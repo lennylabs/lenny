@@ -8,19 +8,19 @@
       Tiers 0, 11. Depends on: —
 - [ ] **S3 · spec** — SPEC-3. Lands Edit (a) in §8.10 and Edit (b) in §7.2.
       Tiers 0, 11. Depends on: —
-- [ ] **S4 · code** — CODE-A. Lands the derive and replay row, response, registration, and comment changes, with TEST-1 item 1's tier-1 cases.
+- [ ] **S4 · code** — CODE-A, with TEST-1 item 1's tier-1 cases.
       Tiers 0, 1. Depends on: —
 - [ ] **S5 · code** — CODE-B. Lands items 1 to 6, with TEST-1 items 2 and 3.
       Tiers 0, 1. Depends on: S1, S2
-- [ ] **S6 · code** — CODE-C. Lands the predicate, dispositions, writer, and cap count, with TEST-1 item 4's tier-1 cases.
+- [ ] **S6 · code** — CODE-C items 1 to 6, with TEST-1 item 4's tier-1 cases.
       Tiers 0, 1. Depends on: S3
 - [ ] **S7 · code** — CODE-D. Lands `effectiveCascade` and its call sites, with TEST-1 item 6.
       Tiers 0, 1. Depends on: S3, S6
-- [ ] **S8 · code** — CODE-E. Lands the mutator re-check and the metric move, with TEST-1 item 7.
+- [ ] **S8 · code** — CODE-E, with TEST-1 item 7.
       Tiers 0, 1. Depends on: —
 - [ ] **S9 · code** — CODE-F. Lands the detached rollback context, with TEST-1 item 8.
       Tiers 0, 1. Depends on: —
 - [ ] **S10 · test** — TEST-1. Lands the tier-2, tier-4, and tier-7a tests, item 5, and item 9.
-      Tiers 0, 1, 2, 4, 7a, 11. Depends on: S4, S5, S6, S7, S8, S9
+      Tiers 0, 1, 2, 4, 7a, 8, 11. Depends on: S4, S5, S6, S7, S8, S9
 - [ ] **S11 · docs** — REC-1. Lands the BUILD-GAPS records and the P4a plan entry.
       Tiers 0, 11. Depends on: S10

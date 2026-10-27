@@ -12,14 +12,14 @@
 - CODE-A, CODE-E, and CODE-F have no dependency on another proposal.
 - SPEC-2 and SPEC-3 Edit (b) apply after 0105 SPEC-2.
 - CODE-B applies after 0105 CODE-6 item 6, which rewrites `sessionStateMachineEdges`.
-- CODE-C applies after 0105 CODE-4 and CODE-5, whose per-row continuation and unconditional stamp it keeps and whose root-anchored window check it replaces.
+- CODE-C applies after 0105 CODE-4 and CODE-5.
 - CODE-D applies after CODE-C and after 0104 CODE-2 item 7, whose per-level primary re-listing stays as staged.
 
 ## Staged code changes
 
 ### CODE-A · Derive and replay create roots
 
-Targets: `pkg/gateway/sessionserver/derive.go` (the `derived` literal, `DeriveResponse` construction, `persistDeriveFailure`), `pkg/gateway/sessionserver/replay.go` (the `replayed` literal, `ReplayResponse` construction), `pkg/gateway/session/sessionstore/sessionstore.go` (the `ParentSessionID` doc comment), `pkg/gateway/session/sessionstore/creation_fence.go` (the `IsDelegatedChild` comment), `pkg/gateway/session/sessionstore/pgstore/pgstore.go` (the `root_session_id` comment in the insert), `pkg/gateway/session/sessionstore/memstore/memstore.go` (the root comment in the insert).
+Targets: `pkg/gateway/sessionserver/derive.go` (the `derived` literal, `DeriveResponse` construction, `persistDeriveFailure`), `pkg/gateway/sessionserver/replay.go` (the `replayed` literal, `ReplayResponse` construction), `pkg/gateway/session/sessionstore/sessionstore.go` (the `ParentSessionID` doc comment), `pkg/gateway/session/sessionstore/creation_fence.go` (the `IsDelegatedChild` comment), `pkg/gateway/session/sessionstore/pgstore/pgstore.go` (the `root_session_id` comment in the insert), `pkg/gateway/session/sessionstore/memstore/memstore.go` (the root comment in the insert), and the tests **Existing tests** names.
 
 `derive.go`:
 1. Remove `ParentSessionID: source.ID` from the `derived` literal. Keep `ParentWorkspaceRef`.
@@ -35,6 +35,8 @@ Targets: `pkg/gateway/sessionserver/derive.go` (the `derived` literal, `DeriveRe
 Comments:
 - Rewrite the sessionstore `ParentSessionID` doc: it is the §8.2 delegating parent, set only by the delegation service; derive and replay leave it empty and record lineage in `ParentWorkspaceRef` (§4.5).
 - Update the `creation_fence.go`, `pgstore.go`, and `memstore.go` comments that say a derived session sets the parent or shares the parent's tree.
+
+**Existing tests.** `TestDeriveInheritsRuntimeAndUserAndPool` (`derive_test.go`) and `TestReservedPathsRunTheProductionCreatePaths_spec_12_8` (`tests/testinfra/lifecyclefence/paths_test.go`) assert the source id as the derived row's `ParentSessionID`; change both to assert it empty, and rewrite the `paths_test.go` doc comment's "names its source as parent".
 
 No store logic changes and no migration. Cite `// spec: §12.6 (StoreRouter), §15.1 (Session Replay Semantics), §12.8 step 16, §4.5 (Workspace lineage), §8.6`.
 
@@ -53,12 +55,14 @@ Targets: `pkg/delegation/recovery/recovery.go` (`Node`, `Config`, the reason con
    - `pkg/gateway/sessionserver/terminal_context_internal_test.go`: the row keyed `session_terminal.go writeTerminal` seeds `resume_pending`.
    - `pkg/gateway/sessionserver/terminal_writer_inventory_test.go`: remove `expireSession` from `writeTerminalCallers` and from its comment.
    - `pkg/gateway/mcpfabric/delegationtree/treerecovery/treerecovery_test.go`: replace `TestRecoverTreeNodeResumeWindow_spec_8_10_1027` with the TEST-1 item 2 orchestrator case.
+   - `pkg/delegation/recovery/recovery_test.go`: delete the `node resume window` case of `TestRecoverWaitEndsAtNodeDeadline_spec_8_10`, `TestRecoverNodeResumeWindowBindsBeforeLevel_spec_8_10_1027`, and `TestRecoverTreeRemainingBindsNodeWindow_spec_8_10_1027`.
+   - `pkg/gateway/sessionserver/treerecovery_internal_test.go`: TEST-1 item 3's state table replaces `TestTerminalMarkerReasonMapping_spec_8_10_1027`.
 
 Cite `// spec: §8.10 (Delegation Tree Recovery), §7.2 (Interactive Session Model), §6.2 (resume_pending wall-clock cap)`.
 
 ### CODE-C · Orphan sweeper over the SPEC-3 orphan set
 
-Targets: `pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go` (package doc, `sweepTenant`, `expireOrphan`, `treeRoot`, `archiveOrphan`), `pkg/gateway/sessionserver/usage.go` (`detachExceedsOrphanCap`).
+Targets: `pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go` (package doc, `sweepTenant`, `expireOrphan`, `treeRoot`, `archiveOrphan`), `pkg/gateway/sessionserver/usage.go` (`detachExceedsOrphanCap`), and the test files item 6 names.
 
 1. **Predicate.** Add to `orphancleanup`:
 
@@ -85,11 +89,16 @@ Targets: `pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go` (
 
    An applied end decrements `activeOrphans`, as today, and writes the ended state and `now` into the row's `byID` entry, so a child visited later in the pass sees its parent's end.
 
-3. **Writer.** Generalize `expireOrphan` into `endOrphan(ctx, tenant, row sessionstore.Session, to session.State, now time.Time) (bool, error)`. `cancelled` stamps no `FailureReason`. `expired` keeps 0105 CODE-5's unconditional `expired:deadline` stamp. Both keep the non-terminal locked-row guard, `BeginTerminal`, `MarkTerminated`, and `OnSessionTerminal`, so the funnel's `terminalSignals` runs `cascadeToChildren` for the ended row. Keep 0105 CODE-4's per-row continuation.
+3. **Writer.** Generalize `expireOrphan` into `endOrphan(ctx, tenant, row sessionstore.Session, to session.State, now time.Time) (bool, error)`. `cancelled` stamps no `FailureReason`. `expired` keeps 0105 CODE-5's unconditional `expired:deadline` stamp. Both keep the non-terminal locked-row guard, `BeginTerminal`, `MarkTerminated`, and `OnSessionTerminal`, so the funnel's `terminalSignals` runs `cascadeToChildren` for the ended row. Keep 0105 CODE-4 items 1 to 4.
 
 4. **Cleanup.** Delete `orphancleanup.treeRoot`. `archiveOrphan` takes `row.RootSessionID`. Update the package doc to the SPEC-3 Edit (a) set and dispositions.
 
 5. **Cap count.** `detachExceedsOrphanCap` builds `byID` from its one `List` and counts rows for which `orphancleanup.Orphaned` is true. Delete its per-row `store.Get` and its `s.treeRoot` call. `Server.treeRoot` stays for its other callers. Update its doc.
+
+6. **Existing tests.**
+   - `orphancleanup_test.go`: the `seed` helper, which `terminal_stamp_test.go` also uses, gives a row with a parent a `DelegationDepth` one above its parent's (a flat 1 breaks `TestTickTerminatesDeepOrphanSubtree`, which relies on ascending-depth order), gives a terminal row a `TerminatedAt`, and seeds `CascadeOnFailure: detach`, so the existing Tick and stamp cases keep their expiry and window assertions. 0105 TEST-1 item 6's cases and item 4's orphan-writer case are seeded the same way.
+   - `pkg/gateway/sessionserver/tree_archive_test.go`: `old_child` and `sess_child` carry `DelegationDepth: 1` in `TestDetachFallsBackToCancelAllOverOrphanCap` and `TestDetachFallbackEmitsCascadeAppliedAudit_spec_8_10_1103`.
+   - The `terminalWriterInventory` row and its comment in `terminal_writer_inventory_test.go`, and the `terminalContextWriters` key in `terminal_context_internal_test.go`, name `endOrphan` in place of `expireOrphan`. `terminalAssignment` admits a non-literal `to` only in `writeTerminal`, so `endOrphan` assigns each terminal state as a literal in its own branch.
 
 Cite `// spec: §8.10 (Orphan cleanup), §7.2 (Terminal writes from any non-terminal state)`.
 
@@ -109,19 +118,20 @@ Cite `// spec: §8.10 (maxOrphanTasksPerTenant fallback)`.
 Targets: `cmd/lenny-gateway/reconciler_workers.go` (`deadlockFail`), `pkg/gateway/mcpfabric/delegationtree/deadlock/manager.go` (`FailFunc`, `TimeoutAction`, `Manager.Observe`, `Detector.RunOnce`).
 
 1. The `deadlockFail` mutator returns `sessionstore.ErrSuperseded` when the locked row is terminal, when `w.inputWaits` is nil, or when `len(w.inputWaits.PendingDetailsForSession(sessionID)) == 0`. This re-checks the registry the detector's snapshot read, so it covers persisted waits and edge-served waits that leave the row `running`. Do not gate on `State == input_required` (summary D12).
-2. `FailFunc` becomes `func(ctx context.Context, tenantID, sessionID string) bool`. It returns true only when the write applied. It returns false on `ErrSuperseded`, and false on a store error, which it logs.
+2. `FailFunc` becomes `func(ctx context.Context, tenantID, sessionID string) bool`. It returns true only when the write applied. It returns false on `ErrSuperseded`, and false on a store error, which it logs. The closure becomes the method `func (w *gatewayWiring) deadlockFail(ctx context.Context, tenantID, sessionID string) bool` in `reconciler_workers.go`, which `startReconcilerWorkers` passes to `deadlock.NewDetector`; it keeps the line `end := w.sessionSrv.BeginTerminal(sessionID)`, which `terminal_seams_wiring_test.go` matches.
 3. `TimeoutAction` gains `DetectedAt time.Time`, which `Observe` fills from the tracked entry.
 4. `Observe` no longer calls `ObserveDelegationDeadlockResolution("timeout", ...)`. It still deletes the active entry and returns the action. The existing `resolved` emission for a subtree no longer detected is unchanged.
 5. `RunOnce` calls `fail` for each deepest task of an action and records `timeout` once per action, with duration `now.Sub(action.DetectedAt)`, only when at least one call returned true. When none applied it records nothing, and the next sweep re-detects a subtree that is still deadlocked. A store error and a refusal therefore have the same metric outcome.
+6. **Existing tests.** The `terminalWriterInventory` row in `terminal_writer_inventory_test.go` names `deadlockFail` as writer and claim function in place of `startReconcilerWorkers`, and the `terminalContextWriters` key in `terminal_context_internal_test.go` becomes `cmd/lenny-gateway/reconciler_workers.go deadlockFail`.
 
 Cite `// spec: §8.8 (Subtree deadlock detection), §16.1`.
 
-### CODE-F · Pod rollbacks detached from the caller's cancellation
+### CODE-F · Rollbacks detached from the caller's cancellation
 
-Target: `pkg/gateway/sessionserver/bind_rollback.go` (`rollbackBinding`, `rollbackClaim`).
+Target: `pkg/gateway/sessionserver/bind_rollback.go` (`rollbackBinding`, `rollbackClaim`) and `pkg/gateway/sessionserver/coordination_lease.go` (`releaseCoordinationLease`).
 
-1. The first statements of both helpers are `ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.streamFailureReportTimeout)` and `defer cancel()`. That field is the §7.1 release allowance, and `Server` init already defaults it. Do not use `terminalContext` (summary D13).
-2. Add one doc sentence to each helper: the rollback runs detached from the caller's cancellation, so a client disconnect or a parent teardown cannot strand the claim; the release allowance bounds it; and the §4.6.1 orphan-claim GC bounds a crash mid-rollback.
+1. The first statements of each helper are `ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.streamFailureReportTimeout)` and `defer cancel()`. That field is the §7.1 release allowance, and `Server` init already defaults it. Do not use `terminalContext` (summary D13).
+2. Add one doc sentence to `rollbackBinding` and `rollbackClaim`: the rollback runs detached from the caller's cancellation, so a client disconnect or a parent teardown cannot strand the claim; the release allowance bounds it; and the §4.6.1 orphan-claim GC bounds a crash mid-rollback.
 3. Callers are unchanged.
 
 Cite `// spec: §7.1 (Atomicity of session creation (steps 2–8)); §7.1 (Terminal pipeline context: release allowance bounds the release); §4.6.1 (Orphaned SandboxClaim detection)`.
@@ -154,7 +164,7 @@ Every test carries `// spec:`. Every tier-2-and-up test carries `// diagnosis:`.
 1. **Derive and replay roots** (tier 1: `pkg/gateway/sessionserver/derive_test.go`, `replay_test.go`, `derive_failure_audit_test.go`). Table over derive from a terminal source, derive with `allowStale` from a live source, and each replay mode. Assert that the row has an empty `ParentSessionID`, that `RootSessionID` equals its own id, that `ParentWorkspaceRef` equals the source snapshot ref, and that the response `parentSessionId` equals the source id. Assert that a recording lease registrar receives the new row once; this is the discriminating assertion, because `registerLeaseTree` skips a row with a parent. An insert error registers nothing. The failure audit row has an empty parent, carries `ParentWorkspaceRef` when the source has a snapshot and none otherwise, and is absent from the source's `ListByRoot`. `// spec: §12.6 (StoreRouter), §15.1 (Session Replay Semantics), §4.5 (Workspace lineage), §8.6`.
    - Tier 2 (`tests/tier2_component/stores/`): a pgstore insert with an empty parent sets `root_session_id` to the row's id. Deleting a delegated child's parent row leaves the child with `parent_session_id` NULL and its `delegation_depth` unchanged, and `orphancleanup.Orphaned` selects it. `// spec: §12.8 step 16, §8.10 (Orphan cleanup)`.
    - Tier 4 (`tests/tier4_integration`): a session derived from a terminal source whose tree root ended more than `cascadeTimeoutSeconds` ago (set short) stays non-terminal across two orphan-cleanup intervals, and a live source's `cancel_all` cascade does not reach it. `// spec: §12.6 (StoreRouter), §8.10 (Orphan cleanup)`.
-2. **Recovery engine and orchestrator** (tier 1: `pkg/delegation/recovery/recovery_test.go`, `pkg/gateway/mcpfabric/delegationtree/treerecovery/treerecovery_test.go`). Record `start` and `OnResult` calls on one sequence. Assert that `OnResult` is called once per node, in traversal order, and that every call for a level precedes the next level's first `start`. Cover a node failed without a start, the tree deadline failing every remaining node, and a nil `OnResult`. In the orchestrator, a node past `ResumeEligibleUntil` gets no special treatment, and a node the watchdog moved to `awaiting_client_action` is counted failed in the summary and its row is unchanged. `// spec: §8.10 (Delegation Tree Recovery)`.
+2. **Recovery engine and orchestrator** (tier 1: `pkg/delegation/recovery/recovery_test.go`, `pkg/gateway/mcpfabric/delegationtree/treerecovery/treerecovery_test.go`). Record `start` and `OnResult` calls on one sequence. Assert that `OnResult` is called once per node, in traversal order, and that every call for a level precedes the next level's first `start`. Cover a node failed without a start, the tree deadline failing every remaining node, and a nil `OnResult`. In the orchestrator, a node past `ResumeEligibleUntil` gets no special treatment, and a node the watchdog moved to `awaiting_client_action` is counted failed in the summary and its row is unchanged. With the reattacher's `StartNode` and the terminal marker's `FailNode` recording onto one sequence, a depth-2 node whose `ReattachNode` errors has its `FailNode` recorded before the depth-1 node's `StartNode`; this is the discriminating case for CODE-B item 2. `// spec: §8.10 (Delegation Tree Recovery)`.
 3. **Tree-recovery guard** (tier 1: `pkg/gateway/sessionserver/treerecovery_internal_test.go`, `pkg/session/state/state_test.go`, and the CODE-B item 6 files).
    - Table over every non-terminal state seeded on the locked row: only `resume_pending` is written `failed`, with one hook. Every other state is unchanged, with no hook and no event.
    - A restore that commits `running` after the level deadline is not overwritten.
@@ -177,9 +187,10 @@ Every test carries `// spec:`. Every tier-2-and-up test carries `// diagnosis:`.
 5. **Convergence under faults.**
    - Tier 1 (`pkg/gateway/sessionserver/cascade_on_expire_test.go`, `pkg/gateway/mcpfabric/mcptools/cancel_release_test.go`): a fault-injecting store fails a randomized subset of `List` and `Update` calls in `cascadeToChildren` and `cancelNode`. After the walk and sweeper passes to quiescence, within a bounded pass count, no non-terminal delegated row has a terminal `cancel_all` parent, and every row has at most one terminal write and one hook.
    - Tier 7a (`tests/tier7a_load_local/`): the inline `cascadeToChildren` and two sweepers run as goroutines over one store. Each row gets one terminal write and at most one post-terminal hook, and after quiescence no live delegated row has a terminal `cancel_all` parent.
+   - Tier 8 (`tests/tier8_chaos/`): two gateway replicas share one pgstore, and replica A is stopped after its `cancel_all` cascade has cancelled part of a depth-3 subtree. Replica B's next orphan-cleanup pass cancels every remaining descendant, with one terminal write and at most one hook per row.
    `// spec: §8.10 (Orphan cleanup), §7.2 (Interactive Session Model)`.
-6. **Cap fallback** (tier 1: `pkg/gateway/sessionserver/cascade_on_expire_test.go`). A top-level `detach` session over the cap cancels its children. A cancelled `detach` descendant over the cap has its children cancelled and gets a `cascade_applied` row with reason `orphan_cap_fallback`. Under the cap its children are left running. A cascade that starts at a mid-tree session under a live root, with a cancelled `detach` descendant over the cap, cancels that descendant's children and writes the audit row; this case discriminates CODE-C's count from the root-keyed one. A store error in `detachExceedsOrphanCap` reports not over cap. `// spec: §8.10 (maxOrphanTasksPerTenant fallback)`.
-7. **Deadlock** (tier 1: `pkg/gateway/mcpfabric/delegationtree/deadlock/manager_test.go`, and a `deadlockFail` test in `cmd/lenny-gateway`).
+6. **Cap fallback** (tier 1: `pkg/gateway/sessionserver/cascade_on_expire_test.go`). A top-level `detach` session over the cap cancels its children. A cancelled `detach` descendant over the cap has its children cancelled and gets a `cascade_applied` row with reason `orphan_cap_fallback`. Under the cap its children are left running. A cascade that starts at a mid-tree session under a live root, with a cancelled `detach` descendant over the cap, cancels that descendant's children and writes the audit row; this case discriminates CODE-C's count from the root-keyed one. A store error in `detachExceedsOrphanCap` reports not over cap. A store whose `Update` commits an over-cap `detach` descendant `cancelled` directly, just before the walk's write to it, leaves the walk writing no `cascade_applied` row for that descendant and queueing none of its children; this case discriminates CODE-D item 3's post-write evaluation. `// spec: §8.10 (maxOrphanTasksPerTenant fallback)`.
+7. **Deadlock** (tier 1: `pkg/gateway/mcpfabric/delegationtree/deadlock/manager_test.go`, and `cmd/lenny-gateway/deadlock_fail_test.go`).
    - An answered wait (registry empty, row in any non-terminal state) gets no write and no `timeout`.
    - An edge-served pending wait on a `running` row is failed with DEADLOCK_TIMEOUT and records `timeout` once, with duration from `DetectedAt`.
    - An action with two deepest tasks of which one applies records `timeout` once.
@@ -189,7 +200,7 @@ Every test carries `// spec:`. Every tier-2-and-up test carries `// diagnosis:`.
    `// spec: §8.8 (Subtree deadlock detection), §16.1`.
 8. **Rollbacks.**
    - `pkg/gateway/sessionserver/delegated_child_materialize_test.go` (extend): a table over the materializer's three rollback paths with an already-cancelled request context; each path reaches the binder.
-   - `pkg/gateway/sessionserver/bind_rollback_test.go` (new): `rollbackBinding` and `rollbackClaim` reach binder `Release`, `ReleaseSlot`, and `ReclaimClaimed` with a context that is not done and carries a deadline within the release allowance. A binder `Release` that blocks returns once the release allowance, set short in the test, elapses.
+   - `pkg/gateway/sessionserver/bind_rollback_test.go` (new): `rollbackBinding`, `rollbackClaim`, and `releaseCoordinationLease` reach binder `Release`, `ReleaseSlot`, and `ReclaimClaimed`, and the lease store's `Release`, with a context that is not done and carries a deadline within the release allowance. A binder `Release` that blocks returns once the release allowance, set short in the test, elapses.
    `// spec: §7.1 (Atomicity of session creation (steps 2–8)), §4.6.1 (Orphaned SandboxClaim detection)`.
 9. **Spec map.** Add each new test to `tests/spec-map.json` under the sections its `// spec:` names.
 
@@ -216,6 +227,7 @@ Every test carries `// spec:`. Every tier-2-and-up test carries `// diagnosis:`.
 - cmd/lenny-gateway/reconciler_workers.go
 - pkg/gateway/mcpfabric/delegationtree/deadlock/manager.go
 - pkg/gateway/sessionserver/bind_rollback.go
+- pkg/gateway/sessionserver/coordination_lease.go
 - pkg/session/state/state_test.go
 - pkg/gateway/sessionserver/lifecycle_internal_test.go
 - pkg/gateway/sessionserver/terminal_writers_internal_test.go
@@ -226,17 +238,21 @@ Every test carries `// spec:`. Every tier-2-and-up test carries `// diagnosis:`.
 - pkg/gateway/sessionserver/derive_failure_audit_test.go
 - pkg/gateway/sessionserver/treerecovery_internal_test.go
 - pkg/gateway/sessionserver/cascade_on_expire_test.go
+- pkg/gateway/sessionserver/tree_archive_test.go
 - pkg/gateway/sessionserver/delegated_child_materialize_test.go
 - pkg/gateway/sessionserver/bind_rollback_test.go (new)
 - pkg/delegation/recovery/recovery_test.go
 - pkg/gateway/mcpfabric/delegationtree/treerecovery/treerecovery_test.go
 - pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup_test.go
+- pkg/gateway/mcpfabric/delegationtree/orphancleanup/terminal_stamp_test.go
 - pkg/gateway/mcpfabric/mcptools/cancel_release_test.go
 - pkg/gateway/mcpfabric/delegationtree/deadlock/manager_test.go
-- cmd/lenny-gateway (a `deadlockFail` test file)
+- cmd/lenny-gateway/deadlock_fail_test.go (new)
+- tests/testinfra/lifecyclefence/paths_test.go
 - tests/tier2_component/stores/
 - tests/tier4_integration/
 - tests/tier7a_load_local/
+- tests/tier8_chaos/
 - tests/spec-map.json
 - BUILD-GAPS.md
 - gateway-runtime-comms-remediation.md

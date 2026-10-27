@@ -9,7 +9,7 @@
 - §8.10 orphan cleanup selects every live delegated session with a terminal or absent ancestor, cancels it at once under a terminal `cancel_all` parent, and otherwise bounds it from the earliest terminal ancestor, and the §7.2 any-state clause names the `cancelled` write (SPEC-3). The sweeper and the orphan-cap count implement that set (CODE-C), and the cap fallback applies to every node the cascade cancels (CODE-D).
 - Derive and replay stop writing a delegation parent and register the new root for lease extension (CODE-A).
 - The deadlock fail write re-checks the live wait under the row lock, and the `timeout` resolution follows an applied write (CODE-E).
-- The pod rollbacks run detached from the caller's cancellation, bounded by the release allowance (CODE-F).
+- The rollbacks run detached from the caller's cancellation, bounded by the release allowance (CODE-F).
 - Tests across the reached tiers (TEST-1) and the BUILD-GAPS and plan records (REC-1).
 
 **Decisions.**
@@ -30,9 +30,7 @@
 - D15. 0106 applies on top of 0104 and 0105 by quoted anchor and edits neither proposal. Non-spec changes, **Sequencing against other proposals** is the one home for the ordering.
 
 **Watch out for.**
-- Narrowing `failSession`'s guard breaks existing tests that call it on a `running` row, and deleting `expireSession` breaks the terminal-writer inventory. CODE-B names each file and the edit it needs.
 - `registerLeaseTree` skips a row that carries a parent, so the call CODE-A adds registers nothing unless the parent write is removed in the same change.
-- The derive and replay responses must keep echoing the source id as `parentSessionId`. Copying the field from the new row, as the code does today, empties it once the row has no parent.
 - CODE-D's cap check on a cascaded descendant counts that descendant's children only under CODE-C's predicate. Landing CODE-D before CODE-C leaves the fallback silent for a cascade under a live root.
 - Do not gate the deadlock fail on `input_required`; see D12.
 - The orphan sweeper's selection must not read `ParentSessionID != ""` as "is delegated"; see D8.
@@ -56,20 +54,20 @@
 - A store rule that inherits `root_session_id` only when `DelegationDepth > 0`. The COALESCE already yields the row's own id once no parent is written.
 - Rewriting every `ParentSessionID` reader to classify membership by `DelegationDepth`. Removing the writes corrects them all. Only the sweeper switches to `DelegationDepth`, to catch the SET NULL case.
 - Editing the `migrations/0001` comment that calls `parent_session_id` a derive lineage pointer. It is an applied migration. The sessionstore and store comments are corrected instead.
-- Keeping §8.10's `expired` for an elapsed window by anchoring tree recovery on 0105's `state_entered_at` or the resume driver's window. That contradicts §6.2, §7.2, and §7.3, puts two writers on one timer racing toward different states, and needs extra edges, a §6.2 carve-out, and a 0105 dependency.
+- Keeping §8.10's `expired` for an elapsed window by anchoring tree recovery on 0105's `state_entered_at` or the resume driver's window (D4).
 - Having the watchdog write `expired` for delegated `resume_pending` rows. That contradicts §6.2's "no additional expiry path" and the §7.2 edge list.
 - Re-anchoring `ResumeEligibleUntil` on `resume_pending` entry. 0105 D3 rejects that anchor, the field surfaces to clients with creation semantics, and tree recovery reads no window under this design.
 - Deleting or re-defining `ResumeEligibleUntil`. It is outside the validated problem and is listed under the defects below.
-- Listing tree recovery in 0105's §7.2 any-state terminal-write paragraph. That would legalize writing `failed` over `resuming` and `running`, which is the F-8.10.20 defect.
-- Admitting `resuming` in tree recovery's guard. §7.2 has no `resuming → failed` tree-recovery edge, the §6.2 `resuming` enumeration is authoritative, the driver race would remain, and the `resuming` watchdog already bounds a stuck restore.
-- Admitting `awaiting_client_action` in tree recovery's guard. Tree recovery would then overwrite the client-intervention state that §6.2 and §7.3 give an elapsed or retry-exhausted node, and F-8.10.19 would reappear as `failed`.
+- Listing tree recovery in 0105's §7.2 any-state terminal-write paragraph (D5).
+- Admitting `resuming` in tree recovery's guard (D5).
+- Admitting `awaiting_client_action` in tree recovery's guard (D5).
 - Guarding tree recovery's write on the `coordination_generation` the traversal listed. The `resume_pending`-only guard already excludes every in-flight or committed restore, and a node back in `resume_pending` is legitimately unrecovered.
 - Persisting tree-recovery progress or budgets across a replica crash. The watchdog's per-node `resume_pending` cap bounds every unsettled node, and the next restore starts a new traversal.
 - Moving `cascadeToChildren` into the post-terminal hook and replacing the breadth-first walk with per-node recursion. It replaces 0104 CODE-2 item 7's staged loop, adds a primary tenant listing per cancelled node or a new list filter, delays `cancel_all` by a hop per level, and changes behavior for writers the validated problem does not name.
 - Deleting `cancelSubtree` and shrinking the `cancel_child` result to the target. The sweeper converges the subtree within one interval, and the result change would churn the mcptools tests for no requirement.
 - Making `cancelSubtree` continue past a per-node error with a joined error. With the sweeper as retry owner this is unnecessary, and it would change `cancel_child`'s result semantics.
 - In-process retry or backoff loops in `cascadeToChildren` and `cancelSubtree`. They do not survive a replica crash, they add tuning settings, and the sweeper covers both walks from durable rows.
-- A durable cascade-pending marker, outbox table, or persisted orphan-cap fallback decision. The obligation is already encoded as a terminal parent plus live children. The residual, in which children a fallen-back cascade missed are expired after `cascadeTimeoutSeconds` rather than cancelled at once, is bounded and accepted.
+- A durable cascade-pending marker, outbox table, or persisted orphan-cap fallback decision (D7). The residual, in which children a fallen-back cascade missed are expired after `cascadeTimeoutSeconds` rather than cancelled at once, is bounded and accepted.
 - Having the sweeper write `expired` for children of a `cancel_all` parent. The same parent policy would then end children `cancelled` or `expired` depending on a transient error.
 - Having the sweeper re-run the parent's full cascade, including a fresh orphan-cap check. That would cancel a detach parent's children retroactively when the tenant later crosses the cap, which §8.10 does not allow.
 - Re-checking `maxOrphanTasksPerTenant` inside the sweeper, or moving the cap check there. §8.10 places the fallback at detach time.
@@ -79,11 +77,10 @@
 - Changing the `parent_session_id` foreign key to RESTRICT or CASCADE. That interacts with §12.8 erasure ordering, and selecting by `delegation_depth` handles SET NULL with no schema change.
 - Applying the orphan-cap fallback inside `cancelSubtree` (`lenny/cancel_child`). The validated F-8.10.26 names only the `usage.go` cascade, so this is listed under the defects below.
 - Gating the deadlock fail on `State == input_required`, or matching 0105's `input_wait_id` in the re-check. The state check blocks edge-served waits (D12), and the registry re-check under the row lock fences an answered wait without carrying wait identities through the detector.
-- Recording `resolved` for a refused deadlock write. A refusal is not one of the §16.1 resolutions, and the next sweep re-detects a subtree that is still deadlocked.
+- Recording `resolved` for a refused deadlock write (D12).
 - Keeping the deadlock Manager's active entry on a store error so the next tick retries at once. Re-detection with a fresh window bounds that case, and the problem does not exhibit it.
 - Persisting the deadlock active set or detecting deadlocks across replicas. Each wait is bounded by `maxRequestInputWaitSeconds`, and this is outside the problem.
-- Fixing the rollback context only at the materializer's call sites. The two helpers are the single choke point for every caller.
-- Detaching `releaseCoordinationLease` inside its helper. The 60s lease TTL bounds a lost release, and the helper has many unrelated callers. It is listed under the defects below.
+- Fixing the rollback context only at the materializer's call sites. The rollback helpers are the single choke point for every caller.
 - An unbounded `context.WithoutCancel` in the rollback helpers, or `terminalContext`'s seal-inclusive budget. The first leaves the outbound release calls unbounded, and the second is the wrong bound (D13).
 - Splitting the members into separate proposals, or landing the code-only members as direct BUILD-GAPS fixes. Each member's sequencing is stated per step, and the cascade and orphan members share one §8.10 edit.
 - Restaging F-8.10.17 or F-8.10.24. Only records are needed (D14).
@@ -98,27 +95,26 @@ None yet. The review loops add entries here.
 - **(b) A cascaded descendant's post-terminal hook runs `archiveSettledChild` as its signal tail.** It runs the archive tail rather than the funnel's `terminalSignals`. CODE-D moves only the descendant's cascade decision into the walk, and the rest of the signal set is outside the validated problem.
 - **(c) `ResumeEligibleUntil` is creation-relative and echoed to clients.** Only `create.go` and `create_and_start.go` write it, and once CODE-B deletes `remainingResumeWindow` nothing reads it as a deadline. Whether to delete or redefine the field is outside the validated problem.
 - **(d) §4.5 Workspace lineage names derive as the `parent_workspace_ref` writer but omits replay, which also writes it.** The lineage-doc inconsistency is outside the validated problem.
-- **(e) `releaseCoordinationLease` runs on the materializer's request context.** The 60s lease TTL bounds a lost release, and the helper has many unrelated callers, so CODE-F leaves it.
-- **(f) The deadlock Manager emits `resolution="resolved"`, which §16.1 does not list, and the resolution metric carries no `pool` label.** The conformance gap is outside F-8.8.18 and F-8.8.19. CODE-E neither extends nor removes the existing emission.
+- **(e) The deadlock Manager emits `resolution="resolved"`, which §16.1 does not list, and the resolution metric carries no `pool` label.** The conformance gap is outside F-8.8.18 and F-8.8.19. CODE-E neither extends nor removes the existing emission.
 
 ## Impacts on other proposals
 
 | Proposal | Status | What this change does to it | What it must do |
 |:--|:--|:--|:--|
 | 0092 (session suspend and resume) | Implemented | REC-1 closes F-8.10.24 citing 0092's commit 3f943f56f, and resolves the F-8.10.19, F-8.10.20, and F-8.8.18 residuals 0092 handed to P4. | Nothing. 0092 is not edited. |
-| 0104 (session-scoped and delegation token gaps) | Approved | CODE-D edits the enqueue decision in `cascadeToChildren` on top of 0104 CODE-2 item 7's per-level primary re-listing, which stays as staged. REC-1 re-owns F-8.10.17 to 0104 D6, CODE-2, and SPEC-3 Edit (a). Every 0104 deliverable survives. | 0104 lands its CODE-2 before 0106 CODE-D. 0104's files are not edited. |
-| 0105 (per-state deadlines and watchdog sweeps) | Approved | SPEC-2 inserts a line into the §7.2 block 0105 SPEC-2 edits, and SPEC-3 Edit (b) amends the orphan-cleanup clause of the any-state paragraph 0105 SPEC-2 Edit (c) lands. CODE-C replaces 0105 CODE-5's root-anchored window check with the earliest-terminal-ancestor anchor and keeps CODE-4's continuation and CODE-5's unconditional `expired:deadline` stamp. CODE-B adds one edge to the `sessionStateMachineEdges` table 0105 CODE-6 item 6 rewrites. 0105 TEST-1 item 6's cases still hold, because a terminal root is then the earliest terminal ancestor. 0105 D5's root anchor is superseded; no other 0105 decision reopens. | 0105 lands SPEC-2, CODE-4, CODE-5, and CODE-6 before the 0106 steps that depend on them. 0105's files are not edited. |
+| 0104 (session-scoped and delegation token gaps) | Approved (2026-10-27, status record) | CODE-D edits the enqueue decision in `cascadeToChildren` on top of 0104 CODE-2 item 7's per-level primary re-listing, which stays as staged. CODE-A rewrites only comments in `creation_fence.go`, where 0104 CODE-2 adds `ParentSessionID` and `ParentTerminal` to `CreationMarkers`. 0104's rule 5 keys on `IsDelegatedChild`, which is delegation depth, so removing `ParentSessionID` from derived and replayed rows does not change what rule 5 refuses. REC-1 re-owns F-8.10.17 to 0104 D6, CODE-2, and SPEC-3 Edit (a). Every 0104 deliverable survives. | 0104 lands its CODE-2 before 0106 CODE-D. Whichever proposal lands second applies the `creation_fence.go` comment edits by quoted anchor. 0104's files are not edited. |
+| 0105 (per-state deadlines and watchdog sweeps) | Approved (2026-10-27, status record) | SPEC-2 inserts a line into the §7.2 block 0105 SPEC-2 edits, and SPEC-3 Edit (b) amends the orphan-cleanup clause of the any-state paragraph 0105 SPEC-2 Edit (c) lands. CODE-C replaces 0105 CODE-5's root-anchored window check with the earliest-terminal-ancestor anchor and keeps CODE-4 and CODE-5's unconditional `expired:deadline` stamp. CODE-B adds one edge to the `sessionStateMachineEdges` table 0105 CODE-6 item 6 rewrites. CODE-C item 6 reseeds the orphan cases of 0105 TEST-1 items 4 and 6. 0105 D5's root anchor is superseded; no other 0105 decision reopens. 0105 CODE-5 has not landed, so CODE-C replaces a staged deliverable rather than landed code. | Approving 0106 supersedes 0105 D5 before 0105 is implemented, and that is the human's call. 0105 lands SPEC-2, CODE-4, CODE-5, and CODE-6 before the 0106 steps that depend on them. 0105's files are not edited. |
 
 ## Deliverable index
 
 - SPEC-1 — spec/08_recursive-delegation.md — §8.10 tree recovery fails only `resume_pending` nodes on a level or tree budget and leaves an elapsed resume window to the §6.2 cap
 - SPEC-2 — spec/07_session-lifecycle.md — the §7.2 `resume_pending → failed` tree-recovery edge
 - SPEC-3 — spec/08_recursive-delegation.md, spec/07_session-lifecycle.md — §8.10 orphan selection and disposition, and the §7.2 any-state clause naming `cancelled` and `expired`
-- CODE-A — pkg/gateway/sessionserver/derive.go, pkg/gateway/sessionserver/replay.go, pkg/gateway/session/sessionstore/ — derive and replay create roots and register them for lease extension
+- CODE-A — pkg/gateway/sessionserver/derive.go, pkg/gateway/sessionserver/replay.go, pkg/gateway/session/sessionstore/, and the existing tests it names — derive and replay create roots and register them for lease extension
 - CODE-B — pkg/delegation/recovery/recovery.go, pkg/gateway/mcpfabric/delegationtree/treerecovery/treerecovery.go, pkg/gateway/sessionserver/treerecovery.go, pkg/gateway/sessionserver/session_terminal.go, pkg/session/state/state_test.go, and the existing tests it names — per-level failure through a `resume_pending`-only guard, with the window path deleted
-- CODE-C — pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go, pkg/gateway/sessionserver/usage.go — the orphan predicate, sweeper dispositions, and the cap counting the same set
+- CODE-C — pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go, pkg/gateway/sessionserver/usage.go, and the existing tests it names — the orphan predicate, sweeper dispositions, and the cap counting the same set
 - CODE-D — pkg/gateway/sessionserver/usage.go — the orphan-cap fallback for every node the cascade cancels
-- CODE-E — cmd/lenny-gateway/reconciler_workers.go, pkg/gateway/mcpfabric/delegationtree/deadlock/manager.go — the live-wait re-check and the `timeout` metric after an applied write
-- CODE-F — pkg/gateway/sessionserver/bind_rollback.go — detached, release-allowance-bounded pod rollbacks
-- TEST-1 — pkg/, cmd/lenny-gateway/, tests/tier2_component/stores/, tests/tier4_integration/, tests/tier7a_load_local/, tests/spec-map.json — tests across the reached tiers
+- CODE-E — cmd/lenny-gateway/reconciler_workers.go, pkg/gateway/mcpfabric/delegationtree/deadlock/manager.go, and the existing tests it names — the live-wait re-check and the `timeout` metric after an applied write
+- CODE-F — pkg/gateway/sessionserver/bind_rollback.go, pkg/gateway/sessionserver/coordination_lease.go — detached, release-allowance-bounded rollbacks
+- TEST-1 — pkg/, cmd/lenny-gateway/, tests/tier2_component/stores/, tests/tier4_integration/, tests/tier7a_load_local/, tests/tier8_chaos/, tests/spec-map.json — tests across the reached tiers
 - REC-1 — BUILD-GAPS.md, gateway-runtime-comms-remediation.md — finding re-ownership and closure, new defect entries, and the P4a plan entry
