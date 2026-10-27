@@ -91,7 +91,7 @@
 - SPEC-2 — spec/08_recursive-delegation.md — replace the §8.2 child-token exchange with child identity and parent freshness, and drop the Token Service from the §8.1 enforcement clause
 - SPEC-3 — spec/12_storage-architecture.md — the creation fence gains the parent-terminal rule
 - SPEC-4 — spec/15_external-api-surface.md — error catalog, token-endpoint row, the `CallerIdentity.Act` and `ActorClaim` comments, and the MCP endpoint boundary
-- SPEC-5 — spec/04, 05, 07, 10, 13, 16, 17, 18, 23, and 27 — drop internal delegation minting and the session mint from every restatement
+- SPEC-5 — spec/04, 05, 07, 13, 16, 17, 18, and 27 — drop internal delegation minting and the session mint from every restatement
 - CODE-1 — pkg/gateway/mcpfabric/delegation/ — delete the unsigned child-token minter and the audit-contention path
 - CODE-2 — pkg/gateway/session/sessionstore/, pkg/gateway/sessionserver/usage.go, and pkg/gateway/mcpfabric/mcptools/ — the fence refuses a delegated child of a terminal or absent parent, and both cascade walks list children from the primary
 - CODE-3 — pkg/gateway/callercheck/ — session creation and client-facing delegation apply the step (1a) caller check
