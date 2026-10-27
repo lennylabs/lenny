@@ -539,3 +539,99 @@ func TestDeriveCopiesParentBytesIntoDerivedURI(t *testing.T) {
 		t.Errorf("derived blob missing after parent erasure: %v (spec §4.5 ll. 311)", err)
 	}
 }
+
+// deriveSnapshotSource derives from the seeded sess_source row and returns
+// the workspaceSnapshotSource the 201 response reports.
+func deriveSnapshotSource(t *testing.T, srv *sessionserver.Server, newID string) string {
+	t.Helper()
+	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("derive %s: status %d, want 201; body=%s", newID, rr.Code, rr.Body.String())
+	}
+	var resp sessionserver.DeriveResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode derive response: %v; body=%s", err, rr.Body.String())
+	}
+	return resp.WorkspaceSnapshotSource
+}
+
+// TestDeriveTerminalSourceReportsRecordedSnapshotSource_spec_7_1 pins
+// derive rule 1 for a terminal source: every terminal state derives from
+// the snapshot its row records, the sealed workspace when the seal
+// succeeded and the latest checkpoint otherwise, and the response reports
+// that source. A `failed` row records `checkpoint` after a seal-timeout
+// relabel and `sealed` after a seal that succeeded before a later failure.
+// The code already derives this way; the case set pins it against the
+// merged rule.
+//
+// spec: §7.1 (Normal Flow)
+func TestDeriveTerminalSourceReportsRecordedSnapshotSource_spec_7_1(t *testing.T) {
+	sources := []sessionstore.WorkspaceSnapshotSource{
+		sessionstore.WorkspaceSnapshotSealed,
+		sessionstore.WorkspaceSnapshotCheckpoint,
+	}
+	for _, state := range session.TerminalStates() {
+		for _, src := range sources {
+			t.Run(string(state)+"/"+string(src), func(t *testing.T) {
+				store := memstore.New()
+				newSourceSession(t, store, func(s *sessionstore.Session) {
+					s.State = state
+					s.WorkspaceSnapshot.Source = src
+				})
+				srv := sessionserver.New(store, sessionserver.Options{
+					DevTenantHeader: true,
+					IDFunc:          func() string { return "sess_derived" },
+				})
+				if got := deriveSnapshotSource(t, srv, "sess_derived"); got != string(src) {
+					t.Errorf("workspaceSnapshotSource for %s source: got %q, want %q", state, got, src)
+				}
+			})
+		}
+	}
+}
+
+// TestDeriveCompletedSourceDuringSealWindow_spec_7_1 pins derive during the
+// seal window of a `completed` session: before the seal records its
+// snapshot the row holds the latest checkpoint, the derive copies it and
+// reports `checkpoint`, and once the seal records the sealed snapshot a
+// second derive reports `sealed`. No derive waits for the seal.
+//
+// spec: §7.1 (Normal Flow)
+func TestDeriveCompletedSourceDuringSealWindow_spec_7_1(t *testing.T) {
+	store := memstore.New()
+	newSourceSession(t, store, func(s *sessionstore.Session) {
+		s.WorkspaceSnapshot.Source = sessionstore.WorkspaceSnapshotCheckpoint
+		s.WorkspaceSnapshot.Ref = "/acme/workspace/sess_source/ckpt.tar.zst"
+	})
+	ids := []string{"sess_derived_1", "sess_derived_2"}
+	next := 0
+	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader: true,
+		IDFunc: func() string {
+			id := ids[next]
+			next++
+			return id
+		},
+	})
+
+	if got := deriveSnapshotSource(t, srv, ids[0]); got != string(sessionstore.WorkspaceSnapshotCheckpoint) {
+		t.Fatalf("derive before the seal: workspaceSnapshotSource %q, want checkpoint", got)
+	}
+
+	ctx := context.Background()
+	if _, err := store.Update(ctx, "acme", "sess_source", func(s *sessionstore.Session) error {
+		s.WorkspaceSnapshot = &sessionstore.WorkspaceSnapshot{
+			Ref:         "/acme/workspace/sess_source/snap.tar.zst",
+			Source:      sessionstore.WorkspaceSnapshotSealed,
+			Timestamp:   time.Date(2026, 1, 1, 0, 6, 0, 0, time.UTC),
+			ContentHash: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("record sealed snapshot: %v", err)
+	}
+
+	if got := deriveSnapshotSource(t, srv, ids[1]); got != string(sessionstore.WorkspaceSnapshotSealed) {
+		t.Errorf("derive after the seal: workspaceSnapshotSource %q, want sealed", got)
+	}
+}

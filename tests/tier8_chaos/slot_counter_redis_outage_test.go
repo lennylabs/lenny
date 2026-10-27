@@ -41,6 +41,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
@@ -250,7 +251,13 @@ func newSlotChaos(t *testing.T) *slotChaos {
 	}
 	base := ctrlfake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxClaim{}).Build()
 	return &slotChaos{
-		store: sessionpg.New(pg.Pool), rd: rd, proxy: lifecycleharness.NewProxy(t, rd.Addr),
+		// spec: §7.1 (Post-terminal window) — the store counts a terminal
+		// session with no recorded release as holding its pod for the
+		// gateway's default terminal pipeline budget, as production wires it.
+		store: sessionpg.New(pg.Pool, sessionpg.WithPostTerminalCap(sessionserver.TerminalPipelineBudgetFor(
+			sessionserver.DefaultWorkspaceSealMaxDuration, sessionserver.DefaultStreamFailureReportTimeout,
+		))),
+		rd: rd, proxy: lifecycleharness.NewProxy(t, rd.Addr),
 		kube: interceptor.NewClient(base, interceptor.Funcs{SubResourcePatch: chaosApplyAsUpdate}),
 	}
 }
@@ -460,6 +467,39 @@ func TestRedisRestartLosingTheSlotSets_spec_5_2(t *testing.T) {
 		}
 		if _, _, err := counter.Reserve(ctx, pod, newChaosUUID(t), 2); !errors.Is(err, slotcounter.ErrSlotsExhausted) {
 			t.Errorf("the next reservation at the cap = %v, want ErrSlotsExhausted", err)
+		}
+	})
+
+	// spec: §7.1 (Post-terminal window), §5.2 (Post-recovery rehydration
+	// atomicity) — a terminal session whose release is not recorded keeps
+	// its slot through a set loss: the seed counts it and a reservation at
+	// the cap is refused, on the Redis path and on the outage gate. Once the
+	// release is recorded the next set loss frees the slot.
+	t.Run("the seed after a set loss counts a session in its post-terminal window", func(t *testing.T) {
+		counter := c.counter(t)
+		pod, s := c.pod(t, claimstate.Bound), newChaosUUID(t)
+		c.row(t, s, pod, session.StateRunning)
+		mustReserveChaos(t, counter, pod, s, 1)
+		c.update(t, s, session.StateCompleted, pod)
+		c.restartLosingData(t)
+		if _, _, err := counter.Reserve(ctx, pod, newChaosUUID(t), 1); !errors.Is(err, slotcounter.ErrSlotsExhausted) {
+			t.Fatalf("reservation at the cap after the set loss = %v, want ErrSlotsExhausted", err)
+		}
+		if m := c.members(t, pod); !m[s] {
+			t.Errorf("seeded set = %v, want the sealing session", m)
+		}
+		if _, admitted, err := c.store.ReserveSlotUnderLock(ctx, pod, 1); err != nil || admitted {
+			t.Errorf("outage gate at the cap = (admitted %v, %v), want refused", admitted, err)
+		}
+		if err := sessionstore.RecordPodRelease(ctx, c.store, "acme", s, time.Now()); err != nil {
+			t.Fatalf("record the release: %v", err)
+		}
+		c.restartLosingData(t)
+		if _, _, err := counter.Reserve(ctx, pod, newChaosUUID(t), 1); err != nil {
+			t.Errorf("reservation after the recorded release = %v, want admitted", err)
+		}
+		if _, admitted, err := c.store.ReserveSlotUnderLock(ctx, pod, 1); err != nil || !admitted {
+			t.Errorf("outage gate after the recorded release = (admitted %v, %v), want admitted", admitted, err)
 		}
 	})
 

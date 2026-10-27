@@ -46,6 +46,10 @@ func (s *slowAncestorStore) Create(context.Context, sessionstore.Session) error 
 	panic("unused")
 }
 
+func (s *slowAncestorStore) CreateIfGeneration(context.Context, sessionstore.Session, string, string, int64) error {
+	panic("unused")
+}
+
 func (s *slowAncestorStore) Reserve(context.Context, string, string, string, bool) error {
 	panic("unused")
 }

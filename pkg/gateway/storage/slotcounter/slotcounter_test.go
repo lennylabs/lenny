@@ -15,6 +15,9 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 )
@@ -659,4 +662,40 @@ func TestReserveWaitsForPeerFlagThenSucceeds(t *testing.T) {
 	if n := src.callCount("pod-w"); n != 0 {
 		t.Errorf("source queried %d times, want 0 (peer seeded)", n)
 	}
+}
+
+// TestRehydrationSeedKeepsAPostTerminalSlot_spec_5_2 pins the rehydration
+// seed against the session store's §7.1 pod-holder predicate: after a Redis
+// set loss, the seed for a pod whose only session is terminal with no
+// release recorded includes that session, so a reservation at
+// maxConcurrentSessions is refused; on the pre-fix seed the session is
+// omitted and the slot is reissued while its terminal pipeline still uses
+// it. Once PodReleasedAt is set and the set is lost again, the seed omits it
+// and the reservation is admitted.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity), §7.1 (Post-terminal window)
+func TestRehydrationSeedKeepsAPostTerminalSlot_spec_5_2(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New(memstore.WithPostTerminalCap(5 * time.Minute))
+	if err := store.Create(ctx, sessionstore.Session{
+		ID: "sealing", TenantID: "acme", State: session.StateCompleted, PodAssignment: "pod-pt",
+		ScrubPolicy: "best-effort-per-slot", TerminatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c, _, cl := newCounterWithSource(t, store)
+	if _, _, err := c.Reserve(ctx, "pod-pt", "next", 1); !errors.Is(err, slotcounter.ErrSlotsExhausted) {
+		t.Fatalf("Reserve at the bound with a sealing member = %v, want ErrSlotsExhausted", err)
+	}
+	wantMembers(t, cl, "pod-pt", "sealing")
+	if err := sessionstore.RecordPodRelease(ctx, store, "acme", "sealing", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := cl.FlushAll(ctx).Err(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if got, _, err := c.Reserve(ctx, "pod-pt", "next", 1); err != nil || got != 1 {
+		t.Fatalf("Reserve after the release = (%d, %v), want (1, nil)", got, err)
+	}
+	wantMembers(t, cl, "pod-pt", "next")
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
 // Horizon is how far past its start the checker steps the clock before it
@@ -160,8 +161,11 @@ var noLeaseStates = map[session.State]bool{
 }
 
 // Invariants evaluates the lifecycle invariants for the tracked sessions:
-// every bound claim's pod is named by a non-terminal row, or on a
-// concurrent-workspace pool holds a non-empty slot set (pods and claims);
+// every bound claim's pod is held by a session under the §7.1 holder
+// predicate on the harness clock (a non-terminal row naming the pod, or a
+// terminal row naming it in its post-terminal window under PostTerminalCap),
+// or on a concurrent-workspace pool holds a non-empty slot set (pods and
+// claims);
 // a session in a lease-free state holds no credential lease (credential
 // leases); at most one surviving replica binds a session (one coordinator);
 // no surviving replica binds a terminal session (replica records); a
@@ -170,20 +174,19 @@ var noLeaseStates = map[session.State]bool{
 //
 // spec: §7.2 (Interactive Session Model), §7.3 (Resume driver), §10.1.1
 // (one coordinating replica per session), §6.1 (per-session credential lease
-// lifecycle)
+// lifecycle), §7.1 (Post-terminal window), §4.6.1 (Orphaned SandboxClaim
+// detection)
 func (h *Harness) Invariants() []Invariant {
 	ctx := context.Background()
 	ids := h.Sessions()
 	sort.Strings(ids)
-	held := map[string]bool{}
+	now := h.Clock.Now()
 	rows := map[string]sessionRow{}
 	for _, id := range ids {
 		row, err := h.Inner.Get(ctx, Tenant, id)
-		rows[id] = sessionRow{state: row.State, pod: row.PodAssignment, retries: row.RetryCount, err: err}
-		if err == nil && !session.IsTerminal(row.State) && row.PodAssignment != "" {
-			held[row.PodAssignment] = true
-		}
+		rows[id] = newSessionRow(row, err, now)
 	}
+	held := heldPods(rows)
 	var out []Invariant
 	podsClaims := Invariant{Name: "pods and claims"}
 	if claims, err := h.Cluster.BoundClaims(ctx); err != nil {
@@ -244,8 +247,9 @@ func (h *Harness) Invariants() []Invariant {
 	return out
 }
 
-// podsClaimsViolations flags each bound claim whose pod no non-terminal row
-// names. Three cases are accepted. Under RelaxOrphanClaims a claim a crash
+// podsClaimsViolations flags each bound claim whose pod no session holds,
+// where held is the set of pods the §7.1 holder predicate counts (heldPods).
+// Three cases are accepted. Under RelaxOrphanClaims a claim a crash
 // left is accepted when no surviving replica binds its pod, because the
 // claim-orphan GC reclaims it. On a concurrent-workspace pool a claim whose
 // pod's slot set is non-empty (occupied) is accepted, because a leaked:
@@ -258,7 +262,8 @@ func (h *Harness) Invariants() []Invariant {
 // the claim-orphan GC.
 //
 // spec: §4.6.1 (Orphaned SandboxClaim detection), §7.3, §5.2 (Slot
-// assignment atomicity), §6.2 (leaked slot semantics)
+// assignment atomicity), §6.2 (leaked slot semantics), §7.1 (Post-terminal
+// window)
 func (h *Harness) podsClaimsViolations(claims []string, held, bound, occupied map[string]bool) []string {
 	var out []string
 	for _, pod := range claims {
@@ -268,15 +273,52 @@ func (h *Harness) podsClaimsViolations(claims []string, held, bound, occupied ma
 		case h.RelaxEmptySetClaims && h.Concurrent():
 		case h.RelaxOrphanClaims && !bound[pod]:
 		default:
-			out = append(out, fmt.Sprintf("claim on %s is bound, but no non-terminal row names the pod", pod))
+			out = append(out, fmt.Sprintf("claim on %s is bound, but no session holds the pod", pod))
 		}
 	}
 	return out
 }
 
+// sessionRow is the checker's view of one tracked session row.
 type sessionRow struct {
 	state   session.State
 	pod     string
 	retries int64
 	err     error
+	// window reports whether the row is in its §7.1 post-terminal window
+	// at the checker's read under PostTerminalCap.
+	window bool
+}
+
+// newSessionRow builds the checker's view of row, read with err, at now.
+func newSessionRow(row sessionstore.Session, err error, now time.Time) sessionRow {
+	return sessionRow{
+		state:   row.State,
+		pod:     row.PodAssignment,
+		retries: row.RetryCount,
+		err:     err,
+		window:  err == nil && sessionstore.InPostTerminalWindow(row, now, PostTerminalCap),
+	}
+}
+
+// holdsPod reports whether the row holds the pod it names under the §7.1
+// holder predicate: it names a pod and is non-terminal or in its
+// post-terminal window.
+func (r sessionRow) holdsPod() bool {
+	return r.err == nil && r.pod != "" && (!session.IsTerminal(r.state) || r.window)
+}
+
+// heldPods returns the pods some row holds under the §7.1 holder predicate,
+// the pods-and-claims and empty-pod invariants' notion of a held pod.
+//
+// spec: §7.1 (Post-terminal window), §4.6.1 (Orphaned SandboxClaim
+// detection)
+func heldPods(rows map[string]sessionRow) map[string]bool {
+	held := map[string]bool{}
+	for _, row := range rows {
+		if row.holdsPod() {
+			held[row.pod] = true
+		}
+	}
+	return held
 }

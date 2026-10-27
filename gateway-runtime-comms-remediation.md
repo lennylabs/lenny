@@ -2863,8 +2863,8 @@ Proposals, first wave after 0092 (after R4 and the credential fail-open fix):
     terminates the user's sessions before the erasers run. A successful drain does not wait for a
     session's terminal steps or its pod release: the pod of a drained session bound on another replica can
     stay claimed after user erasure deletes its row, until the claim-orphan GC reclaims it. That residual
-    is F-12.8.43, owned by P2, which also asks P2 whether such a binding's credential leases are returned,
-    and the claim register carries it as an `ABSENT` row deferred to R21.
+    is F-12.8.43, owned by the inter-replica carrier proposal, and the claim register carries it as an
+    `ABSENT` row deferred to R21.
   - **Filed unassigned.** F-12.3.25, F-12.8.44, F-12.8.45, F-12.8.46, F-12.8.47, F-12.8.48, and F-15.1.55.
   - **Members.** F-11.4.12 to F-11.4.14 (TT-77 to TT-79), F-12.8.26 to F-12.8.28 (TT-95 to TT-97),
     F-12.8.30 to F-12.8.33 (TT-99, TT-100, TT-103, and TT-104), F-15.1.48 (TT-93), F-15.1.50 (TT-101),

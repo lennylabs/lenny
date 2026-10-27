@@ -13,14 +13,14 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // pgSessionStore starts Postgres with the production migrations and returns
-// a session store over it with the harness tenant seeded.
+// a session store over it with the harness tenant seeded, counting the §7.1
+// post-terminal window under the harness cap.
 func pgSessionStore(t *testing.T) sessionstore.Store {
 	t.Helper()
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
@@ -31,7 +31,7 @@ func pgSessionStore(t *testing.T) sessionstore.Store {
 		lifecycleharness.Tenant); err != nil {
 		t.Fatalf("seed tenant: %v", err)
 	}
-	return sessionpg.New(pg.Pool)
+	return lifecycleharness.CappedPostgresStore(pg.Pool)
 }
 
 // spec: §7.2 (Interactive Session Model), §8.8 (TaskRecord and TaskResult

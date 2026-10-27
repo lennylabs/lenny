@@ -35,24 +35,21 @@ func newFailingBlobs() failingCopier {
 type fenceStore struct {
 	sessionstore.Store
 	target string
-	calls  int
 }
 
-func (f *fenceStore) Get(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
-	row, err := f.Store.Get(ctx, tenantID, id)
-	if err == nil && id == f.target {
-		f.calls++
-		if f.calls >= 2 {
-			row.CoordinationGeneration++
+// CreateIfGeneration commits a replacement coordinator's handoff on the
+// source row (a coordination_generation bump) after the derive's admission
+// and before the failure write's fenced insert.
+func (f *fenceStore) CreateIfGeneration(ctx context.Context, row sessionstore.Session, tenantID, sourceID string, wantGen int64) error {
+	if sourceID == f.target {
+		if _, err := f.Update(ctx, tenantID, sourceID, func(s *sessionstore.Session) error {
+			s.CoordinationGeneration++
+			return nil
+		}); err != nil {
+			return err
 		}
 	}
-	return row, err
-}
-
-// GetPrimary is the persist's primary re-read; it observes the handoff as Get
-// does.
-func (f *fenceStore) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
-	return f.Get(ctx, tenantID, id)
+	return f.Store.CreateIfGeneration(ctx, row, tenantID, sourceID, wantGen)
 }
 
 // captureCounter records the §16.1 derive-failure audit outcomes.
@@ -189,25 +186,25 @@ func TestDeriveFailureCASFenceSkipsWrite_spec_7_1_derive_rule_2(t *testing.T) {
 
 // resumingSourceStore moves the source row from resume_pending to resuming,
 // as the resume driver's entry write does, after the derive's admission read
-// and before its failure write's primary re-read.
+// and before its failure write's fenced insert.
 type resumingSourceStore struct {
 	sessionstore.Store
 	target string
 	moved  bool
 }
 
-func (r *resumingSourceStore) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
-	if id == r.target && !r.moved {
+func (r *resumingSourceStore) CreateIfGeneration(ctx context.Context, row sessionstore.Session, tenantID, sourceID string, wantGen int64) error {
+	if sourceID == r.target && !r.moved {
 		r.moved = true
-		if _, err := r.Update(ctx, tenantID, id, func(s *sessionstore.Session) error {
+		if _, err := r.Update(ctx, tenantID, sourceID, func(s *sessionstore.Session) error {
 			s.State = session.StateResuming
 			s.CoordinationGeneration++
 			return nil
 		}); err != nil {
-			return sessionstore.Session{}, err
+			return err
 		}
 	}
-	return r.Get(ctx, tenantID, id)
+	return r.Store.CreateIfGeneration(ctx, row, tenantID, sourceID, wantGen)
 }
 
 // spec: §7.1 (Normal Flow) derive rule 2, §7.3 (Resume driver) — a stale

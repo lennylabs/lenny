@@ -10,14 +10,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
@@ -73,9 +70,7 @@ func TestCrashBetweenTerminalCommitAndRelease_spec_4_6_1(t *testing.T) {
 		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
 	})
 	seedChaosTenant(t, pg, lifecycleharness.Tenant)
-	newStore := func(now func() time.Time) sessionstore.Store {
-		return lifecycleharness.NewSteppedClockStore(sessionpg.New(pg.Pool), now)
-	}
+	newStore := lifecycleharness.PostgresStoreOn(pg.Pool)
 
 	t.Run("concurrent pool", func(t *testing.T) {
 		h := lifecycleharness.New(t, lifecycleharness.Options{Replicas: 2, Pods: 3, MaxConcurrentSessions: 4, NewStore: newStore})
@@ -148,9 +143,7 @@ func TestFailFinalizingStoreError_spec_6_2(t *testing.T) {
 				MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
 			})
 			seedChaosTenant(t, pg, lifecycleharness.Tenant)
-			newStore := func(now func() time.Time) sessionstore.Store {
-				return lifecycleharness.NewSteppedClockStore(sessionpg.New(pg.Pool), now)
-			}
+			newStore := lifecycleharness.PostgresStoreOn(pg.Pool)
 			h := lifecycleharness.New(t, lifecycleharness.Options{
 				Replicas: 1, Pods: 2, MaxConcurrentSessions: 4, NewStore: newStore, MaxFinalizingSeconds: 10,
 				CredentialPool: true,

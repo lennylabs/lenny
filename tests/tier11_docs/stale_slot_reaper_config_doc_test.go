@@ -4,8 +4,8 @@
 // the operator configuration page. The gateway leader removes a stale session
 // member only when the adapter reports a clean exit, the pod's `rehydrated`
 // flag is present, and the set holds another member, so the reaper never runs
-// the occupancy-zero disposition. It visits only the pods that a non-terminal
-// session names. A slot outside those conditions stays counted until the
+// the occupancy-zero disposition. It visits only the pods that a session holds.
+// A slot outside those conditions stays counted until the
 // orphaned-claim garbage collection drains the pod after its last live
 // session. The configuration page owns the reader-facing description of the
 // reaper, so it must state both exclusions and must scope its recovery-time
@@ -27,8 +27,8 @@ import (
 var staleSlotReaperRequiredPhrases = []string{
 	// The reaper keeps a member that is the set's last one.
 	"keeps a slot that is the pod's last remaining slot",
-	// The reaper visits only pods a non-terminal session names.
-	"does not visit a pod on which no session is still active",
+	// The reaper visits only pods a session holds.
+	"does not visit a pod that no session holds",
 	// Both cases fall to the orphaned-claim drain.
 	"the controller drains the pod once the orphaned-claim timeout",
 	// The recovery-time bound applies only where other sessions still run.
@@ -55,7 +55,7 @@ func staleSlotReaperSection(t *testing.T) string {
 // diagnosis: The configuration page describes the stale slot reaper as freeing
 //
 //	every failed-release slot within a fixed bound. The spec has the reaper
-//	keep a pod's last member and skip pods no live session names, leaving those
+//	keep a pod's last member and skip pods no session holds, leaving those
 //	slots to the orphaned-claim drain, so an operator reading the page expects
 //	a recovery the platform does not perform.
 func TestStaleSlotReaperDocStatesLastMemberAndUnvisitedPodExclusions(t *testing.T) {

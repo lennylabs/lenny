@@ -30,11 +30,15 @@ var (
 	// to maintain conversation context).
 	ErrUnsupported = errors.New("executor: operation not supported")
 
-	// ErrSessionSealed reports that the session's runtime adapter refused a
-	// message because an idle suspension sealed the session (§4.7.1
-	// **Session seal.**). The message did not reach the runtime, and the
-	// stream end is not a stream failure, so the caller routes the message
-	// again by the session's state.
+	// ErrSessionSealed reports that a message did not reach the session's
+	// runtime because the session is sealed against delivery. Two seals
+	// produce it: the runtime adapter refused the message because an idle
+	// suspension sealed the session (§4.7.1 **Session seal.**), or the
+	// executor refused to open or use the session's stream because the
+	// binding is marked closing for the terminal seal (spec: §7.1 (Delivery
+	// and checkpoints during the seal)). The message did not reach the
+	// runtime, and the stream end is not a stream failure, so the caller
+	// routes the message again by the session's state.
 	ErrSessionSealed = errors.New("executor: session sealed against message delivery")
 
 	// ErrNotBound reports that this replica holds no pod binding for the
@@ -46,12 +50,15 @@ var (
 )
 
 // SealedError is the error a Send returns when the adapter refused one of
-// the batch's messages as sealed. Delivered counts the batch's messages the
+// the batch's messages as sealed, or when the session's binding is marked
+// closing for the terminal seal. Delivered counts the batch's messages the
 // runtime received before the refusal, in order, and Response carries their
-// output; the refused message and every later one were not delivered.
-// errors.Is(err, ErrSessionSealed) holds for it.
+// output; the refused message and every later one were not delivered. A
+// closing binding refuses the batch before any message is written, so
+// Delivered is zero. errors.Is(err, ErrSessionSealed) holds for it.
 //
-// spec: §4.7.1 (Role and Gateway RPC Contract), §28.5.1 (CH-ATTACH)
+// spec: §4.7.1 (Role and Gateway RPC Contract), §28.5.1 (CH-ATTACH), §7.1
+// (Delivery and checkpoints during the seal)
 type SealedError struct {
 	Delivered int
 	Response  Response

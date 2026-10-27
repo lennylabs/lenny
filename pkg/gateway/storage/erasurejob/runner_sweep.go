@@ -51,10 +51,17 @@ func (r *Runner) RunPending(ctx context.Context) error {
 }
 
 // runLogged runs one job and logs an error that left it in progress or
-// failed it. A job another executor moved is not an error.
+// failed it. A job another executor moved is not an error, and a job waiting
+// for a drained session's release is logged at Info, because the wait ends
+// by itself within the post-terminal window cap.
 func (r *Runner) runLogged(ctx context.Context, j Job) {
 	err := r.Run(ctx, j.ID)
 	if err == nil || errors.Is(err, ErrJobMoved) {
+		return
+	}
+	if errors.Is(err, ErrReleasePending) {
+		r.logger.InfoContext(ctx, "erasure job waits for a drained session's pod release",
+			"job_id", j.ID, "tenant_id", j.TenantID, "detail", err.Error())
 		return
 	}
 	r.logger.WarnContext(ctx, "erasure job run did not complete",

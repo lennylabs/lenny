@@ -239,3 +239,44 @@ func assertPrimaryListings(t *testing.T, l *drainLister, userID string, want int
 		}
 	}
 }
+
+// TestReleasePendingListsThePostTerminalWindow_spec_12_8 pins the §12.8
+// store-deletion gate's listing: it is a primary read with the scope's
+// UserID, it returns exactly the rows in their §7.1 post-terminal window, a
+// listing error is returned, and a zero cap returns ErrReleaseCapUnset
+// without listing.
+//
+// spec: §12.8 (Compliance Interfaces), §7.1 (Post-terminal window)
+func TestReleasePendingListsThePostTerminalWindow_spec_12_8(t *testing.T) {
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	const capD = 5 * time.Minute
+	recent := now.Add(-time.Minute)
+	rows := []sessionstore.Session{
+		{ID: "in-window", State: session.StateFailed, PodAssignment: "p1", TerminatedAt: recent},
+		{ID: "released", State: session.StateCompleted, PodAssignment: "p2", TerminatedAt: recent, PodReleasedAt: recent},
+		{ID: "past-cap", State: session.StateCompleted, PodAssignment: "p3", TerminatedAt: now.Add(-capD)},
+		{ID: "no-pod", State: session.StateCompleted, TerminatedAt: recent},
+		{ID: "live", State: session.StateRunning, PodAssignment: "p4"},
+	}
+	l := &drainLister{answers: [][]sessionstore.Session{rows}}
+	got, err := admin.ReleasePending(context.Background(), l, "acme", "alice", now, capD)
+	if err != nil || !reflect.DeepEqual(got, []string{"in-window"}) {
+		t.Fatalf("ReleasePending = (%v, %v), want [in-window]", got, err)
+	}
+	if want := (sessionstore.ListFilter{UserID: "alice", Primary: true}); len(l.filters) != 1 || !reflect.DeepEqual(l.filters[0], want) || l.tenants[0] != "acme" {
+		t.Errorf("listing = %v %v, want one primary read of acme with %+v", l.tenants, l.filters, want)
+	}
+
+	down := errors.New("primary unreachable")
+	if _, err := admin.ReleasePending(context.Background(), &drainLister{errs: []error{down}}, "acme", "", now, capD); !errors.Is(err, down) {
+		t.Errorf("listing error = %v, want it wrapped", err)
+	}
+
+	unwired := &drainLister{answers: [][]sessionstore.Session{rows}}
+	if _, err := admin.ReleasePending(context.Background(), unwired, "acme", "", now, 0); !errors.Is(err, admin.ErrReleaseCapUnset) {
+		t.Errorf("zero cap = %v, want ErrReleaseCapUnset", err)
+	}
+	if len(unwired.filters) != 0 {
+		t.Errorf("zero cap listed %d times, want none", len(unwired.filters))
+	}
+}

@@ -76,6 +76,7 @@ func (g *guardRound) newRunner(jobs erasurejob.Store) *erasurejob.Runner {
 		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))).
 		WithSessionDrain(func(context.Context, string, string) error { return g.fault() }).
 		WithHoldCheck(func(context.Context, string, string) ([]erasurejob.Hold, error) { return nil, g.fault() }).
+		WithReleaseGate(func(context.Context, string, string) ([]string, error) { return nil, nil }).
 		WithCompletionReceipt(func(_ context.Context, j erasurejob.Job) error {
 			b, err := json.Marshal(j)
 			if err != nil {

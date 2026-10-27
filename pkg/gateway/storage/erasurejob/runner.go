@@ -41,6 +41,7 @@ type Runner struct {
 	deadLetterRedact func(ctx context.Context, tenantID, userID string) (int, error)
 	drain            func(ctx context.Context, tenantID, userID string) error
 	holdCheck        func(ctx context.Context, tenantID, userID string) ([]Hold, error)
+	releaseGate      func(ctx context.Context, tenantID, userID string) ([]string, error)
 	receipt          func(ctx context.Context, j Job) error
 	crossTenantRead  CrossTenantReadFunc
 	onFailure        func(tenantID, failurePhase string)
@@ -118,6 +119,17 @@ var (
 	// progress, because §12.8 lifts the restriction only after the receipt
 	// is written.
 	ErrReceiptUnwired = errors.New("erasurejob: no completion receipt sink is wired")
+	// ErrReleasePending is returned, wrapped with a count, when the
+	// store_deleting phase finds a session of the user still in its §7.1
+	// post-terminal window. The job makes no write and stays in
+	// store_deleting for the next Poll tick; the wait ends within the
+	// window cap, so it is not a job failure.
+	ErrReleasePending = errors.New("erasurejob: a drained session's pod release is not yet recorded")
+	// ErrReleaseGateUnwired is the failure cause of a job that reaches
+	// store_deleting on a runner with no release gate. Deleting the stores
+	// while a seal may still upload would leave objects of the erased user
+	// behind, so a missing gate fails the job.
+	ErrReleaseGateUnwired = errors.New("erasurejob: no post-terminal release gate is wired")
 	// ErrBillingUnwired is the failure cause of a job persisted in a
 	// billing phase that a runner with no BillingEraser resumes.
 	ErrBillingUnwired = errors.New("erasurejob: no billing eraser is wired")
@@ -185,6 +197,20 @@ func (r *Runner) WithDeadLetterRedaction(hook func(ctx context.Context, tenantID
 // during erasure (GDPR Article 18)).
 func (r *Runner) WithSessionDrain(drain func(ctx context.Context, tenantID, userID string) error) *Runner {
 	r.drain = drain
+	return r
+}
+
+// WithReleaseGate attaches the §12.8 post-terminal release gate the
+// store_deleting phase runs before DeleteByUser. The gate returns the
+// identifiers of the user's sessions in their §7.1 post-terminal window.
+// While it returns any, or returns an error, the phase makes no job write
+// and returns, so the job waits in store_deleting for a later run; a job
+// resumed in store_deleting passes the gate again. A runner with no gate
+// fails every job at store_delete. Returns the Runner for call chaining.
+//
+// spec: §12.8 (Lifecycle fence and drain), §7.1 (Post-terminal window).
+func (r *Runner) WithReleaseGate(gate func(ctx context.Context, tenantID, userID string) ([]string, error)) *Runner {
+	r.releaseGate = gate
 	return r
 }
 
@@ -325,8 +351,9 @@ func (r *Runner) Start(ctx context.Context, tenantID, userID, initiatedBy string
 // Run returns nil when the job completed or was already terminal, the
 // failure cause when the job failed, ErrJobMoved when another executor
 // wrote the job first, and otherwise the error that left the job in
-// progress for a later run (a receipt error, a store error, or an ended
-// context). When ctx has ended, a failing step writes nothing and the job
+// progress for a later run (a receipt error, a store error, an ended
+// context, ErrReleasePending while a drained session is still in its
+// post-terminal window, or a release-gate error). When ctx has ended, a failing step writes nothing and the job
 // stays in its persisted phase for the next leader.
 func (r *Runner) Run(ctx context.Context, jobID string) error {
 	// The runner is a background worker that reads any tenant's job.

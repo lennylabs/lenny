@@ -322,7 +322,7 @@ func (h *OpenResponsesHandler) handleCreate(w http.ResponseWriter, r *http.Reque
 	// and completion update.
 	// spec: §15 built-in adapter single-shot compute model; §6.2 release.
 	disp := executor.DispositionFailed
-	defer releaseSingleShot(r.Context(), h.exec, h.releaseTimeout, sessionID, &disp)
+	defer releaseSingleShot(r.Context(), singleShotRelease{exec: h.exec, store: h.store, clock: h.clock, timeout: h.releaseTimeout}, tenantID, sessionID, &disp)
 
 	msgs, err := normalizeInput(req.Input)
 	if err != nil {

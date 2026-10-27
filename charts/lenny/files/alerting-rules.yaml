@@ -1021,7 +1021,7 @@ groups:
           labels:
             severity: warning
           annotations:
-            description: A session's seal-and-export operation has been retrying for longer than maxWorkspaceSealDurationSeconds without success. Indicates sustained MinIO unavailability; pods held in draining beyond this deadline are forcibly terminated.
+            description: A session's seal-and-export operation has been retrying for longer than maxWorkspaceSealDurationSeconds without success. Indicates sustained MinIO unavailability.
             summary: Workspace seal-and-export stuck
         - alert: InboxDrainFailure
           expr: increase(lenny_inbox_drain_failure_total[5m]) > 0

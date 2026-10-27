@@ -77,6 +77,10 @@ type runHarness struct {
 	deleteCount  int
 	receiptErr   error
 	preflightErr error
+	// releasePending and releaseErr are what the post-terminal release
+	// gate returns; both empty lets the job through.
+	releasePending []string
+	releaseErr     error
 	// Optional blocking points. Each is called with the run's context.
 	drainGate   func(ctx context.Context, tenantID string)
 	deleteGate  func(ctx context.Context, tenantID string)
@@ -149,6 +153,12 @@ func (h *runHarness) newRunner() *erasurejob.Runner {
 			h.mu.Lock()
 			defer h.mu.Unlock()
 			return h.holds, h.holdErr
+		}).
+		WithReleaseGate(func(_ context.Context, tenantID, _ string) ([]string, error) {
+			h.record("release:" + tenantID)
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			return append([]string(nil), h.releasePending...), h.releaseErr
 		}).
 		WithCompletionReceipt(func(ctx context.Context, j erasurejob.Job) error {
 			h.record("receipt:" + j.TenantID)

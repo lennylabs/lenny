@@ -1404,7 +1404,7 @@ func warningAlerts() []Rule {
 			Expr:        `increase(lenny_workspace_seal_duration_seconds_count{outcome="timeout"}[5m]) > 0`,
 			Severity:    SeverityWarning,
 			Summary:     "Workspace seal-and-export stuck",
-			Description: "A session's seal-and-export operation has been retrying for longer than maxWorkspaceSealDurationSeconds without success. Indicates sustained MinIO unavailability; pods held in draining beyond this deadline are forcibly terminated.",
+			Description: "A session's seal-and-export operation has been retrying for longer than maxWorkspaceSealDurationSeconds without success. Indicates sustained MinIO unavailability.",
 			SpecRef:     "§16.5",
 		},
 		{

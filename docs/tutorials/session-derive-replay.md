@@ -57,7 +57,7 @@ curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/terminate" \
   -H "Content-Type: application/json" -d '{}'
 ```
 
-The session is now in `completed` state with a sealed workspace snapshot.
+The session is now in `completed` state, and the gateway exports its final workspace to durable storage.
 
 ---
 

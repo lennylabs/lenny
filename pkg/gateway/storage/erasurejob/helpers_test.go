@@ -53,6 +53,7 @@ func newRunner(jobs erasurejob.Store, orch *erasure.Orchestrator, clock func() t
 	return erasurejob.NewRunner(jobs, orch, clock).
 		WithSessionDrain(func(context.Context, string, string) error { return nil }).
 		WithHoldCheck(func(context.Context, string, string) ([]erasurejob.Hold, error) { return nil, nil }).
+		WithReleaseGate(func(context.Context, string, string) ([]string, error) { return nil, nil }).
 		WithCompletionReceipt(func(context.Context, erasurejob.Job) error { return nil }).
 		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
 }

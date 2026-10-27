@@ -494,9 +494,7 @@ Authorization: Bearer <token>
 
 | Source State | Allowed | `allowStale` Required | Snapshot Source |
 |---|---|---|---|
-| `completed` | Yes | No | Sealed final workspace |
-| `failed` | Yes | No | Last successful checkpoint |
-| `cancelled`, `expired` | Yes | No | Sealed or last checkpoint |
+| `completed`, `failed`, `cancelled`, `expired` | Yes | No | Sealed final workspace when the export succeeded, otherwise the last successful checkpoint |
 | `running`, `suspended`, `resume_pending`, `awaiting_client_action` | Yes | **Yes** | Last checkpoint (may lag by up to checkpoint interval) |
 
 The derived session is independent: it goes through standard credential policy evaluation and receives its own credential lease. Connector OAuth tokens are not inherited.

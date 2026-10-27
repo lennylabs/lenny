@@ -421,6 +421,10 @@ func (c *countingStore) Create(ctx context.Context, s sessionstore.Session) erro
 	return c.inner.Create(ctx, s)
 }
 
+func (c *countingStore) CreateIfGeneration(ctx context.Context, s sessionstore.Session, sourceTenantID, sourceID string, wantGen int64) error {
+	return c.inner.CreateIfGeneration(ctx, s, sourceTenantID, sourceID, wantGen)
+}
+
 func (c *countingStore) Reserve(ctx context.Context, tenantID, ownerUserID, sessionID string, delegatedChild bool) error {
 	return c.inner.Reserve(ctx, tenantID, ownerUserID, sessionID, delegatedChild)
 }

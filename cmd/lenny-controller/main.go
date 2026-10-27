@@ -167,14 +167,19 @@ func assertCRDSchemaVersion(restCfg *rest.Config) error {
 
 // sessionActiveLookup adapts the session store to the §4.6.1 orphan-claim
 // GC's warmpool.SessionLookup contract: a claim is reclaimable when no
-// non-terminal session backs it. The per-pod claim (§4.6.3) carries no
-// session identifier, so the check keys on the pod through the Postgres
-// `pod_assignment` binding: GetActiveSlotsByPod returns the pod's slot
-// holders (the non-terminal sessions whose row names the Sandbox), and a
-// pod with none has no live session. The failure funnel clears a
-// recovering session's pod_assignment, so such a session does not hold
-// its earlier pod. A pod whose sessions all reached a terminal state (or
-// whose gateway crashed before persisting any session) reports inactive.
+// session holds its pod. The per-pod claim (§4.6.3) carries no session
+// identifier, so the check keys on the pod through the Postgres
+// `pod_assignment` binding: GetActiveSlotsByPod returns the pod's holders
+// (the sessions whose row names the Sandbox and is non-terminal or in its
+// §7.1 post-terminal window), and a pod with none has no session using it.
+// The controller's store is built with claimOrphanTimeout as its
+// post-terminal cap (stores.go), so a terminal session whose gateway has not
+// recorded the release keeps its pod for at most that long, and the drain
+// never cuts a seal mid-export. The failure funnel clears a recovering
+// session's pod_assignment, so such a session does not hold its earlier pod.
+// A pod whose sessions all released or passed the cap (or whose gateway
+// crashed before persisting any session) reports inactive.
+// spec: §4.6.1 (Orphaned SandboxClaim detection), §7.1 (Post-terminal window).
 type sessionActiveLookup struct {
 	store sessionstore.Store
 }

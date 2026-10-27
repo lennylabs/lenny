@@ -22,6 +22,7 @@ func seedTenant(t *testing.T, store sessionstore.Store, tenant, id string) {
 		TenantID:           tenant,
 		State:              session.StateCompleted,
 		RetentionExpiresAt: gcClock.Add(-time.Hour),
+		TerminatedAt:       gcClock.Add(-2 * testRetention),
 	}); err != nil {
 		t.Fatalf("seed %s/%s: %v", tenant, id, err)
 	}
@@ -37,7 +38,7 @@ func TestSweepTenantScopesToOneTenant_spec_12_5_317(t *testing.T) {
 	seedTenant(t, store, "globex", "globex_old")
 	arts := &recordingArtifact{name: "artifacts"}
 	c := retentiongc.New(store, retentiongc.StaticTenants{"acme", "globex"},
-		[]retentiongc.Artifact{arts.artifact()}, retentiongc.Options{})
+		[]retentiongc.Artifact{arts.artifact()}, withRetention(retentiongc.Options{}))
 
 	n, err := c.SweepTenant(context.Background(), "acme", gcClock)
 	if err != nil {
@@ -57,7 +58,7 @@ func TestSweepTenantRejectsEmptyTenant_spec_12_5_317(t *testing.T) {
 	store := memstore.New()
 	arts := &recordingArtifact{name: "artifacts"}
 	c := retentiongc.New(store, retentiongc.StaticTenants{}, []retentiongc.Artifact{arts.artifact()},
-		retentiongc.Options{Metrics: &fakeMetricsSink{}})
+		withRetention(retentiongc.Options{Metrics: &fakeMetricsSink{}}))
 	if _, err := c.SweepTenant(context.Background(), "", gcClock); err == nil {
 		t.Fatal("SweepTenant(\"\") = nil error, want rejection")
 	}
@@ -72,7 +73,7 @@ func TestSweepTenantEmitsMetrics_spec_12_5_321(t *testing.T) {
 	arts := &recordingArtifact{name: "artifacts"}
 	sink := &fakeMetricsSink{}
 	c := retentiongc.New(store, retentiongc.StaticTenants{"acme"},
-		[]retentiongc.Artifact{arts.artifact()}, retentiongc.Options{Metrics: sink})
+		[]retentiongc.Artifact{arts.artifact()}, withRetention(retentiongc.Options{Metrics: sink}))
 
 	if _, err := c.SweepTenant(context.Background(), "acme", gcClock); err != nil {
 		t.Fatalf("SweepTenant: %v", err)

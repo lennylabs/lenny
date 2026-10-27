@@ -71,6 +71,17 @@ func (f *refusalStore) Create(ctx context.Context, s sessionstore.Session) error
 	return f.Store.Create(ctx, s)
 }
 
+// CreateIfGeneration is the derive-failure audit row's fenced insert. It
+// shares Create's injected error, because the row is a plain insert behind
+// the creation fence.
+func (f *refusalStore) CreateIfGeneration(ctx context.Context, s sessionstore.Session, sourceTenantID, sourceID string, wantGen int64) error {
+	f.record("CreateIfGeneration")
+	if f.createErr != nil {
+		return f.createErr
+	}
+	return f.Store.CreateIfGeneration(ctx, s, sourceTenantID, sourceID, wantGen)
+}
+
 func (f *refusalStore) CreateReserved(ctx context.Context, s sessionstore.Session) error {
 	f.record("CreateReserved")
 	if f.createReservedErr != nil {

@@ -175,7 +175,11 @@ func (r *Router) handleForceTerminateSession(w http.ResponseWriter, req *http.Re
 		if strings.TrimSpace(body.Reason) != "" {
 			detail["reason"] = strings.TrimSpace(body.Reason)
 		}
-		r.emit(req.Context(), p, eventSessionForceTerminated, sess.ID, detail)
+		// spec: §7.1 (Gateway-owned terminal writes), §11.7 — the audit
+		// emit runs detached from the admin request, so a client that
+		// disconnects during the synchronous force-terminate still leaves
+		// the session.force_terminated row for the write that committed.
+		r.emit(context.WithoutCancel(req.Context()), p, eventSessionForceTerminated, sess.ID, detail)
 	}
 	writeJSON(w, http.StatusOK, newAdminSessionPayload(sess))
 }

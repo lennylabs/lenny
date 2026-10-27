@@ -51,9 +51,14 @@ func (a sessionAdminAdapter) GetByID(ctx context.Context, id string) (sessionsto
 // inside the mutate so it reflects the state at commit time, and the
 // forced write records the Terminated fact. It opens the terminal claim
 // before the write and ends it after the terminal pipeline, or at once on
-// a refusal or error. spec: §24.11; §7.2 (Interactive Session Model);
-// §12.8 (Lifecycle fence and drain).
+// a refusal or error. The forced write is gateway-decided, so it runs
+// detached from the caller's cancellation: an admin request that ends
+// before the write commits does not strand the session, and the post-terminal
+// hook bounds its own context. spec: §24.11; §7.2 (Interactive Session
+// Model); §12.8 (Lifecycle fence and drain); §7.1 (Gateway-owned terminal
+// writes).
 func (a sessionAdminAdapter) ForceTerminate(ctx context.Context, tenantID, id string) (sessionstore.Session, session.State, bool, error) {
+	ctx = context.WithoutCancel(ctx)
 	end := func() {}
 	if a.beginTerminal != nil {
 		end = a.beginTerminal(id)

@@ -98,7 +98,7 @@ stateDiagram-v2
 | `resume_pending` | Pod lost, or a `suspended` session whose pod was released is being resumed. The gateway's resume driver claims a replacement pod and restores the session onto it. `maxResumeWindowSeconds` timer running. |
 | `resuming` | **Internal-only state.** New pod allocated; workspace checkpoint replaying and session file restoring. External clients never see this state -- the API reports the transition as `resume_pending` to `running` directly. |
 | `awaiting_client_action` | Automatic retries exhausted or `maxResumeWindowSeconds` elapsed. Client intervention required. Expires after `maxAwaitingClientActionSeconds` (default: 900s). Active children continue running. |
-| `completed` | Terminal. Agent finished normally. Workspace sealed and exported. |
+| `completed` | Terminal. Agent finished normally. The gateway then exports the final workspace. When the export does not finish within `maxWorkspaceSealDurationSeconds`, the session is recorded as `failed` with reason `workspace_seal_timeout`. |
 | `failed` | Terminal. A non-retryable failure or other unrecoverable error, or `BUDGET_KEYS_EXPIRED`. |
 | `cancelled` | Terminal. Client or parent explicitly cancelled the session. |
 | `expired` | Terminal. Session deadline, lease expiry, or budget exhausted. |
