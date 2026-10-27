@@ -3,7 +3,9 @@
 package sessionstore
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -63,4 +65,90 @@ func terminatedReason(st session.State) string {
 	default:
 		return ""
 	}
+}
+
+// InPostTerminalWindow reports whether s is in its §7.1 post-terminal window
+// at now under the window cap: s is terminal, names a pod, has no release
+// marker, carries a TerminatedAt, and now is before TerminatedAt plus cap.
+//
+// A non-positive cap puts no row in the window, so a store or a gate built
+// without a cap counts no terminal row as holding its pod. A terminal row
+// with a zero TerminatedAt is outside the window: every terminal mutator
+// stamps it through MarkTerminated, and counting a row with no stamp would
+// hold its pod with no end.
+//
+// A session holds pod P when its PodAssignment is P and it is non-terminal or
+// InPostTerminalWindow reports true. The gateway passes the terminal pipeline
+// budget as cap; the warm-pool controller passes claimOrphanTimeout, which
+// §5.2 keeps above that budget.
+//
+// spec: §7.1 (Post-terminal window)
+func InPostTerminalWindow(s Session, now time.Time, cap time.Duration) bool {
+	if cap <= 0 || !session.IsTerminal(s.State) {
+		return false
+	}
+	if s.PodAssignment == "" || !s.PodReleasedAt.IsZero() || s.TerminatedAt.IsZero() {
+		return false
+	}
+	return now.Before(s.TerminatedAt.Add(cap))
+}
+
+// HoldsPod reports whether s holds the pod its row names at now under the
+// window cap: s names a pod and is non-terminal, or it is in its post-terminal
+// window. It is the in-memory form of the two-arm predicate the Postgres
+// store's slot queries run.
+//
+// spec: §7.1 (Post-terminal window), §5.2 (Slot assignment atomicity)
+func HoldsPod(s Session, now time.Time, cap time.Duration) bool {
+	if s.PodAssignment == "" {
+		return false
+	}
+	return !session.IsTerminal(s.State) || InPostTerminalWindow(s, now, cap)
+}
+
+// MarkPodReleased returns the Update mutator that records the §7.1 release
+// marker: it sets PodReleasedAt to now on a terminal row that records no
+// release yet. On a non-terminal row, or a row that already records a
+// release, it returns ErrSuperseded and changes nothing, so a second release
+// writer, or a writer racing a resume that left the row non-terminal, writes
+// nothing.
+//
+// The replica that released the session's binding, or reclaimed its
+// pre-running claim, runs it in one Update once that release has returned,
+// whatever the release's error.
+//
+// spec: §7.1 (Post-terminal window)
+func MarkPodReleased(now time.Time) func(*Session) error {
+	return func(r *Session) error {
+		if !session.IsTerminal(r.State) || !r.PodReleasedAt.IsZero() {
+			return ErrSuperseded
+		}
+		r.PodReleasedAt = now
+		return nil
+	}
+}
+
+// RowUpdater is the one store method RecordPodRelease needs.
+type RowUpdater interface {
+	Update(ctx context.Context, tenantID, id string, mutate func(*Session) error) (Session, error)
+}
+
+// RecordPodRelease records the §7.1 release marker on the session row with
+// MarkPodReleased(now) in one Update. The write runs on a context detached
+// from ctx's cancellation and bounded by DefaultPrimaryReadTimeout, because
+// the release it records already ran and the caller's context may be the one
+// whose end cut it. ErrNotFound (the row was deleted) and ErrSuperseded (the
+// row is not terminal, or a release is already recorded) return nil; any
+// other store error is returned wrapped. A row whose marker write fails stays
+// in its post-terminal window until the cap.
+//
+// spec: §7.1 (Post-terminal window)
+func RecordPodRelease(ctx context.Context, store RowUpdater, tenantID, sessionID string, now time.Time) error {
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), DefaultPrimaryReadTimeout)
+	defer cancel()
+	_, err := store.Update(writeCtx, tenantID, sessionID, MarkPodReleased(now))
+	if err == nil || errors.Is(err, ErrNotFound) || errors.Is(err, ErrSuperseded) {
+		return nil
+	}
+	return fmt.Errorf("record the pod release of session %s: %w", sessionID, err)
 }

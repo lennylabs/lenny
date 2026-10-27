@@ -51,15 +51,25 @@ func TestTierTimeoutResolvesOverrideAndDefaults(t *testing.T) {
 
 // The unit tier budget is operator-tunable (code-best-practices).
 //
-// The unit tier runs `go test ./...` with the race detector, and one
-// package under it starts an envtest control plane per test. Its default
-// budget must exceed that package's observed runtime, or a passing
-// package is reported as a tier failure for a timeout alone.
+// The unit tier runs `go test ./...` with the race detector, and some
+// packages under it start envtest control planes. Its default budget must
+// exceed the slowest package's observed runtime, or a passing package is
+// reported as a tier failure for a timeout alone.
 func TestUnitTimeoutExceedsObservedRuntime(t *testing.T) {
-	// Observed: 832.6s for pkg/gateway/podlifecycle/podsession without the
-	// race detector, which slows it further. Go's own default is 600s, so
-	// the package cannot pass without an explicit budget.
-	const observedSlowest = 833 * time.Second
+	// Observed: 198.9s for pkg/gateway/sessionserver under the race
+	// detector, inside a scoped run of 25 unit-tier package patterns on
+	// 2026-10-27 at load average 14 to 22 (TEST-GAPS T-17.4.27); a run of
+	// that package alone later the same day took 164.4s at load average 16
+	// to 25. pkg/gateway/session/recycle, which set the previous figure of
+	// 251.5s, took 14.7s once it shared one envtest control plane per test
+	// binary (TEST-GAPS T-17.4.28), and pkg/embedded/stack took 13.5s
+	// (TEST-GAPS T-17.4.23), in a run of the four patterns the unit tier
+	// scoped to those changes, whose slowest package was cmd/lenny-gateway
+	// at 109.1s (load average 24 to 16). pkg/controller/sandbox
+	// (464.3s to 19.8s, TEST-GAPS T-17.4.26) and pkg/gateway/podlifecycle/
+	// podsession (1776.6s to 46.0s, TEST-GAPS T-17.4.22) made the same change
+	// before them.
+	const observedSlowest = 199 * time.Second
 	if tierUnitTimeout <= observedSlowest {
 		t.Errorf("tierUnitTimeout %s does not exceed observed unit runtime %s; a passing package will be aborted as a timeout",
 			tierUnitTimeout, observedSlowest)

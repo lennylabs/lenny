@@ -1000,7 +1000,8 @@ func runKubernetesVersionChecks(_ context.Context, _ client.Reader, cfg Config) 
 
 // runInstallPrereqChecks runs the §17.6 install-prerequisite advisories
 // that are pure functions or a single prober over the chart values: the
-// SIEM-endpoint advisory (line 517), the StorageRouter region-coverage
+// SIEM-endpoint advisory (line 517), the etcd Secret encryption and node
+// disk encryption advisories, the StorageRouter region-coverage
 // audit (line 504), the legal-hold escrow audit (line 505), the PgBouncer
 // pool_mode / connect_query audit (lines 487-488), and the billing/audit
 // integrity-trigger audit (line 489). Each prober-backed check self-skips
@@ -1013,6 +1014,17 @@ func runInstallPrereqChecks(ctx context.Context, _ client.Reader, cfg Config) []
 		{
 			Name:     "siem-endpoint",
 			Decision: SIEMEndpointCheck{Environment: cfg.Environment, SIEMEndpoint: cfg.SIEMEndpoint}.Decide(),
+		},
+		// §17.6 — non-blocking etcd Secret encryption and node disk
+		// encryption advisories: production mode warns that neither
+		// control can be verified by the preflight Job.
+		{
+			Name:     "etcd-secret-encryption",
+			Decision: EtcdSecretEncryptionCheck{Environment: cfg.Environment}.Decide(),
+		},
+		{
+			Name:     "node-disk-encryption",
+			Decision: NodeDiskEncryptionCheck{Environment: cfg.Environment}.Decide(),
 		},
 		// §17.6 — every declared StorageRouter region must carry a
 		// Postgres and an object-storage backend. Empty region set skips.

@@ -29,8 +29,17 @@ import (
 )
 
 // ErrNoBinding reports that the checkpointer holds no pod binding for
-// the session: it is not coordinated by this gateway replica.
+// the session it can checkpoint: it is not coordinated by this gateway
+// replica, or, for an attempt other than the seal, the binding is closing
+// for the session's terminal seal. spec: §7.1 (Delivery and checkpoints
+// during the seal).
 var ErrNoBinding = errors.New("checkpointer: no pod binding for the session")
+
+// errRowGone marks the error of an attempt whose session row read on the
+// primary returned sessionstore.ErrNotFound, so CheckpointWithTrigger
+// releases the binding for that read alone and not for a later write that
+// fails. spec: §7.1 (Seal-and-export invariant)
+var errRowGone = errors.New("session row absent on the primary")
 
 // defaultInterval is the periodic-checkpoint cadence used when Interval
 // is zero. The §4.4 mandated default is 600 s / 10 minutes
@@ -228,6 +237,15 @@ type Checkpointer struct {
 	// ChunkEncoding is the wire encoding the gateway declares in Start.
 	// Empty selects tar.
 	ChunkEncoding string
+	// ReleaseGone releases this replica's binding of a session whose row is
+	// absent on the primary. CheckpointWithTrigger calls it when the
+	// attempt's primary row read returns sessionstore.ErrNotFound, which
+	// covers the periodic Sweep and the preStop eviction checkpoint. Seal
+	// never calls it, because the post-terminal hook runs its own release.
+	// The gateway wires it to the session server's terminal binding release
+	// with the failed disposition. Nil skips the release.
+	// spec: §7.1 (Seal-and-export invariant), §10.1.7 (preStop Hook Drain)
+	ReleaseGone func(tenantID, sessionID string)
 
 	// flights holds the per-session single-flight lock the driver
 	// acquires for the duration of one attempt. Lazily populated.
@@ -372,7 +390,14 @@ func (c *Checkpointer) Checkpoint(ctx context.Context, tenantID, sessionID strin
 //
 // spec: §10.1.
 func (c *Checkpointer) CheckpointWithTrigger(ctx context.Context, tenantID, sessionID string, trigger checkpoint.Trigger) error {
-	return c.snapshot(ctx, tenantID, sessionID, sessionstore.WorkspaceSnapshotCheckpoint, trigger)
+	err := c.snapshot(ctx, tenantID, sessionID, sessionstore.WorkspaceSnapshotCheckpoint, trigger)
+	// spec: §7.1 (Seal-and-export invariant) — a binding whose row is gone
+	// on the primary has no writer left to release it, so the checkpoint
+	// path that observed the absence releases it.
+	if errors.Is(err, errRowGone) && c.ReleaseGone != nil {
+		c.ReleaseGone(tenantID, sessionID)
+	}
+	return err
 }
 
 // Seal takes the §7.1 final workspace snapshot of a completing session
@@ -380,13 +405,18 @@ func (c *Checkpointer) CheckpointWithTrigger(ctx context.Context, tenantID, sess
 // on session completion, distinguished from a periodic checkpoint only
 // by the recorded snapshot source.
 //
-// A session this replica holds no binding for has no live workspace to
-// seal — it either never ran on a pod or is coordinated elsewhere — so
-// Seal returns nil rather than ErrNoBinding, satisfying the Sealer
-// contract's "no-op for a session that never ran on a pod". The
-// session's final snapshot then falls back to the latest checkpoint
-// (§7.1). The §7.1 retry path therefore retries only
-// real export failures, never an inapplicable seal.
+// Seal returns ErrNoBinding when this replica holds no binding for the
+// session. The seal step skips the Sealer for a session with no binding
+// before it starts, so ErrNoBinding here means the binding was removed
+// after the seal began, which the seal step classifies as the permanent
+// outcome: the workspace was not exported. spec: §7.1 (Seal-and-export
+// invariant).
+//
+// Seal returns an error wrapping sessionstore.ErrNotFound, opening no
+// adapter stream, when the session row is absent on the primary. The seal
+// step classifies that as permanent too, and Seal releases nothing, because
+// the post-terminal hook runs its own release. spec: §7.1 (Seal-and-export
+// invariant).
 //
 // Seal stamps the §4.4 TriggerPeriodic label on the duration histogram:
 // the §4.4 enum (pkg/checkpoint.Trigger) has no seal value, and the
@@ -394,11 +424,7 @@ func (c *Checkpointer) CheckpointWithTrigger(ctx context.Context, tenantID, sess
 // WorkspaceSnapshotSource on the session row rather than by the trigger.
 // spec: §4.4.
 func (c *Checkpointer) Seal(ctx context.Context, tenantID, sessionID string) error {
-	err := c.snapshot(ctx, tenantID, sessionID, sessionstore.WorkspaceSnapshotSealed, checkpoint.TriggerPeriodic)
-	if errors.Is(err, ErrNoBinding) {
-		return nil
-	}
-	return err
+	return c.snapshot(ctx, tenantID, sessionID, sessionstore.WorkspaceSnapshotSealed, checkpoint.TriggerPeriodic)
 }
 
 // snapshot drives the session's bound pod adapter to checkpoint its
@@ -425,7 +451,7 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 		return ErrNoBinding
 	}
 	startedAt := c.now()
-	checkpointID, sizeBytes, err := c.driveCheckpoint(ctx, binding, tenantID, sessionID, trigger)
+	checkpointID, sizeBytes, err := c.driveCheckpoint(ctx, binding, tenantID, sessionID, source, trigger)
 	elapsed := c.now().Sub(startedAt).Seconds()
 	// spec: §4.4 — observe the duration histogram regardless
 	// of outcome so operators see slow checkpoints that also failed
@@ -495,7 +521,14 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 // spec: §10.1 — the gateway mints the checkpoint_id, opens
 // the stream, and the adapter reports the confirmed byte total in
 // CheckpointSummary.
-func (c *Checkpointer) driveCheckpoint(ctx context.Context, binding *podsession.BindResult, tenantID, sessionID string, trigger checkpoint.Trigger) (string, int64, error) {
+//
+// source is the snapshot source the attempt records. The seal stamps the
+// periodic trigger, so the trigger cannot tell a seal apart from a periodic
+// attempt; the source can, and an attempt whose source is not sealed opens
+// no stream on a binding that is closing for the terminal seal.
+func (c *Checkpointer) driveCheckpoint(ctx context.Context, binding *podsession.BindResult, tenantID, sessionID string,
+	source sessionstore.WorkspaceSnapshotSource, trigger checkpoint.Trigger,
+) (string, int64, error) {
 	// Serialise every attempt for this session so the supersede set
 	// the intent-row transaction fences is stable for the duration of the
 	// attempt.
@@ -504,17 +537,24 @@ func (c *Checkpointer) driveCheckpoint(ctx context.Context, binding *podsession.
 		return "", 0, fmt.Errorf("checkpoint session %s: wait for the single-flight lock: %w", sessionID, err)
 	}
 	defer unlock()
-
-	// Cancel the stream on return so its RPC is torn down once the
-	// terminal frame is read. c.Deadline additionally bounds the whole
-	// attempt: a stalled stream cancels rather than blocking the sweep
-	// indefinitely. Zero lets the adapter apply its own §4.4 default.
-	var cancel context.CancelFunc
-	if c.Deadline > 0 {
-		ctx, cancel = context.WithTimeout(ctx, c.Deadline)
-	} else {
-		ctx, cancel = context.WithCancel(ctx)
+	// spec: §7.1 (Delivery and checkpoints during the seal) — read after
+	// the single-flight lock, so a periodic, barrier, or preStop attempt
+	// that waited behind the seal sees the mark and records no checkpoint
+	// snapshot over the sealed one.
+	if source != sessionstore.WorkspaceSnapshotSealed && binding.Closing() {
+		return "", 0, ErrNoBinding
 	}
+	// Read the session row once, from the primary and before any stream
+	// opens, for every value the attempt is scoped by: the pool (for the
+	// §5.2 per-pool grant-window override) and the §10.1 coordinator and
+	// recovery generations and baseline the intent row is fenced and sized
+	// on. A failed read opens no stream and writes no intent row.
+	sc, err := c.sessionCheckpointContext(ctx, tenantID, sessionID)
+	if err != nil {
+		return "", 0, err
+	}
+
+	ctx, cancel := c.attemptContext(ctx)
 	defer cancel()
 	stream, err := binding.Adapter.Checkpoint(ctx)
 	if err != nil {
@@ -541,11 +581,6 @@ func (c *Checkpointer) driveCheckpoint(ctx context.Context, binding *podsession.
 	if err := stream.Send(start); err != nil {
 		return "", 0, fmt.Errorf("send checkpoint start: %w", err)
 	}
-	// Read the session row once for every value the attempt is scoped by: the
-	// pool (for the §5.2 per-pool grant-window override) and the §10.1
-	// coordinator/recovery generations and baseline the intent row is fenced
-	// and sized on.
-	sc := c.sessionCheckpointContext(ctx, tenantID, sessionID)
 	d := &uploadDriver{
 		c:            c,
 		ctx:          ctx,
@@ -575,6 +610,28 @@ func (c *Checkpointer) driveCheckpoint(ctx context.Context, binding *podsession.
 	return d.run()
 }
 
+// attemptContext derives the context one checkpoint attempt runs on, so the
+// stream is torn down once the terminal frame is read and every attempt
+// carries a deadline. c.Deadline bounds the attempt when it is set. When it
+// is zero and ctx already carries a deadline (the seal window inside the
+// terminal pipeline budget, or a preStop tier cap), that deadline bounds the
+// attempt. Otherwise the §4.4 checkpoint timeout does, so a periodic attempt
+// on the Run context cannot stall the sweep indefinitely. The intent row
+// records the resulting deadline as its checkpoint_timeout_at, which the
+// §12.5 backstop reads before it reclaims an in_progress row.
+//
+// spec: §10.1.7 (preStop Hook Drain), §7.1 (Terminal pipeline context),
+// §4.4.3 (Checkpoint timeout and recovery)
+func (c *Checkpointer) attemptContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if c.Deadline > 0 {
+		return context.WithTimeout(ctx, c.Deadline)
+	}
+	if _, ok := ctx.Deadline(); ok {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, checkpoint.CheckpointTimeout)
+}
+
 // sessionCheckpointContext is the slice of session-row state a checkpoint
 // attempt is scoped by: the pool it is scheduled against and the §10.1
 // generations and baseline the intent row is written with.
@@ -585,27 +642,34 @@ type sessionCheckpointContext struct {
 	baselineBytes   *int64
 }
 
-// sessionCheckpointContext reads the session row once so the driver resolves
-// the bound pool's per-pool checkpointGrantWindow override (§5.2) and writes
-// the §10.1 intent row with the session's coordinator generation, recovery
-// counter, and last_checkpoint_workspace_bytes baseline. The supersede fence
-// rejects a stale coordinator on coordination_generation and the resume path
-// selects the highest-generation row, so pinning every intent row at
-// generation 0 would let a stale coordinator orphan a live newer writer's
-// active manifest. A nil session store or a read error yields the zero value
-// (empty pool → deployment-wide window, generation 0, no baseline), so a
-// transient read failure degrades to the deployment default rather than
-// aborting the checkpoint.
+// sessionCheckpointContext reads the session row once, from the primary, so
+// the driver resolves the bound pool's per-pool checkpointGrantWindow override
+// (§5.2) and writes the §10.1 intent row with the session's coordinator
+// generation, recovery counter, and last_checkpoint_workspace_bytes baseline.
+// The supersede fence rejects a stale coordinator on coordination_generation
+// and the resume path selects the highest-generation row, so every intent row
+// carries the generation read from the primary. The read never uses the
+// replica Get, because replica lag would make a just-bound session read as
+// absent.
 //
-// spec: §5.2 (per-pool override); §10.1 (generation fence,
-// MAX(coordination_generation) resume selector, baseline denominator).
-func (c *Checkpointer) sessionCheckpointContext(ctx context.Context, tenantID, sessionID string) sessionCheckpointContext {
+// A row absent on the primary returns an error wrapping both errRowGone and
+// sessionstore.ErrNotFound. Any other read error is returned wrapped and
+// releases nothing. A nil session store, which only test constructions
+// leave unset, yields the zero value.
+//
+// spec: §5.2 (per-pool override); §10.1.7 (generation fence,
+// MAX(coordination_generation) resume selector, baseline denominator);
+// §7.1 (Seal-and-export invariant)
+func (c *Checkpointer) sessionCheckpointContext(ctx context.Context, tenantID, sessionID string) (sessionCheckpointContext, error) {
 	if c.Sessions == nil {
-		return sessionCheckpointContext{}
+		return sessionCheckpointContext{}, nil
 	}
-	row, err := c.Sessions.Get(ctx, tenantID, sessionID)
+	row, err := sessionstore.ReadPrimary(ctx, c.Sessions, sessionstore.DefaultPrimaryReadTimeout, tenantID, sessionID)
+	if errors.Is(err, sessionstore.ErrNotFound) {
+		return sessionCheckpointContext{}, fmt.Errorf("read session %s from the primary: %w: %w", sessionID, errRowGone, err)
+	}
 	if err != nil {
-		return sessionCheckpointContext{}
+		return sessionCheckpointContext{}, fmt.Errorf("read session %s from the primary: %w", sessionID, err)
 	}
 	sc := sessionCheckpointContext{
 		pool:            row.PoolRef,
@@ -620,7 +684,7 @@ func (c *Checkpointer) sessionCheckpointContext(ctx context.Context, tenantID, s
 		b := row.WorkspaceSnapshot.Bytes
 		sc.baselineBytes = &b
 	}
-	return sc
+	return sc, nil
 }
 
 // chunkPrefix builds the §10.1 chunk_object_key_prefix under which an

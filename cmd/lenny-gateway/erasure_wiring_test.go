@@ -130,6 +130,7 @@ func newErasureFixture(t *testing.T) *erasureFixture {
 			return nil
 		}).
 		WithHoldCheck(func(context.Context, string, string) ([]erasurejob.Hold, error) { return nil, nil }).
+		WithReleaseGate(func(context.Context, string, string) ([]string, error) { return nil, nil }).
 		WithCompletionReceipt(func(context.Context, erasurejob.Job) error { return nil })
 	return f
 }
@@ -455,6 +456,7 @@ func TestErasureSessionListerPrimaryAndReservations_spec_12_8(t *testing.T) {
 				WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))).
 				WithSessionDrain(func(context.Context, string, string) error { return nil }).
 				WithHoldCheck(func(context.Context, string, string) ([]erasurejob.Hold, error) { return nil, nil }).
+				WithReleaseGate(func(context.Context, string, string) ([]string, error) { return nil, nil }).
 				WithCompletionReceipt(func(context.Context, erasurejob.Job) error { return nil })
 			j, err := r.Start(ctx, "acme", "alice", "carol", nil)
 			if err != nil {

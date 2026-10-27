@@ -19,9 +19,12 @@ import (
 // backstop sweep to clean up on the next cycle.
 type PartialManifestCleaner interface {
 	// CleanupAfterResume runs the cleanup for the session's latest
-	// active partial manifest. A no-op (returns nil) when no active
-	// manifest exists.
-	CleanupAfterResume(ctx context.Context, tenantID, sessionID string) error
+	// active partial manifest when that row's coordination generation is
+	// below resumedGen, the generation of the committed resume row. A row
+	// at or above it belongs to the live incarnation and is left. A no-op
+	// (returns nil) when no active manifest exists.
+	// spec: §10.1.7 (Cleanup.)
+	CleanupAfterResume(ctx context.Context, tenantID, sessionID string, resumedGen int64) error
 }
 
 // EvictionStateLookup reports whether the (tenant, session) carries

@@ -17,7 +17,6 @@ import (
 
 	lennyv1alpha1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/embedded/stack"
-	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
 // The agent-namespace create and the echo Runtime CR apply are exported to the
@@ -38,11 +37,11 @@ import (
 // spec: §4.6.2 (the agent namespace holds the pool CRDs), §5.1 (platform-global
 // pools materialize per agent namespace).
 func TestEnsureAgentNamespaceCreatesAndIsIdempotent_spec_4_6_2(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	ctx := context.Background()
 	cfg := env.RESTConfig()
 
-	const ns = "lenny-agents"
+	ns := testNamespace(t)
 	if err := stack.EnsureAgentNamespaceFromConfigForTest(ctx, cfg, ns); err != nil {
 		t.Fatalf("first ensureAgentNamespace: %v", err)
 	}
@@ -83,7 +82,7 @@ func TestEnsureAgentNamespaceCreatesAndIsIdempotent_spec_4_6_2(t *testing.T) {
 // spec: §4.7 (embedded deployment model), §5.1 (the Runtime CR is the
 // declarative source the Sandbox controller resolves by name).
 func TestApplyEchoRuntimeCRCreatesAndReconverges_spec_4_7(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	ctx := context.Background()
 	cfg := env.RESTConfig()
 
@@ -91,6 +90,12 @@ func TestApplyEchoRuntimeCRCreatesAndReconverges_spec_4_7(t *testing.T) {
 		"5555555555555555555555555555555555555555555555555555555555555555"
 	const second = "ghcr.io/lennylabs/runtime-echo-embedded@sha256:" +
 		"6666666666666666666666666666666666666666666666666666666666666666"
+
+	// The echo Runtime's cluster-scoped name is fixed, and the placement
+	// wrapper test applies it to the same shared control plane, so delete
+	// any copy first: the first apply below must be a create.
+	deleteFixedObject(t, fixedObjectClient(t, cfg), "echo Runtime",
+		&lennyv1alpha1.Runtime{ObjectMeta: metav1.ObjectMeta{Name: stack.EchoRuntimeName}})
 
 	if err := stack.ApplyEchoRuntimeCRFromConfigForTest(ctx, cfg, first); err != nil {
 		t.Fatalf("first applyEchoRuntimeCR: %v", err)
@@ -137,7 +142,7 @@ func TestApplyEchoRuntimeCRCreatesAndReconverges_spec_4_7(t *testing.T) {
 // spec: §5.1 (Runtime image must be digest-pinned), §5.3 (supply-chain digest
 // pin).
 func TestApplyEchoRuntimeCRRejectsTagOnlyImage_spec_5_1(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	ctx := context.Background()
 	cfg := env.RESTConfig()
 
@@ -170,12 +175,12 @@ func TestApplyEchoRuntimeCRRejectsTagOnlyImage_spec_5_1(t *testing.T) {
 // §4.7 (the echo Runtime CR and the embedded deployment model), §17.4 (Up
 // activates placement from the embedded kubeconfig).
 func TestPlacementWrappersDriveActivationFromKubeconfig_spec_4_7(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	ctx := context.Background()
 	cfg := env.RESTConfig()
 	kubeconfigPath := writeKubeconfig(t, cfg)
 
-	const ns = "lenny-agents"
+	ns := testNamespace(t)
 	if err := stack.EnsureAgentNamespaceForTest(ctx, kubeconfigPath, ns); err != nil {
 		t.Fatalf("ensureAgentNamespace via kubeconfig: %v", err)
 	}

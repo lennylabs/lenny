@@ -4,6 +4,7 @@ package lifecyclefence
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
 // suspendDirectly sets the tenant's suspension marker without the admin
@@ -225,4 +227,79 @@ func TestDeriveFailureRowAdoptsKeptReservation_spec_12_8(t *testing.T) {
 		t.Error("the failed undo deleted the copied objects")
 	}
 	w.Check(t)
+}
+
+// TestDeriveFailureRowFencedBySourceIsSourceGone_spec_7_1 removes or ends a
+// failing derive's source between the copy failure and the derive-failure
+// row's generation-fenced insert. The insert persists no row, and the
+// World records the derive as source-gone rather than as an unexpected
+// error, whichever way the source left. Deleting the source row by hand
+// stands in for the owner's erasure without its receipt, so that case
+// asserts the World recorded no violation instead of running the whole
+// checker, whose bystander check expects the seeded source to stand.
+//
+// spec: 7.1 (Derive session semantics), 12.8 (Compliance Interfaces: Lifecycle fence and drain)
+func TestDeriveFailureRowFencedBySourceIsSourceGone_spec_7_1(t *testing.T) {
+	type leaveFunc func(ctx context.Context, w *World, src string) error
+	cases := map[string]struct {
+		leave     leaveFunc
+		fullCheck bool
+	}{
+		"source row deleted": {leave: func(ctx context.Context, w *World, src string) error {
+			return w.S.Sessions.Delete(ctx, w.Tenant, src)
+		}},
+		"source generation advanced": {fullCheck: true, leave: func(ctx context.Context, w *World, src string) error {
+			_, err := w.S.Sessions.Update(ctx, w.Tenant, src, func(s *sessionstore.Session) error {
+				s.CoordinationGeneration++
+				return nil
+			})
+			return err
+		}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			w := NewWorld(t, MemoryStores(), 0)
+			src := w.sources["alice"]
+			w.Faults.BeforeDeriveFailureRow(func() {
+				if err := tc.leave(ctx, w, src); err != nil {
+					t.Error(err)
+				}
+			})
+			o := w.Create(ctx, PathDeriveFailure, "alice")
+			if o.Path != PathDeriveFailure || !errors.Is(o.Err, ErrSourceGone) {
+				t.Fatalf("derive-failure outcome = %+v, want a source-gone derive failure", o)
+			}
+			if _, err := w.S.Sessions.Get(ctx, w.Tenant, o.ID); !errors.Is(err, sessionstore.ErrNotFound) {
+				t.Errorf("derive-failure row read = %v, want no row", err)
+			}
+			if tc.fullCheck {
+				w.Check(t)
+				return
+			}
+			w.mu.Lock()
+			defer w.mu.Unlock()
+			for _, v := range w.violations {
+				t.Error(v)
+			}
+		})
+	}
+}
+
+// TestFailureRowOutcomeKeepsOtherErrors_spec_12_8 pins that only the
+// generation fence's source-gone answers become ErrSourceGone: a fence
+// refusal and any other store error keep their own identity.
+//
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain)
+func TestFailureRowOutcomeKeepsOtherErrors_spec_12_8(t *testing.T) {
+	refusal := &sessionstore.CreationRefusal{}
+	if err := failureRowOutcome(nil); err != nil {
+		t.Errorf("failureRowOutcome(nil) = %v, want nil", err)
+	}
+	if err := failureRowOutcome(refusal); errors.Is(err, ErrSourceGone) || !errors.As(err, &refusal) {
+		t.Errorf("failureRowOutcome(refusal) = %v, want the refusal unchanged", err)
+	}
+	if err := failureRowOutcome(ErrInjected); errors.Is(err, ErrSourceGone) || !errors.Is(err, ErrInjected) {
+		t.Errorf("failureRowOutcome(injected) = %v, want the injected error unchanged", err)
+	}
 }

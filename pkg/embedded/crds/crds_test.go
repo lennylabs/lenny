@@ -46,10 +46,11 @@ func embeddedCRDs(t *testing.T) []apiextensionsv1.CustomResourceDefinition {
 // package documents: the embedded .yaml files are byte-for-byte copies
 // of charts/lenny/crds/, which remain the source of truth. The §17.4
 // Embedded Mode stack installs these copies, so any field, enum, or
-// annotation present in the chart manifest (including the hand-applied
-// `lenny.dev/schema-version` annotation and the
-// x-kubernetes-preserve-unknown-fields markers that controller-gen does
-// not emit) must also be present in the embedded copy. A drift here
+// annotation present in the chart manifest (including the
+// `lenny.dev/schema-version` annotation and the top-level
+// x-kubernetes-preserve-unknown-fields markers, which come from
+// +kubebuilder markers on the root types) must also be present in the
+// embedded copy. `make generate` writes both copies. A drift here
 // means Embedded Mode installs a CRD whose schema differs from a cluster
 // install, silently stripping fields the controllers and gateway write.
 //

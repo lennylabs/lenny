@@ -510,10 +510,10 @@ The termination sequence:
 
 ## Seal and Export
 
-Before a pod is released, the gateway always exports the final workspace snapshot to durable storage (MinIO):
+Before a pod is released, the gateway exports the final workspace snapshot to durable storage (MinIO):
 
 1. Workspace files are sealed and uploaded.
 2. If export fails, the pod is held in `draining` and the upload is retried with exponential backoff.
-3. After `maxWorkspaceSealDurationSeconds` (default: 300s), the gateway stops retrying, marks the session `failed` with reason `workspace_seal_timeout`, and terminates the pod.
+3. After `maxWorkspaceSealDurationSeconds` (default: 300s), the gateway stops retrying, records the session as `failed` with reason `workspace_seal_timeout`, and terminates the pod, or, on a pool with `maxConcurrentSessions` above 1, cleans up and releases the session's slot.
 
-The seal preserves session output for the client to download after the session ends, except when the retry window is exhausted by a sustained storage outage.
+The seal preserves session output for the client to download after the session ends, except when the retry window is exhausted by a sustained storage outage or when the gateway process is killed or crashes before the export finishes.

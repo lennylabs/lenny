@@ -18,9 +18,9 @@ import (
 // podWithContainersReady builds a Running pod whose ContainersReady
 // condition is True but whose Pod.Ready condition is unset — the state a
 // real kubelet reports while the §6.1 readiness gate is still pending.
-func podWithContainersReady() *corev1.Pod {
+func podWithContainersReady(t *testing.T) *corev1.Pod {
 	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNamespace(t)},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{Name: "stub", Image: "k8s.gcr.io/pause"}},
 		},
@@ -48,7 +48,7 @@ func podCondition(pod corev1.Pod, t corev1.PodConditionType) (corev1.PodConditio
 // real kubelet recomputes it from ContainersReady + the now-True gate).
 func TestReconcileFlipsReadinessGateWhenContainersReady_spec_6_1(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, sandboxCR("warming"), runtimeCR(), podWithContainersReady())
+	c := newClient(t, s, sandboxCR(t, "warming"), runtimeCR(t), podWithContainersReady(t))
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -69,7 +69,7 @@ func TestReconcileFlipsReadinessGateWhenContainersReady_spec_6_1(t *testing.T) {
 // unset so claimability is not asserted prematurely.
 func TestReconcileDoesNotFlipGateBeforeContainersReady_spec_6_1(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, sandboxCR("warming"), runtimeCR(), podCR(corev1.PodPending, false))
+	c := newClient(t, s, sandboxCR(t, "warming"), runtimeCR(t), podCR(t, corev1.PodPending, false))
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -86,7 +86,7 @@ func TestReconcileDoesNotFlipGateBeforeContainersReady_spec_6_1(t *testing.T) {
 // owned, so the planner takes no action; only the label sync runs.
 func TestReconcileStampsCoarseActiveLabel_spec_6_2(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, sandboxCR("claimed"), runtimeCR(), podCR(corev1.PodRunning, true))
+	c := newClient(t, s, sandboxCR(t, "claimed"), runtimeCR(t), podCR(t, corev1.PodRunning, true))
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -102,9 +102,9 @@ func TestReconcileStampsCoarseActiveLabel_spec_6_2(t *testing.T) {
 // draining.
 func TestReconcileRemovesCoarseLabelOnTerminal_spec_6_2(t *testing.T) {
 	s := newScheme(t)
-	pod := podCR(corev1.PodRunning, true)
+	pod := podCR(t, corev1.PodRunning, true)
 	pod.Labels = map[string]string{"lenny.dev/state": "active"}
-	c := newClient(t, s, sandboxCR("terminated"), runtimeCR(), pod)
+	c := newClient(t, s, sandboxCR(t, "terminated"), runtimeCR(t), pod)
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -118,7 +118,7 @@ func TestReconcileRemovesCoarseLabelOnTerminal_spec_6_2(t *testing.T) {
 // audience configured on the reconciler reaches the created pod's spec.
 func TestReconcileThreadsSAToken_spec_10_3(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, sandboxCR(""), runtimeCR())
+	c := newClient(t, s, sandboxCR(t, ""), runtimeCR(t))
 
 	r := &sandbox.Reconciler{
 		Client:                  c,
@@ -129,7 +129,7 @@ func TestReconcileThreadsSAToken_spec_10_3(t *testing.T) {
 		AgentServiceAccountName: "lenny-agent",
 	}
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{
-		NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName},
+		NamespacedName: client.ObjectKey{Namespace: testNamespace(t), Name: testName},
 	}); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}

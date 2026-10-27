@@ -207,3 +207,54 @@ func TestSessionAdminAdapter_GetByID(t *testing.T) {
 		t.Errorf("tenant = %q, want acme", got.TenantID)
 	}
 }
+
+// ctxCheckingStore fails an Update whose context has ended, as a Postgres
+// transaction on a cancelled context does, so a test sees whether a write
+// depends on its caller's cancellation.
+type ctxCheckingStore struct {
+	sessionstore.Store
+}
+
+func (c ctxCheckingStore) Update(ctx context.Context, tenantID, id string, mutate func(*sessionstore.Session) error) (sessionstore.Session, error) {
+	if err := ctx.Err(); err != nil {
+		return sessionstore.Session{}, err
+	}
+	return c.Store.Update(ctx, tenantID, id, mutate)
+}
+
+// TestSessionAdminAdapterForceTerminateCommitsOnCancelledContext_spec_7_1
+// asserts that an administrative force-terminate commits its failed write
+// and runs the terminal pipeline on a live context when the admin request
+// context is already cancelled: the gateway makes that write on a context it
+// owns. Against an adapter that writes on the caller's context, the Update
+// fails with context.Canceled and the session stays running.
+//
+// spec: 7.1 (Gateway-owned terminal writes), 24.11
+func TestSessionAdminAdapterForceTerminateCommitsOnCancelledContext_spec_7_1(t *testing.T) {
+	inner := memstore.New()
+	seedRunning(t, inner, "sess_1", "acme")
+	var hookCtxErr error
+	hookRan := false
+	adapter := sessionAdminAdapter{
+		store: ctxCheckingStore{Store: inner},
+		onTerminal: func(ctx context.Context, _ session.State, _ sessionstore.Session) {
+			hookRan = true
+			hookCtxErr = ctx.Err()
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	sess, _, transitioned, err := adapter.ForceTerminate(ctx, "acme", "sess_1")
+	if err != nil {
+		t.Fatalf("ForceTerminate on a cancelled request context: %v", err)
+	}
+	if !transitioned || sess.State != session.StateFailed {
+		t.Fatalf("transitioned = %v, state = %q; want true and failed", transitioned, sess.State)
+	}
+	if got, _ := inner.GetByID(context.Background(), "sess_1"); got.State != session.StateFailed {
+		t.Errorf("persisted state = %q, want failed", got.State)
+	}
+	if !hookRan || hookCtxErr != nil {
+		t.Errorf("terminal hook ran = %v with context error %v; want it run on a live context", hookRan, hookCtxErr)
+	}
+}

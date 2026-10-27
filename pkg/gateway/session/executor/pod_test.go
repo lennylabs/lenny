@@ -8,7 +8,9 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -301,4 +303,129 @@ func TestPodExecutorSendAddressesTheAttachStreamBySession(t *testing.T) {
 			t.Errorf("outbound envelope sessionId = %q with recorded slot %q, want sess-pod", envelopeSession, slotID)
 		}
 	}
+}
+
+// countingRuntime answers every message with a response and counts the
+// messages that reached the runtime.
+type countingRuntime struct {
+	out      chan []byte
+	messages atomic.Int32
+}
+
+func (r *countingRuntime) TapOutput(func([]byte)) {}
+
+func (r *countingRuntime) Start(context.Context, string) error { return nil }
+
+func (r *countingRuntime) WriteEnvelope(_ string, envelope []byte) error {
+	if jsonHasType(envelope, "message") {
+		r.messages.Add(1)
+		r.out <- []byte(`{"type":"response","text":"ack"}`)
+	}
+	return nil
+}
+
+func (r *countingRuntime) Output(context.Context, string) (<-chan []byte, error) { return r.out, nil }
+func (r *countingRuntime) Interrupt(context.Context, string, bool) error         { return nil }
+func (r *countingRuntime) Close(context.Context, string) error                   { return nil }
+
+// assertClosingRefusal fails unless err is the closing refusal: a
+// *SealedError that delivered nothing, which errors.Is reports as
+// ErrSessionSealed.
+func assertClosingRefusal(t *testing.T, err error) {
+	t.Helper()
+	var sealed *executor.SealedError
+	if !errors.As(err, &sealed) {
+		t.Fatalf("Send on a closing binding = %v, want *SealedError", err)
+	}
+	if sealed.Delivered != 0 || len(sealed.Response.Parts) != 0 {
+		t.Fatalf("closing refusal = %+v, want nothing delivered", sealed)
+	}
+	if !errors.Is(err, executor.ErrSessionSealed) {
+		t.Fatalf("closing refusal %v does not unwrap to ErrSessionSealed", err)
+	}
+}
+
+// TestPodExecutorRefusesAClosingBindingOnACacheMiss_spec_7_1 pins the
+// closing gate on a session with no cached stream: once the terminal seal
+// marks the binding closing, Send opens no stream, writes nothing, and
+// returns a *SealedError with Delivered zero, so every caller takes its
+// sealed-reroute branch. Before the gate, Send opened a stream and started
+// a turn while the export read the workspace.
+// spec: 7.1 (Normal Flow), 28.5.1 (Gateway-to-pod)
+func TestPodExecutorRefusesAClosingBindingOnACacheMiss_spec_7_1(t *testing.T) {
+	rt := &countingRuntime{out: make(chan []byte, 8)}
+	cl := dialPodAdapter(t, rt)
+	reg := podsession.NewRegistry()
+	bind := &podsession.BindResult{SessionID: "sess-pod", Adapter: cl}
+	reg.Put(bind)
+	bind.MarkClosing()
+
+	pe := executor.NewPodExecutor(reg, nil)
+	_, err := pe.Send(context.Background(), "sess-pod", []executor.Message{{Role: "user", Content: "hello"}})
+	assertClosingRefusal(t, err)
+	if n := rt.messages.Load(); n != 0 {
+		t.Fatalf("runtime received %d message(s), want none on a closing binding", n)
+	}
+}
+
+// TestPodExecutorRefusesAClosingBindingOnACacheHit_spec_7_1 pins the
+// closing gate on a session whose stream is cached from an earlier turn:
+// the mark is read from the registry on the cache hit, so the cached stream
+// carries no further turn. Before the gate, the cached stream delivered the
+// message.
+// spec: 7.1 (Normal Flow), 28.5.1 (Gateway-to-pod)
+func TestPodExecutorRefusesAClosingBindingOnACacheHit_spec_7_1(t *testing.T) {
+	rt := &countingRuntime{out: make(chan []byte, 8)}
+	cl := dialPodAdapter(t, rt)
+	reg := podsession.NewRegistry()
+	bind := &podsession.BindResult{SessionID: "sess-pod", Adapter: cl}
+	reg.Put(bind)
+
+	pe := executor.NewPodExecutor(reg, nil)
+	if _, err := pe.Send(context.Background(), "sess-pod", []executor.Message{{Role: "user", Content: "first"}}); err != nil {
+		t.Fatalf("first Send: %v", err)
+	}
+	bind.MarkClosing()
+	_, err := pe.Send(context.Background(), "sess-pod", []executor.Message{{Role: "user", Content: "second"}})
+	assertClosingRefusal(t, err)
+	if n := rt.messages.Load(); n != 1 {
+		t.Fatalf("runtime received %d message(s), want only the turn before the mark", n)
+	}
+}
+
+// TestPodExecutorInFlightSendEndsAtTheSealEviction_spec_7_1 pins the
+// eviction half of the closing gate: a Send that obtained its stream before
+// the seal ends with an error when the seal start evicts the stream, and no
+// turn starts after the mark.
+// spec: 7.1 (Normal Flow), 28.5.1 (Gateway-to-pod)
+func TestPodExecutorInFlightSendEndsAtTheSealEviction_spec_7_1(t *testing.T) {
+	rt := &silentRuntime{out: make(chan []byte, 1), received: make(chan struct{})}
+	cl := dialPodAdapter(t, rt)
+	reg := podsession.NewRegistry()
+	bind := &podsession.BindResult{SessionID: "sess-pod", Adapter: cl}
+	reg.Put(bind)
+	pe := executor.NewPodExecutor(reg, nil)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := pe.Send(context.Background(), "sess-pod", []executor.Message{{Role: "user", Content: "in flight"}})
+		done <- err
+	}()
+	select {
+	case <-rt.received:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the runtime never received the in-flight message")
+	}
+	bind.MarkClosing()
+	pe.EvictStream("sess-pod")
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("the in-flight Send succeeded though the seal evicted its stream")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the in-flight Send did not end when the seal evicted its stream")
+	}
+	_, err := pe.Send(context.Background(), "sess-pod", []executor.Message{{Role: "user", Content: "after"}})
+	assertClosingRefusal(t, err)
 }

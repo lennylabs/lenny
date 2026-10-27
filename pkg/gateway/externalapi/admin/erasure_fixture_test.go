@@ -34,6 +34,7 @@ func newFixtureRunner(t *testing.T, jobs erasurejob.Store, orch *erasure.Orchest
 		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))).
 		WithSessionDrain(func(context.Context, string, string) error { return nil }).
 		WithHoldCheck(func(context.Context, string, string) ([]erasurejob.Hold, error) { return nil, nil }).
+		WithReleaseGate(func(context.Context, string, string) ([]string, error) { return nil, nil }).
 		WithCompletionReceipt(func(ctx context.Context, j erasurejob.Job) error {
 			if audit != nil {
 				audit.EmitAdminEvent(ctx, admin.AuditEvent{

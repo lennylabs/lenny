@@ -611,11 +611,12 @@ func (m *Metrics) IncInjectionGateFailClosed(cause string) {
 // `lenny_workspace_seal_duration_seconds{pool,outcome}` histogram for one
 // terminal session's seal-and-export. outcome is "success" when the seal
 // completed, "timeout" when the retry window was exhausted, or
-// "permanent" when the seal failed on an export error the adapter
-// reported as permanent and returned immediately without retrying. The
-// §16.5 WorkspaceSealStuck alert fires on a nonzero outcome="timeout"
-// count alone.
-// spec: §7.1.
+// "permanent" when the seal ended on a condition the §7.1 Seal-and-export
+// invariant classifies as permanent (an export error the adapter reports as
+// permanent, a binding lost during the seal, or a session row absent on the
+// primary) and returned immediately without retrying. The §16.5
+// WorkspaceSealStuck alert fires on a nonzero outcome="timeout" count alone.
+// spec: §7.1 (Seal-and-export invariant).
 func (m *Metrics) ObserveWorkspaceSealDuration(pool, outcome string, seconds float64) {
 	if m == nil {
 		return
@@ -2003,8 +2004,8 @@ func (m *Metrics) SetAuditRetentionDays(days int) {
 	m.auditRetentionDays.Set(float64(days))
 }
 
-// SetEnvProduction emits the §16.5 lenny_env_production gauge: 1 when
-// LENNY_ENV=production, 0 otherwise. The production-only audit alerts gate
+// SetEnvProduction emits the §16.5 lenny_env_production gauge: 1 in
+// production mode (--environment=prod, §17.9.1), 0 otherwise. The production-only audit alerts gate
 // on `lenny_env_production == 1` so they stay inert in dev and staging.
 // F-16.4.9.
 func (m *Metrics) SetEnvProduction(production bool) {

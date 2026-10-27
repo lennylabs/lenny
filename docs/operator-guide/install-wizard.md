@@ -173,10 +173,10 @@ the backup retention policy for one capacity envelope.
 | `values-tier2.yaml` | Multi-team production installs with steady traffic. | 3 | 2 | 2 | 2 | 30 days, 10 backups, 3 full. |
 | `values-tier3.yaml` | High-traffic production installs. Assumes a KEDA-driven gateway autoscaler. | 5 | 3 | 4 | 3 | 90 days, 30 backups, 7 full. |
 
-Tier 2 and Tier 3 set `ops.production: true`, which turns on the confirmation
-requirement for full backups. Tier 3 also enables the periodic test-restore
-CronJob, which restores the latest full backup on the first day of each month.
-Tier 1 leaves both off.
+In the `prod` environment, lenny-ops requires confirmation for full backups,
+whichever preset is layered. Tier 3 enables the periodic test-restore CronJob,
+which restores the latest full backup on the first day of each month. Tier 1
+and Tier 2 leave the CronJob off.
 
 The preset overrides only the keys listed in its file header. Every other base
 `values.yaml` key keeps its default. See [Scaling](scaling.html) for sizing

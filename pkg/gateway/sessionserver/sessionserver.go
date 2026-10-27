@@ -1898,6 +1898,42 @@ func (s *Server) Close() {
 	}
 }
 
+// terminalWorkPollInterval is how often WaitTerminalWork reads the terminal
+// claim record.
+const terminalWorkPollInterval = 100 * time.Millisecond
+
+// WaitTerminalWork blocks until s.terminalClaims is empty, or ctx ends. It
+// reads the record every terminalWorkPollInterval, returns nil once the
+// record holds no entry, and returns ctx.Err() when ctx ends first. The
+// record counts each open terminal-writer claim, which spans the
+// post-terminal hook, and each terminal binding release in progress, so an
+// empty record means no terminal pipeline runs on this replica. A claim that
+// a background loop opens during the wait extends it, up to ctx's bound.
+//
+// The gateway calls it on shutdown before Close, because the hook's release
+// and the terminal binding release take the slot-accounting lock on the
+// server-lifetime context and skip the release once Close cancels it.
+//
+// spec: §10.1.7 (Terminal pipelines at process exit.)
+func (s *Server) WaitTerminalWork(ctx context.Context) error {
+	ticker := time.NewTicker(terminalWorkPollInterval)
+	defer ticker.Stop()
+	for s.terminalClaims.size() != 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+	return nil
+}
+
+// OpenTerminalWork reports the number of sessions with an open terminal
+// claim or a terminal binding release in progress, which the shutdown
+// sequence logs when the wait reaches its bound.
+// spec: §10.1.7 (Terminal pipelines at process exit.)
+func (s *Server) OpenTerminalWork() int { return s.terminalClaims.size() }
+
 // lifetime returns the server-lifetime context, or context.Background() on
 // a Server built without New.
 func (s *Server) lifetime() context.Context {
@@ -1923,3 +1959,48 @@ func randomSessionID() string {
 // to the Server can compose with the same time source. Useful for
 // tests that need to verify timestamp behaviour.
 func (s *Server) Now() time.Time { return s.clock() }
+
+// TerminalPipelineBudgetFor is the one computation of the §7.1 terminal
+// pipeline budget: the seal window plus the release allowance
+// (--stream-failure-report-timeout). A non-positive allowance falls back to
+// DefaultStreamFailureReportTimeout. The server's budget, the §5.2 startup
+// gate, and the session-store window cap call it, so they take one value.
+// spec: §7.1 (Terminal pipeline context)
+func TerminalPipelineBudgetFor(sealWindow, releaseAllowance time.Duration) time.Duration {
+	if releaseAllowance <= 0 {
+		releaseAllowance = DefaultStreamFailureReportTimeout
+	}
+	return sealWindow + releaseAllowance
+}
+
+// terminalPipelineBudget is the §7.1 terminal pipeline budget: the seal
+// window plus the release allowance (--stream-failure-report-timeout).
+// spec: §7.1 (Terminal pipeline context)
+func (s *Server) terminalPipelineBudget() time.Duration {
+	return TerminalPipelineBudgetFor(s.sealMaxDuration, s.streamFailureReportTimeout)
+}
+
+// TerminalPipelineBudget exports terminalPipelineBudget for the shutdown
+// wait. spec: §7.1 (Terminal pipeline context)
+func (s *Server) TerminalPipelineBudget() time.Duration { return s.terminalPipelineBudget() }
+
+// terminalContext detaches ctx from its caller's cancellation and bounds it
+// by what remains of the terminal pipeline budget counted from terminatedAt,
+// the instant the §5.2 stale slot release ages the session from. A zero
+// terminatedAt, which that release never ages, gets the whole budget, and so
+// does a terminatedAt after the server clock. A terminatedAt more than the
+// budget in the past yields an already-expired context, so the seal records
+// a timeout and the release still runs.
+//
+// context.WithoutCancel keeps the caller's values (the trace span and the
+// tenant), so the seal span still stitches under the writer's trace. The
+// elapsed time is measured on s.clock rather than as an absolute deadline,
+// so a test's fake server clock does not hand the pipeline an expired
+// context. spec: §7.1 (Terminal pipeline context)
+func (s *Server) terminalContext(ctx context.Context, terminatedAt time.Time) (context.Context, context.CancelFunc) {
+	remaining := s.terminalPipelineBudget()
+	if !terminatedAt.IsZero() {
+		remaining = min(remaining, remaining-s.clock().Sub(terminatedAt))
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), remaining)
+}

@@ -276,7 +276,7 @@ func (h *OpenAIChatHandler) handleCreateCompletion(w http.ResponseWriter, r *htt
 	// where r.Context() is already cancelled.
 	// spec: §15 built-in adapter single-shot compute model; §6.2 release.
 	disp := executor.DispositionFailed
-	defer releaseSingleShot(r.Context(), h.exec, h.releaseTimeout, sessionID, &disp)
+	defer releaseSingleShot(r.Context(), singleShotRelease{exec: h.exec, store: h.store, clock: h.clock, timeout: h.releaseTimeout}, tenantID, sessionID, &disp)
 
 	// Translate the OpenAI messages array into executor messages.
 	// System/user/assistant roles round-trip unchanged.
@@ -496,6 +496,16 @@ func openAIErrorType(status int) string {
 	}
 }
 
+// singleShotRelease is what a translator handler's deferred release needs:
+// the executor that releases the pod, the session store and clock that
+// record the §7.1 release marker, and the release timeout.
+type singleShotRelease struct {
+	exec    executor.Executor
+	store   sessionstore.RowUpdater
+	clock   func() time.Time
+	timeout time.Duration
+}
+
 // releaseSingleShot releases the single-shot pod and its §4.9 lease on a
 // context detached from the request context, so the pod drain and lease
 // release complete even when the request context is already cancelled (a
@@ -504,14 +514,27 @@ func openAIErrorType(status int) string {
 // successful turn, failed on a dispatch error or timeout). An ErrUnsupported
 // release (the in-memory EchoExecutor, which is not a SessionReleaser) is
 // tolerated.
-// spec: §6.2 release; §15 built-in adapter single-shot compute model.
-func releaseSingleShot(reqCtx context.Context, exec executor.Executor, timeout time.Duration, sessionID string, disp *executor.Disposition) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(reqCtx), timeout)
+//
+// After the release returns, whatever its error, it records the release on
+// the session row, which ends the session's §7.1 post-terminal window: a
+// built-in adapter session's completed write runs no post-terminal hook, so
+// no session-server release site reaches it. A row that is not terminal (a
+// dispatch that failed before the completion write) or is gone records
+// nothing, and a store error is discarded like a release error; the window
+// cap ends that session's window.
+// spec: §6.2 release; §15 built-in adapter single-shot compute model; §7.1
+// (Post-terminal window).
+func releaseSingleShot(reqCtx context.Context, rel singleShotRelease, tenantID, sessionID string, disp *executor.Disposition) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(reqCtx), rel.timeout)
 	defer cancel()
-	if err := executor.ReleaseSession(ctx, exec, sessionID, *disp); err != nil && !errors.Is(err, executor.ErrUnsupported) {
+	if err := executor.ReleaseSession(ctx, rel.exec, sessionID, *disp); err != nil && !errors.Is(err, executor.ErrUnsupported) {
 		// Non-fatal; the gateway logs release failures in production.
 		_ = err
 	}
+	if rel.store == nil {
+		return
+	}
+	_ = sessionstore.RecordPodRelease(reqCtx, rel.store, tenantID, sessionID, rel.clock())
 }
 
 // resolveTenant returns the tenant the request runs as and reports

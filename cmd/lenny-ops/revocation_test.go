@@ -485,7 +485,8 @@ func TestRevocationSetRule7RefusesPlaygroundBearer(t *testing.T) {
 
 // TestRevocationSetWithoutDSNRefusesKeySetTokens pins that without
 // --postgres-dsn no read runs, so a key-set token gets the rule-4
-// response with --production, and with the dev trust hook without it.
+// response in production mode (--environment=prod), and with the dev
+// trust hook outside it.
 //
 // spec: 25.4 (The lenny-ops Service: Authentication)
 func TestRevocationSetWithoutDSNRefusesKeySetTokens(t *testing.T) {

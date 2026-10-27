@@ -5,18 +5,22 @@
 // Tier-4 multi-replica scenarios for the release of a concurrent-workspace
 // slot and its per-pod claim at and after a terminal write, on the lifecycle
 // harness over the compose Postgres session store. Each scenario ends with
-// the harness checker, which asserts the slot-set invariants: every pod's set
-// holds exactly the non-terminal sessions naming the pod plus its leaked:
-// members, no pod with an empty set keeps a bound claim, and no member is
-// removed twice in one reservation.
+// the harness checker, which asserts the slot-set invariants under the §7.1
+// holder predicate: every pod's set holds every non-terminal session naming
+// the pod, may hold a session naming it in its post-terminal window, and
+// holds nothing else but its leaked: members; no pod with an empty set that
+// no session holds keeps a bound claim; and no member is removed twice in
+// one reservation.
 //
 // spec: §5.2 (Slot assignment atomicity), §4.6.3 (SandboxClaim: a release
 // that ends the occupancy without reuse), §6.2 (Pod State Machine), §10.1.5
-// (Stale Replica Behavior), §11.4 (User Invalidation).
+// (Stale Replica Behavior), §11.4 (User Invalidation), §7.1 (Post-terminal
+// window), §4.6.1 (Warm Pool Controller (Pod Lifecycle)).
 package tier4_integration_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"slices"
 	"testing"
@@ -273,4 +277,163 @@ func TestOldCoordinatorDeleteAfterPeerResumeEvictsItsStaleBinding_spec_10_1_5(t 
 		t.Error("the old coordinator kept its stale binding on the earlier pod")
 	}
 	h.Check(t)
+}
+
+// postTerminalStores names the session stores the post-terminal reseed
+// scenarios run on: the compose Postgres store and the harness's in-memory
+// default, each built with the replicas' terminal pipeline budget as its
+// post-terminal cap.
+var postTerminalStores = []struct {
+	name string
+	new  func(t *testing.T) *lifecycleharness.Harness
+}{
+	{"postgres", func(t *testing.T) *lifecycleharness.Harness {
+		return newConcurrentCompose(t, lifecycleharness.Options{Pods: 1})
+	}},
+	{"memstore", newPostTerminalMemHarness},
+}
+
+// newPostTerminalMemHarness builds a two-replica harness on a concurrent
+// pool of one pod over the in-memory store, whose window cutoff reads the
+// harness clock.
+func newPostTerminalMemHarness(t *testing.T) *lifecycleharness.Harness {
+	t.Helper()
+	return lifecycleharness.New(t, lifecycleharness.Options{
+		Replicas: 2, Pods: 1, MaxConcurrentSessions: concurrentSlots, CredentialPool: true,
+	})
+}
+
+// loseSet drops the pod's slot set, as a Redis restart that loses its data
+// does.
+func loseSet(t *testing.T, h *lifecycleharness.Harness, pod string) {
+	t.Helper()
+	if err := h.LoseSlotSet(context.Background(), pod); err != nil {
+		t.Fatalf("lose the slot set of %s: %v", pod, err)
+	}
+}
+
+// requireAdmittedOnPod starts a session on r and requires it to run on pod.
+func requireAdmittedOnPod(t *testing.T, h *lifecycleharness.Harness, r *lifecycleharness.Replica, pod string) string {
+	t.Helper()
+	id, code, body := h.TryStartSession(r)
+	if code != http.StatusCreated {
+		t.Fatalf("start on %s after the reseed = %d %v, want 201 into the freed slot", r.ID, code, body)
+	}
+	if got := h.Row(id).PodAssignment; got != pod {
+		t.Fatalf("admitted session runs on %q, want %q", got, pod)
+	}
+	return id
+}
+
+// spec: §7.1 (Post-terminal window), §5.2 (Post-recovery rehydration
+// atomicity, Slot assignment atomicity), §4.6.1 (Warm Pool Controller (Pod
+// Lifecycle))
+// diagnosis: after replica A ended a session and recorded its pod release,
+// the pod's slot set was lost and replica B's reservation reseeded it from
+// the session store. The reseed counted the released session (the holder
+// predicate ignored the release marker), so the new session was refused a
+// slot the release had freed, or the checker found the set or the claim out
+// of step with the holder predicate.
+func TestReseedAfterARecordedReleaseFreesTheSlot_spec_7_1(t *testing.T) {
+	for _, st := range postTerminalStores {
+		t.Run(st.name, func(t *testing.T) {
+			h := st.new(t)
+			a, b := h.Replicas[0], h.Replicas[1]
+			pod, ids := h.FillPod(t, a)
+			h.EndWithRelease(t, a, pod, ids[0], false)
+			loseSet(t, h, pod)
+			admitted := requireAdmittedOnPod(t, h, b, pod)
+			requireMembers(t, h, pod, append(slices.Clone(ids[1:]), admitted)...)
+			h.Check(t)
+		})
+	}
+}
+
+// spec: §7.1 (Post-terminal window), §5.2 (Post-recovery rehydration
+// atomicity, Slot assignment atomicity), §4.6.1 (Warm Pool Controller (Pod
+// Lifecycle))
+// diagnosis: replica A ended a session and released its slot, but the
+// release-marker write failed, so the session stays in its post-terminal
+// window. After the pod's slot set was lost, replica B's reseed omitted the
+// session (the seed counted only non-terminal rows) and admitted a new
+// session over the slots the terminal pipeline may still use, or the
+// checker rejected the reseeded member the holder predicate accepts.
+func TestReseedCountsASessionInItsPostTerminalWindow_spec_7_1(t *testing.T) {
+	for _, st := range postTerminalStores {
+		t.Run(st.name, func(t *testing.T) {
+			h := st.new(t)
+			a, b := h.Replicas[0], h.Replicas[1]
+			pod, ids := h.FillPod(t, a)
+			h.EndWithRelease(t, a, pod, ids[0], true)
+			loseSet(t, h, pod)
+			if id, code, body := h.TryStartSession(b); code == http.StatusCreated {
+				t.Fatalf("start %s on %s after the reseed = %d %v, want a refusal at maxConcurrentSessions", id, b.ID, code, body)
+			}
+			requireMembers(t, h, pod, ids...)
+			h.Check(t)
+		})
+	}
+}
+
+// spec: §7.1 (Post-terminal window), §5.2 (Post-recovery rehydration
+// atomicity)
+// diagnosis: a session whose release marker was never recorded kept
+// counting toward its pod's slots after the harness clock passed
+// TerminatedAt plus the terminal pipeline budget, so a reseed after a later
+// set loss still refused a new session. The cap bounds the post-terminal
+// window when no release is recorded. Only the in-memory store reads the
+// harness clock for its cutoff, so the case runs there alone.
+func TestReseedStopsCountingASessionPastThePostTerminalCap_spec_7_1(t *testing.T) {
+	h := newPostTerminalMemHarness(t)
+	a, b := h.Replicas[0], h.Replicas[1]
+	pod, ids := h.FillPod(t, a)
+	h.EndWithRelease(t, a, pod, ids[0], true)
+	loseSet(t, h, pod)
+	if id, code, body := h.TryStartSession(b); code == http.StatusCreated {
+		t.Fatalf("start %s inside the window = %d %v, want a refusal", id, code, body)
+	}
+	capEnd := h.Row(ids[0]).TerminatedAt.Add(lifecycleharness.PostTerminalCap)
+	for !h.Clock.Now().After(capEnd) {
+		h.Pass()
+	}
+	if row := h.Row(ids[0]); !row.PodReleasedAt.IsZero() {
+		t.Fatalf("PodReleasedAt of %s = %v, want no marker so only the cap ends the window", ids[0], row.PodReleasedAt)
+	}
+	loseSet(t, h, pod)
+	admitted := requireAdmittedOnPod(t, h, b, pod)
+	requireMembers(t, h, pod, append(slices.Clone(ids[1:]), admitted)...)
+	h.Check(t)
+}
+
+// spec: §7.1 (Post-terminal window), §10.1.1 (Stateless Replicas and
+// Per-Session Coordination), §5.2 (Post-recovery rehydration atomicity)
+// diagnosis: replica B made the terminal write of a session replica A binds,
+// so A's coordination Sweeper released the binding through its terminal
+// binding release and made the release-marker write there. A failure means
+// A's terminal binding release recorded no marker (or recorded one despite
+// the fault), or the reseed after a set loss counted the session against
+// the marker: a recorded release must free the slot and a failed marker
+// write must keep the session counted in its post-terminal window.
+func TestCrossReplicaTerminalWriteRecordsTheReleaseOnTheBindingReplica_spec_7_1(t *testing.T) {
+	for _, st := range postTerminalStores {
+		for _, failMarker := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/marker-fails-%v", st.name, failMarker), func(t *testing.T) {
+				h := st.new(t)
+				a, b := h.Replicas[0], h.Replicas[1]
+				pod, ids := h.FillPod(t, a)
+				h.EndWithRelease(t, b, pod, ids[0], failMarker)
+				loseSet(t, h, pod)
+				if failMarker {
+					if id, code, body := h.TryStartSession(a); code == http.StatusCreated {
+						t.Fatalf("start %s on %s after the reseed = %d %v, want a refusal at maxConcurrentSessions", id, a.ID, code, body)
+					}
+					requireMembers(t, h, pod, ids...)
+				} else {
+					admitted := requireAdmittedOnPod(t, h, a, pod)
+					requireMembers(t, h, pod, append(slices.Clone(ids[1:]), admitted)...)
+				}
+				h.Check(t)
+			})
+		}
+	}
 }

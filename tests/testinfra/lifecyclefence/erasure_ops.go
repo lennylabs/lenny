@@ -149,6 +149,10 @@ func (e *Erasure) Runner() *erasurejob.Runner {
 		WithHoldCheck(func(ctx context.Context, _, _ string) ([]erasurejob.Hold, error) {
 			return nil, e.step(ctx, StepHoldCheck, func() error { return nil })
 		}).
+		// The World's sessions run no terminal pipeline, so no drained
+		// session is ever in its post-terminal window and the gate admits
+		// every job. spec: §12.8 (Lifecycle fence and drain).
+		WithReleaseGate(func(context.Context, string, string) ([]string, error) { return nil, nil }).
 		WithFailureObserver(func(_, phase string) {
 			e.mu.Lock()
 			e.failures = append(e.failures, phase)

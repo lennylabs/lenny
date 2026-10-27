@@ -19,6 +19,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/clockinject"
@@ -31,6 +32,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/serviceidentity"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	"github.com/lennylabs/lenny/pkg/redisconn"
@@ -406,6 +408,10 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			// reservation.
 			Quota:         storageCounter,
 			QuotaLimitFor: tenantStorageQuotaResolver(tenants),
+			// §7.1 — a periodic or eviction checkpoint that finds the row
+			// absent on the primary releases the binding through the
+			// session server, which is built after this checkpointer.
+			ReleaseGone: goneBindingReleaserSeam{w: w}.ReleaseGone,
 		}
 		log.Printf("lenny-gateway: placing sessions on warm pods in namespace %q", *agentNamespace)
 	}
@@ -431,6 +437,22 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 	w.saTokenVerifier = saTokenVerifier
 	w.saUserVerifier = saUserVerifier
 	w.sessionSealer = sessionSealer
+}
+
+// goneBindingReleaserSeam forwards the checkpointer's release of a binding
+// whose session row is absent on the primary to the session server once it
+// is built. It releases with the failed disposition, the disposition the
+// seal step gives a row deleted during the seal. A call before the server
+// is set does nothing, and the server's method returns at once.
+//
+// spec: §7.1 (Seal-and-export invariant), §10.1.7 (preStop Hook Drain)
+type goneBindingReleaserSeam struct{ w *gatewayWiring }
+
+// ReleaseGone is the checkpointer.Checkpointer ReleaseGone seam.
+func (g goneBindingReleaserSeam) ReleaseGone(tenantID, sessionID string) {
+	if srv := g.w.sessionSrv; srv != nil {
+		srv.ReleaseTerminalBinding(sessionstore.Session{ID: sessionID, TenantID: tenantID, State: session.StateFailed})
+	}
 }
 
 // tenantStorageQuotaResolver returns the §11.2 checkpointer QuotaLimitFor seam:

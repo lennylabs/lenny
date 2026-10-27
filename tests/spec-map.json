@@ -334,7 +334,8 @@
         "pkg/checkpoint/checkpoint_test.go::TestConsistencyForLevel",
         "pkg/checkpoint/checkpoint_test.go::TestCheckpointTimeoutIs60s",
         "tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go::TestCheckpointHandshakeUnderGvisorTagsConsistent",
-        "tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go::TestSignalCheckpointingRefusedUnderSandboxedProfiles"
+        "tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go::TestSignalCheckpointingRefusedUnderSandboxedProfiles",
+        "pkg/gateway/checkpoint/checkpointer/uploaddriver_test.go"
       ],
       "packages": [
         "pkg/checkpoint"
@@ -548,7 +549,12 @@
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOrphanTimeoutAndAbsentAnswerAgree_spec_4_7_1",
         "tests/tier4_integration/slot_counter_redis_outage_fallback_test.go::TestOutageFailedReleaseStaysCounted_spec_12_4",
         "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestUserErasureReleasesClaimOnOtherReplica_spec_12_8",
-        "pkg/adapter/shutdown_demote_test.go::TestShutdownDemoteSDKKeepsARegisteredSessionOnTheEmbeddedModel_spec_6_1"
+        "pkg/adapter/shutdown_demote_test.go::TestShutdownDemoteSDKKeepsARegisteredSessionOnTheEmbeddedModel_spec_6_1",
+        "tests/testinfra/lifecycleharness/slots_test.go::TestHeldPodsFollowTheHolderPredicate_spec_7_1",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedAfterARecordedReleaseFreesTheSlot_spec_7_1",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedCountsASessionInItsPostTerminalWindow_spec_7_1",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestCrossReplicaTerminalWriteRecordsTheReleaseOnTheBindingReplica_spec_7_1",
+        "tests/tier7a_load_local/slot_release_departure_race_test.go::TestPostTerminalReseedRacesConcurrentReservations_spec_7_1"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -1808,7 +1814,12 @@
         "tests/tier9_security/runtime_supervisor_security_test.go::TestLabelImmutabilityRefusesARuntimeProcessRelabel_spec_17_2",
         "tests/tier9_security/runtime_supervisor_security_test.go::TestRestartPodSweepRemovesAgentResidue_spec_4_7_10",
         "tests/tier9_security/runtime_supervisor_security_test.go::TestScrubDoesNotFollowAPlantedLink_spec_5_2",
-        "tests/tier9_security/runtime_supervisor_security_test.go::TestSignalsToTheSupervisorReachNeitherItNorTheRuntime_spec_4_7_10"
+        "tests/tier9_security/runtime_supervisor_security_test.go::TestSignalsToTheSupervisorReachNeitherItNorTheRuntime_spec_4_7_10",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedAfterARecordedReleaseFreesTheSlot_spec_7_1",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedCountsASessionInItsPostTerminalWindow_spec_7_1",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestCrossReplicaTerminalWriteRecordsTheReleaseOnTheBindingReplica_spec_7_1",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedStopsCountingASessionPastThePostTerminalCap_spec_7_1",
+        "tests/tier7a_load_local/slot_release_departure_race_test.go::TestPostTerminalReseedRacesConcurrentReservations_spec_7_1"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -2186,6 +2197,9 @@
       "title": "Session Lifecycle \u2014 Normal Flow",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
+        "tests/tier7a_load_local/terminal_pipeline_context_race_test.go",
+        "tests/tier2_component/stores/sessionstore_post_terminal_window_test.go",
+        "tests/tier7a_load_local/erasure_pipeline_gate_race_test.go",
         "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathUnansweredReclaimLeaksTheSlot_spec_5_2",
         "pkg/gateway/sessionserver/slotretry_test.go::TestReservedSlotBindReachesTheAccounting_spec_5_2",
         "pkg/gateway/sessionserver/slotretry_test.go::TestSlotFailureAccountingReadsTheReclaimDisposition_spec_5_2",
@@ -2249,7 +2263,28 @@
         "pkg/gateway/sessionserver/prerunning_reclaim_internal_test.go",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOccupancyEndingReleasePredicateAtEverySite_spec_4_6_3",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOrphanTimeoutAndAbsentAnswerAgree_spec_4_7_1",
-        "tests/tier4_integration/concurrent_slot_release_test.go::TestOldCoordinatorDeleteAfterPeerResumeEvictsItsStaleBinding_spec_10_1_5"
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestOldCoordinatorDeleteAfterPeerResumeEvictsItsStaleBinding_spec_10_1_5",
+        "tests/tier7a_load_local/terminal_seal_closing_race_test.go::TestSealClosingGateRacesSendsEvictionAndRelease_spec_7_1",
+        "tests/tier7a_load_local/checkpoint_gone_row_release_race_test.go::TestCheckpointGoneRowReleaseRacesSweepsAndEvictions_spec_7_1",
+        "tests/tier2_component/stores/partialmanifeststore_deadline_test.go::TestIntentRowDeadlineHoldsOffTheBackstop",
+        "cmd/lenny-gateway/slot_reaper_test.go",
+        "pkg/gateway/checkpoint/checkpointer/uploaddriver_test.go",
+        "pkg/gateway/storage/slotcounter/slotcounter_test.go",
+        "pkg/gateway/session/executor/pod_test.go::TestPodExecutorRefusesAClosingBindingOnACacheMiss_spec_7_1",
+        "pkg/gateway/session/executor/pod_test.go::TestPodExecutorRefusesAClosingBindingOnACacheHit_spec_7_1",
+        "pkg/gateway/session/executor/pod_test.go::TestPodExecutorInFlightSendEndsAtTheSealEviction_spec_7_1",
+        "pkg/gateway/sessionserver/derive_test.go::TestDeriveTerminalSourceReportsRecordedSnapshotSource_spec_7_1",
+        "pkg/gateway/sessionserver/derive_test.go::TestDeriveCompletedSourceDuringSealWindow_spec_7_1",
+        "tests/testinfra/lifecycleharness/slots_test.go::TestHeldPodsFollowTheHolderPredicate_spec_7_1",
+        "tests/testinfra/lifecycleharness/slots_test.go::TestDefaultStoreTakesTheReplicasTerminalPipelineBudget_spec_7_1",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedAfterARecordedReleaseFreesTheSlot_spec_7_1",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedCountsASessionInItsPostTerminalWindow_spec_7_1",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestCrossReplicaTerminalWriteRecordsTheReleaseOnTheBindingReplica_spec_7_1",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedStopsCountingASessionPastThePostTerminalCap_spec_7_1",
+        "tests/tier7a_load_local/slot_release_departure_race_test.go::TestPostTerminalReseedRacesConcurrentReservations_spec_7_1",
+        "tests/tier7a_load_local/derive_failure_fence_race_test.go",
+        "tests/tier11_docs/build_gaps_terminal_pipeline_records_currency_test.go::TestTerminalPipelineRecordsCloseTheirMembers_spec_7_1",
+        "tests/tier11_docs/build_gaps_terminal_pipeline_records_currency_test.go::TestTerminalPipelineRecordParsers_spec_7_1"
       ],
       "packages": [
         "pkg/session"
@@ -3005,7 +3040,8 @@
         "pkg/gateway/coordination/coordination/coordination_scoping_test.go::TestSweepRenewsSelfHeldLeaseInRecoveringStates_spec_10_1",
         "tests/tier7a_load_local/credential_lookup_flapping_race_test.go",
         "tests/tier7a_load_local/elicitation_xreplica_wake_test.go",
-        "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestTenantSuspendDrainsSessionsOnTwoReplicas_spec_12_8"
+        "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestTenantSuspendDrainsSessionsOnTwoReplicas_spec_12_8",
+        "tests/tier11_docs/build_gaps_terminal_pipeline_records_currency_test.go::TestTerminalPipelineDeparturesAreRecorded_spec_10_1_7"
       ],
       "packages": [
         "pkg/gateway"
@@ -3034,7 +3070,8 @@
         "tests/tier4_integration/session_resume_driver_integration_test.go::TestPeerAdoptsAResumePendingSession_spec_10_1_1",
         "tests/tier4_integration/session_suspension_delivery_integration_test.go::TestPodlessSuspendedSessionNeedsNoCoordinator_spec_10_1_1",
         "tests/tier4_integration/session_suspension_delivery_integration_test.go::TestTerminalWriteOnAPeerReleasesThroughTheCoordinator_spec_7_2",
-        "tests/tier4_integration/delegation_tree_resume_peer_child_test.go::TestTreeRecoveryLeavesAPeerBoundChildRunning_spec_8_10"
+        "tests/tier4_integration/delegation_tree_resume_peer_child_test.go::TestTreeRecoveryLeavesAPeerBoundChildRunning_spec_8_10",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestCrossReplicaTerminalWriteRecordsTheReleaseOnTheBindingReplica_spec_7_1"
       ],
       "packages": [
         "pkg/gateway"
@@ -3168,6 +3205,10 @@
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
         "tests/tier7a_load_local/prestop_no_double_checkpoint_test.go",
+        "tests/tier7a_load_local/shutdown_terminal_wait_race_test.go",
+        "pkg/gateway/sessionserver/terminal_writers_internal_test.go::TestWaitTerminalWorkWaitsOnTheTerminalClaimRecord_spec_10_1_7",
+        "pkg/gateway/sessionserver/terminal_writers_internal_test.go::TestShutdownCloseBeforeTheWaitSkipsAPendingRelease_spec_10_1_7",
+        "cmd/lenny-gateway/shutdown_helper_test.go",
         "tests/tier7a_load_local/checkpoint_grant_window_test.go",
         "tests/tier3_contract/checkpoint_stream/...",
         "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestCheckpointManifestColumnSetMatchesMigration0178",
@@ -3904,6 +3945,8 @@
       "spec_file": "spec/11_policy-and-controls.md",
       "tests": [
         "tests/tier11_docs/impersonation_revocation_docs_test.go::TestReaderDocsDescribeImpersonationRevocation_spec_13_3",
+        "cmd/lenny-gateway/production_gates_test.go::TestSIEMAndPgauditGateFatalOnlyOnMessageInProductionMode_spec_11_7",
+        "cmd/lenny-gateway/production_gates_test.go::TestPgauditPreflightFatalNeedsProductionAndRegulatedTenant_spec_11_7",
         "cmd/lenny-gateway/auth_seams_test.go::TestAuthFailureTenantNotFoundOnPlatformChain_spec_11_7",
         "tests/tier9_security/deleting_tenant_bearer_refusal_test.go::TestDeletingTenantBearerRefusedAndAuditedOnPlatformChain",
         "pkg/audit/audit_test.go::TestAllChainIntegritiesIsExhaustive",
@@ -4028,6 +4071,8 @@
       "title": "Postgres HA Requirements (R-01, R-02, R-03)",
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
+        "cmd/lenny-gateway/production_gates_test.go::TestAuditIntegrityFatalNeedsProductionAndError_spec_12_3",
+        "cmd/lenny-gateway/audit_batching_test.go::TestAuditBatchingNoSIEM_spec_12_3_99",
         "tests/tier0_static/self_managed_postgres_path_render_test.go::TestSelfManagedRendersGivePostgresPath_spec_17_9",
         "tests/tier2_component/pgbouncerchart/pgbouncer_chart_test.go::TestChartPgBouncerReachesPostgres_spec_17_9",
         "tests/tier2_component/pgbouncerchart/pgbouncer_chart_test.go::TestChartPgBouncerExporterServesPoolMetrics_spec_12_3",
@@ -4040,6 +4085,9 @@
         "tests/tier4_integration/erasure_job_test.go::TestErasureJobResumesOnAnotherReplica_spec_12_8",
         "tests/tier2_component/stores/sessionstore_list_primary_test.go::TestSessionStoreListPrimaryReadsPastReplicaLag_spec_12_8",
         "tests/tier2_component/stores/sessionstore_primary_read_test.go::TestSessionStorePrimaryReadIsLockFree_spec_12_3",
+        "tests/tier2_component/stores/sessionstore_commit_ack_test.go::TestSessionStoreLostCommitAckClassifiedByWriteID_spec_12_3",
+        "tests/tier8_chaos/session_commit_ack_lost_test.go::TestSessionWriteCommitAckLostAcrossPrimaryOutage_spec_12_3",
+        "tests/tier8_chaos/session_commit_ack_lost_test.go::TestSessionWriteCommitAckRandomizedFaults_spec_12_3",
         "tests/tier8_chaos/lifecycle_fault_injection_test.go::TestLifecycleFaultInjection_spec_10_1_2",
         "tests/tier2_component/migrations/migrations_test.go::TestApplyAllMigrationsCreatesExpectedSchema",
         "tests/tier2_component/migrations/migrations_test.go::TestPostgresMeetsMinimumVersion",
@@ -4229,6 +4277,7 @@
         "tests/tier4_integration/erasure_job_test.go::TestErasureJobResumesOnAnotherReplica_spec_12_8",
         "tests/tier4_integration/erasure_job_test.go::TestErasureJobsCompleteWithSmallPool_spec_12_8",
         "tests/tier7a_load_local/erasure_runner_guard_race_test.go::TestErasureRunnerGuardUnderInterleavings_spec_12_8",
+        "tests/tier7a_load_local/erasure_pipeline_gate_race_test.go",
         "tests/tier8_chaos/erasure_receipt_crash_test.go::TestErasureReceiptThenCrashResumes_spec_12_8",
         "tests/tier2_component/stores/erasurejobstore_test.go::TestErasureJobStoreUpdateSerializesAndRoundTrips_spec_12_8",
         "tests/tier2_component/stores/erasurejobstore_test.go::TestErasureJobStoreRestart_spec_12_8",
@@ -4365,7 +4414,8 @@
         "tests/tier2_component/migrations/audit_redaction_receipts_drop_fk_test.go::TestAuditRedactionReceiptsDropFKMigration_spec_12_8",
         "tests/tier9_security/tenant_deletion_isolation_test.go::TestRefusedPlaygroundMintAfterPhase4AuditsOnPlatformChain_spec_12_8",
         "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestRefusedMintForMissingTenantAuditsOnPlatformChain_spec_12_8",
-        "tests/tier9_security/ops_revocation_enforcement_test.go::TestOpsRefusesRevokedLennyTokens_spec_25_4"
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestOpsRefusesRevokedLennyTokens_spec_25_4",
+        "tests/tier11_docs/build_gaps_terminal_pipeline_records_currency_test.go::TestTerminalPipelineOpenFindingsKeepTheirNotes_spec_12_8"
       ],
       "packages": [
         "pkg/store",
@@ -5849,7 +5899,7 @@
         "pkg/kms/local_signing_internal_test.go::TestLocalSigningKeySeparatedFromKEKMaterial_spec_10_2",
         "pkg/kms/providerflags/signingref_test.go::TestResolveLocalPassesJWTAliasReferences_spec_10_2",
         "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_ProductionRefusesDevTrustHook",
-        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetRefusesLocalInProduction",
+        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetRefusesLocalInProductionMode_spec_17_9_1",
         "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetSharesTheGatewayKeyUnderLocal",
         "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule6ExcludesDevTrustTokens",
         "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesLocalKMSProvider",
@@ -6022,6 +6072,31 @@
       ],
       "blocked_until_phase": "14",
       "notes": "Answer-file format that lenny-ctl install consumes. Phase 14 ships the parser and the lenny-ctl subcommand."
+    },
+    "17.9.1": {
+      "title": "Composition Dimensions",
+      "spec_file": "spec/17_deployment-topology.md",
+      "tests": [
+        "cmd/lenny-gateway/production_gates_test.go::TestGatewayProductionGatesReadFinalizedEnvironment_spec_17_9_1",
+        "pkg/deployenv/deployenv_test.go::TestValidateAndIsProductionExactClosedSet_spec_17_9_1",
+        "cmd/lenny-ops/flags_test.go::TestOpsProductionModeAndRequiredKeyAreIndependent_spec_17_9_1",
+        "cmd/lenny-ops/flags_test.go::TestOpsProductionGatesReadFinalizedEnvironment_spec_17_9_1",
+        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetRefusesLocalInProductionMode_spec_17_9_1",
+        "tests/tier9_security/gateway_production_mode_test.go::TestGatewayEnvironmentProdIsProductionMode_spec_17_9_1",
+        "tests/tier9_security/gateway_production_mode_test.go::TestGatewayRefusesOffSetEnvironment_spec_17_9_1",
+        "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsRefusesOffSetEnvironment_spec_17_9_1",
+        "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesLocalKMSProvider",
+        "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesDevTrustHook",
+        "tests/tier0_static/production_mode_carrier_test.go::TestProductionModeHasOneCarrier",
+        "tests/tier0_static/production_mode_carrier_test.go::TestProductionCarrierScannerFindsDirectRead"
+      ],
+      "packages": [
+        "pkg/deployenv",
+        "cmd/lenny-gateway",
+        "cmd/lenny-ops"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "Environment dimension and production mode: the closed set local, dev, staging, and prod, exact matching, and production mode only for prod."
     },
     "18": {
       "title": "Build Sequence",
@@ -6518,6 +6593,8 @@
       "title": "The lenny-ops Service",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
+        "pkg/ops/opsserver/idempotency_test.go::TestServerRequiredKeyFollowsTierNotProductionMode_spec_25_4",
+        "tests/tier4_integration/ops_service_e2e_test.go::TestOpsServiceRemediationLockPersistenceE2E",
         "pkg/ops/coordination/reconcile_errors_test.go::TestReconcileReportsAndRetriesFailedLoserRemoval_spec_25_4",
         "pkg/ops/coordination/reconcile_errors_test.go::TestReconcileRetryKeepsFailingRemovalPending_spec_25_4",
         "pkg/ops/coordination/reconcile_errors_test.go::TestReconcileReportsAndRetriesFailedEpochMirror_spec_25_4",
@@ -6636,7 +6713,7 @@
         "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_DevWithoutKeyIsOpen",
         "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_WithKeyAndIssuer",
         "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_BadKeyFileErrors",
-        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetRefusesLocalInProduction",
+        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetRefusesLocalInProductionMode_spec_17_9_1",
         "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetFailureIsFatalInEveryMode",
         "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule1PeriodicReadReplacesSet",
         "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule1FailedReadLogsAtErrorLevel",
@@ -7400,7 +7477,10 @@
         "tests/tier3_contract/adapter_generation_fence/generation_fence_wire_test.go",
         "pkg/adapter/runtimegeneration_test.go",
         "pkg/adapter/holdstate_test.go",
-        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestSlotOccupancyIsAKeyedSetAtEverySite_spec_5_2"
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestSlotOccupancyIsAKeyedSetAtEverySite_spec_5_2",
+        "pkg/gateway/session/executor/pod_test.go::TestPodExecutorRefusesAClosingBindingOnACacheMiss_spec_7_1",
+        "pkg/gateway/session/executor/pod_test.go::TestPodExecutorRefusesAClosingBindingOnACacheHit_spec_7_1",
+        "pkg/gateway/session/executor/pod_test.go::TestPodExecutorInFlightSendEndsAtTheSealEviction_spec_7_1"
       ],
       "packages": [],
       "blocked_until_phase": "0",

@@ -15,8 +15,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
-func finalizedSandbox(phase string) *lennyv1.Sandbox {
-	sb := sandboxCR(phase)
+func finalizedSandbox(t *testing.T, phase string) *lennyv1.Sandbox {
+	sb := sandboxCR(t, phase)
 	sb.Finalizers = []string{lennyv1.FinalizerSessionCleanup}
 	return sb
 }
@@ -24,7 +24,7 @@ func finalizedSandbox(phase string) *lennyv1.Sandbox {
 func getPod(t *testing.T, c client.Client) corev1.Pod {
 	t.Helper()
 	var pod corev1.Pod
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); err != nil {
 		t.Fatalf("get pod: %v", err)
 	}
 	return pod
@@ -35,7 +35,7 @@ func getPod(t *testing.T, c client.Client) corev1.Pod {
 // Sandbox, allowing Kubernetes to complete the deletion.
 func TestReconcileRemovesFinalizerWhenNoActiveClaim(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, finalizedSandbox("claimed"), runtimeCR())
+	c := newClient(t, s, finalizedSandbox(t, "claimed"), runtimeCR(t))
 
 	ctx := context.Background()
 	sb := getSandbox(t, c)
@@ -48,7 +48,7 @@ func TestReconcileRemovesFinalizerWhenNoActiveClaim(t *testing.T) {
 	}
 
 	var got lennyv1.Sandbox
-	err := c.Get(ctx, client.ObjectKey{Namespace: testNS, Name: testName}, &got)
+	err := c.Get(ctx, client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &got)
 	if !apierrors.IsNotFound(err) {
 		t.Errorf("sandbox still present after finalizer removal (err=%v, finalizers=%v)", err, got.Finalizers)
 	}
@@ -59,11 +59,11 @@ func TestReconcileRemovesFinalizerWhenNoActiveClaim(t *testing.T) {
 // session is resolved.
 func TestReconcileHoldsFinalizerWhileClaimActive(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, finalizedSandbox("claimed"), runtimeCR())
+	c := newClient(t, s, finalizedSandbox(t, "claimed"), runtimeCR(t))
 
 	ctx := context.Background()
 	if err := c.Create(ctx, &lennyv1.SandboxClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: "claim-1", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "claim-1", Namespace: testNamespace(t)},
 		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: testName},
 	}); err != nil {
 		t.Fatalf("create claim: %v", err)
@@ -96,7 +96,7 @@ func TestReconcileHoldsFinalizerWhileClaimActive(t *testing.T) {
 // stamped at creation regardless.
 func TestReconcileStampsPodStateLabelOnCreate(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, sandboxCR(""), runtimeCR())
+	c := newClient(t, s, sandboxCR(t, ""), runtimeCR(t))
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -106,7 +106,7 @@ func TestReconcileStampsPodStateLabelOnCreate(t *testing.T) {
 	if got, ok := pod.Labels[state.LabelState]; ok {
 		t.Errorf("pod state label = %q, want absent (warming pod has no coarse state)", got)
 	}
-	if got := pod.Labels[state.LabelRuntime]; got != "claude-code" {
+	if got := pod.Labels[state.LabelRuntime]; got != testRuntime(t) {
 		t.Errorf("pod runtime label = %q, want claude-code (§6.2)", got)
 	}
 }
@@ -116,7 +116,7 @@ func TestReconcileStampsPodStateLabelOnCreate(t *testing.T) {
 // the pod becomes ready).
 func TestReconcileSyncsPodStateLabelOnTransition(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, sandboxCR("warming"), runtimeCR(), podCR(corev1.PodRunning, true))
+	c := newClient(t, s, sandboxCR(t, "warming"), runtimeCR(t), podCR(t, corev1.PodRunning, true))
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)

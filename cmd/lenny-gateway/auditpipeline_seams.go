@@ -124,6 +124,8 @@ func (a auditPruneTenants) ListTenants(ctx context.Context) ([]string, error) {
 // condition: production mode has T2 audit batching enabled but no SIEM
 // endpoint, so buffered T2 audit events would be lost on a crash with
 // no external durable copy to recover from. F-12.3.15.
-func auditBatchingNoSIEM(env string, batchingEnabled, siemConfigured bool) bool {
-	return env == "production" && batchingEnabled && !siemConfigured
+//
+// spec: §17.9.1 (Composition Dimensions) "Production mode"; §12.3 (Postgres HA Requirements)
+func auditBatchingNoSIEM(production, batchingEnabled, siemConfigured bool) bool {
+	return production && batchingEnabled && !siemConfigured
 }

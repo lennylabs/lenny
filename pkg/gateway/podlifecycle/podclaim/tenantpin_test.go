@@ -19,13 +19,14 @@ import (
 // pool that reuses no pod, or AdmitTenantPin writes to the Pod or
 // reads a SandboxClaim.
 func TestAdmitTenantPinDecisions_spec_5_2(t *testing.T) {
+	ns := testNamespace(t)
 	const pool = "pin-decide"
 	base := newEnvtestClient(
 		t,
-		pinnedPod(pool, "pd-unpinned", ""),
-		pinnedPod(pool, "pd-acme", "acme"),
-		pinnedPod(pool, "pd-globex", "globex"),
-		pinnedPod(pool, "pd-unassigned", "unassigned"),
+		pinnedPod(ns, pool, "pd-unpinned", ""),
+		pinnedPod(ns, pool, "pd-acme", "acme"),
+		pinnedPod(ns, pool, "pd-globex", "globex"),
+		pinnedPod(ns, pool, "pd-unassigned", "unassigned"),
 	)
 	rec := &pinRecorder{}
 	c := rec.wrap(base)
@@ -47,7 +48,7 @@ func TestAdmitTenantPinDecisions_spec_5_2(t *testing.T) {
 		{"pd-unassigned", false, false},
 	}
 	for _, tc := range cases {
-		got, _, err := podclaim.AdmitTenantPin(context.Background(), c, testNS, tc.pod,
+		got, _, err := podclaim.AdmitTenantPin(context.Background(), c, ns, tc.pod,
 			podclaim.ClaimRequest{Pool: pool, SessionID: "s", TenantID: "acme", ReusesPods: tc.keeps, RequiresProcessAcknowledgment: tc.keeps})
 		if err != nil {
 			t.Fatalf("AdmitTenantPin(%s, keeps=%v): %v", tc.pod, tc.keeps, err)
@@ -68,20 +69,21 @@ func TestAdmitTenantPinDecisions_spec_5_2(t *testing.T) {
 // API-server read failure surfaces as WARM_POOL_EXHAUSTED or binds a pod whose
 // pin was never read.
 func TestPinReadErrorEndsAcquisitionWithoutExhaustion_spec_5_2(t *testing.T) {
+	ns := testNamespace(t)
 	injected := apierrors.NewInternalError(errors.New("injected pod read failure"))
 	base := newEnvtestClient(
 		t,
-		sandboxIn(testPool, "a-pinerr", "idle"),
-		sandboxIn(testPool, "b-ok", "idle"),
-		pinnedPod(testPool, "a-pinerr", ""),
-		pinnedPod(testPool, "b-ok", ""),
+		sandboxIn(ns, testPool, "a-pinerr", "idle"),
+		sandboxIn(ns, testPool, "b-ok", "idle"),
+		pinnedPod(ns, testPool, "a-pinerr", ""),
+		pinnedPod(ns, testPool, "b-ok", ""),
 	)
 	rec := &pinRecorder{failPodGet: map[string]error{"a-pinerr": injected}}
 	c := rec.wrap(base)
 
 	for _, keeps := range []bool{true, false} {
 		rec.reset()
-		claimer := &podclaim.Claimer{Client: c, Namespace: testNS}
+		claimer := &podclaim.Claimer{Client: c, Namespace: ns}
 		_, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
 			Pool: testPool, SessionID: "s", TenantID: "acme", ReusesPods: keeps, RequiresProcessAcknowledgment: keeps,
 		})
@@ -101,7 +103,7 @@ func TestPinReadErrorEndsAcquisitionWithoutExhaustion_spec_5_2(t *testing.T) {
 	}
 
 	rec.reset()
-	slot := &podclaim.SlotClaimer{Client: c, Namespace: testNS, Counter: newCounter(t)}
+	slot := &podclaim.SlotClaimer{Client: c, Namespace: ns, Counter: newCounter(t)}
 	_, err := slot.ClaimSlot(context.Background(), slotReq("s-slot", "acme", 4))
 	if err == nil || !errors.Is(err, injected) {
 		t.Fatalf("ClaimSlot error = %v, want one wrapping the injected read failure", err)
@@ -121,13 +123,14 @@ func TestPinReadErrorEndsAcquisitionWithoutExhaustion_spec_5_2(t *testing.T) {
 // drained, a pod whose acquisition is in flight elsewhere is drained, or a
 // failed claim read or drain stamp goes unlogged.
 func TestDrainRefusedPodStampsOnlyUnclaimedPod_spec_5_2(t *testing.T) {
+	ns := testNamespace(t)
 	const pool = "drain-refused"
 	base := newEnvtestClient(
 		t,
-		pinnedPod(pool, "dr-free", "acme"),
-		pinnedPod(pool, "dr-held", "acme"),
-		pinnedPod(pool, "dr-claimerr", "acme"),
-		pinnedPod(pool, "dr-patcherr", "acme"),
+		pinnedPod(ns, pool, "dr-free", "acme"),
+		pinnedPod(ns, pool, "dr-held", "acme"),
+		pinnedPod(ns, pool, "dr-claimerr", "acme"),
+		pinnedPod(ns, pool, "dr-patcherr", "acme"),
 	)
 	createBareClaim(t, base, "dr-held", "acme")
 	rec := &pinRecorder{
@@ -138,7 +141,7 @@ func TestDrainRefusedPodStampsOnlyUnclaimedPod_spec_5_2(t *testing.T) {
 	logs := captureSlog(t)
 	ctx := context.Background()
 
-	podclaim.DrainRefusedPod(ctx, c, testNS, pool, "dr-free", fixedNow)
+	podclaim.DrainRefusedPod(ctx, c, ns, pool, "dr-free", fixedNow)
 	if !hasDrainRequest(t, base, "dr-free") {
 		t.Error("unclaimed refused pod carries no drain request")
 	}
@@ -146,7 +149,7 @@ func TestDrainRefusedPodStampsOnlyUnclaimedPod_spec_5_2(t *testing.T) {
 		t.Errorf("want one Info record for the stamp, got %d", len(got))
 	}
 
-	podclaim.DrainRefusedPod(ctx, c, testNS, pool, "dr-held", fixedNow)
+	podclaim.DrainRefusedPod(ctx, c, ns, pool, "dr-held", fixedNow)
 	if hasDrainRequest(t, base, "dr-held") || rec.patched("dr-held") {
 		t.Error("a pod held by a SandboxClaim was patched")
 	}
@@ -154,7 +157,7 @@ func TestDrainRefusedPodStampsOnlyUnclaimedPod_spec_5_2(t *testing.T) {
 		t.Errorf("a claimed pod logged %d records, want none", len(recs))
 	}
 
-	podclaim.DrainRefusedPod(ctx, c, testNS, pool, "dr-claimerr", fixedNow)
+	podclaim.DrainRefusedPod(ctx, c, ns, pool, "dr-claimerr", fixedNow)
 	if rec.patched("dr-claimerr") {
 		t.Error("a failed claim read still patched the Pod")
 	}
@@ -163,7 +166,7 @@ func TestDrainRefusedPodStampsOnlyUnclaimedPod_spec_5_2(t *testing.T) {
 		t.Errorf("want one Warn naming the claim read error, got %v", warns)
 	}
 
-	podclaim.DrainRefusedPod(ctx, c, testNS, pool, "dr-patcherr", fixedNow)
+	podclaim.DrainRefusedPod(ctx, c, ns, pool, "dr-patcherr", fixedNow)
 	warns = drainRecords(logs(), "WARN", "dr-patcherr")
 	if len(warns) != 1 || !errorMentions(warns[0], "patch boom") {
 		t.Errorf("want one Warn naming the stamp error, got %v", warns)
@@ -175,12 +178,13 @@ func TestDrainRefusedPodStampsOnlyUnclaimedPod_spec_5_2(t *testing.T) {
 // another tenant, refuses a `keep` pod pinned to the request's own tenant, or
 // drains a pod it refused.
 func TestClaimSlotIdlePassAdmitsOwnTenantPinOnly_spec_5_2(t *testing.T) {
+	ns := testNamespace(t)
 	claimer, c, _ := slotClaimerFor(
 		t,
-		sandboxIn(testPool, "a-other", "idle"),
-		sandboxIn(testPool, "b-own", "idle"),
-		pinnedPod(testPool, "a-other", "globex"),
-		lifetimePod(testPool, "b-own", "acme", "keep"),
+		sandboxIn(ns, testPool, "a-other", "idle"),
+		sandboxIn(ns, testPool, "b-own", "idle"),
+		pinnedPod(ns, testPool, "a-other", "globex"),
+		lifetimePod(ns, testPool, "b-own", "acme", "keep"),
 	)
 	res, err := claimer.ClaimSlot(context.Background(), slotReq("s-1", "acme", 4))
 	if err != nil {
@@ -198,7 +202,7 @@ func TestClaimSlotIdlePassAdmitsOwnTenantPinOnly_spec_5_2(t *testing.T) {
 	// The slot path always passes both predicates true; under the zero
 	// values both pods would be refused.
 	for _, pod := range []string{"a-other", "b-own"} {
-		ok, _, err := podclaim.AdmitTenantPin(context.Background(), c, testNS, pod,
+		ok, _, err := podclaim.AdmitTenantPin(context.Background(), c, ns, pod,
 			podclaim.ClaimRequest{Pool: testPool, TenantID: "acme"})
 		if err != nil || ok {
 			t.Errorf("AdmitTenantPin(%s, zero predicates) = %v, %v; want refused", pod, ok, err)
@@ -211,21 +215,22 @@ func TestClaimSlotIdlePassAdmitsOwnTenantPinOnly_spec_5_2(t *testing.T) {
 // stamps, or otherwise writes to a pod pinned to another tenant, which then
 // leaves the pod's tenant before it is drained.
 func TestKeptRuntimeRefusalWritesNothing_spec_5_2(t *testing.T) {
+	ns := testNamespace(t)
 	base := newEnvtestClient(
 		t,
-		sandboxIn("kr-only", "kr1-a", "idle"),
-		sandboxIn("kr-only", "kr1-b", "idle"),
-		pinnedPod("kr-only", "kr1-a", "globex"),
-		pinnedPod("kr-only", "kr1-b", "globex"),
-		sandboxIn("kr-mixed", "kr2-a", "idle"),
-		sandboxIn("kr-mixed", "kr2-b", "idle"),
-		sandboxIn("kr-mixed", "kr2-z", "idle"),
-		pinnedPod("kr-mixed", "kr2-a", "globex"),
-		pinnedPod("kr-mixed", "kr2-b", "globex"),
-		pinnedPod("kr-mixed", "kr2-z", ""),
+		sandboxIn(ns, "kr-only", "kr1-a", "idle"),
+		sandboxIn(ns, "kr-only", "kr1-b", "idle"),
+		pinnedPod(ns, "kr-only", "kr1-a", "globex"),
+		pinnedPod(ns, "kr-only", "kr1-b", "globex"),
+		sandboxIn(ns, "kr-mixed", "kr2-a", "idle"),
+		sandboxIn(ns, "kr-mixed", "kr2-b", "idle"),
+		sandboxIn(ns, "kr-mixed", "kr2-z", "idle"),
+		pinnedPod(ns, "kr-mixed", "kr2-a", "globex"),
+		pinnedPod(ns, "kr-mixed", "kr2-b", "globex"),
+		pinnedPod(ns, "kr-mixed", "kr2-z", ""),
 	)
 	rec := &pinRecorder{}
-	claimer := &podclaim.Claimer{Client: rec.wrap(base), Namespace: testNS}
+	claimer := &podclaim.Claimer{Client: rec.wrap(base), Namespace: ns}
 
 	_, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
 		Pool: "kr-only", SessionID: "s1", TenantID: "acme", ReusesPods: true, RequiresProcessAcknowledgment: true,
@@ -257,16 +262,17 @@ func TestKeptRuntimeRefusalWritesNothing_spec_5_2(t *testing.T) {
 // tenant pin or names one it did not refuse, so the Postgres fallback reads a
 // refused pod again or skips an admissible one.
 func TestIdleScanNoIdlePodResultNamesRefusedPods_spec_5_2(t *testing.T) {
+	ns := testNamespace(t)
 	base := newEnvtestClient(
 		t,
-		sandboxIn(testPool, "n-a", "idle"),
-		sandboxIn(testPool, "n-b", "idle"),
-		sandboxIn(testPool, "n-taken", "idle"),
-		pinnedPod(testPool, "n-a", "globex"),
-		pinnedPod(testPool, "n-b", "globex"),
+		sandboxIn(ns, testPool, "n-a", "idle"),
+		sandboxIn(ns, testPool, "n-b", "idle"),
+		sandboxIn(ns, testPool, "n-taken", "idle"),
+		pinnedPod(ns, testPool, "n-a", "globex"),
+		pinnedPod(ns, testPool, "n-b", "globex"),
 	)
 	createBareClaim(t, base, "n-taken", "acme")
-	claimer := &podclaim.Claimer{Client: base, Namespace: testNS}
+	claimer := &podclaim.Claimer{Client: base, Namespace: ns}
 	_, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
 		Pool: testPool, SessionID: "s", TenantID: "acme", ReusesPods: true, RequiresProcessAcknowledgment: true,
 	})

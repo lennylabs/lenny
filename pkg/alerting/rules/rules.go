@@ -885,7 +885,7 @@ func warningAlerts() []Rule {
 			Expr:        `lenny_audit_siem_configured == 0 and lenny_env_production == 1`,
 			Severity:    SeverityWarning,
 			Summary:     "Audit SIEM endpoint not configured in production",
-			Description: "LENNY_ENV=production and audit.siem.endpoint is not set. Fires at startup and persists until an endpoint is configured. When any active tenant has a regulated complianceProfile the gateway refuses to start instead.",
+			Description: "The deployment runs in production mode (environment prod) and audit.siem.endpoint is not set. Fires at startup and persists until an endpoint is configured. When any active tenant has a regulated complianceProfile the gateway refuses to start instead.",
 			SpecRef:     "§16.5",
 		},
 		// spec: §16.5; §12.3; §11.7 audit sequencing.
@@ -1279,7 +1279,7 @@ func warningAlerts() []Rule {
 			Expr:        `lenny_audit_retention_days < 365 and lenny_audit_siem_configured == 0 and lenny_env_production == 1`,
 			Severity:    SeverityWarning,
 			Summary:     "Audit retention below 365 days without a SIEM",
-			Description: "LENNY_ENV=production and audit.retentionDays is below 365 days without a configured SIEM. Fires at startup. Suppressed when a SIEM is configured.",
+			Description: "The deployment runs in production mode (environment prod) and audit.retentionDays is below 365 days without a configured SIEM. Fires at startup. Suppressed when a SIEM is configured.",
 			SpecRef:     "§16.5",
 		},
 		{
@@ -1404,7 +1404,7 @@ func warningAlerts() []Rule {
 			Expr:        `increase(lenny_workspace_seal_duration_seconds_count{outcome="timeout"}[5m]) > 0`,
 			Severity:    SeverityWarning,
 			Summary:     "Workspace seal-and-export stuck",
-			Description: "A session's seal-and-export operation has been retrying for longer than maxWorkspaceSealDurationSeconds without success. Indicates sustained MinIO unavailability; pods held in draining beyond this deadline are forcibly terminated.",
+			Description: "A session's seal-and-export operation has been retrying for longer than maxWorkspaceSealDurationSeconds without success. Indicates sustained MinIO unavailability.",
 			SpecRef:     "§16.5",
 		},
 		{

@@ -7,12 +7,15 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 )
 
@@ -97,10 +100,12 @@ func TestSlotLogCountsRemovalsPerReservation_spec_5_2(t *testing.T) {
 // terminal session's member and nothing else.
 func TestSlotSetViolations_spec_5_2(t *testing.T) {
 	rows := map[string]sessionRow{
-		"live":   {state: session.StateRunning, pod: "p1"},
-		"ended":  {state: session.StateCompleted, pod: "p1"},
-		"absent": {state: session.StateRunning, pod: "p1"},
-		"other":  {state: session.StateRunning, pod: "p2"},
+		"live":      {state: session.StateRunning, pod: "p1"},
+		"ended":     {state: session.StateCompleted, pod: "p1"},
+		"absent":    {state: session.StateRunning, pod: "p1"},
+		"other":     {state: session.StateRunning, pod: "p2"},
+		"sealing":   {state: session.StateCompleted, pod: "p1", window: true},
+		"elsewhere": {state: session.StateCompleted, pod: "p2", window: true},
 	}
 	cases := []struct {
 		name    string
@@ -114,6 +119,11 @@ func TestSlotSetViolations_spec_5_2(t *testing.T) {
 		{"terminal member relaxed", true, []string{"live", "absent", "ended"}, nil},
 		{"member of another pod", true, []string{"live", "absent", "other"}, []string{"holds other, whose running row names pod \"p2\""}},
 		{"untracked member", true, []string{"live", "absent", "stranger"}, []string{"which no tracked session is"}},
+		// A terminal member in its post-terminal window holds the pod, so the
+		// set may count it without the relaxation, and need not.
+		{"member in its post-terminal window", false, []string{"live", "absent", "sealing"}, nil},
+		{"window member absent", false, []string{"live", "absent"}, nil},
+		{"window member of another pod", false, []string{"live", "absent", "elsewhere"}, []string{"holds elsewhere, whose session is completed"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -227,5 +237,80 @@ func TestPoolPolicyStoreRegistersAnExclusivePoolThatKeepsItsRuntime_spec_5_2(t *
 	}
 	if h := (&Harness{maxConcurrent: 1}); h.Concurrent() {
 		t.Error("a pool with one slot per pod reads as a concurrent-workspace pool")
+	}
+}
+
+// spec: §7.1 (Post-terminal window), §4.6.1 (Orphaned SandboxClaim
+// detection), §5.2 (Slot assignment atomicity)
+//
+// The checker's held pods follow the §7.1 holder predicate on the harness
+// clock: a non-terminal row naming a pod holds it, a terminal row holds it
+// only inside its post-terminal window, which a release marker or the
+// passing of PostTerminalCap ends, and a row with no pod or a read error
+// holds nothing.
+func TestHeldPodsFollowTheHolderPredicate_spec_7_1(t *testing.T) {
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	terminal := func(pod string, terminatedAgo time.Duration, released bool) sessionstore.Session {
+		row := sessionstore.Session{State: session.StateCompleted, PodAssignment: pod, TerminatedAt: now.Add(-terminatedAgo)}
+		if released {
+			row.PodReleasedAt = now.Add(-time.Second)
+		}
+		return row
+	}
+	cases := []struct {
+		name string
+		row  sessionstore.Session
+		err  error
+		want bool
+	}{
+		{"running", sessionstore.Session{State: session.StateRunning, PodAssignment: "p"}, nil, true},
+		{"running with no pod", sessionstore.Session{State: session.StateRunning}, nil, false},
+		{"terminal inside the cap", terminal("p", PostTerminalCap/2, false), nil, true},
+		{"terminal at the cap", terminal("p", PostTerminalCap, false), nil, false},
+		{"terminal past the cap", terminal("p", PostTerminalCap+time.Second, false), nil, false},
+		{"terminal with the release marker", terminal("p", time.Second, true), nil, false},
+		{"terminal with no TerminatedAt", sessionstore.Session{State: session.StateFailed, PodAssignment: "p"}, nil, false},
+		{"read error", sessionstore.Session{State: session.StateRunning, PodAssignment: "p"}, ErrInjected, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rows := map[string]sessionRow{"s": newSessionRow(tc.row, tc.err, now)}
+			if got := heldPods(rows)["p"]; got != tc.want {
+				t.Errorf("held = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// spec: §7.1 (Terminal pipeline context, Post-terminal window), §5.2
+// (Post-recovery rehydration atomicity)
+//
+// The harness's default store counts the post-terminal window under the
+// terminal pipeline budget its replicas run with, so a rehydration seed on
+// the harness counts a session whose release is not recorded, as the
+// production gateway store does.
+func TestDefaultStoreTakesTheReplicasTerminalPipelineBudget_spec_7_1(t *testing.T) {
+	want := sessionserver.TerminalPipelineBudgetFor(sessionserver.DefaultWorkspaceSealMaxDuration, sessionserver.DefaultStreamFailureReportTimeout)
+	if PostTerminalCap != want || PostTerminalCap <= 0 {
+		t.Fatalf("PostTerminalCap = %v, want the replicas' terminal pipeline budget %v", PostTerminalCap, want)
+	}
+	now := time.Now().UTC()
+	st := NewMemStore(func() time.Time { return now })
+	if got := st.PostTerminalCap(); got != PostTerminalCap {
+		t.Fatalf("default store cap = %v, want %v", got, PostTerminalCap)
+	}
+	ctx := context.Background()
+	if err := st.Create(ctx, sessionstore.Session{
+		ID: "s", TenantID: Tenant, State: session.StateCompleted, PodAssignment: "p",
+		CreatedAt: now, UpdatedAt: now, TerminatedAt: now.Add(-time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := st.GetActiveSlotsByPod(ctx, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(ids, []string{"s"}) {
+		t.Errorf("slot source for p = %v, want the session in its post-terminal window", ids)
 	}
 }

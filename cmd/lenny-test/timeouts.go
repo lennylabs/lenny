@@ -57,14 +57,21 @@ var (
 	tierSecurityTimeout = securityTierTimeout()
 
 	// tierUnitTimeout caps each package in the unit tier. Without it Go's
-	// own ten-minute per-package default applies, and
-	// pkg/gateway/podlifecycle/podsession exceeds it: the package starts a
-	// fresh envtest control plane per test, 138 times, at roughly seven
-	// seconds each, so it passes in about fourteen minutes and is aborted
-	// at ten. The budget is what keeps a passing package from being
-	// reported as a failure; the per-test control plane is the thing that
-	// wants fixing, and a shared environment there would bring this well
-	// back under the default. Override: LENNY_TEST_UNIT_TIMEOUT.
+	// own ten-minute per-package default applies. The budget was raised to
+	// 1800 seconds because pkg/gateway/podlifecycle/podsession started a
+	// fresh envtest control plane per test and ran for 1700 to 1960 seconds
+	// under the race detector on a loaded host. That package, together with
+	// pkg/gateway/podlifecycle/podclaim, pkg/controller/warmpool,
+	// pkg/controller/sandbox, pkg/gateway/session/recycle, and
+	// pkg/embedded/stack, now shares one control plane per test binary
+	// (TEST-GAPS T-17.4.22, T-17.4.26, T-17.4.28, and T-17.4.23); podsession
+	// passes in under a minute, and sandbox, recycle, and stack in about 15
+	// to 20 seconds each. The slowest package measured since is
+	// pkg/gateway/sessionserver, which still starts a private control plane
+	// per test (TEST-GAPS T-17.4.27) and took 199 seconds inside a scoped
+	// unit-tier run. The budget stays at 1800 seconds because a whole
+	// `./...` run under load has not been measured since the change.
+	// Override: LENNY_TEST_UNIT_TIMEOUT.
 	tierUnitTimeout = tierTimeout("LENNY_TEST_UNIT_TIMEOUT", 1800*time.Second)
 
 	// tierComponentTimeout caps the component tier. Component tests

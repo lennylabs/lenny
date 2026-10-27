@@ -3,10 +3,15 @@
 package main
 
 import (
+	"flag"
+	"os"
 	"reflect"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 )
@@ -72,7 +77,6 @@ func TestParseFlags(t *testing.T) {
 		// registerEventFlags
 		{"selfHealthInterval", *f.selfHealthInterval, 10 * time.Second},
 		{"webhookRetentionDays", *f.webhookRetentionDays, 7},
-		{"production", *f.production, false},
 		// registerUpgradeFlags
 		{"registryURL", *f.registryURL, "ghcr.io/lennylabs"},
 		{"opsRollTimeout", *f.opsRollTimeout, 600},
@@ -99,10 +103,159 @@ func TestParseFlags(t *testing.T) {
 		{"gatewaySATokenFile", *f.gatewaySATokenFile, "/var/run/secrets/lenny/gateway/token"},
 		{"gatewayTokenRefreshBefore", *f.gatewayTokenRefreshBefore, 5 * time.Minute},
 		{"alertingBundleFormats", *f.alertingBundleFormats, "prometheusrule"},
+		// §16.1.1 / §25.4: an unset --platform-tier is tier1, the chart
+		// default for global.deploymentTier. F-25.4.38.
+		{"platformTier", *f.platformTier, "tier1"},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
 			t.Errorf("parseFlags default for %s = %v, want %v", c.name, c.got, c.want)
 		}
+	}
+
+	// §17.9.1: production mode has one carrier, --environment. lenny-ops
+	// registers no separate production flag that could disagree with it.
+	if fl := flag.Lookup("production"); fl != nil {
+		t.Errorf("lenny-ops registers --production; production mode comes only from --environment (§17.9.1)")
+	}
+	if f.productionMode() {
+		t.Errorf("productionMode() = true with --environment unset, want false")
+	}
+	if f.idempotencyKeyRequired() {
+		t.Errorf("idempotencyKeyRequired() = true with --platform-tier unset, want false")
+	}
+}
+
+// boundOpsFlags parses args through the providerflags carrier on a fresh
+// flag set, runs its finalizer, and returns the opsFlags that the
+// production-mode and required-key readers consult.
+func boundOpsFlags(t *testing.T, tier string, args ...string) *opsFlags {
+	t.Helper()
+	fs := flag.NewFlagSet("lenny-ops", flag.ContinueOnError)
+	opts, finalize := providerflags.Bind(fs, func(string) string { return "" }, providerflags.Options{
+		Provider: providerflags.ProviderLocal,
+	})
+	if err := fs.Parse(args); err != nil {
+		t.Fatalf("parse %v: %v", args, err)
+	}
+	if err := finalize(); err != nil {
+		t.Fatalf("finalize %v: %v", args, err)
+	}
+	return &opsFlags{kmsOpts: opts, platformTier: &tier}
+}
+
+// spec: §17.9.1 (Composition Dimensions) "Production mode"; §25.4 (The lenny-ops Service) Idempotency-Key; §25.11
+//
+// TestOpsProductionModeAndRequiredKeyAreIndependent_spec_17_9_1 pins that
+// lenny-ops derives production mode from the finalized --environment value
+// alone and the §25.4 required Idempotency-Key from --platform-tier alone.
+// A tier2 install outside production mode requires the key, and a tier1
+// install in production mode does not; staging is not production mode.
+func TestOpsProductionModeAndRequiredKeyAreIndependent_spec_17_9_1(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		tier         string
+		args         []string
+		wantProd     bool
+		wantRequired bool
+	}{
+		{"prod tier1", "tier1", []string{"--environment=prod"}, true, false},
+		{"staging tier3", "tier3", []string{"--environment=staging"}, false, true},
+		{"dev tier2", "tier2", []string{"--environment=dev"}, false, true},
+		{"local", "tier1", []string{"--environment=local"}, false, false},
+		{"unset environment, default tier", "tier1", nil, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := boundOpsFlags(t, tc.tier, tc.args...)
+			if got := f.productionMode(); got != tc.wantProd {
+				t.Errorf("productionMode() = %v, want %v", got, tc.wantProd)
+			}
+			if got := f.idempotencyKeyRequired(); got != tc.wantRequired {
+				t.Errorf("idempotencyKeyRequired() = %v, want %v", got, tc.wantRequired)
+			}
+		})
+	}
+}
+
+// spec: §17.9.1 (Composition Dimensions) "Production mode"; §25.4 (The lenny-ops Service) Idempotency-Key; §25.11; §17.4 "Dev mode guard rails"
+//
+// TestOpsProductionGatesReadFinalizedEnvironment_spec_17_9_1 pins the wiring
+// of every lenny-ops production-keyed behavior to productionMode() and of the
+// §25.4 required-key posture to idempotencyKeyRequired(). A call site that
+// feeds a gate another value fails here; the reader tables above cannot
+// detect that.
+func TestOpsProductionGatesReadFinalizedEnvironment_spec_17_9_1(t *testing.T) {
+	space := regexp.MustCompile(`\s+`)
+	for file, wants := range map[string][]string{
+		"httpsurface.go": {
+			"production: w.f.productionMode(),",
+			"Production: w.f.productionMode(),",
+			"IdempotencyKeyRequired: w.f.idempotencyKeyRequired(),",
+		},
+		"services_wiring.go": {
+			"buildBackupService(w.f.productionMode(),",
+		},
+		"keyset.go": {
+			"checkDevTrustPosture(*w.f.devMode, w.f.productionMode(),",
+		},
+	} {
+		b, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := space.ReplaceAllString(string(b), " ")
+		for _, want := range wants {
+			if !strings.Contains(src, want) {
+				t.Errorf("%s: production-keyed behavior not wired as expected (%q missing)", file, want)
+			}
+		}
+		if strings.Contains(src, `"LENNY_PRODUCTION"`) {
+			t.Errorf("%s reads LENNY_PRODUCTION; production mode comes from --environment", file)
+		}
+	}
+}
+
+// spec: 16.1.1 (Attribute Naming) deployment_tier; 25.4 (The lenny-ops Service) Idempotency-Key
+//
+// TestValidatePlatformTier_spec_25_4 pins the startup refusal of a
+// --platform-tier outside the §16.1.1 closed set. The three members pass;
+// the empty value, case variants, whitespace variants, and out-of-range
+// tiers are refused with an error naming the value. Without the refusal an
+// off-set value reads as Tier 1 and drops the §25.4 Tier 2/3 required
+// Idempotency-Key. F-25.4.38.
+func TestValidatePlatformTier_spec_25_4(t *testing.T) {
+	for _, tier := range []string{"tier1", "tier2", "tier3"} {
+		if err := validatePlatformTier(tier); err != nil {
+			t.Errorf("validatePlatformTier(%q) = %v, want nil", tier, err)
+		}
+	}
+	for _, tier := range []string{"", "TIER2", "Tier3", "tier4", "tier0", " tier2", "tier2 ", "teir2", "2", "tier-2"} {
+		err := validatePlatformTier(tier)
+		if err == nil {
+			t.Errorf("validatePlatformTier(%q) = nil, want a refusal", tier)
+			continue
+		}
+		want := `--platform-tier "` + tier + `" is not one of tier1, tier2, or tier3`
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("validatePlatformTier(%q) error = %q, want it to contain %q", tier, err, want)
+		}
+	}
+}
+
+// spec: 16.1.1 (Attribute Naming) deployment_tier; 25.4 (The lenny-ops Service) Idempotency-Key
+//
+// TestMainRefusesOffSetPlatformTier_spec_25_4 pins the wiring: main runs
+// validatePlatformTier on the parsed --platform-tier before runOps builds
+// any subsystem, and exits through log.Fatalf on a refusal.
+func TestMainRefusesOffSetPlatformTier_spec_25_4(t *testing.T) {
+	b, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	src := string(b)
+	validate := strings.Index(src, "validatePlatformTier(*f.platformTier)")
+	run := strings.Index(src, "runOps(f)")
+	if validate < 0 || run < 0 || validate > run {
+		t.Fatalf("main does not call validatePlatformTier(*f.platformTier) before runOps(f)")
 	}
 }

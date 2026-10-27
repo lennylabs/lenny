@@ -16,6 +16,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
+	"github.com/lennylabs/lenny/pkg/deployenv"
 	"github.com/lennylabs/lenny/pkg/preflight"
 	"github.com/lennylabs/lenny/pkg/preflight/infra"
 )
@@ -171,11 +172,6 @@ type installConfig struct {
 // knownTiers is the set of capacity tiers the wizard accepts. It
 // matches the preset files under charts/lenny/presets/.
 var knownTiers = map[string]bool{"tier1": true, "tier2": true, "tier3": true}
-
-// knownEnvironments is the set of target environments (§17.9.1).
-var knownEnvironments = map[string]bool{
-	"local": true, "dev": true, "staging": true, "prod": true,
-}
 
 // knownReferenceRuntimes is the §26 reference-runtime catalog the wizard's
 // multi-select validates against. It mirrors charts/lenny/values.yaml
@@ -505,7 +501,10 @@ func applyAnswerDefaults(a *installAnswers) {
 // means the answers are usable.
 func validateAnswers(a installAnswers) []string {
 	var errs []string
-	if !knownEnvironments[a.Environment] {
+	// deployenv.Validate accepts an unset value, which the wizard's
+	// answers must not carry, so the empty value is rejected explicitly.
+	// spec: §17.9.1 (Composition Dimensions)
+	if a.Environment == "" || deployenv.Validate(a.Environment) != nil {
 		errs = append(errs, fmt.Sprintf(
 			"environment %q is not one of local, dev, staging, or prod", a.Environment,
 		))

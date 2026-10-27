@@ -2,15 +2,15 @@
 proposal: 0103_fix_production-mode-has-two-spellings-so-no-single-setting
 title: Production mode has two spellings, so no single setting turns on every production gate
 kind: fix
-status: Approved
+status: Implemented
 drafted-date: 2026-10-26
 drafted-by: change-proposal
 reviewed-date: 2026-10-26
 reviewed-by: change-proposal
 approved-date: 2026-10-26
 approved-by: jaf
-implemented-date: 
-implemented-by: 
+implemented-date: 2026-10-27
+implemented-by: jaf
 ---
 ## Review history
 

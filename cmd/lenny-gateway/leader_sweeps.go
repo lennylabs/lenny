@@ -133,11 +133,7 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 		} else if be, ok := w.blobs.(sessionArtifactDeleter); ok {
 			arts = append(arts, retentiongc.Artifact{Name: "artifacts", Delete: be.DeleteBySession})
 		}
-		retGC := retentiongc.New(w.sessions, tenantsLister{w.tenants}, arts, retentiongc.Options{
-			Interval: gcInterval,
-			Clock:    clockinject.Now,
-			Metrics:  w.gwMetrics,
-		})
+		retGC := retentiongc.New(w.sessions, tenantsLister{w.tenants}, arts, w.retentionGCOptions(gcInterval))
 		log.Printf("lenny-gateway: §12.5 GC sweep cadence %s (gc.cycleIntervalSeconds=%d); tombstone retention %s (gc.tombstoneRetentionSeconds=%d)",
 			gcInterval, int(gcInterval/time.Second), gcTombstoneRetention, int(gcTombstoneRetention/time.Second))
 		// §12.5: bind the erasure-completion → immediate-sweep
@@ -618,4 +614,25 @@ func (w *gatewayWiring) addStaleSlotReaper(add func(name string, run func(contex
 	log.Printf("lenny-gateway: §5.2 stale-slot reaper cadence %s, rate %d/s, terminal age %s",
 		*f.slotReaperInterval, *f.slotReaperRate, *f.slotReaperTerminalAge)
 	add("stale-slot-reaper", reaper.Run)
+}
+
+// retentionGCOptions returns the §7.1 retention collector options: the
+// sweep cadence, the injected clock, the metrics sink, the session server's
+// per-session retention window, and the post-terminal cap buildStores
+// computed. With no session server the window stays nil, so the collector
+// collects nothing rather than fall back to a window it did not resolve.
+// spec: §7.1 (Artifact retention), §7.1 (Post-terminal window)
+func (w *gatewayWiring) retentionGCOptions(interval time.Duration) retentiongc.Options {
+	opts := retentiongc.Options{
+		Interval:        interval,
+		Clock:           clockinject.Now,
+		PostTerminalCap: w.postTerminalCap,
+	}
+	if w.gwMetrics != nil {
+		opts.Metrics = w.gwMetrics
+	}
+	if w.sessionSrv != nil {
+		opts.RetentionFor = w.sessionSrv.RetentionWindow
+	}
+	return opts
 }

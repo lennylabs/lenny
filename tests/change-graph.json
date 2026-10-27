@@ -2,6 +2,16 @@
   "version": 1,
   "description": "Maps source packages, schemas, migrations, and chart templates to the tests that exercise them. The lenny-test harness walks this graph when invoked with --changed to determine the minimal test set. CI runs `lenny-test validate-maps` on every PR.",
   "globs": {
+    "pkg/deployenv": {
+      "unit": [
+        "pkg/deployenv/...",
+        "pkg/kms/providerflags/...",
+        "pkg/preflight/...",
+        "pkg/ctlcli/...",
+        "cmd/lenny-gateway/...",
+        "cmd/lenny-ops/..."
+      ]
+    },
     "pkg/embedded/k3s/": {
       "unit": ["pkg/embedded/k3s/..."],
       "component": ["tests/tier2_component/embedded/..."]
@@ -54,6 +64,11 @@
       "integration": ["tests/tier4_integration/jwt_keyset_cross_process_test.go"],
       "chaos": ["tests/tier8_chaos/jwt_keyset_chaos_test.go"],
       "security": ["tests/tier9_security/ops_revocation_enforcement_test.go"]
+    },
+    "tests/testinfra/commitfault/": {
+      "unit": ["tests/testinfra/commitfault/..."],
+      "component": ["tests/tier2_component/stores/sessionstore_commit_ack_test.go"],
+      "chaos": ["tests/tier8_chaos/session_commit_ack_lost_test.go"]
     },
     "supervisor/": {
       "static": ["tests/tier0_static/supervisor_binary_test.go"],

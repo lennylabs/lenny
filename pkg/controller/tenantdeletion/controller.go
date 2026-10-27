@@ -32,10 +32,13 @@ type TenantEraser interface {
 // sessions through the lifecycle drain, which force-terminates every
 // non-terminal session in the tenant and verifies the result with a
 // second primary listing. A nil error means every session of the tenant
-// is terminal on the primary; it does not mean the pods of sessions
+// is terminal on the primary and that no session of the tenant is in its
+// §7.1 post-terminal window, so no terminal pipeline still writes to the
+// stores the later phases act on. It does not mean the pods of sessions
 // bound on another replica have been released.
 //
-// spec: §12.8 (Tenant deletion lifecycle), §12.8 (Lifecycle fence and drain).
+// spec: §12.8 (Tenant deletion lifecycle), §12.8 (Lifecycle fence and drain),
+// §7.1 (Post-terminal window).
 type SessionTerminator interface {
 	// TerminateTenantSessions drains every non-terminal session for
 	// tenantID. It is idempotent: a tenant with no live sessions is a

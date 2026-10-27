@@ -222,6 +222,10 @@ func runClaimGC(t *testing.T, h *lifecycleharness.Harness, pod string) {
 	done := make(chan struct{})
 	go func() { _ = gc.Start(ctx); close(done) }()
 	awaitClaimGone(t, h, pod)
+	// The GC records the reclaim after the claim DELETE, on the same
+	// context, so the sweep keeps running until the condition lands rather
+	// than being cancelled between the DELETE and the record.
+	awaitReclaimCondition(h, pod)
 	cancel()
 	<-done
 	assertSandboxReclaimed(t, h, pod)
@@ -244,6 +248,23 @@ func awaitClaimGone(t *testing.T, h *lifecycleharness.Harness, pod string) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("the claim-orphan GC left the claim of %s", pod)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// awaitReclaimCondition waits, for at most 15 s, until the pod's Sandbox
+// carries the OrphanClaimReclaimed condition. It reports nothing itself:
+// assertSandboxReclaimed reads the outcome after the wait.
+// spec: §4.6.1 (Warm Pool Controller (Pod Lifecycle)), §6.2 (Pod State
+// Machine)
+func awaitReclaimCondition(h *lifecycleharness.Harness, pod string) {
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		var sb lennyv1.Sandbox
+		err := h.Cluster.Client.Get(context.Background(), client.ObjectKey{Namespace: lifecycleharness.Namespace, Name: pod}, &sb)
+		if err == nil && meta.IsStatusConditionTrue(sb.Status.Conditions, sandboxcond.OrphanClaimReclaimed) {
+			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -505,9 +526,7 @@ func partitionedPrimary(t *testing.T, opts lifecycleharness.Options) (*lifecycle
 	}
 	t.Cleanup(primary.Close)
 	opts.CredentialPool = true
-	opts.NewStore = func(now func() time.Time) sessionstore.Store {
-		return lifecycleharness.NewSteppedClockStore(sessionpg.New(primary, sessionpg.WithReadPool(pg.Pool)), now)
-	}
+	opts.NewStore = lifecycleharness.PostgresStoreOn(primary, sessionpg.WithReadPool(pg.Pool))
 	return lifecycleharness.New(t, opts), proxy
 }
 

@@ -137,9 +137,16 @@ func finalizingPrecondition(row *sessionstore.Session) error {
 // its pod and slot release through this hook; a by-name release that a
 // through-Prepare failure's binder already performed is repeated on an
 // exclusive pool, and a duplicate slot release is a keyed no-op.
+//
+// The gateway decides this write, so it runs detached from the request's
+// cancellation: a client that disconnects before the write would otherwise
+// leave the row in finalizing with no later writer. The post-terminal hook
+// then bounds its own context.
 // spec: §15.1 (finalize row), §6.2 (finalize timeout), §7.2 (terminal states),
-// §6.1 (Per-session credential lease lifecycle)
+// §6.1 (Per-session credential lease lifecycle), §7.1 (Gateway-owned terminal
+// writes)
 func (s *Server) failFinalizing(ctx context.Context, tenantID, id string) error {
+	ctx = context.WithoutCancel(ctx)
 	end := s.BeginTerminal(id)
 	defer end()
 	from, updated, err := s.writeTerminal(ctx, tenantID, id, session.StateFailed, finalizingPrecondition)

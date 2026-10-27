@@ -71,7 +71,7 @@ type Root struct {
 	MinIO                      Object     `json:"minio,omitempty"`
 	GC                         Object     `json:"gc,omitempty"`
 	KMS                        KMS        `json:"kms,omitempty" open:"true"`
-	Environment                string     `json:"environment,omitempty" desc:"Target environment (local, dev, or prod): drives alert thresholds, warm-pool sizes, and log verbosity (§17.6 question phase, §17.9.1)."`
+	Environment                string     `json:"environment,omitempty" desc:"Target environment (local, dev, staging, or prod): prod is production mode, which turns on every production gate in every Lenny binary; staging is not production mode. Also sets alert thresholds, warm-pool sizes, and log verbosity (§17.6 question phase, §17.9.1)."`
 	Monitoring                 Monitoring `json:"monitoring,omitempty" open:"true"`
 	SLO                        Object     `json:"slo,omitempty"`
 	Observability              Object     `json:"observability,omitempty"`
@@ -120,10 +120,13 @@ type Root struct {
 // the security-affecting noEnvironmentPolicy enum. spec: §17.6,
 // §16.1.1 (deploymentTier), §10.3 (spiffeTrustDomain, saTokenAudience).
 type Global struct {
-	// DeploymentTier is the §16.1.1 static metric tier label. It is left a
-	// free string (not an enum) because the chart legitimately sets it to
-	// the empty string to omit the deployment_tier metric relabel.
-	DeploymentTier string `json:"deploymentTier,omitempty" desc:"Static metric tier label (tier1/tier2/tier3, or empty to omit the deployment_tier relabel). §16.1.1."`
+	// DeploymentTier is the §16.1.1 static metric tier label, which
+	// "always carries one of tier1, tier2, or tier3". The enum refuses
+	// every other value, including the empty string, so a typo cannot
+	// reach the lenny-ops --platform-tier flag and drop the §25.4 Tier 2/3
+	// required Idempotency-Key. An omitted key keeps the values.yaml
+	// default tier1. F-25.4.38.
+	DeploymentTier string `json:"deploymentTier,omitempty" enum:"tier1|tier2|tier3" desc:"Static metric tier label and lenny-ops platform tier: tier1, tier2, or tier3. §16.1.1, §25.4."`
 	DevMode        bool   `json:"devMode,omitempty" desc:"Relaxes multi-tenant admission controls for local development. Never enable on a multi-tenant cluster. §4.9."`
 	// MaintenanceMode is the §25.6 global guard: when true the
 	// doctor --fix auto-remediation surface skips every remediation.

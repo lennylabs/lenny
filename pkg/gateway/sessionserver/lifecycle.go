@@ -5,11 +5,14 @@ package sessionserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
@@ -433,10 +436,10 @@ func (s *Server) emitAwaitingClientActionExpired(ctx context.Context, sess sessi
 // re-check inside the store mutation closes the race with a concurrent
 // extend-retention write. Best-effort: a store failure leaves the
 // create-time deadline in place rather than fail the terminal
-// transition.
+// transition, and the retention GC still collects nothing before the
+// window has elapsed from TerminatedAt.
 //
-// spec: §7.1 and §7.1 — the
-// window starts at the terminal transition.
+// spec: §7.1 (Artifact retention)
 func (s *Server) rollRetentionOnTerminal(ctx context.Context, sess sessionstore.Session) {
 	deadline := s.clock().Add(s.retentionForTier(ctx, sess.TenantID, sess.Environment))
 	if sess.RetentionExpiresAt.After(deadline) {
@@ -461,13 +464,31 @@ func (s *Server) rollRetentionOnTerminal(ctx context.Context, sess sessionstore.
 // the session is scoped to an environment) and applies the spec's fixed
 // per-tier default: T2 90 days, T4 24 hours. T3 and the empty default are
 // the deployer-configured window (s.defaultRetention), so a T4-classified
-// tenant no longer silently inherits the T3 7-day default. spec: §12.9.
+// tenant no longer silently inherits the T3 7-day default. A tier lookup
+// error is discarded, so the create and roll callers keep the default
+// window rather than fail. spec: §12.9.
 func (s *Server) retentionForTier(ctx context.Context, tenantID, environment string) time.Duration {
-	tier := s.effectiveWorkspaceTier(ctx, tenantID, environment)
+	d, _ := s.retentionWindow(ctx, tenantID, environment)
+	return d
+}
+
+// RetentionWindow returns the §7.1 artifact-retention window of sess, the
+// window retentionForTier computes, together with the first tenant or
+// environment lookup error other than not-found. The retention GC reads it
+// and collects nothing for a session whose window it cannot resolve, so a
+// failed lookup cannot shorten a T2 session's retention to the default.
+// spec: §7.1 (Artifact retention), §12.9 (Data Classification)
+func (s *Server) RetentionWindow(ctx context.Context, sess sessionstore.Session) (time.Duration, error) {
+	return s.retentionWindow(ctx, sess.TenantID, sess.Environment)
+}
+
+// retentionWindow is the body of retentionForTier and RetentionWindow.
+func (s *Server) retentionWindow(ctx context.Context, tenantID, environment string) (time.Duration, error) {
+	tier, err := s.effectiveWorkspaceTier(ctx, tenantID, environment)
 	if d, fixed := tenantstore.TierRetentionDefault(tier); fixed && d > 0 {
-		return d
+		return d, err
 	}
-	return s.defaultRetention
+	return s.defaultRetention, err
 }
 
 // effectiveWorkspaceTier returns the §12.9 classification tier in effect
@@ -475,22 +496,33 @@ func (s *Server) retentionForTier(ctx context.Context, tenantID, environment str
 // override when the session is scoped to an environment and the override
 // is stricter. The environment override is admitted stricter-only (§12.9), so taking the higher strictness rank is defensive against a
 // stale row. A missing tenant or environment row resolves to the empty
-// (T3-default) tier rather than failing the create path.
-func (s *Server) effectiveWorkspaceTier(ctx context.Context, tenantID, environment string) string {
+// (T3-default) tier rather than failing the create path. It also returns
+// the first tenant or environment Get error other than not-found, with the
+// tier it resolved without that row.
+func (s *Server) effectiveWorkspaceTier(ctx context.Context, tenantID, environment string) (string, error) {
 	tier := ""
+	var lookupErr error
 	if s.tenants != nil && tenantID != "" {
-		if t, err := s.tenants.Get(ctx, tenantID); err == nil {
+		t, err := s.tenants.Get(ctx, tenantID)
+		switch {
+		case err == nil:
 			tier = t.WorkspaceTier
+		case !errors.Is(err, tenantstore.ErrNotFound):
+			lookupErr = fmt.Errorf("read tenant %s for its workspace tier: %w", tenantID, err)
 		}
 	}
 	if s.environments != nil && tenantID != "" && environment != "" {
-		if e, err := s.environments.Get(ctx, tenantID, environment); err == nil && e.WorkspaceTier != "" {
+		e, err := s.environments.Get(ctx, tenantID, environment)
+		switch {
+		case err == nil && e.WorkspaceTier != "":
 			envRank, envOK := tenantstore.WorkspaceTierRank(e.WorkspaceTier)
 			curRank, curOK := tenantstore.WorkspaceTierRank(tier)
 			if envOK && (!curOK || envRank > curRank) {
 				tier = e.WorkspaceTier
 			}
+		case err != nil && !errors.Is(err, environmentstore.ErrNotFound) && lookupErr == nil:
+			lookupErr = fmt.Errorf("read environment %s for its workspace tier: %w", environment, err)
 		}
 	}
-	return tier
+	return tier, lookupErr
 }

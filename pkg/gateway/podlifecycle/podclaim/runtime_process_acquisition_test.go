@@ -43,20 +43,21 @@ func claimRestartPoolClaim(claimer *podclaim.Claimer, pool, session string) (str
 // `restart` pod refused only for its tenant, or refuses a used `restart` pod
 // of the requesting tenant.
 func TestIdleScanRefusesUsedKeepPodWhenAcknowledgmentNotRequired_spec_5_2(t *testing.T) {
+	ns := testNamespace(t)
 	base := newEnvtestClient(
 		t,
-		sandboxIn("lt-idle", "a-keep-acme", "idle"),
-		lifetimePod("lt-idle", "a-keep-acme", "acme", "keep"),
-		sandboxIn("lt-idle", "b-keep-globex", "idle"),
-		lifetimePod("lt-idle", "b-keep-globex", "globex", "keep"),
-		sandboxIn("lt-idle", "c-nolabel-acme", "idle"),
-		lifetimePod("lt-idle", "c-nolabel-acme", "acme", ""),
-		sandboxIn("lt-idle", "d-restart-globex", "idle"),
-		lifetimePod("lt-idle", "d-restart-globex", "globex", "restart"),
-		sandboxIn("lt-idle", "e-restart-acme", "idle"),
-		lifetimePod("lt-idle", "e-restart-acme", "acme", "restart"),
+		sandboxIn(ns, "lt-idle", "a-keep-acme", "idle"),
+		lifetimePod(ns, "lt-idle", "a-keep-acme", "acme", "keep"),
+		sandboxIn(ns, "lt-idle", "b-keep-globex", "idle"),
+		lifetimePod(ns, "lt-idle", "b-keep-globex", "globex", "keep"),
+		sandboxIn(ns, "lt-idle", "c-nolabel-acme", "idle"),
+		lifetimePod(ns, "lt-idle", "c-nolabel-acme", "acme", ""),
+		sandboxIn(ns, "lt-idle", "d-restart-globex", "idle"),
+		lifetimePod(ns, "lt-idle", "d-restart-globex", "globex", "restart"),
+		sandboxIn(ns, "lt-idle", "e-restart-acme", "idle"),
+		lifetimePod(ns, "lt-idle", "e-restart-acme", "acme", "restart"),
 	)
-	claimer := &podclaim.Claimer{Client: base, Namespace: testNS}
+	claimer := &podclaim.Claimer{Client: base, Namespace: ns}
 	bound, err := claimRestartPoolClaim(claimer, "lt-idle", "s1")
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
@@ -84,19 +85,20 @@ func TestIdleScanRefusesUsedKeepPodWhenAcknowledgmentNotRequired_spec_5_2(t *tes
 // or a reserved pod whose Pod is gone stops the acquisition or loses its
 // hold.
 func TestRebindRefusesReservedKeepPodWhenAcknowledgmentNotRequired_spec_4_6_1(t *testing.T) {
+	ns := testNamespace(t)
 	base := newEnvtestClient(
 		t,
-		reservedIn("lt-res", "rk-held", "acme"),
-		lifetimePod("lt-res", "rk-held", "acme", "keep"),
-		sandboxIn("lt-res", "rk-z", "idle"),
-		pinnedPod("lt-res", "rk-z", ""),
-		reservedIn("lt-rr", "rr-held", "acme"),
-		lifetimePod("lt-rr", "rr-held", "acme", "restart"),
-		reservedIn("lt-gone", "rg-held", "acme"),
-		sandboxIn("lt-gone", "rg-z", "idle"),
-		reservedIn("lt-err", "re-held", "acme"),
-		lifetimePod("lt-err", "re-held", "acme", "restart"),
-		sandboxIn("lt-err", "re-z", "idle"),
+		reservedIn(ns, "lt-res", "rk-held", "acme"),
+		lifetimePod(ns, "lt-res", "rk-held", "acme", "keep"),
+		sandboxIn(ns, "lt-res", "rk-z", "idle"),
+		pinnedPod(ns, "lt-res", "rk-z", ""),
+		reservedIn(ns, "lt-rr", "rr-held", "acme"),
+		lifetimePod(ns, "lt-rr", "rr-held", "acme", "restart"),
+		reservedIn(ns, "lt-gone", "rg-held", "acme"),
+		sandboxIn(ns, "lt-gone", "rg-z", "idle"),
+		reservedIn(ns, "lt-err", "re-held", "acme"),
+		lifetimePod(ns, "lt-err", "re-held", "acme", "restart"),
+		sandboxIn(ns, "lt-err", "re-z", "idle"),
 	)
 	for _, pod := range []string{"rk-held", "rr-held", "rg-held", "re-held"} {
 		seedReservedClaim(t, base, pod, "acme", fixedNow, time.Minute)
@@ -104,7 +106,7 @@ func TestRebindRefusesReservedKeepPodWhenAcknowledgmentNotRequired_spec_4_6_1(t 
 	var rebound []string
 	now := func() time.Time { return fixedNow.Add(5 * time.Second) }
 	claimer := &podclaim.Claimer{
-		Client: base, Namespace: testNS, Now: now,
+		Client: base, Namespace: ns, Now: now,
 		OnRebind: func(pod string) { rebound = append(rebound, pod) },
 	}
 
@@ -142,7 +144,7 @@ func TestRebindRefusesReservedKeepPodWhenAcknowledgmentNotRequired_spec_4_6_1(t 
 	// Any other pod read error ends the acquisition with the error.
 	boom := apierrors.NewInternalError(errors.New("reserved pod read boom"))
 	rec := &pinRecorder{failPodGet: map[string]error{"re-held": boom}}
-	failing := &podclaim.Claimer{Client: rec.wrap(base), Namespace: testNS, Now: now}
+	failing := &podclaim.Claimer{Client: rec.wrap(base), Namespace: ns, Now: now}
 	if err := claimRestartPool(failing, "lt-err", "s4"); !errors.Is(err, boom) {
 		t.Fatalf("Claim with a failed reserved pod read = %v, want the read error", err)
 	}

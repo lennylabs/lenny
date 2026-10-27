@@ -345,7 +345,7 @@ func (d *uploadDriver) onProbe(p *adapterv1.CheckpointProbe) error {
 		ChunkEncoding:               c.chunkEncoding(),
 		ReservedBytes:               probed,
 		CheckpointStartedAt:         now,
-		CheckpointTimeoutAt:         now.Add(c.Deadline),
+		CheckpointTimeoutAt:         d.timeoutAt(now),
 	}
 	if err := c.Manifests.Put(d.ctx, rec); err != nil {
 		d.releaseReservation()
@@ -358,6 +358,24 @@ func (d *uploadDriver) onProbe(p *adapterv1.CheckpointProbe) error {
 	// order.
 	d.intentWritten = true
 	return nil
+}
+
+// timeoutAt is the intent row's checkpoint_timeout_at: the deadline the
+// attempt's context runs under, which attemptContext guarantees is set. The
+// deadline is carried onto the Checkpointer's clock as now plus the time
+// remaining, so a row's start and deadline are read on one clock; on the
+// production clock the two are the same instant. A context with no deadline,
+// reachable only from a driver built outside driveCheckpoint, yields now, so
+// the row is reclaimable at once rather than never.
+//
+// spec: §10.1.7 (preStop Hook Drain), §7.1 (Terminal pipeline context),
+// §4.4.3 (Checkpoint timeout and recovery)
+func (d *uploadDriver) timeoutAt(now time.Time) time.Time {
+	dl, ok := d.ctx.Deadline()
+	if !ok {
+		return now
+	}
+	return now.Add(time.Until(dl))
 }
 
 // reserve increments the tenant storage counter by the probed size,

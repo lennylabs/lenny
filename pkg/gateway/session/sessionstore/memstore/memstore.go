@@ -53,10 +53,39 @@ type Store struct {
 	// active session age against. New wires the wall clock; NewWithClock
 	// lets a test step it.
 	now func() time.Time
+
+	// postTerminalCap caps the §7.1 post-terminal window the slot queries
+	// count (WithPostTerminalCap). Zero counts no terminal row.
+	postTerminalCap time.Duration
 }
 
 // Option configures a Store at construction.
 type Option func(*Store)
+
+// PostTerminalCap returns the §7.1 post-terminal cap the store's slot
+// queries count, as WithPostTerminalCap set it. The composition roots' wiring
+// tests read it to pin the cap each production construction passes.
+// spec: §7.1 (Post-terminal window).
+func (s *Store) PostTerminalCap() time.Duration {
+	return s.postTerminalCap
+}
+
+// WithPostTerminalCap sets the cap of the §7.1 post-terminal window that
+// GetActiveSlotsByPod, ReserveSlotUnderLock, and ListPodsWithActiveSlots
+// count, on the store's clock. A non-positive cap counts no terminal row,
+// matching the Postgres store's omitted terminal arm.
+// spec: §7.1 (Post-terminal window), §5.2 (Post-recovery rehydration atomicity)
+func WithPostTerminalCap(d time.Duration) Option {
+	return func(s *Store) {
+		s.postTerminalCap = d
+	}
+}
+
+// holdsPodLocked reports whether row holds the pod it names on the store's
+// clock (sessionstore.HoldsPod). Callers hold s.mu.
+func (s *Store) holdsPodLocked(row sessionstore.Session) bool {
+	return sessionstore.HoldsPod(row, s.now(), s.postTerminalCap)
+}
 
 // New returns an empty in-memory store on the wall clock.
 func New(opts ...Option) *Store {
@@ -90,6 +119,27 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.createLocked(ctx, sess, nil)
+}
+
+// CreateIfGeneration implements Store: Create with the source row's
+// coordination generation checked under the same lock as the insert, so no
+// Update can advance it between the check and the insert. A missing source
+// row returns ErrNotFound; a different generation returns
+// ErrGenerationAdvanced. Neither inserts anything.
+// spec: §7.1 (Derive session semantics).
+func (s *Store) CreateIfGeneration(ctx context.Context, sess sessionstore.Session, sourceTenantID, sourceID string, wantGen int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.createLocked(ctx, sess, func(sessionstore.Session) error {
+		src, ok := s.sessions[sourceID]
+		if !ok || src.TenantID != sourceTenantID {
+			return sessionstore.ErrNotFound
+		}
+		if src.CoordinationGeneration != wantGen {
+			return sessionstore.ErrGenerationAdvanced
+		}
+		return nil
+	})
 }
 
 // createLocked is the shared insert of Create, CreateReserved, and
@@ -395,9 +445,11 @@ func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, e
 }
 
 // GetActiveSlotsByPod implements Store: the §5.2 rehydration seed source.
-// It returns the identifiers of the non-terminal sessions whose
-// pod_assignment names podID across every tenant (the slot-holder
-// predicate). An empty podID matches no session.
+// It returns the identifiers of the sessions that hold podID across every
+// tenant: the non-terminal sessions whose pod_assignment names it and the
+// terminal sessions in their §7.1 post-terminal window under the store's
+// cap. An empty podID matches no session.
+// spec: §5.2 (Post-recovery rehydration atomicity), §7.1 (Post-terminal window).
 func (s *Store) GetActiveSlotsByPod(_ context.Context, podID string) ([]string, error) {
 	if podID == "" {
 		return nil, nil
@@ -406,7 +458,7 @@ func (s *Store) GetActiveSlotsByPod(_ context.Context, podID string) ([]string, 
 	defer s.mu.RUnlock()
 	var ids []string
 	for _, row := range s.sessions {
-		if row.PodAssignment == podID && !session.IsTerminal(row.State) {
+		if row.PodAssignment == podID && s.holdsPodLocked(row) {
 			ids = append(ids, row.ID)
 		}
 	}
@@ -415,15 +467,16 @@ func (s *Store) GetActiveSlotsByPod(_ context.Context, podID string) ([]string, 
 }
 
 // ListPodsWithActiveSlots implements Store: the distinct pods that a
-// non-terminal best-effort-per-slot session row names, across tenants.
-// spec: §12.4 (Redis failure behavior).
+// best-effort-per-slot session row holds across tenants, non-terminal or in
+// its §7.1 post-terminal window under the store's cap.
+// spec: §12.4 (Redis failure behavior), §7.1 (Post-terminal window).
 func (s *Store) ListPodsWithActiveSlots(_ context.Context) ([]string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	seen := map[string]bool{}
 	var pods []string
 	for _, row := range s.sessions {
-		if row.PodAssignment == "" || row.ScrubPolicy != "best-effort-per-slot" || session.IsTerminal(row.State) {
+		if row.ScrubPolicy != "best-effort-per-slot" || !s.holdsPodLocked(row) {
 			continue
 		}
 		if !seen[row.PodAssignment] {
@@ -463,8 +516,10 @@ func (s *Store) ListStaleTerminalSessions(_ context.Context, ids []string, termi
 // gate. It serializes the count-and-decide for podID under a per-pod mutex
 // (the in-memory analogue of the Postgres per-pod advisory xact lock) so two
 // concurrent admissions during a Redis outage cannot both observe the same
-// free slot. The count predicate matches GetActiveSlotsByPod verbatim.
-// spec: §12.4; §5.2.
+// free slot. The count predicate matches GetActiveSlotsByPod verbatim, so a
+// session in its §7.1 post-terminal window keeps its slot.
+// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity),
+// §7.1 (Post-terminal window).
 func (s *Store) ReserveSlotUnderLock(_ context.Context, podID string, maxConcurrent int32) (int32, bool, error) {
 	if podID == "" {
 		return 0, false, nil
@@ -479,7 +534,7 @@ func (s *Store) ReserveSlotUnderLock(_ context.Context, podID string, maxConcurr
 	s.mu.RLock()
 	current := int32(0)
 	for _, row := range s.sessions {
-		if row.PodAssignment == podID && !session.IsTerminal(row.State) {
+		if row.PodAssignment == podID && s.holdsPodLocked(row) {
 			current++
 		}
 	}

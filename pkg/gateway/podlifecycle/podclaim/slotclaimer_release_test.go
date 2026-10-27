@@ -63,9 +63,10 @@ func countingFuncs(w *claimWrites, create func(ctx context.Context, c client.Wit
 // setClaimPhase writes phase onto the named claim's status.
 func setClaimPhase(t *testing.T, c client.Client, name, phase string) {
 	t.Helper()
+	ns := testNamespace(t)
 	ctx := context.Background()
 	var stored lennyv1.SandboxClaim
-	if err := c.Get(ctx, client.ObjectKey{Namespace: testNS, Name: name}, &stored); err != nil {
+	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &stored); err != nil {
 		t.Fatalf("get claim %s: %v", name, err)
 	}
 	stored.Status.Phase = phase
@@ -89,7 +90,8 @@ func counterOn(t *testing.T) (*slotcounter.Counter, *miniredis.Miniredis, *redis
 // claim a later occupancy of the pod holds. The disposition runs only on the
 // release that removed the member.
 func TestReleaseSlotDuplicateLeavesLaterClaim_spec_5_2(t *testing.T) {
-	claimer, c, counter := slotClaimerFor(t, concurrentSandbox("sbx-1", "claimed", "acme"))
+	ns := testNamespace(t)
+	claimer, c, counter := slotClaimerFor(t, concurrentSandbox(ns, "sbx-1", "claimed", "acme"))
 	seedOccupiedPod(t, c, counter, "sbx-1", "acme", 1)
 	ctx := context.Background()
 	if _, err := claimer.ReleaseSlot(ctx, "sbx-1", "occ-0", false, false); err != nil {
@@ -116,17 +118,19 @@ func TestReleaseSlotDuplicateLeavesLaterClaim_spec_5_2(t *testing.T) {
 // sentinel and would be repeated after the member was gone.
 func TestReleaseSlotErrorClassification_spec_5_2(t *testing.T) {
 	t.Run("counter failure carries the sentinel", func(t *testing.T) {
-		c := newEnvtestClient(t, concurrentSandbox("sbx-1", "claimed", "acme"))
+		ns := testNamespace(t)
+		c := newEnvtestClient(t, concurrentSandbox(ns, "sbx-1", "claimed", "acme"))
 		counter, mr, _ := counterOn(t)
 		mr.Close()
-		claimer := &podclaim.SlotClaimer{Client: c, Namespace: testNS, Counter: counter}
+		claimer := &podclaim.SlotClaimer{Client: c, Namespace: ns, Counter: counter}
 		_, err := claimer.ReleaseSlot(context.Background(), "sbx-1", "s1", false, false)
 		if !errors.Is(err, podclaim.ErrSlotCounterRelease) {
 			t.Fatalf("err = %v, want ErrSlotCounterRelease", err)
 		}
 	})
 	t.Run("disposition failure carries no sentinel", func(t *testing.T) {
-		base := newEnvtestClient(t, concurrentSandbox("sbx-1", "claimed", "acme"))
+		ns := testNamespace(t)
+		base := newEnvtestClient(t, concurrentSandbox(ns, "sbx-1", "claimed", "acme"))
 		counter, mr, _ := counterOn(t)
 		seedOccupiedPod(t, base, counter, "sbx-1", "acme", 1)
 		c := interceptor.NewClient(base, interceptor.Funcs{
@@ -134,7 +138,7 @@ func TestReleaseSlotErrorClassification_spec_5_2(t *testing.T) {
 				return errors.New("apiserver unreachable")
 			},
 		})
-		claimer := &podclaim.SlotClaimer{Client: c, Namespace: testNS, Counter: counter}
+		claimer := &podclaim.SlotClaimer{Client: c, Namespace: ns, Counter: counter}
 		_, err := claimer.ReleaseSlot(context.Background(), "sbx-1", "occ-0", false, false)
 		if err == nil || errors.Is(err, podclaim.ErrSlotCounterRelease) {
 			t.Fatalf("err = %v, want a disposition error without ErrSlotCounterRelease", err)
@@ -150,11 +154,12 @@ func TestReleaseSlotErrorClassification_spec_5_2(t *testing.T) {
 // rehydration event, or recorded it under a pool other than the Sandbox's
 // warm-pool label, which is the label a reservation records for the pod.
 func TestReleaseSlotRecordsRehydrationWithPoolLabel_spec_5_2(t *testing.T) {
-	c := newEnvtestClient(t, concurrentSandbox("sbx-1", "claimed", "acme"))
+	ns := testNamespace(t)
+	c := newEnvtestClient(t, concurrentSandbox(ns, "sbx-1", "claimed", "acme"))
 	counter, _, _ := counterOn(t)
 	var got []string
 	claimer := &podclaim.SlotClaimer{
-		Client: c, Namespace: testNS, Counter: counter,
+		Client: c, Namespace: ns, Counter: counter,
 		OnRehydrate: func(pod, pool string) { got = append(got, pod+"/"+pool) },
 	}
 	if _, err := claimer.ReleaseSlot(context.Background(), "sbx-1", "s1", false, false); err != nil {
@@ -198,7 +203,8 @@ func TestFreshClaimBoundWriteRollback_spec_4_6_3(t *testing.T) {
 			name = "sibling joined"
 		}
 		t.Run(name, func(t *testing.T) {
-			base := newEnvtestClient(t, concurrentSandbox("sbx-1", "idle", ""))
+			ns := testNamespace(t)
+			base := newEnvtestClient(t, concurrentSandbox(ns, "sbx-1", "idle", ""))
 			counter, mr, _ := counterOn(t)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -216,7 +222,7 @@ func TestFreshClaimBoundWriteRollback_spec_4_6_3(t *testing.T) {
 					return cl.SubResource(sub).Patch(pctx, obj, p, opts...)
 				},
 			})
-			claimer := &podclaim.SlotClaimer{Client: c, Namespace: testNS, Counter: counter}
+			claimer := &podclaim.SlotClaimer{Client: c, Namespace: ns, Counter: counter}
 			if _, err := claimer.ClaimSlot(ctx, slotReq("sess-1", "acme", 4)); err == nil {
 				t.Fatal("ClaimSlot err = nil, want the bound-write failure")
 			}
@@ -253,7 +259,8 @@ func TestCreateLoserWithdrawalLeavesWinnerClaim_spec_4_6_3(t *testing.T) {
 	for errName, mkErr := range createErrs {
 		for _, phase := range []string{"bound", "recycling", "reserved"} {
 			t.Run(errName+"/"+phase, func(t *testing.T) {
-				base := newEnvtestClient(t, concurrentSandbox("sbx-1", "idle", ""))
+				ns := testNamespace(t)
+				base := newEnvtestClient(t, concurrentSandbox(ns, "sbx-1", "idle", ""))
 				counter, mr, _ := counterOn(t)
 				w := &claimWrites{}
 				var once sync.Once
@@ -276,7 +283,7 @@ func TestCreateLoserWithdrawalLeavesWinnerClaim_spec_4_6_3(t *testing.T) {
 					})
 					return err
 				}))
-				claimer := &podclaim.SlotClaimer{Client: c, Namespace: testNS, Counter: counter}
+				claimer := &podclaim.SlotClaimer{Client: c, Namespace: ns, Counter: counter}
 				_, _ = claimer.ClaimSlot(context.Background(), slotReq("sess-1", "acme", 4))
 				if n := w.writes.Load(); n != 0 {
 					t.Fatalf("claim writes after the CREATE failure = %d, want 0", n)
@@ -299,8 +306,9 @@ func TestCreateLoserWithdrawalLeavesWinnerClaim_spec_4_6_3(t *testing.T) {
 // stays counted, which fails closed, the claim stays, and the caller sees the
 // stamp failure.
 func TestRollbackCounterFailureKeepsMember_spec_5_2(t *testing.T) {
-	base := newEnvtestClient(t, concurrentSandbox("sbx-1", "claimed", "acme"))
-	mustCreate(t, base, agentPod("sbx-1", ""))
+	ns := testNamespace(t)
+	base := newEnvtestClient(t, concurrentSandbox(ns, "sbx-1", "claimed", "acme"))
+	mustCreate(t, base, agentPod(ns, "sbx-1", ""))
 	seedPerPodClaim(t, base, "sbx-1", "acme")
 	mr := miniredis.RunT(t)
 	rc := redis.NewClient(&redis.Options{Addr: mr.Addr(), MaxRetries: -1})
@@ -318,7 +326,7 @@ func TestRollbackCounterFailureKeepsMember_spec_5_2(t *testing.T) {
 			return cl.Patch(ctx, obj, p, opts...)
 		},
 	})
-	claimer := &podclaim.SlotClaimer{Client: c, Namespace: testNS, Counter: counter}
+	claimer := &podclaim.SlotClaimer{Client: c, Namespace: ns, Counter: counter}
 	_, err := claimer.ReserveSlotOnPod(context.Background(), "sbx-1", slotReq("sess-1", "acme", 4))
 	if err == nil || !strings.Contains(err.Error(), "stamp refused") {
 		t.Fatalf("err = %v, want the stamp failure", err)

@@ -843,3 +843,45 @@ func TestWarmPoolReplenishmentSlowDerivesFromPerPoolBaseline_spec_16_5_488(t *te
 		t.Errorf("WarmPoolReplenishmentSlow still uses the fixed > 60 threshold: %q", got.Expr)
 	}
 }
+
+// TestProductionAuditAlertDescriptions_spec_16_5 pins the wording of the
+// two production-only audit alerts. Each description names production mode
+// as the §17.9.1 Environment value prod, so an operator reading a fired
+// alert sees the one setting that turns it on rather than the retired
+// LENNY_ENV=production spelling, and each expression still gates on the
+// lenny_env_production gauge.
+//
+// spec: §16.5 (AuditSIEMNotConfigured and AuditRetentionLow warning-alert
+// rows); §16.4; §17.9.1 (Composition Dimensions) "Production mode".
+func TestProductionAuditAlertDescriptions_spec_16_5(t *testing.T) {
+	cases := []struct {
+		name       string
+		wantPrefix string
+		wantExpr   string
+	}{
+		{
+			name:       "AuditSIEMNotConfigured",
+			wantPrefix: "The deployment runs in production mode (environment prod) and audit.siem.endpoint is not set.",
+			wantExpr:   `lenny_audit_siem_configured == 0 and lenny_env_production == 1`,
+		},
+		{
+			name:       "AuditRetentionLow",
+			wantPrefix: "The deployment runs in production mode (environment prod) and audit.retentionDays is below 365 days without a configured SIEM.",
+			wantExpr:   `lenny_audit_retention_days < 365 and lenny_audit_siem_configured == 0 and lenny_env_production == 1`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := catalogRule(t, tc.name)
+			if !strings.HasPrefix(got.Description, tc.wantPrefix) {
+				t.Errorf("description = %q, want prefix %q", got.Description, tc.wantPrefix)
+			}
+			if strings.Contains(got.Description, "LENNY_ENV") {
+				t.Errorf("description %q names the retired LENNY_ENV spelling", got.Description)
+			}
+			if got.Expr != tc.wantExpr {
+				t.Errorf("expr = %q, want %q unchanged", got.Expr, tc.wantExpr)
+			}
+		})
+	}
+}

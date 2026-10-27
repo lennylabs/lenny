@@ -109,18 +109,22 @@ only the env vars it can satisfy.
 {{- end -}}
 {{- /* §5.2 (Slot assignment atomicity) — the stale-slot reaper's terminal
    age, controller.claimOrphanTimeoutSeconds, must be at least one second
-   more than the largest post-terminal slot activity window: the seal
-   window (gateway.workspaceSealMaxDurationSeconds, 300 when 0) and the
-   gateway defaults of the finalizing (600s) and resuming (300s) deadlines,
-   which the chart does not render. The gateway's startup gate is the
-   complete check, because an operator can change those two deadlines
+   more than the largest post-terminal slot activity window: the §7.1
+   terminal pipeline budget, which is the seal window
+   (gateway.workspaceSealMaxDurationSeconds, 300 when 0) plus the gateway's
+   30s release allowance (--stream-failure-report-timeout), and the gateway
+   defaults of the finalizing (600s) and resuming (300s) deadlines. The
+   chart renders none of the allowance, the finalizing deadline, or the
+   resuming deadline, so it uses their defaults. The gateway's startup gate
+   is the complete check, because an operator can change those three values
    through their environment variables. */ -}}
 {{- $sealWindow := int (.Values.gateway.workspaceSealMaxDurationSeconds | default 0) -}}
 {{- if le $sealWindow 0 -}}{{- $sealWindow = 300 -}}{{- end -}}
-{{- $reaperFloor := add1 (max $sealWindow 600 300) -}}
+{{- $pipelineBudget := add $sealWindow 30 -}}
+{{- $reaperFloor := add1 (max $pipelineBudget 600 300) -}}
 {{- $claimOrphanTimeout := int (.Values.controller.claimOrphanTimeoutSeconds | default 900) -}}
 {{- if lt $claimOrphanTimeout (int $reaperFloor) -}}
-{{- fail (printf "§5.2: controller.claimOrphanTimeoutSeconds=%d must be at least %d, one second more than the largest of the seal window (%ds) and the gateway's finalizing (600s) and resuming (300s) deadlines." $claimOrphanTimeout (int $reaperFloor) $sealWindow) -}}
+{{- fail (printf "§5.2: controller.claimOrphanTimeoutSeconds=%d must be at least %d, one second more than the largest of the terminal pipeline budget (%ds: the seal window of %ds plus the gateway's 30s release allowance, --stream-failure-report-timeout) and the gateway's finalizing (600s) and resuming (300s) deadlines." $claimOrphanTimeout (int $reaperFloor) (int $pipelineBudget) $sealWindow) -}}
 {{- end -}}
 {{- if le (int (.Values.gateway.slotReaper.ratePerSecond | default 0)) 0 -}}
 {{- fail (printf "§5.2: gateway.slotReaper.ratePerSecond=%v must be a positive releases/sec ceiling." .Values.gateway.slotReaper.ratePerSecond) -}}

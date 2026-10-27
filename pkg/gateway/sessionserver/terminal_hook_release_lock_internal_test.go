@@ -5,6 +5,7 @@ package sessionserver
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -330,16 +331,12 @@ func hookAfterShutdown(t *testing.T, f *funnelFixture, from session.State, row s
 	awaitDone(t, done, "the hook")
 }
 
-// TestHookReleaseOnCancelledWriterContextLeaksTheSlot_spec_5_2 runs the hook
-// with a writer context that ended before the release step, over a real pod
-// executor and slot set on a concurrent pool. The adapter Shutdown is cut,
-// so the keyed release removes the session's member and adds its leaked
-// member on the detached context, and no claim is written: the slot stays
-// counted and the claim stays.
-//
-// spec: §5.2 (Slot assignment atomicity), §6.2 (leaked slot semantics),
-// §7.2 (Interactive Session Model)
-func TestHookReleaseOnCancelledWriterContextLeaksTheSlot_spec_5_2(t *testing.T) {
+// seedReleaseFixture seeds a cancelled session on a concurrent pool with a
+// reserved slot and a binding over a real pod executor, and returns the
+// fixture, the row with terminatedAt stamped, and the adapter that records
+// Shutdown requests.
+func seedReleaseFixture(t *testing.T, terminatedAt time.Time) (*preRunningFixture, sessionstore.Session, *reclaimAdapter) {
+	t.Helper()
 	p := newPreRunningFixture(t)
 	p.srv.executor = executor.NewPodExecutor(p.registry, p.srv.podBinder)
 	p.reserve(t, "sess-1")
@@ -351,15 +348,55 @@ func TestHookReleaseOnCancelledWriterContextLeaksTheSlot_spec_5_2(t *testing.T) 
 		t.Fatalf("seed: %v", err)
 	}
 	row = p.state(t, "sess-1")
+	row.TerminatedAt = terminatedAt
 	a := &reclaimAdapter{}
 	p.registry.Put(&podsession.BindResult{
 		SessionID: "sess-1", TenantID: "acme", SandboxName: reclaimPod, SlotID: "sess-1",
 		Adapter: dialReclaimAdapter(t, a), CoordinationGeneration: row.CoordinationGeneration,
 	})
+	return p, row, a
+}
 
+// TestHookReleaseOnCancelledWriterContextReleasesTheSlot_spec_7_1 runs the
+// hook with a writer context that ended before the hook, over a real pod
+// executor and slot set on a concurrent pool. The hook runs on the
+// gateway-owned terminal context, so the writer's cancellation does not cut
+// the adapter Shutdown: the Shutdown is sent, no leaked member is left, and
+// the binding is released. Against a hook on the writer's context, the
+// Shutdown is cut and the slot stays counted through its leaked member.
+//
+// spec: §7.1 (Terminal pipeline context), §5.2 (Slot assignment atomicity),
+// §7.2 (Interactive Session Model)
+func TestHookReleaseOnCancelledWriterContextReleasesTheSlot_spec_7_1(t *testing.T) {
+	p, row, a := seedReleaseFixture(t, time.Time{})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	p.srv.AfterTerminalWrite(ctx, session.StateRunning, row, nil)
+
+	if got := a.sent(); got == "[]" {
+		t.Errorf("Shutdown requests = %s, want the release's Shutdown on the detached terminal context", got)
+	}
+	if got := p.members(t); strings.Contains(got, "leaked:") {
+		t.Errorf("members = %s, want no leaked member after a release that was not cut", got)
+	}
+	if _, ok := p.registry.Get("sess-1"); ok {
+		t.Error("the binding is still registered after the release")
+	}
+}
+
+// TestHookReleasePastTheBudgetLeaksTheSlot_spec_5_2 runs the hook for a
+// session whose terminal transition is older than the terminal pipeline
+// budget, over a real pod executor and slot set on a concurrent pool. The
+// terminal context is already past its deadline, so the adapter Shutdown is
+// cut, the keyed release removes the session's member and adds its leaked
+// member on the detached context, and no claim is written: the slot stays
+// counted and the claim stays.
+//
+// spec: §5.2 (Slot assignment atomicity), §6.2 (leaked slot semantics),
+// §7.1 (Terminal pipeline context), §7.2 (Interactive Session Model)
+func TestHookReleasePastTheBudgetLeaksTheSlot_spec_5_2(t *testing.T) {
+	p, row, a := seedReleaseFixture(t, time.Now().Add(-(DefaultWorkspaceSealMaxDuration + DefaultStreamFailureReportTimeout + time.Minute)))
+	p.srv.AfterTerminalWrite(context.Background(), session.StateRunning, row, nil)
 
 	if got := p.members(t); got != "[leaked:sess-1]" {
 		t.Errorf("members = %s, want [leaked:sess-1] (the leaked slot stays counted)", got)
@@ -371,7 +408,7 @@ func TestHookReleaseOnCancelledWriterContextLeaksTheSlot_spec_5_2(t *testing.T) 
 		t.Errorf("claim writes = %d, want none", n)
 	}
 	if got := a.sent(); got != "[]" {
-		t.Errorf("Shutdown requests = %s, want none on a cancelled context", got)
+		t.Errorf("Shutdown requests = %s, want none on an expired terminal context", got)
 	}
 	if _, ok := p.registry.Get("sess-1"); ok {
 		t.Error("the binding is still registered after the release")

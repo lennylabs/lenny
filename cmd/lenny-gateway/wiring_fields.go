@@ -326,8 +326,15 @@ type gatewayWiringFields struct {
 	revCache            *revocation.Cache
 	revProp             *revocationprop.Propagator
 	sessions            sessionstore.Store
-	sessionSrv          *sessionserver.Server
-	storageCounter      storagequota.Counter
+	// postTerminalCap is the §7.1 terminal pipeline budget in effect, the
+	// cap of the post-terminal window. buildPersistenceStores computes it
+	// once and passes it to the session store's slot queries; the retention
+	// GC options, the §12.8 erasure release gate, and the tenant-deletion
+	// session terminator read the same value. spec: §7.1 (Post-terminal
+	// window).
+	postTerminalCap time.Duration
+	sessionSrv      *sessionserver.Server
+	storageCounter  storagequota.Counter
 	// storageLiveBytes is the reservation-aware §12.4 LiveBytesSource seam
 	// (live artifact_store bytes plus outstanding checkpoint reservations)
 	// buildRedisAndQuota composes once and every storage-counter consumer

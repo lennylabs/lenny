@@ -2863,8 +2863,8 @@ Proposals, first wave after 0092 (after R4 and the credential fail-open fix):
     terminates the user's sessions before the erasers run. A successful drain does not wait for a
     session's terminal steps or its pod release: the pod of a drained session bound on another replica can
     stay claimed after user erasure deletes its row, until the claim-orphan GC reclaims it. That residual
-    is F-12.8.43, owned by P2, which also asks P2 whether such a binding's credential leases are returned,
-    and the claim register carries it as an `ABSENT` row deferred to R21.
+    is F-12.8.43, owned by the inter-replica carrier proposal, and the claim register carries it as an
+    `ABSENT` row deferred to R21.
   - **Filed unassigned.** F-12.3.25, F-12.8.44, F-12.8.45, F-12.8.46, F-12.8.47, F-12.8.48, and F-15.1.55.
   - **Members.** F-11.4.12 to F-11.4.14 (TT-77 to TT-79), F-12.8.26 to F-12.8.28 (TT-95 to TT-97),
     F-12.8.30 to F-12.8.33 (TT-99, TT-100, TT-103, and TT-104), F-15.1.48 (TT-93), F-15.1.50 (TT-101),
@@ -3075,7 +3075,12 @@ Proposal 0087 part 1 (Phase 2 above) follows P1 and P5. P5b follows P1 and P5 an
 
 Proposals, second wave:
 
-- [ ] **P2. Terminal pipeline completeness** (not yet written), after P1.
+- [ ] **P2. Terminal pipeline completeness** (split; P2a implemented, P2b not yet written), after P1.
+  - **Outcome (P2a).** Proposal 0100 (`proposals/0100_fix_the-terminal-pipeline-what-happens-between-a-session-s/`)
+    was implemented 2026-10-27 and merged into this branch (`8d0f2c7ea`). It lands the bounded terminal pipeline
+    context, the seal and release ordering, the post-terminal window, and the release marker. Its unstaged defects
+    are filed below. P2b (held messages, emission, and translators) remains, drafted after proposal 0071 is
+    re-derived per the split seam below.
   - **Scope.** What happens between a terminal write and the end of its hook: the context the pipeline
     runs on, the seal and its relabel, the held-message drain and the lifetime of DLQ and inbox keys, the
     ordering of session-stream events after a terminal, the row returned to the caller, one terminal-signal
@@ -3280,15 +3285,21 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
       2026-10-26 (merge `1b4ff8637`). It records the impersonation bearer in `issued_tokens`, ends the session
       by revoking that row, and adds the platform-admin cascade to a full revoke. Its implementation, which
       closes F-13.3.20 as its DOCS-1 states, is pending. Its unstaged defects are filed below.
-  - [x] **Production-mode spelling proposal** (done as a proposal; implementation pending): **F-17.9.24**
+  - [x] **Production-mode spelling proposal** (implemented): **F-17.9.24**
     (High). §17.9.1 says `prod`, §11.7, §16.5, and §17.6 say `LENNY_ENV=production`, and the chart sets no
     `LENNY_ENV`, so no value turns on every production gate.
     - **Outcome.** Proposal 0103
       (`proposals/0103_fix_production-mode-has-two-spellings-so-no-single-setting/`) was approved
       2026-10-26 (merge `f7a1c54e4`). Production mode becomes Environment `prod` on `--environment`, which
-      every gate reads through one predicate. Its implementation, which closes F-17.9.24, is pending. Its
-      unstaged defects are filed below.
-  - [ ] **Session capability and delegation child token proposal** (not yet written), the follow-up 0097
+      every gate reads through one predicate. Implemented 2026-10-27 (merge `83ab31257`), closing F-17.9.24.
+      Its unstaged defects are filed below.
+  - [x] **Session capability and delegation child token proposal** (done as a proposal; implementation pending), the follow-up 0097
+    - **Outcome.** Proposal 0104 (`proposals/0104_fix_two-gaps-leave-lenny-s-session-scoped-and-delegation/`) was
+      approved 2026-10-27 (merge `56a8699ff`). It resolves the open points the other way: pods hold no
+      Lenny-issued JWT, so the session-creation mint and the internal child-token exchange are dropped, and the
+      creation fence refuses a delegated child of a terminal or absent parent. The forwarded-call session binding
+      is split out (F-10.2.29). Its spec edits rewrite sentences proposal 0102 adds, so its implementation runs
+      after 0102 merges. It closes F-10.2.25 and F-8.2.31. Its unstaged defects are filed below.
     names: **F-10.2.25** (Medium, the session-creation mint and the gateway-to-pod renewal path) and
     **F-8.2.31** (Medium, delegation child tokens are unsigned claim records absent from `issued_tokens`),
     joined on 2026-10-26 because the delegation exchange takes the session-creation token as its
@@ -3423,13 +3434,27 @@ re-confirm against the tree and are filed in BUILD-GAPS and routed below.
 
 - Direct-fix queue, after the post-0097 direct-fix queue above. Each lands after 0103's implementation,
   because each reads its production predicate or edits lines its CHART-1 and CODE-4 change.
-  - [ ] **F-17.6.25** (Low): no preflight check emits the §17.6 etcd Secret encryption or node disk encryption
-    warning. Add both non-blocking checks in production mode, and correct T-17.6.13.
-  - [ ] **F-25.4.37** (Low): the chart sets the `lenny-ops` readinessProbe path to `/readyz` outside
-    production, while §25.4 gives `/healthz` unconditionally. Render `/healthz` in every environment.
-  - [ ] **F-25.4.38** (Low): `lenny-ops --platform-tier` and `global.deploymentTier` accept any string, so an
+  - [x] **F-17.6.25** (Low): no preflight check emits the §17.6 etcd Secret encryption or node disk encryption
+    warning. Add both non-blocking checks in production mode, and correct T-17.6.13. Fixed in `450ef8a47`:
+    `EtcdSecretEncryptionCheck` and `NodeDiskEncryptionCheck` warn in production mode and never block, and
+    T-17.6.13 is corrected.
+  - [x] **F-25.4.37** (Low): the chart sets the `lenny-ops` readinessProbe path to `/readyz` outside
+    production, while §25.4 gives `/healthz` unconditionally. Render `/healthz` in every environment. Fixed in
+    `42bb52ac1`, `a4fc41c0b`, and `7f2dce149`.
+  - [x] **F-25.4.38** (Low): `lenny-ops --platform-tier` and `global.deploymentTier` accept any string, so an
     off-set tier reaches 0103's `idempotencyKeyRequired()` fallback and drops the Tier 2/3 `Idempotency-Key`
     requirement. Refuse a value outside `tier1`, `tier2`, and `tier3` in the binary and the values schema.
+    Fixed in `0b66ec19c`: `lenny-ops` refuses an off-set tier at startup (unset defaults to `tier1`, the
+    chart default), and `global.deploymentTier` carries the enum.
+  - [x] **F-25.4.39** (Low): `lenny-preflight --platform-tier` accepts any string, so an off-set tier reads as
+    Tier 1 in the §25.4 Prometheus advisory. Filed from the F-25.4.38 fix (2026-10-27) and fixed in
+    `32ae0c7ce`: the Job refuses a value outside `tier1`, `tier2`, and `tier3`.
+  - [x] **F-10.5.16** (Low): `make generate` strips the hand-applied CRD additions (the `lenny.dev/schema-version`
+    annotation and the top-level preserve-unknown markers) and rewrites a DeepCopy import, and the tier-0 CRD
+    drift check normalizes the difference away. Filed from the F-25.4.37 fix (2026-10-27) and fixed in
+    `d96ce8485`: kubebuilder markers on the root types emit the annotation and the markers, the `generate`
+    target runs goimports over the DeepCopy file and copies the CRDs into `pkg/embedded/crds/`, and the tier-0
+    checks compare the controller-gen and DeepCopy output byte for byte.
 - Proposal routing.
   - [ ] **§11.7 startup compliance-check proposal** (not yet written): **F-11.7.25** (Medium). The gateway's
     SIEM and pgaudit startup checks, and the retention-floor and grant-check-cadence checks, continue when
@@ -3564,6 +3589,72 @@ endpoint, KMS error codes, or the `lenny-ops` probe.
 
     Owner decisions it lists: whether the `minio.*` Helm keys are renamed to backend-neutral keys, and
     whether the metric and alert renames ship with aliases for the old names or without them.
+
+**Defects filed from proposal 0104's unstaged-defect list (2026-10-27).** Proposal 0104 (approved
+2026-10-27, implementation pending) lists defects in the shipped tree that it does not stage, and its REC-1
+files them once confirmed. They are filed now, ahead of REC-1, because no defect is dropped. Each was
+re-confirmed against the tree, none was already tracked, and each BUILD-GAPS entry says it was filed ahead of
+REC-1, so 0104's implementor updates the entry rather than filing a duplicate. The §10.7 runtime eval
+credential gap surfaced during the review of 0104 and is filed with them.
+
+- Direct-fix queue, after 0104's implementation.
+  - [ ] **F-13.3.22** (Medium): the Token Service's `issuedRecord` sets neither `ParentJTI` nor `ActSubject`
+    on an external `a2a_delegation` child, so `RevokeCascade` cannot reach the child from its parent. Record
+    the `actor_token`'s `jti` and `sub` on an actor-bearing exchange. After 0104 deletes the internal minter,
+    this is the only delegation-child issuance path.
+- Proposal routing.
+  - [ ] **F-8.5.26** (Low): `lenny/delegate_task` returns admission's `ErrParentNotRunning` (and
+    `ErrParentNotFound`) bare, so the caller receives `INTERNAL_ERROR`, which is `TRANSIENT` and retryable.
+    No §15.1 code covers a live parent that is not `running`, so the choice of code needs the proposal
+    pipeline unless an existing row is judged to fit. It can ride with any later §8.5 or §15.1 proposal, and
+    it lands after 0104, which edits the same handler.
+  - [ ] **Forwarded-call session binding proposal** (not yet written), after R14: **F-10.2.29** (Medium). The
+    gateway dispatches a `CH-MCP-PLATFORM` or `CH-MCP-CONNECTOR` call forwarded on `LNK-GWCONTROL` under the
+    session ID the adapter presents, with no check that the session is assigned to the calling pod
+    (0104 D11). It depends on R14, which gives the agent pod its client identity. The proposal covers:
+    - the `pod_assignment` invariant at every state edge (suspend, resume, recycle, and terminal);
+    - the RPCs the binding covers, and why `ListPlatformTools` and the scrub reports are excluded;
+    - the posture of the dev plaintext listener, which carries no SPIFFE identity;
+    - the timing of assignment relative to the first forwarded call;
+    - pods that serve concurrent sessions;
+    - the refusal outcome.
+- Awaiting an owner decision.
+  - [ ] **F-10.7.21** (Low): the §10.7 Eval Submission Contract Caller row says the agent runtime submits
+    evals "via its session credential", and §23.1 item 12 lists the agent runtime as a caller, while no
+    section defines a pod-held session credential and no code provides a pod-side eval path. The owner
+    decides whether runtime eval self-reporting exists. If it does not, the example is removed. If it does,
+    a proposal specifies its delivery path, which the owner noted would be an adapter or gateway API rather
+    than an MCP tool.
+
+**Test-harness direct fixes (2026-10-27).** The unit tier reported a package timeout for
+`pkg/gateway/podlifecycle/podsession` whenever the host was loaded, which hid the results of every
+other test in that binary.
+
+- [x] **Direct fix: T-17.4.22** (Medium): `podsession` started a fresh envtest control plane per test and
+  ran for about 1700 to 1960 s under `-race`, at or over the 1800-second unit-tier budget. Fixed in
+  `49d4b019c` and `e89d988f9`: the package, and `pkg/controller/warmpool` and
+  `pkg/gateway/podlifecycle/podclaim` with it, starts one control plane per binary and isolates each test in
+  its own namespace. `podsession` fell from 1776.6 s to 46.0 s, `warmpool` from 791.0 s to 64.8 s, and
+  `podclaim` from 761.0 s to 19.7 s.
+- Direct-fix queue, filed from the T-17.4.22 survey.
+  - [x] **T-17.4.26** (Medium): `pkg/controller/sandbox` starts a control plane in each test (345.9 s alone,
+    464.3 s in a scoped unit-tier run), now the slowest measured unit-tier package. Fixed in `229f9d829`: the
+    package shares one control plane, and each test gets its own namespace and a `Runtime` named after it.
+    The package fell from 378.4 s to 18.7 s.
+  - [x] **T-17.4.28** (Medium): `pkg/gateway/session/recycle` starts a control plane in each of its 21
+    envtest-backed tests and, at 251.5 s in a scoped unit-tier run, is now the slowest measured unit-tier
+    package. Filed from the T-17.4.26 fix (2026-10-27). Fixed in `1edca69df`: the package shares one control
+    plane and each test gets its own namespace. The package fell from 237.4 s to 19.4 s. The slowest measured
+    unit-tier package is now `pkg/gateway/sessionserver` (T-17.4.27, 198.9 s).
+  - [ ] **T-17.4.27** (Medium): `pkg/gateway/sessionserver` starts a private control plane per test in
+    parallel, and under load one start failed the unit tier with "resource quota evaluation timed out".
+  - [x] **T-17.4.23** (Low): `pkg/embedded/stack` starts a control plane in each of 19 tests (127.4 s).
+    Fixed in `2a0c51c4a` with no product change: tests whose code takes the namespace, or whose manifest
+    the test supplies, use per-test namespaces, and each object at a product-fixed namespace and name has
+    one owning test. The package fell from 151.7 s to 25.9 s.
+  - [ ] **T-17.4.24** (Low): `tests/tier2_component/controllers` starts one in 17 tests (146.3 s).
+  - [ ] **T-17.4.25** (Info): `cmd/lenny-gateway` starts one in 5 tests (about 31 s of 86.4 s). It took
+    109.1 s in a scoped unit-tier run on 2026-10-27, the slowest of that run.
 
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 

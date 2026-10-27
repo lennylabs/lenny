@@ -20,11 +20,9 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
-	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
 const (
-	testNS    = "lenny-agents"
 	testName  = "claude-worker-1"
 	testPodIP = "10.244.1.7"
 )
@@ -37,8 +35,8 @@ func newScheme(t *testing.T) *runtime.Scheme {
 	return s
 }
 
-// newClient boots an envtest API server, pre-creates the
-// `lenny-agents` namespace, and seeds the supplied objects (Spec
+// newClient creates the test's namespace on the package's shared envtest
+// API server (sharedEnv), and seeds the supplied objects (Spec
 // via Create, then Status via SSA Apply under the
 // `lenny-warm-pool-controller` field manager so the production
 // reconciler's Apply path sees a same-manager update rather than
@@ -47,17 +45,13 @@ func newScheme(t *testing.T) *runtime.Scheme {
 // kube-apiserver via envtest.
 func newClient(t *testing.T, s *runtime.Scheme, objs ...client.Object) client.Client {
 	t.Helper()
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	c, err := client.New(env.RESTConfig(), client.Options{Scheme: s})
 	if err != nil {
 		t.Fatalf("client.New: %v", err)
 	}
 	ctx := context.Background()
-	if err := c.Create(ctx, &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{Name: testNS},
-	}); err != nil && !apierrors.IsAlreadyExists(err) {
-		t.Fatalf("create namespace %s: %v", testNS, err)
-	}
+	ns := testNamespaces.Create(t, c)
 	// Pre-create the three §5.3 RuntimeClass objects podspec.Build
 	// references. envtest enforces the RuntimeClass admission check
 	// (real apiserver); the fake client did not. The handlers are
@@ -71,6 +65,14 @@ func newClient(t *testing.T, s *runtime.Scheme, objs ...client.Object) client.Cl
 		}
 	}
 	for _, o := range objs {
+		// A fixture built for another test's namespace or Runtime would
+		// land among another test's objects on the shared control plane.
+		if got := o.GetNamespace(); got != "" && got != ns {
+			t.Fatalf("seed %T %s: namespace %q is not this test's namespace %q", o, o.GetName(), got, ns)
+		}
+		if rt, ok := o.(*lennyv1.Runtime); ok && rt.Name != testRuntime(t) {
+			t.Fatalf("seed Runtime %s: name is not this test's Runtime %q", rt.Name, testRuntime(t))
+		}
 		var (
 			sbStatus  lennyv1.SandboxStatus
 			podStatus corev1.PodStatus
@@ -127,11 +129,11 @@ var (
 	_ = clientgoscheme.AddToScheme
 )
 
-func sandboxCR(phase string) *lennyv1.Sandbox {
+func sandboxCR(t *testing.T, phase string) *lennyv1.Sandbox {
 	return &lennyv1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNamespace(t)},
 		Spec: lennyv1.SandboxSpec{
-			RuntimeRef:       "claude-code",
+			RuntimeRef:       testRuntime(t),
 			PoolRef:          "claude-worker",
 			IsolationProfile: "sandboxed",
 		},
@@ -147,23 +149,23 @@ func TestReconcileClampsPodGraceToTemplateCeiling_spec_4_6_1(t *testing.T) {
 	s := newScheme(t)
 	ceiling := int64(45)
 	tmpl := &lennyv1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-template", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "claude-template", Namespace: testNamespace(t)},
 		Spec: lennyv1.SandboxTemplateSpec{
-			RuntimeRef:                       "claude-code",
+			RuntimeRef:                       testRuntime(t),
 			MaxTerminationGracePeriodSeconds: &ceiling,
 		},
 	}
 	pool := &lennyv1.SandboxWarmPool{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker", Namespace: testNamespace(t)},
 		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "claude-template", MinWarm: 1, MaxWarm: 3},
 	}
-	c := newClient(t, s, sandboxCR(""), runtimeCR(), tmpl, pool)
+	c := newClient(t, s, sandboxCR(t, ""), runtimeCR(t), tmpl, pool)
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	var pod corev1.Pod
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); err != nil {
 		t.Fatalf("get pod: %v", err)
 	}
 	if g := pod.Spec.TerminationGracePeriodSeconds; g == nil || *g != ceiling {
@@ -171,9 +173,9 @@ func TestReconcileClampsPodGraceToTemplateCeiling_spec_4_6_1(t *testing.T) {
 	}
 }
 
-func runtimeCR() *lennyv1.Runtime {
+func runtimeCR(t *testing.T) *lennyv1.Runtime {
 	return &lennyv1.Runtime{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-code"},
+		ObjectMeta: metav1.ObjectMeta{Name: testRuntime(t)},
 		Spec: lennyv1.RuntimeSpec{
 			Type: "agent",
 			// spec: §5.3 (F-5.3.4) — the Runtime CRD pins images by digest;
@@ -186,12 +188,12 @@ func runtimeCR() *lennyv1.Runtime {
 	}
 }
 
-func podCR(phase corev1.PodPhase, ready bool) *corev1.Pod {
+func podCR(t *testing.T, phase corev1.PodPhase, ready bool) *corev1.Pod {
 	// envtest enforces real Pod validation (spec.containers is
 	// required). A stand-in container suffices; the reconciler reads
 	// only pod.Status, not pod.Spec, for its phase decisions.
 	p := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNamespace(t)},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{Name: "stub", Image: "k8s.gcr.io/pause"}},
 		},
@@ -209,7 +211,7 @@ func reconcile(t *testing.T, c client.Client, s *runtime.Scheme) error {
 	t.Helper()
 	r := &sandbox.Reconciler{Client: c, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1", SupervisorImage: "ghcr.io/lennylabs/lenny-supervisor:v1"}
 	_, err := r.Reconcile(context.Background(), ctrl.Request{
-		NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName},
+		NamespacedName: client.ObjectKey{Namespace: testNamespace(t), Name: testName},
 	})
 	return err
 }
@@ -217,7 +219,7 @@ func reconcile(t *testing.T, c client.Client, s *runtime.Scheme) error {
 func getSandbox(t *testing.T, c client.Client) lennyv1.Sandbox {
 	t.Helper()
 	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &sb); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
 	return sb
@@ -230,18 +232,18 @@ func getSandbox(t *testing.T, c client.Client) lennyv1.Sandbox {
 // spec: §5.3.
 func TestReconcileDevModeDefaultsPodToRunc_spec_5_3(t *testing.T) {
 	s := newScheme(t)
-	sb := sandboxCR("")
+	sb := sandboxCR(t, "")
 	sb.Spec.IsolationProfile = "" // exercise the controller default fallback
-	c := newClient(t, s, sb, runtimeCR())
+	c := newClient(t, s, sb, runtimeCR(t))
 
 	r := &sandbox.Reconciler{Client: c, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1", SupervisorImage: "ghcr.io/lennylabs/lenny-supervisor:v1", DevMode: true}
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{
-		NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName},
+		NamespacedName: client.ObjectKey{Namespace: testNamespace(t), Name: testName},
 	}); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	var pod corev1.Pod
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); err != nil {
 		t.Fatalf("expected a backing pod: %v", err)
 	}
 	if pod.Spec.RuntimeClassName == nil || *pod.Spec.RuntimeClassName != "runc" {
@@ -261,16 +263,16 @@ func TestReconcileDevModeDefaultsPodToRunc_spec_5_3(t *testing.T) {
 // spec: §5.3 row 3 (microvm → kata); §17.2.
 func TestReconcileMicrovmLaunchesKataPod_spec_5_3_8(t *testing.T) {
 	s := newScheme(t)
-	sb := sandboxCR("")
+	sb := sandboxCR(t, "")
 	sb.Spec.IsolationProfile = "microvm"
-	c := newClient(t, s, sb, runtimeCR())
+	c := newClient(t, s, sb, runtimeCR(t))
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
 	var pod corev1.Pod
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); err != nil {
 		t.Fatalf("expected a Kata-isolated backing pod: %v", err)
 	}
 	if pod.Spec.RuntimeClassName == nil || *pod.Spec.RuntimeClassName != "kata" {
@@ -329,14 +331,14 @@ func podHasKataToleration(pod *corev1.Pod) bool {
 
 func TestReconcileCreatesPodForNewSandbox(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, sandboxCR(""), runtimeCR())
+	c := newClient(t, s, sandboxCR(t, ""), runtimeCR(t))
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
 	var pod corev1.Pod
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); err != nil {
 		t.Fatalf("expected a backing pod to be created: %v", err)
 	}
 	if len(pod.Spec.Containers) != 2 {
@@ -363,18 +365,18 @@ func TestReconcileCreatesPodForNewSandbox(t *testing.T) {
 // pod.
 func TestReconcileCreatesEmbeddedPodForEmbeddedRuntime(t *testing.T) {
 	s := newScheme(t)
-	rt := runtimeCR()
+	rt := runtimeCR(t)
 	rt.Spec.DeploymentModel = "embedded"
 	// spec: §5.1 (command) — command is forbidden on an embedded runtime.
 	rt.Spec.Command = nil
-	c := newClient(t, s, sandboxCR(""), rt)
+	c := newClient(t, s, sandboxCR(t, ""), rt)
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
 	var pod corev1.Pod
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); err != nil {
 		t.Fatalf("expected a backing pod to be created: %v", err)
 	}
 	if len(pod.Spec.Containers) != 1 {
@@ -391,16 +393,16 @@ func TestReconcileCreatesEmbeddedPodForEmbeddedRuntime(t *testing.T) {
 // rejects the pod and a T4 Runtime cannot back any pool. spec: §6.4.
 func TestReconcileWiresT4WorkspaceTierFromRuntimeCRD_spec_6_4(t *testing.T) {
 	s := newScheme(t)
-	rt := runtimeCR()
+	rt := runtimeCR(t)
 	rt.Spec.WorkspaceTier = "T4"
-	c := newClient(t, s, sandboxCR(""), rt)
+	c := newClient(t, s, sandboxCR(t, ""), rt)
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
 	var pod corev1.Pod
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); err != nil {
 		t.Fatalf("expected a backing pod to be created: %v", err)
 	}
 	if got := pod.Labels["lenny.dev/workspace-tier"]; got != "t4" {
@@ -431,13 +433,13 @@ func TestReconcileWiresT4WorkspaceTierFromRuntimeCRD_spec_6_4(t *testing.T) {
 // carries the T4 label/selector/toleration. spec: §6.4.
 func TestReconcileNonT4RuntimeOmitsT4Injection_spec_6_4(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, sandboxCR(""), runtimeCR())
+	c := newClient(t, s, sandboxCR(t, ""), runtimeCR(t))
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	var pod corev1.Pod
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); err != nil {
 		t.Fatalf("get pod: %v", err)
 	}
 	if _, ok := pod.Labels["lenny.dev/workspace-tier"]; ok {
@@ -456,7 +458,7 @@ func TestReconcileNonT4RuntimeOmitsT4Injection_spec_6_4(t *testing.T) {
 
 func TestReconcileAdvancesWarmingToIdleWhenPodReady(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, sandboxCR("warming"), runtimeCR(), podCR(corev1.PodRunning, true))
+	c := newClient(t, s, sandboxCR(t, "warming"), runtimeCR(t), podCR(t, corev1.PodRunning, true))
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -468,7 +470,7 @@ func TestReconcileAdvancesWarmingToIdleWhenPodReady(t *testing.T) {
 
 func TestReconcileRecordsPodIP(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, sandboxCR("warming"), runtimeCR(), podCR(corev1.PodRunning, true))
+	c := newClient(t, s, sandboxCR(t, "warming"), runtimeCR(t), podCR(t, corev1.PodRunning, true))
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -480,7 +482,7 @@ func TestReconcileRecordsPodIP(t *testing.T) {
 
 func TestReconcileAdvancesWarmingToFailedOnPodFailure(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, sandboxCR("warming"), runtimeCR(), podCR(corev1.PodFailed, false))
+	c := newClient(t, s, sandboxCR(t, "warming"), runtimeCR(t), podCR(t, corev1.PodFailed, false))
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -492,7 +494,7 @@ func TestReconcileAdvancesWarmingToFailedOnPodFailure(t *testing.T) {
 
 func TestReconcileWaitsWhilePodPending(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, sandboxCR("warming"), runtimeCR(), podCR(corev1.PodPending, false))
+	c := newClient(t, s, sandboxCR(t, "warming"), runtimeCR(t), podCR(t, corev1.PodPending, false))
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -504,7 +506,7 @@ func TestReconcileWaitsWhilePodPending(t *testing.T) {
 
 func TestReconcileDrainsIdleSandboxWhosePodVanished(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, sandboxCR("idle"), runtimeCR())
+	c := newClient(t, s, sandboxCR(t, "idle"), runtimeCR(t))
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -516,13 +518,13 @@ func TestReconcileDrainsIdleSandboxWhosePodVanished(t *testing.T) {
 
 func TestReconcileDeletesPodWhileDraining(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, sandboxCR("draining"), runtimeCR(), podCR(corev1.PodRunning, true))
+	c := newClient(t, s, sandboxCR(t, "draining"), runtimeCR(t), podCR(t, corev1.PodRunning, true))
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	var pod corev1.Pod
-	err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod)
+	err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod)
 	if !apierrors.IsNotFound(err) {
 		t.Errorf("draining sandbox should have its pod deleted, got err=%v", err)
 	}
@@ -530,7 +532,7 @@ func TestReconcileDeletesPodWhileDraining(t *testing.T) {
 
 func TestReconcileTerminatesDrainingSandboxWithNoPod(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, sandboxCR("draining"), runtimeCR())
+	c := newClient(t, s, sandboxCR(t, "draining"), runtimeCR(t))
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -542,7 +544,7 @@ func TestReconcileTerminatesDrainingSandboxWithNoPod(t *testing.T) {
 
 func TestReconcileMissingRuntimeErrors(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, sandboxCR("")) // no Runtime CR
+	c := newClient(t, s, sandboxCR(t, "")) // no Runtime CR
 
 	if err := reconcile(t, c, s); err == nil {
 		t.Fatal("Reconcile should error when the referenced Runtime is missing")

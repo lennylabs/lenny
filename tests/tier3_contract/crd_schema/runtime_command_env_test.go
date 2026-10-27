@@ -80,8 +80,8 @@ func TestRuntimeServedSchemaCarriesCommandWithRules(t *testing.T) {
 // diagnosis: the committed Runtime CRD no longer carries spec.env or one of
 // its §5.1 validation rules, so the API server would admit a duplicate or
 // platform-reserved variable name, or env on a runtime the supervisor does
-// not launch. Regenerate the CRD from the Go type and re-apply the
-// post-generation markers.
+// not launch. Regenerate the CRD from the Go type with
+// `make generate`.
 func TestRuntimeServedSchemaCarriesEnvWithRules(t *testing.T) {
 	crd := loadChartCRD(t, "lenny.dev_runtimes.yaml")
 	env := specProperty(t, crd, "env")

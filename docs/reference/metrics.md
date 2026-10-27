@@ -347,7 +347,7 @@ These are derived from credential lifecycle counters, not directly named in the 
 
 | Metric | Type | Labels | Description | Used by |
 |:-------|:-----|:-------|:------------|:--------|
-| `lenny_workspace_seal_duration_seconds` | Histogram | `pool`, `outcome` | Seal-and-export completion time: `success`, `timeout`, `permanent`. The `permanent` outcome records a seal that failed on a permanent adapter error and returned immediately without retrying. | `WorkspaceSealStuck` alert (fires on the `outcome="timeout"` arm alone). |
+| `lenny_workspace_seal_duration_seconds` | Histogram | `pool`, `outcome` | Seal-and-export completion time: `success`, `timeout`, `permanent`. The `permanent` outcome records a seal that ended on a permanent condition (a permanent adapter error, a session binding lost during the seal, or a deleted session row) and returned immediately without retrying. | `WorkspaceSealStuck` alert (fires on the `outcome="timeout"` arm alone). |
 
 ---
 

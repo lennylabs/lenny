@@ -20,10 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 )
 
-const (
-	testNS   = "lenny-agents"
-	testPool = "claude-worker"
-)
+const testPool = "claude-worker"
 
 func newScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
@@ -42,11 +39,11 @@ func newScheme(t *testing.T) *runtime.Scheme {
 	return s
 }
 
-func sandboxIn(pool, name, phase string) *lennyv1.Sandbox {
+func sandboxIn(ns, pool, name, phase string) *lennyv1.Sandbox {
 	return &lennyv1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: testNS,
+			Namespace: ns,
 			Labels:    map[string]string{warmpool.LabelPool: pool},
 		},
 		Status: lennyv1.SandboxStatus{Phase: phase},
@@ -57,8 +54,9 @@ func sandboxIn(pool, name, phase string) *lennyv1.Sandbox {
 // a Claimer wired to it.
 func claimerFor(t *testing.T, objs ...client.Object) (*podclaim.Claimer, client.Client) {
 	t.Helper()
+	ns := testNamespace(t)
 	c := newEnvtestClient(t, objs...)
-	return &podclaim.Claimer{Client: c, Namespace: testNS}, c
+	return &podclaim.Claimer{Client: c, Namespace: ns}, c
 }
 
 // spec: §4.6.1, §4.6.3
@@ -68,7 +66,8 @@ func claimerFor(t *testing.T, objs ...client.Object) (*podclaim.Claimer, client.
 // Sandbox.status; the WarmPoolController projects the pod's phase from the
 // claim binding state.
 func TestClaimBindsAnIdlePod_spec_4_6(t *testing.T) {
-	claimer, c := claimerFor(t, sandboxIn(testPool, "sbx-1", "idle"))
+	ns := testNamespace(t)
+	claimer, c := claimerFor(t, sandboxIn(ns, testPool, "sbx-1", "idle"))
 
 	claim, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme",
@@ -87,7 +86,7 @@ func TestClaimBindsAnIdlePod_spec_4_6(t *testing.T) {
 	}
 
 	var stored lennyv1.SandboxClaim
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: claim.Name}, &stored); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: claim.Name}, &stored); err != nil {
 		t.Fatalf("the SandboxClaim was not persisted: %v", err)
 	}
 	if stored.Status.Phase != "bound" {
@@ -97,7 +96,7 @@ func TestClaimBindsAnIdlePod_spec_4_6(t *testing.T) {
 	// The gateway no longer writes Sandbox.status.phase; the WPC projection
 	// owns it, so the pod's status stays at the WPC-written idle value here.
 	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "sbx-1"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
 	if sb.Status.Phase != "idle" {
@@ -115,11 +114,12 @@ func TestClaimReturnsErrNoIdlePodWhenPoolEmpty(t *testing.T) {
 }
 
 func TestClaimSkipsNonIdleSandboxes(t *testing.T) {
+	ns := testNamespace(t)
 	claimer, _ := claimerFor(
 		t,
-		sandboxIn(testPool, "sbx-warming", "warming"),
-		sandboxIn(testPool, "sbx-claimed", "claimed"),
-		sandboxIn(testPool, "sbx-draining", "draining"),
+		sandboxIn(ns, testPool, "sbx-warming", "warming"),
+		sandboxIn(ns, testPool, "sbx-claimed", "claimed"),
+		sandboxIn(ns, testPool, "sbx-draining", "draining"),
 	)
 	_, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{Pool: testPool, SessionID: "s"})
 	if !errors.Is(err, podclaim.ErrNoIdlePod) {
@@ -128,11 +128,12 @@ func TestClaimSkipsNonIdleSandboxes(t *testing.T) {
 }
 
 func TestClaimPicksTheIdleSandboxAmongMixedPhases(t *testing.T) {
+	ns := testNamespace(t)
 	claimer, _ := claimerFor(
 		t,
-		sandboxIn(testPool, "sbx-warming", "warming"),
-		sandboxIn(testPool, "sbx-idle", "idle"),
-		sandboxIn(testPool, "sbx-claimed", "claimed"),
+		sandboxIn(ns, testPool, "sbx-warming", "warming"),
+		sandboxIn(ns, testPool, "sbx-idle", "idle"),
+		sandboxIn(ns, testPool, "sbx-claimed", "claimed"),
 	)
 	claim, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{Pool: testPool, SessionID: "s"})
 	if err != nil {
@@ -144,8 +145,9 @@ func TestClaimPicksTheIdleSandboxAmongMixedPhases(t *testing.T) {
 }
 
 func TestClaimScopesToTheRequestedPool(t *testing.T) {
+	ns := testNamespace(t)
 	// The only idle pod belongs to a different pool.
-	claimer, _ := claimerFor(t, sandboxIn("other-pool", "sbx-other", "idle"))
+	claimer, _ := claimerFor(t, sandboxIn(ns, "other-pool", "sbx-other", "idle"))
 
 	_, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{Pool: testPool, SessionID: "s"})
 	if !errors.Is(err, podclaim.ErrNoIdlePod) {
@@ -159,19 +161,20 @@ func TestClaimScopesToTheRequestedPool(t *testing.T) {
 // AlreadyExists, so Claim skips it and acquires the next idle pod; a pool
 // where every idle pod is already claimed surfaces ErrNoIdlePod.
 func TestClaimSkipsAlreadyClaimedPod_spec_4_6(t *testing.T) {
+	ns := testNamespace(t)
 	c := newEnvtestClient(
 		t,
-		sandboxIn(testPool, "sbx-1", "idle"),
-		sandboxIn(testPool, "sbx-2", "idle"),
+		sandboxIn(ns, testPool, "sbx-1", "idle"),
+		sandboxIn(ns, testPool, "sbx-2", "idle"),
 	)
 	ctx := context.Background()
 	// A competing replica already claimed sbx-1: its per-pod claim exists.
-	if _, err := podclaim.CreateClaim(ctx, c, testNS, "sbx-1", podclaim.ClaimRequest{
+	if _, err := podclaim.CreateClaim(ctx, c, ns, "sbx-1", podclaim.ClaimRequest{
 		Pool: testPool, SessionID: "s", TenantID: "acme",
 	}); err != nil {
 		t.Fatalf("seed first claim: %v", err)
 	}
-	claimer := &podclaim.Claimer{Client: c, Namespace: testNS}
+	claimer := &podclaim.Claimer{Client: c, Namespace: ns}
 
 	// Claim skips the already-claimed sbx-1 (AlreadyExists on the per-pod
 	// name) and acquires the next idle pod, sbx-2.
@@ -189,14 +192,15 @@ func TestClaimSkipsAlreadyClaimedPod_spec_4_6(t *testing.T) {
 // spec: §4.6.1 — when every idle pod already carries a per-pod claim, a new
 // acquisition surfaces ErrNoIdlePod so the caller does not double-claim.
 func TestClaimReturnsErrNoIdlePodWhenAllClaimed_spec_4_6(t *testing.T) {
-	c := newEnvtestClient(t, sandboxIn(testPool, "sbx-1", "idle"))
+	ns := testNamespace(t)
+	c := newEnvtestClient(t, sandboxIn(ns, testPool, "sbx-1", "idle"))
 	ctx := context.Background()
-	if _, err := podclaim.CreateClaim(ctx, c, testNS, "sbx-1", podclaim.ClaimRequest{
+	if _, err := podclaim.CreateClaim(ctx, c, ns, "sbx-1", podclaim.ClaimRequest{
 		Pool: testPool, SessionID: "s", TenantID: "acme",
 	}); err != nil {
 		t.Fatalf("seed claim: %v", err)
 	}
-	claimer := &podclaim.Claimer{Client: c, Namespace: testNS}
+	claimer := &podclaim.Claimer{Client: c, Namespace: ns}
 	_, err := claimer.Claim(ctx, podclaim.ClaimRequest{
 		Pool: testPool, SessionID: "s2", TenantID: "acme",
 	})
@@ -212,7 +216,8 @@ func TestClaimReturnsErrNoIdlePodWhenAllClaimed_spec_4_6(t *testing.T) {
 // TestClaimDoesNotWriteSandboxStatus_spec_4_6_3 — verifies no
 // lenny-gateway managedFields entry on the Sandbox status subresource.
 func TestClaimDoesNotWriteSandboxStatus_spec_4_6_3(t *testing.T) {
-	claimer, c := claimerFor(t, sandboxIn(testPool, "sbx-1", "idle"))
+	ns := testNamespace(t)
+	claimer, c := claimerFor(t, sandboxIn(ns, testPool, "sbx-1", "idle"))
 
 	if _, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme",
@@ -221,7 +226,7 @@ func TestClaimDoesNotWriteSandboxStatus_spec_4_6_3(t *testing.T) {
 	}
 
 	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "sbx-1"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
 	for _, mf := range sb.ManagedFields {
@@ -235,15 +240,16 @@ func TestClaimDoesNotWriteSandboxStatus_spec_4_6_3(t *testing.T) {
 // claim-<podName> name) returns the AlreadyExists error class so the
 // claimer's apierrors.IsAlreadyExists skip-to-next-pod path triggers.
 func TestClaimCreateClaimPerPodAlreadyExistsClass(t *testing.T) {
+	ns := testNamespace(t)
 	c := newEnvtestClient(t)
 	ctx := context.Background()
-	if _, err := podclaim.CreateClaim(ctx, c, testNS, "sbx-x", podclaim.ClaimRequest{
+	if _, err := podclaim.CreateClaim(ctx, c, ns, "sbx-x", podclaim.ClaimRequest{
 		Pool: testPool, SessionID: "s", TenantID: "acme",
 	}); err != nil {
 		t.Fatalf("first CreateClaim: %v", err)
 	}
 
-	_, err := podclaim.CreateClaim(ctx, c, testNS, "sbx-x", podclaim.ClaimRequest{
+	_, err := podclaim.CreateClaim(ctx, c, ns, "sbx-x", podclaim.ClaimRequest{
 		Pool: testPool, SessionID: "s2", TenantID: "acme",
 	})
 	if err == nil {
@@ -257,8 +263,8 @@ func TestClaimCreateClaimPerPodAlreadyExistsClass(t *testing.T) {
 // reservedSandbox builds a Sandbox projecting the §6.2 `reserved` phase,
 // pinned to tenantID, the projection the acquisition-path rebind branch
 // scans for.
-func reservedSandbox(name, tenantID string) *lennyv1.Sandbox {
-	sb := sandboxIn(testPool, name, "reserved")
+func reservedSandbox(ns, name, tenantID string) *lennyv1.Sandbox {
+	sb := sandboxIn(ns, testPool, name, "reserved")
 	sb.Status.TenantID = tenantID
 	if tenantID != "" {
 		sb.Labels[podclaim.LabelTenant] = tenantID
@@ -271,23 +277,24 @@ func reservedSandbox(name, tenantID string) *lennyv1.Sandbox {
 // reservedAt + holdTTL where reservedAt is the supplied now.
 func seedReservedClaim(t *testing.T, c client.Client, podID, tenantID string, now time.Time, holdTTL time.Duration) {
 	t.Helper()
+	ns := testNamespace(t)
 	ctx := context.Background()
 	name := podclaim.ClaimName(podID)
 	claim := &lennyv1.SandboxClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: podID, TenantID: tenantID},
 	}
 	if err := c.Create(ctx, claim); err != nil {
 		t.Fatalf("create claim %s: %v", name, err)
 	}
-	if err := podclaim.WriteBoundStatus(ctx, c, testNS, name); err != nil {
+	if err := podclaim.WriteBoundStatus(ctx, c, ns, name); err != nil {
 		t.Fatalf("seed bound: %v", err)
 	}
 	clk := func() time.Time { return now }
-	if err := podclaim.WriteRecyclingStatus(ctx, c, testNS, name, clk); err != nil {
+	if err := podclaim.WriteRecyclingStatus(ctx, c, ns, name, clk); err != nil {
 		t.Fatalf("seed recycling: %v", err)
 	}
-	if _, err := podclaim.WriteReservedStatus(ctx, c, testNS, name, holdTTL, clk); err != nil {
+	if _, err := podclaim.WriteReservedStatus(ctx, c, ns, name, holdTTL, clk); err != nil {
 		t.Fatalf("seed reserved: %v", err)
 	}
 }
@@ -298,14 +305,15 @@ func seedReservedClaim(t *testing.T, c client.Client, podID, tenantID string, no
 // fresh idle-pod acquisition.
 // spec: 3.2 (within-hold rebind, no acquisition round trip), 4.6.1 (reserved hold)
 func TestClaimRebindsReservedPodWithinHold_spec_3_2(t *testing.T) {
+	ns := testNamespace(t)
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	// The rebind reads the reserved pod before its patch, so the Pod exists.
-	c := newEnvtestClient(t, reservedSandbox("sbx-held", "acme"), lifetimePod(testPool, "sbx-held", "acme", "keep"))
+	c := newEnvtestClient(t, reservedSandbox(ns, "sbx-held", "acme"), lifetimePod(ns, testPool, "sbx-held", "acme", "keep"))
 	seedReservedClaim(t, c, "sbx-held", "acme", now, 30*time.Second)
 
 	var rebound []string
 	claimer := &podclaim.Claimer{
-		Client: c, Namespace: testNS,
+		Client: c, Namespace: ns,
 		Now:      func() time.Time { return now.Add(5 * time.Second) }, // within the 30s hold
 		OnRebind: func(podID string) { rebound = append(rebound, podID) },
 	}
@@ -332,16 +340,17 @@ func TestClaimRebindsReservedPodWithinHold_spec_3_2(t *testing.T) {
 // acquisition.
 // spec: 3.2 (hold-expiry, no rebind of an expired hold)
 func TestClaimSkipsExpiredReservedHoldAndAcquiresIdle_spec_3_2(t *testing.T) {
+	ns := testNamespace(t)
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	c := newEnvtestClient(
 		t,
-		reservedSandbox("sbx-expired", "acme"),
-		sandboxIn(testPool, "sbx-idle", "idle"),
+		reservedSandbox(ns, "sbx-expired", "acme"),
+		sandboxIn(ns, testPool, "sbx-idle", "idle"),
 	)
 	seedReservedClaim(t, c, "sbx-expired", "acme", now, 10*time.Second)
 
 	claimer := &podclaim.Claimer{
-		Client: c, Namespace: testNS,
+		Client: c, Namespace: ns,
 		Now: func() time.Time { return now.Add(time.Minute) }, // past the 10s hold
 	}
 	claim, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
@@ -360,16 +369,17 @@ func TestClaimSkipsExpiredReservedHoldAndAcquiresIdle_spec_3_2(t *testing.T) {
 // fresh idle pod instead.
 // spec: 3.2 (a reserved pod is held for its pinned tenant alone), 5.2 (tenant pinning)
 func TestClaimDoesNotRebindReservedPodOfOtherTenant_spec_3_2(t *testing.T) {
+	ns := testNamespace(t)
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	c := newEnvtestClient(
 		t,
-		reservedSandbox("sbx-globex", "globex"),
-		sandboxIn(testPool, "sbx-idle", "idle"),
+		reservedSandbox(ns, "sbx-globex", "globex"),
+		sandboxIn(ns, testPool, "sbx-idle", "idle"),
 	)
 	seedReservedClaim(t, c, "sbx-globex", "globex", now, time.Minute)
 
 	claimer := &podclaim.Claimer{
-		Client: c, Namespace: testNS, Now: func() time.Time { return now.Add(5 * time.Second) },
+		Client: c, Namespace: ns, Now: func() time.Time { return now.Add(5 * time.Second) },
 	}
 	claim, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
 		Pool: testPool, SessionID: "sess-4", TenantID: "acme", ReusesPods: true, RequiresProcessAcknowledgment: true,
