@@ -87,10 +87,14 @@ var (
 	//
 	// The earlier four-to-five-minute figure was measured while most of the
 	// suite was refused at session creation and returned in milliseconds.
-	// With those tests reaching the gateway the battery runs about thirteen
-	// minutes on a developer host, so a budget that was comfortable then
-	// aborts a passing suite now. Override:
-	// LENNY_TEST_INTEGRATION_TIMEOUT.
+	// A passing tests/tier4_integration package took 1679 seconds on the
+	// 8-core developer host on 2026-10-28, after its lifecycle harnesses
+	// moved onto a shared control plane and a shared Postgres container
+	// (TEST-GAPS T-17.4.31); it took 2568 seconds before. The package runs
+	// most of its tests one at a time and sits about 120 seconds under the
+	// budget, so a loaded host can still push it over (TEST-GAPS
+	// T-17.4.32).
+	// Override: LENNY_TEST_INTEGRATION_TIMEOUT.
 	tierIntegrationTimeout = tierTimeout("LENNY_TEST_INTEGRATION_TIMEOUT", 1800*time.Second)
 
 	// tierE2EKindTimeout caps the e2e_kind tier. The suite drives a live

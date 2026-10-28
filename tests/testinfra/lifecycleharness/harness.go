@@ -44,6 +44,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	"github.com/lennylabs/lenny/pkg/mtls/certreload"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	"github.com/lennylabs/lenny/tests/testinfra/gatewaypki"
 )
 
@@ -109,6 +110,10 @@ type Options struct {
 	DurableInbox bool
 	// Recycling, when true, makes the warm pool a recycling pool.
 	Recycling bool
+	// ControlPlane, when set, runs the harness cluster on that shared
+	// envtest control plane in a namespace of its own
+	// (ClusterOptions.ControlPlane); nil starts a private control plane.
+	ControlPlane *envtest.Shared
 	// MaxCreatedSeconds is every replica's watchdog bound on a session
 	// that stays in created; zero keeps the watchdog default.
 	MaxCreatedSeconds int
@@ -294,7 +299,7 @@ func (r *Replica) Crashed() bool {
 }
 
 // New builds the harness. It needs envtest; a test that cannot start it is
-// skipped by envtest.Start.
+// skipped by envtest.Start, or by Shared.Start on a shared control plane.
 func New(t testing.TB, opts Options) *Harness {
 	t.Helper()
 	if opts.Replicas < 1 {
@@ -309,7 +314,7 @@ func New(t testing.TB, opts Options) *Harness {
 		Trace:             NewTrace(),
 		Redis:             mr,
 		Leases:            leasestore.New(rc),
-		Cluster:           NewClusterWith(t, ClusterOptions{Recycling: opts.Recycling, HeartbeatInterval: opts.HeartbeatInterval}),
+		Cluster:           NewClusterWith(t, ClusterOptions{Recycling: opts.Recycling, HeartbeatInterval: opts.HeartbeatInterval, ControlPlane: opts.ControlPlane}),
 		Checkpoints:       &Checkpointer{},
 		Interactions:      interactionstore.NewMemory(),
 		TreeMetrics:       &TreeMetrics{},
@@ -436,7 +441,7 @@ func (h *Harness) AddReplica(name string) *Replica {
 	}
 	binder := &podsession.Binder{
 		Client:           crashableClient{Client: h.Cluster.Client, crashed: &r.k8sDown, claims: h.Claims, retire: h.Cluster.retireByName, fault: &r.claimFault},
-		Namespace:        Namespace,
+		Namespace:        h.Cluster.Namespace,
 		AdapterPort:      50051,
 		AcceptedVersions: []string{adapter.ProtocolVersionV1},
 		DialAdapter:      h.Cluster.Dial,
@@ -460,7 +465,7 @@ func (h *Harness) AddReplica(name string) *Replica {
 		PodBinder:                  binder,
 		PodRegistry:                reg,
 		Executor:                   exec,
-		AgentNamespace:             Namespace,
+		AgentNamespace:             h.Cluster.Namespace,
 		CoordinationLeaseStore:     h.Leases,
 		CoordinationLeaseTTL:       LeaseTTL,
 		ReplicaID:                  id,

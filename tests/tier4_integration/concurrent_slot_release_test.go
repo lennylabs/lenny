@@ -317,6 +317,7 @@ func newPostTerminalMemHarness(t *testing.T) *lifecycleharness.Harness {
 	t.Helper()
 	return lifecycleharness.New(t, lifecycleharness.Options{
 		Replicas: 2, Pods: 1, MaxConcurrentSessions: concurrentSlots, CredentialPool: true,
+		ControlPlane: &harnessControlPlane,
 	})
 }
 
