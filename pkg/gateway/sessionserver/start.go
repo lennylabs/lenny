@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -171,6 +172,9 @@ func (s *Server) launchAndPublish(ctx, launchCtx context.Context, row sessionsto
 		// closed rather than double-bind.
 		if err := s.acquireCoordinationLease(ctx, row.TenantID, row.ID); err != nil {
 			return func(w http.ResponseWriter) {
+				// spec: §15.1 — every STARTING_FAILED answer carries
+				// Retry-After.
+				w.Header().Set("Retry-After", strconv.Itoa(sessionCreationFailedRetryAfterSeconds))
 				s.writeError(w, http.StatusServiceUnavailable, "STARTING_FAILED",
 					"could not acquire the session's coordination lease: "+err.Error(), nil)
 			}

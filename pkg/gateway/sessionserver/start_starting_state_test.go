@@ -511,7 +511,8 @@ func TestStartWriteStoreErrorAnswersInternal_spec_15_1(t *testing.T) {
 // TestStartForeignLeaseHolderFailsTheSession_spec_7_2 pins the exit whose
 // lease acquire meets a live foreign holder: the launch never runs, the
 // foreign lease survives the release, and the session is failed with
-// STARTING_FAILED by a write that runs after the request context ended.
+// STARTING_FAILED, carrying Retry-After, by a write that runs after the
+// request context ended.
 //
 // spec: §7.2 (Session state machine: starting → failed), §10.1
 // (per-session coordination lease), §15.1 (/start)
@@ -529,6 +530,12 @@ func TestStartForeignLeaseHolderFailsTheSession_spec_7_2(t *testing.T) {
 	rr := f.start(ctx, f.srv)
 	if rr.Code != http.StatusServiceUnavailable || decodeStartErr(t, rr).Error.Code != "STARTING_FAILED" {
 		t.Fatalf("/start = %d %s, want 503 STARTING_FAILED", rr.Code, rr.Body.String())
+	}
+	// spec: §15.1 — the STARTING_FAILED catalog row sets Retry-After on
+	// every answer, including the lease-acquire refusal, at the default of
+	// five seconds.
+	if got, want := rr.Header().Get("Retry-After"), "5"; got != want {
+		t.Errorf("Retry-After = %q, want %q", got, want)
 	}
 	if n := f.gate.launches(); n != 0 {
 		t.Errorf("launches = %d, want 0", n)
