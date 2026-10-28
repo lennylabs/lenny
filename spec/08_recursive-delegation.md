@@ -844,6 +844,7 @@ input_required → running               (request timeout — maxRequestInputWai
 input_required → running               (request cancelled by parent via lenny/cancel_child or equivalent)
 input_required → cancelled             (parent cancels while awaiting input)
 input_required → expired               (deadline reached while awaiting input)
+input_required → completed             (client terminate while awaiting input)
 input_required → failed                (non-retryable failure while awaiting input)
 input_required → failed                (BUDGET_KEYS_EXPIRED detected while awaiting input — see §8.3)
 ```
