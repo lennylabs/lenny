@@ -246,6 +246,35 @@ func (c *Cluster) Kubectl(args ...string) *exec.Cmd {
 	return exec.Command("kubectl", append([]string{"--kubeconfig", c.KubeconfigPath}, args...)...)
 }
 
+// DedicatedClusterArgs returns the argument list for a `kind` command
+// that creates, deletes, or exports a cluster other than the shared
+// one, with an explicit --kubeconfig naming a file the caller owns.
+//
+// Without the flag, `kind create cluster` merges the new cluster into
+// the file $KUBECONFIG names and makes it the current-context, and
+// `kind delete cluster` removes those entries again and clears the
+// current-context because it names the deleted cluster. A test run
+// with KUBECONFIG pointing at the shared cluster's kubeconfig therefore
+// leaves that file with no current-context, and every kubectl call
+// that relies on it falls back to localhost:8080. Routing a dedicated
+// cluster's kind commands at a private kubeconfig keeps the caller's
+// file untouched. The function fails on an empty path, and on an
+// argument list that already names a kubeconfig, so a caller cannot
+// fall back to the inherited file by accident.
+func DedicatedClusterArgs(kubeconfig string, args ...string) ([]string, error) {
+	if strings.TrimSpace(kubeconfig) == "" {
+		return nil, fmt.Errorf("kind: a dedicated cluster command needs an explicit kubeconfig path")
+	}
+	for _, a := range args {
+		if a == "--kubeconfig" || strings.HasPrefix(a, "--kubeconfig=") {
+			return nil, fmt.Errorf("kind: argument list already names a kubeconfig: %q", args)
+		}
+	}
+	out := make([]string, 0, len(args)+2)
+	out = append(out, args...)
+	return append(out, "--kubeconfig", kubeconfig), nil
+}
+
 // Delete tears down the cluster. Tests rarely call this; CI runs
 // invoke it at workflow-end to free resources.
 func (c *Cluster) Delete() error {
