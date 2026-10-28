@@ -33,11 +33,13 @@ type Process struct {
 	// done receives the result of cmd.Wait once the process exits.
 	done chan error
 	// stopOnce makes stop signal the process at most once.
-	stopOnce   sync.Once
-	cmd        *exec.Cmd
-	baseURL    string
-	stderr     *os.File
-	stderrPath string
+	stopOnce sync.Once
+	cmd      *exec.Cmd
+	baseURL  string
+	// forwardAddr is the CH-HOLDERFORWARD listen and advertise address.
+	forwardAddr string
+	stderr      *os.File
+	stderrPath  string
 }
 
 // SkipUnlessAvailable t.Skips when the prerequisites for booting
@@ -104,6 +106,14 @@ func StartOpts(t testing.TB, opts Options) *Process {
 		t.Fatalf("freePort: %v", err)
 	}
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	// §10.1.1 Replica address: a gateway with a lease store (Redis) refuses
+	// to start without an advertise address, so every process gets a
+	// second free port for its forward listener and advertises it.
+	forwardPort, err := freePort()
+	if err != nil {
+		t.Fatalf("freePort: %v", err)
+	}
+	forwardAddr := fmt.Sprintf("127.0.0.1:%d", forwardPort)
 
 	// Each process gets its own log, because processes started from one
 	// binary share its directory.
@@ -152,6 +162,8 @@ func StartOpts(t testing.TB, opts Options) *Process {
 		"LENNY_TLS_TERMINATED_UPSTREAM=true",
 		"LENNY_DEV_MODE=true",
 		"LENNY_REDIS_ALLOW_INSECURE=true",
+		"LENNY_HOLDER_FORWARD_LISTEN_ADDR="+forwardAddr,
+		"LENNY_HOLDER_FORWARD_ADVERTISE_ADDR="+forwardAddr,
 		stackkey.Env(t),
 	)
 	cmd.Env = append(cmd.Env, opts.Env...)
@@ -163,7 +175,7 @@ func StartOpts(t testing.TB, opts Options) *Process {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start gateway: %v", err)
 	}
-	p := &Process{cmd: cmd, baseURL: "http://" + addr, stderr: stderrFile, stderrPath: stderrPath, done: make(chan error, 1)}
+	p := &Process{cmd: cmd, baseURL: "http://" + addr, forwardAddr: forwardAddr, stderr: stderrFile, stderrPath: stderrPath, done: make(chan error, 1)}
 	// Buffered so the goroutine never blocks once nothing waits on it.
 	go func() { p.done <- cmd.Wait() }()
 
@@ -246,6 +258,12 @@ func (p *Process) Kill(t testing.TB) {
 
 // BaseURL returns the http://host:port the gateway is listening on.
 func (p *Process) BaseURL() string { return p.baseURL }
+
+// ForwardAddr returns the host:port the gateway's CH-HOLDERFORWARD listener
+// binds and advertises in its coordination holder value. The listener runs
+// only when the gateway has a lease store and the gateway replica
+// certificate material; the harness runs in dev mode without it.
+func (p *Process) ForwardAddr() string { return p.forwardAddr }
 
 // Logs returns the gateway's combined stdout and stderr written so far,
 // so a test can include the gateway's own account of a failure in its

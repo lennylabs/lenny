@@ -5,7 +5,7 @@
 // Tier-5 e2e Kind test for the HA multi-replica gateway streaming
 // reconnect contract. It pins one driver per gateway replica, starts an
 // SSE event stream through replica A, drives the session's terminal
-// events through replica B, and reconnects the stream through replica B
+// events through replica A, and reconnects the stream through replica B
 // with the Last-Event-ID cursor last seen on A. It asserts the two
 // replicas serve the same session and the same monotonic event backlog
 // from shared externalized state, and that the reconnect on the other
@@ -137,12 +137,15 @@ func TestHAStreamingReconnectAcrossGatewayReplicas(t *testing.T) {
 	maxSeqA := aEvents.order[len(aEvents.order)-1]
 	t.Logf("replica A delivered seqs %v (cursor now %d)", aEvents.order, maxSeqA)
 
-	// Drive the session's terminal events through replica B. A terminate
-	// on B proves B can coordinate a session it did not create (shared
-	// write path) and generates further monotonic events on the same
-	// per-session sequence.
-	if err := driverB.Terminate(ctx, tenant, sess.ID); err != nil {
-		t.Fatalf("terminate session on replica B: %v", err)
+	// Drive the session's terminal events through replica A, the
+	// coordinating replica. The Kind install runs in dev mode without the
+	// gateway certificate material, so it builds no CH-HOLDERFORWARD
+	// listener and a terminate served by replica B would be refused as not
+	// delivered (§29.3 Forwarding rule 6). The terminate generates further
+	// monotonic events on the same per-session sequence, which replica B
+	// then replays.
+	if err := driverA.Terminate(ctx, tenant, sess.ID); err != nil {
+		t.Fatalf("terminate session on replica A: %v", err)
 	}
 
 	// Full backlog replayed from replica B, from the beginning. This is

@@ -137,7 +137,7 @@ and watchdog workers.
 Pod claim and session placement, termination, the PreStop path, the
 drain-readiness endpoint, and the stale-slot reaper.
 
-`drainreadiness`, `podclaim`, `podsession`, `podterminate`, `prestop`,
+`bindrelease`, `drainreadiness`, `podclaim`, `podsession`, `prestop`,
 `slotreaper`.
 
 ### `checkpoint/` — §4.4 Event / Checkpoint Store

@@ -3876,6 +3876,13 @@ legacy single-file proposals carry their status in the prose status bullet, whic
 `.claude/tools/proposal-status.mjs` reads and does not write.
 
 - Direct-fix lane.
+  - [x] **T-17.4.32** (Medium): `tests/tier4_integration` exceeded its 1800 s budget (1989 s on the integration
+    branch, 2568 s with proposal 0101's tests) because every lifecycle harness started its own control plane and
+    Postgres. Fixed on `impl/0101-inter-replica-carrier` (`2f85a0cc2`): one shared control plane and one shared,
+    template-cloned Postgres per test binary; the package now takes 1679 s.
+  - [ ] **T-17.4.33** (Medium): the tier-4 package has about 120 s of headroom and runs nearly serially. Move the
+    remaining per-test `containers.StartPostgres` sites to `containers.SharedPostgres`, add `t.Parallel()` where
+    tests own their fixtures, and look at the slowest tests (114 s, 92 s, 54 s). Direct fix, after 0101 merges.
   - [x] **F-4.4.32** (Medium, from 0072 §1.8): the gateway declares `chunk_encoding: tar` for chunks
     `ArchiveTree` gzips. Declare `tar.gz`, which §4.4 already permits.
   - [x] **F-4.4.4**, reopened (Medium, from 0072 §1.9): `FirstCheckpointDelay` has no production caller, so
@@ -3888,10 +3895,12 @@ legacy single-file proposals carry their status in the prose status bullet, whic
     adapter now refuses any encoding other than `tar.gz` with `InvalidArgument` (2026-10-28).
   - [x] **T-4.4.22** (Low, filed from F-4.4.4): `TestRunUsesTenMinuteDefaultIntervalWhenUnset` never runs `Run`.
     The test now drives `Run` with an injected clock and an unset interval (2026-10-28, `47475f2e2`).
-  - [ ] **F-4.4.37** (Low, filed from F-4.4.34): `checkpoint_manifest.chunk_encoding` has no CHECK constraint
-    on the `tar` / `tar.gz` enum since migration 0178 replaced the 0062 table.
-  - [ ] **T-4.6.19** (Low, found 2026-10-28): the pod-registry CAS contract test requires a lost
-    compare-and-swap that real concurrency does not guarantee, so it flakes on a loaded host.
+  - [x] **F-4.4.37** (Low, filed from F-4.4.34): `checkpoint_manifest.chunk_encoding` has no CHECK constraint
+    on the `tar` / `tar.gz` enum since migration 0178 replaced the 0062 table. Migration 0194 restores the
+    CHECK (2026-10-28).
+  - [x] **T-4.6.19** (Low, found 2026-10-28): the pod-registry CAS contract test requires a lost
+    compare-and-swap that real concurrency does not guarantee, so it flakes on a loaded host. The subtest now
+    holds the row lock until all eight writers have read the version, so exactly one wins (2026-10-28).
 - With the queued text-corrections proposal, together with F-7.1.32.
   - [x] F-4.4.4 and F-4.4.32 fixed 2026-10-28 (`df5af6cdd`, `0d2645dce`). Filed from those fixes, direct-fix queue: **F-4.4.33** (Low, the download labels a legacy gzip `tar` manifest `application/x-tar`), **F-4.4.34** (Low, the `chunk_encoding` column default and empty-value readers still say `tar`), **F-4.4.35** (Low, the adapter ignores the declared encoding), and **T-4.4.22** (Low, `TestRunUsesTenMinuteDefaultIntervalWhenUnset` never runs `Run`). **F-4.4.36** (Low, whether the first-checkpoint jitter is a stable per-session draw) rides with the text-corrections proposal.
   - [ ] **F-4.4.30** (Low, from 0072 §1.1): the 60-second checkpoint timeout has no start instant on the

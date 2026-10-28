@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"sync/atomic"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -188,47 +189,63 @@ func supersede(t *testing.T, h *lifecycleharness.Harness, from, peer *lifecycleh
 	}
 }
 
-// spec: §10.1.5 (Stale Replica Behavior), §5.2 (Slot assignment atomicity)
-// diagnosis: a terminal write handled by a coordinator that lost the session
-// to a peer released the slot through its stale binding, or did not evict
-// that binding, so the slot was removed twice or the peer's later release
-// found nothing; or the adopting peer never released the terminal session's
-// slot. The adopter's Sweeper must release it exactly once.
-func TestSupersededCoordinatorEvictsAndTheAdopterReleasesOnce_spec_10_1_5(t *testing.T) {
+// countForwards arms r's forward listener to count the requests it receives
+// and returns the counter. The hook never faults the request.
+func countForwards(r *lifecycleharness.Replica) *atomic.Int64 {
+	var n atomic.Int64
+	r.SetForwardFault(func(*http.Request) bool {
+		n.Add(1)
+		return false
+	})
+	return &n
+}
+
+// spec: §10.1.5 (Stale Replica Behavior), §5.2 (Slot assignment atomicity),
+// §29.3 (Interactive message send: Forwarding), §10.1.1 (Stateless Replicas
+// and Per-Session Coordination)
+// diagnosis: a DELETE received by a coordinator that lost the session to a
+// peer was applied there, through its stale binding, rather than forwarded
+// over CH-HOLDERFORWARD to the REG-COORDLEASE holder; or the adopter's
+// terminal write released the slot more than once or not at all; or the
+// superseded replica's stale binding was released through the binder, sent
+// the pod a Shutdown, or was never evicted. The adopter's post-terminal hook
+// releases the slot exactly once and the superseded replica's coordination
+// Sweeper evicts its stale binding with no binder call.
+func TestSupersededCoordinatorForwardsTheDeleteAndTheAdopterReleasesOnce_spec_10_1_5(t *testing.T) {
 	h := newConcurrentCompose(t, lifecycleharness.Options{})
 	old, adopter := h.Replicas[0], h.Replicas[1]
 	sibling := h.StartSession(adopter)
 	id := h.StartSession(old)
 	pod := h.Row(id).PodAssignment
 	supersede(t, h, old, adopter, id)
+	forwards := countForwards(adopter)
 	shutdowns := h.Cluster.PodOf(pod).UnaryCalls("Shutdown")
 	deleteSession(t, h, old, id)
 	h.Settle()
-	if _, ok := old.Registry.Get(id); ok {
-		t.Error("the superseded coordinator kept its stale binding after the terminal write")
+	if n := forwards.Load(); n != 1 {
+		t.Fatalf("the adopter's forward listener received %d requests for the DELETE on the superseded replica, want 1", n)
 	}
-	// Settle ticks no Sweeper, so the adopter has not released yet: any
-	// removal, or any Shutdown to the pod, at this point came from the
-	// superseded coordinator's hook releasing through its stale binding.
-	members, err := h.SlotMembers(context.Background(), pod)
-	if err != nil {
-		t.Fatal(err)
+	if st := h.Row(id).State; st != session.StateCancelled {
+		t.Fatalf("state = %q after the forwarded DELETE, want cancelled", st)
 	}
-	if !slices.Contains(members, id) {
-		t.Errorf("slot set of %s = %v after the superseded coordinator's DELETE, want %s still counted for the adopter's release", pod, members, id)
+	// Settle ticks no Sweeper, so the one removal here is the adopter's
+	// post-terminal hook releasing the binding it holds as coordinator.
+	if n := h.Slots.Removals(pod, id); n != 1 {
+		t.Errorf("removals of %s's member after the forwarded DELETE = %d, want 1 by the adopter", id, n)
 	}
-	if n := h.Slots.Removals(pod, id); n != 0 {
-		t.Errorf("removals of %s's member after the superseded coordinator's DELETE = %d, want 0", id, n)
+	if _, ok := adopter.Registry.Get(id); ok {
+		t.Error("the adopter kept the terminal session's binding after its terminal write")
 	}
-	if n := h.Cluster.PodOf(pod).UnaryCalls("Shutdown") - shutdowns; n != 0 {
-		t.Errorf("the superseded coordinator sent %d Shutdowns to %s, want none", n, pod)
-	}
+	adopterShutdowns := h.Cluster.PodOf(pod).UnaryCalls("Shutdown") - shutdowns
 	h.RunToQuiescence()
+	if _, ok := old.Registry.Get(id); ok {
+		t.Error("the superseded replica kept its stale binding after its Sweeper listed the terminal row")
+	}
 	if n := h.Slots.Removals(pod, id); n != 1 {
 		t.Errorf("removals of %s's member = %d, want 1", id, n)
 	}
-	if _, ok := adopter.Registry.Get(id); ok {
-		t.Error("the adopter kept the terminal session's binding")
+	if n := h.Cluster.PodOf(pod).UnaryCalls("Shutdown") - shutdowns - adopterShutdowns; n != 0 {
+		t.Errorf("the superseded replica's eviction sent %d Shutdowns to %s, want none", n, pod)
 	}
 	if pod == h.Row(sibling).PodAssignment {
 		requireMembers(t, h, pod, sibling)
@@ -300,6 +317,7 @@ func newPostTerminalMemHarness(t *testing.T) *lifecycleharness.Harness {
 	t.Helper()
 	return lifecycleharness.New(t, lifecycleharness.Options{
 		Replicas: 2, Pods: 1, MaxConcurrentSessions: concurrentSlots, CredentialPool: true,
+		ControlPlane: &harnessControlPlane,
 	})
 }
 

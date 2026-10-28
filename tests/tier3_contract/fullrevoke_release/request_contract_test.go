@@ -19,7 +19,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	podterminateprop "github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podterminate/propagator"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/bindrelease"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
 )
 
@@ -27,20 +27,20 @@ import (
 // through TerminateLocal.
 type peerReleaser struct {
 	mu   sync.Mutex
-	reqs []podterminateprop.Request
+	reqs []bindrelease.Request
 }
 
-func (p *peerReleaser) TerminateLocal(_ context.Context, req podterminateprop.Request) podterminateprop.Result {
+func (p *peerReleaser) TerminateLocal(_ context.Context, req bindrelease.Request) bindrelease.Result {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.reqs = append(p.reqs, req)
-	return podterminateprop.Result{PodsTerminated: len(req.SessionIDs)}
+	return bindrelease.Result{PodsTerminated: len(req.SessionIDs)}
 }
 
-func (p *peerReleaser) applied() []podterminateprop.Request {
+func (p *peerReleaser) applied() []bindrelease.Request {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return append([]podterminateprop.Request(nil), p.reqs...)
+	return append([]bindrelease.Request(nil), p.reqs...)
 }
 
 // rawCapture subscribes to the request channel and keeps the raw payloads.
@@ -83,13 +83,13 @@ func TestFullRevokeReleaseRequestWireContract_spec_11_4(t *testing.T) {
 	defer cancel()
 
 	capture := &rawCapture{}
-	go pubsub.New(newClient()).Subscribe(ctx, podterminateprop.Channel, capture.add)
+	go pubsub.New(newClient()).Subscribe(ctx, bindrelease.Channel, capture.add)
 
 	peer := &peerReleaser{}
-	go podterminateprop.New(peer, pubsub.New(newClient()), "replica-B").Run(ctx)
+	go bindrelease.New(peer, pubsub.New(newClient()), "replica-B").Run(ctx)
 
-	handling := podterminateprop.New(&peerReleaser{}, pubsub.New(newClient()), "replica-A")
-	req := podterminateprop.Request{TenantID: "acme", UserID: "alice@acme.com", SessionIDs: []string{"run_a", "run_b"}}
+	handling := bindrelease.New(&peerReleaser{}, pubsub.New(newClient()), "replica-A")
+	req := bindrelease.Request{TenantID: "acme", UserID: "alice@acme.com", SessionIDs: []string{"run_a", "run_b"}}
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) && (len(peer.applied()) == 0 || capture.first() == nil) {
 		handling.Publish(ctx, req)

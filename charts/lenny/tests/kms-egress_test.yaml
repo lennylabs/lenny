@@ -78,7 +78,7 @@ tests:
                 protocol: TCP
       - lengthEqual:
           path: spec.egress
-          count: 8
+          count: 9
 
   # spec: §13.2.4 lenny-ops row, §25.4 lenny-ops-egress — lenny-ops reaches
   # the KMS endpoint for GetPublicKey under the Gateway row condition.
@@ -148,7 +148,7 @@ tests:
                 protocol: TCP
       - lengthEqual:
           path: spec.egress
-          count: 7
+          count: 8
 
   - it: renders no KMS peer in lenny-ops-egress under the local provider
     template: ops-network-policies.yaml

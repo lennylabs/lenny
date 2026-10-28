@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
 )
@@ -30,6 +31,30 @@ func failStream(t *testing.T, h *lifecycleharness.Harness, r *lifecycleharness.R
 			t.Fatal("the failed stream did not mark the binding crashed")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// cancelOffCoordinator writes cancelled on the session's row through the
+// shared store, as a terminal writer outside the §29.3 forwarded routes does
+// on a replica that does not coordinate the session (the §11.4 full_revoke
+// cancellation runs on the replica that received the revoke). A client
+// DELETE on a peer no longer serves for this, because the peer forwards it
+// over CH-HOLDERFORWARD and the coordinator's own post-terminal hook
+// releases the binding before the stream fails.
+func cancelOffCoordinator(t *testing.T, h *lifecycleharness.Harness, id string) {
+	t.Helper()
+	now := h.Clock.Now()
+	row, err := h.Store.Update(context.Background(), lifecycleharness.Tenant, id, func(r *sessionstore.Session) error {
+		from := r.State
+		r.State = session.StateCancelled
+		sessionstore.MarkTerminated(r, from, now)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("cancel %s off the coordinator: %v", id, err)
+	}
+	if row.State != session.StateCancelled {
+		t.Fatalf("state = %q, want cancelled", row.State)
 	}
 }
 
@@ -69,20 +94,16 @@ func requireRetired(t *testing.T, h *lifecycleharness.Harness, pod string) {
 func TestStreamFailureRetiresARecyclingPod_spec_5_2(t *testing.T) {
 	t.Run("terminal row released by the coordinator", func(t *testing.T) {
 		h := newComposeWith(t, lifecycleharness.Options{Replicas: 2, Pods: 4, Recycling: true})
-		coordinator, peer := h.Replicas[0], h.Replicas[1]
+		coordinator := h.Replicas[0]
 		id := h.StartSession(coordinator)
 		if code, body := h.Send(coordinator, id, "open-stream"); code != http.StatusOK {
 			t.Fatalf("message = %d %v", code, body)
 		}
 		pod := h.Row(id).PodAssignment
-		// The peer writes the terminal state, so the coordinator's binding
-		// is released by its terminal binding release on the next sweep.
-		if code, body := h.Do(peer, http.MethodDelete, "/v1/sessions/"+id, nil); code >= http.StatusBadRequest {
-			t.Fatalf("DELETE on the peer = %d %v", code, body)
-		}
-		if st := h.Row(id).State; st != session.StateCancelled {
-			t.Fatalf("state = %q, want cancelled", st)
-		}
+		// A terminal writer outside the forwarded routes cancels the row,
+		// so the coordinator's binding is released by its terminal binding
+		// release on the next sweep rather than by a post-terminal hook.
+		cancelOffCoordinator(t, h, id)
 		failStream(t, h, coordinator, id, pod)
 		h.Pass()
 		requireRetired(t, h, pod)

@@ -547,7 +547,8 @@ spec:
 allow-gateway-egress re-admits the gateway's in-cluster egress the
 §13.2.3 default-deny otherwise blocks (§13.2): the agent-pod
 adapters, the Token Service, PgBouncer, Redis, MinIO, the
-kube-apiserver, kube-system CoreDNS, and, when kms.provider is not
+kube-apiserver, the gateway pods on gateway.holderForwardPort for
+CH-HOLDERFORWARD (§10.3 NET-072), kube-system CoreDNS, and, when kms.provider is not
 local, the KMS endpoint at kms.endpointCIDR (§13.2.4 Gateway row). The external-HTTPS egress
 with its §13.2 NET-062 dual-family IMDS/private-range exclusions is
 rendered with the LLM proxy.
@@ -585,6 +586,16 @@ spec:
         # /v1/oauth/* to the Token Service's HTTP listener, the egress
         # counterpart of the HTTP port allow-token-service admits.
         - port: {{ .Values.tokenService.httpPort }}
+          protocol: TCP
+    # §13.2.4 Gateway row: gateway pods on the CH-HOLDERFORWARD
+    # inter-replica forward port (§10.3 NET-072), the egress counterpart
+    # of the self-peer rule in allow-gateway-ingress.
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+      ports:
+        - port: {{ .Values.gateway.holderForwardPort }}
           protocol: TCP
     - to:
         - podSelector:
@@ -658,7 +669,9 @@ controller namespace; agent-namespace pods on the gateway gRPC port
 and the LLM-proxy port; admission-webhook pods on the gateway internal
 HTTP port for the lenny-drain-readiness GET /internal/drain-readiness
 callbacks (NET-037); lenny-ops pods on the gateway internal TLS and
-HTTP ports for the §25.3 admin-API (NET-051, NET-070); and the
+HTTP ports for the §25.3 admin-API (NET-051, NET-070); gateway pods,
+and only gateway pods, on gateway.holderForwardPort for the
+CH-HOLDERFORWARD inter-replica forward (§10.3 NET-072); and the
 lenny-bootstrap Job on the internal HTTP port, which POSTs the §17.6
 Day-1 seed to the admin API. The lenny-ops peer is rendered with an
 explicit namespaceSelector plus podSelector matchLabels app: lenny-ops
@@ -728,6 +741,15 @@ spec:
               lenny.dev/component: bootstrap
       ports:
         - port: {{ .Values.gateway.internalPort }}
+          protocol: TCP
+    # §13.2.4 Gateway row: gateway pods are the only source admitted on
+    # the CH-HOLDERFORWARD inter-replica forward port (§10.3 NET-072).
+    - from:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+      ports:
+        - port: {{ .Values.gateway.holderForwardPort }}
           protocol: TCP
   policyTypes: [Ingress]
 ---

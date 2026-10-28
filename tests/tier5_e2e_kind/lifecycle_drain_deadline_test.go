@@ -121,29 +121,35 @@ func TestSuspendReleaseBoundIsSweeperIntervalPlusSeal_spec_12_8(t *testing.T) {
 	}
 }
 
-// TestErasureReleaseBoundIsClaimOrphanTimeoutPlusOneGCPass_spec_12_8 pins
-// the erasure case's deadline to claimOrphanTimeout plus one orphan-GC pass
-// with no added slack.
+// TestErasureReleaseBoundIsBindReleaseWindowPlusSeal_spec_12_8 pins the
+// erasure case's deadline to the CH-BINDRELEASE apply window plus
+// maxWorkspaceSealDurationSeconds with no added slack, and pins that the
+// bound at the chart defaults stays below the default claimOrphanTimeout,
+// so the orphan GC cannot satisfy it.
 //
-// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 4.6.1 (Orphan claim detection)
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 11.4 (User Invalidation), 28.5.7 (Gateway-to-store)
 // diagnosis: a failure means the Kind erasure case measures the claim
-// leaving bound against more than claimOrphanTimeout plus one orphan-GC
-// pass, so a claim that stays bound to an erased user's session past that
-// bound still passes.
-func TestErasureReleaseBoundIsClaimOrphanTimeoutPlusOneGCPass_spec_12_8(t *testing.T) {
-	for _, tc := range []struct{ timeout, pass time.Duration }{
-		{loweredClaimOrphanTimeout, orphanGCPass},
-		{900 * time.Second, 60 * time.Second},
+// leaving bound against more than the apply window plus the seal bound, so
+// a binding the drain's release never reached still passes on the orphan
+// GC, or the bound at the defaults reaches claimOrphanTimeout.
+func TestErasureReleaseBoundIsBindReleaseWindowPlusSeal_spec_12_8(t *testing.T) {
+	for _, tc := range []struct{ window, seal time.Duration }{
+		{bindReleaseApplyWindow, 300 * time.Second},
+		{5 * time.Second, 30 * time.Second},
 		{0, 0},
 	} {
-		if got, want := erasureReleaseBound(tc.timeout, tc.pass), tc.timeout+tc.pass; got != want {
-			t.Errorf("erasureReleaseBound(%s, %s) = %s, want %s", tc.timeout, tc.pass, got, want)
+		if got, want := erasureReleaseBound(tc.window, tc.seal), tc.window+tc.seal; got != want {
+			t.Errorf("erasureReleaseBound(%s, %s) = %s, want %s", tc.window, tc.seal, got, want)
 		}
+	}
+	const defaultSeal, defaultClaimOrphanTimeout = 300 * time.Second, 900 * time.Second
+	bound := erasureReleaseBound(bindReleaseApplyWindow, defaultSeal)
+	if bound >= defaultClaimOrphanTimeout {
+		t.Fatalf("the erasure bound %s at the defaults is not below claimOrphanTimeout %s", bound, defaultClaimOrphanTimeout)
 	}
 	// A pod released one poll interval past the bound fails the case.
 	start := time.Unix(1_700_000_000, 0)
 	f := &fakeClock{now: start}
-	bound := erasureReleaseBound(loweredClaimOrphanTimeout, orphanGCPass)
 	late := start.Add(bound + claimPollInterval)
 	pending := awaitAllBy(start.Add(bound), f.clock(), map[string]func() (bool, string){"pod": releasedAt(f, late)})
 	if _, ok := pending["pod"]; !ok {
@@ -199,8 +205,8 @@ func TestPodReturnedToPoolRequiresDeletedClaimAndUnoccupiedSandbox_spec_12_8(t *
 // phase other than bound, whatever the Sandbox's phase. It is weaker than
 // podReturnedToPool, which the suspend case holds.
 //
-// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 4.6.1 (Orphan claim detection), 4.6.3 (SandboxClaim binding state)
-// diagnosis: a failure means the erasure probe rejects a claim the orphan GC
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 11.4 (User Invalidation), 4.6.3 (SandboxClaim binding state)
+// diagnosis: a failure means the erasure probe rejects a claim the release
 // already moved out of bound (released, failed, or deleted before the
 // Sandbox re-warms), holding the erasure case to the suspend case's
 // pool-return condition, or it accepts a claim still bound to the erased
@@ -227,7 +233,7 @@ func TestErasureClaimProbeAcceptsAnyNonBoundClaim_spec_12_8(t *testing.T) {
 			}
 		})
 	}
-	// A claim the orphan GC released while the Sandbox still reads claimed
+	// A claim released while the Sandbox still reads claimed
 	// passes the erasure probe and fails the suspend probe.
 	if ok, _ := claimNoLongerBound(true, "released"); !ok {
 		t.Fatal("erasure probe rejects a released claim")

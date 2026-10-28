@@ -23,8 +23,9 @@ import (
 // with the given options.
 func newComposeWith(t *testing.T, opts lifecycleharness.Options) *lifecycleharness.Harness {
 	t.Helper()
-	opts.NewStore, _ = lifecycleharness.PostgresStore(t)
+	opts.NewStore, _ = lifecycleharness.SharedPostgresStore(t, &harnessPostgres)
 	opts.CredentialPool = true
+	opts.ControlPlane = &harnessControlPlane
 	return lifecycleharness.New(t, opts)
 }
 

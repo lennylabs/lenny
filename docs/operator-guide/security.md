@@ -45,6 +45,7 @@ Each gateway replica has a **distinct mTLS identity**:
 - Compromise of one replica is attributable and revocable independently
 - Certificates are scoped to the replica's ServiceAccount
 - The Token Service validates per-replica identity on every credential request
+- Replicas forward session requests to each other over mutual TLS on port 50054 (`gateway.holderForwardPort`). Each replica presents its gateway certificate and accepts only a peer that presents the gateway certificate. The receiving replica re-checks the client's credential on the forwarded request. A forwarded platform tool call from an agent carries no client credential, so the receiving replica runs it as the calling session that the forwarding replica names. In the `lenny-system` namespace, the `allow-gateway-ingress` and `allow-gateway-egress` policies admit only gateway pods on port 50054.
 
 ### SPIFFE Trust Domain
 

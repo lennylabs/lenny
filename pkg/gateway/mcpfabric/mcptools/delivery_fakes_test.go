@@ -28,18 +28,20 @@ import (
 type dlqDelivery struct {
 	coord *sessioninbox.Coordinator
 
-	mu         sync.Mutex
-	locked     int
-	unlocked   int
-	holds      int
-	outcome    sessionserver.HoldOutcome
-	holdErr    error
-	deliverErr error
-	admitErr   error
-	admits     int
-	delivered  []sessionstore.Session
-	resumed    []sessionstore.Session
-	order      []string
+	mu       sync.Mutex
+	locked   int
+	unlocked int
+	holds    int
+	// undelivered counts HoldUndeliveredForward calls.
+	undelivered int
+	outcome     sessionserver.HoldOutcome
+	holdErr     error
+	deliverErr  error
+	admitErr    error
+	admits      int
+	delivered   []sessionstore.Session
+	resumed     []sessionstore.Session
+	order       []string
 }
 
 func (d *dlqDelivery) LockDelivery(context.Context, string) (func(), error) {
@@ -71,6 +73,15 @@ func (d *dlqDelivery) HoldMessage(ctx context.Context, tenantID, sessionID strin
 		return sessionserver.HoldQueued, "", err
 	}
 	return outcome, session.StateSuspended, nil
+}
+
+// HoldUndeliveredForward records the hold of a message whose forward was not
+// delivered and holds it as HoldMessage does.
+func (d *dlqDelivery) HoldUndeliveredForward(ctx context.Context, row sessionstore.Session, msg sessioninbox.Message) (sessionserver.HoldOutcome, session.State, error) {
+	d.mu.Lock()
+	d.undelivered++
+	d.mu.Unlock()
+	return d.HoldMessage(ctx, row.TenantID, row.ID, msg)
 }
 
 func (d *dlqDelivery) DeliverHeld(_ context.Context, row sessionstore.Session) error {

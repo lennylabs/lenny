@@ -73,6 +73,12 @@ func (s *Server) serviceMux() http.Handler {
 // principal. A client-sent X-Lenny-Tenant-ID header plays no part here.
 // spec: §10.2 (Authentication). F-10.2.21.
 //
+// The synthetic request keeps ctx, so the client credential the auth
+// middleware recorded on the MCP request, or at WebSocket upgrade, rides on
+// it with no Authorization header, and a handler that forwards the request
+// to the coordinating replica relays that credential. spec: §29.3
+// (Interactive message send) Forwarding rule 2.
+//
 // target is the full request target including any query string (for
 // example "/v1/sessions/abc/start" or "/v1/sessions?state=running").
 // body and contentType are empty for a GET. headers carries any

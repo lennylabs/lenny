@@ -25,13 +25,14 @@ import (
 //     resumes the session on that pod and delivers its held messages under
 //     the session's delivery lock, answering 200 with the row in running. A
 //     replica that does not coordinate the session writes nothing and
-//     answers 409 TARGET_NOT_READY, because no inter-replica carrier for the
-//     forward exists.
+//     forwards the request to the coordinating replica over
+//     CH-HOLDERFORWARD.
 //
 // The call claims no pod and runs no post-commit effect itself. Every write
 // out of suspended first passes the resume admission check; a refusal
-// answers 429 QUOTA_EXCEEDED and the row stays suspended. The off-holder
-// TARGET_NOT_READY answer writes nothing and runs no check.
+// answers 429 QUOTA_EXCEEDED and the row stays suspended. An off-holder
+// replica writes nothing and runs no check; a forward that is not delivered
+// or whose outcome is unknown answers 409 TARGET_NOT_READY.
 //
 // spec: §7.3 (Retry and Resume), §15.1 (REST API), §29.3 (Interactive
 // message send), §29.6 (Restore and resume), §11.1 (Resume admission)
@@ -83,21 +84,21 @@ func (s *Server) writeResumeError(w http.ResponseWriter, err error) {
 
 // resumeHeldPodRequest serves POST /resume on a suspended session that holds
 // its pod. Only the coordinating replica resumes it; any other replica writes
-// nothing and answers 409 TARGET_NOT_READY with the current state. On the
-// coordinating replica the resume and the delivery of held messages run
+// nothing and forwards the request to the coordinating replica, answering the
+// coordinator's response, or 409 TARGET_NOT_READY with the current state when
+// the forward is not delivered or its outcome is unknown. A forwarded request
+// that reaches a replica that no longer coordinates the session gets the same
+// refusal. On the coordinating replica the resume and the delivery of held messages run
 // under the session's delivery lock. A delivery failure after the running
 // write still answers 200 with running. A row that left suspended before the
 // write is handled as the state it reached: from awaiting_client_action the
 // call writes resume_pending, and from any other state it answers the
 // precondition error.
 //
-// spec: §29.3 (Interactive message send), §7.2 (Message delivery routing —
-// seven paths, path 6), §7.3 (Retry and Resume)
+// spec: §29.3 (Interactive message send) Forwarding, §7.2 (Message delivery
+// routing — seven paths, path 6), §7.3 (Retry and Resume)
 func (s *Server) resumeHeldPodRequest(w http.ResponseWriter, r *http.Request, row sessionstore.Session) {
-	if !s.coordinatesSession(r.Context(), row.TenantID, row.ID) {
-		s.writeError(w, http.StatusConflict, "TARGET_NOT_READY",
-			"the session's pod is coordinated by another gateway replica; retry the request",
-			map[string]any{"currentState": string(row.State)})
+	if s.forwardToHolder(w, r, row, ForwardKindResume, r.Body) != ForwardLocal {
 		return
 	}
 	unlock, err := s.deliveryLocks.Lock(r.Context(), row.ID)

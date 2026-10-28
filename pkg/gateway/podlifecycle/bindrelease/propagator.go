@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
-// Package propagator fans a §11.4 full_revoke binding release out across
+// Package bindrelease carries CH-BINDRELEASE, the binding-release fan-out
+// §28.5.7 registers: it fans a §11.4 full_revoke binding release out across
 // gateway replicas over Redis pub/sub.
 //
 // On §11.4 full_revoke the gateway releases the pod binding of every
@@ -27,7 +28,9 @@
 // the credential and token revocations that did land already bar the pod
 // from reaching the LLM proxy or calling back into the gateway. Propagator
 // does not redeliver.
-package propagator
+//
+// spec: §28.5.7 (CH-BINDRELEASE), §11.4 step 2.
+package bindrelease
 
 import (
 	"context"
@@ -36,8 +39,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
 )
 
-// Channel is the Redis pub/sub channel §11.4 full_revoke pod-termination
-// requests are published on. It is distinct from the §4.9/§13.3
+// Channel is the Redis pub/sub channel that carries CH-BINDRELEASE, on
+// which §11.4 full_revoke binding-release requests are published. It is distinct from the §4.9/§13.3
 // revocation channel: a termination carries a session set rather than a
 // credential key and drives the pod adapter rather than a deny list.
 const Channel = "lenny:session:terminate"

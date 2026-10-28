@@ -915,8 +915,9 @@ func (m *Metrics) IncIdempotencyCacheWriteFailure(tenantID string) {
 // IncIdempotencyCacheSkipped increments
 // `lenny_idempotency_cache_skipped_total{tenant_id,reason}` once per
 // §11.5 cache write the middleware declined by policy. reason is one
-// of: "server_error" (inner-handler 5xx). spec: §11.5;
-// F-11.5.3.
+// of: "server_error" (inner-handler 5xx), "streamed" (a streamed
+// response), or "forward_refused" (a §29.3 Forwarding rule 6 or rule 7
+// TARGET_NOT_READY refusal). spec: §11.5; F-11.5.3.
 func (m *Metrics) IncIdempotencyCacheSkipped(tenantID, reason string) {
 	if m == nil {
 		return

@@ -167,6 +167,9 @@
     "tests/tier2_component/watchdog/": {
       "component": ["tests/tier2_component/watchdog/..."]
     },
+    "tests/tier3_contract/holderforward/": {
+      "contract": ["tests/tier3_contract/holderforward/..."]
+    },
     "tests/tier3_contract/adapter_artifact_scope/": {
       "contract": ["tests/tier3_contract/adapter_artifact_scope/..."]
     },
@@ -373,6 +376,11 @@
         "tests/tier9_security/ops_revocation_enforcement_test.go",
         "tests/tier9_security/jwt_keyset_forgery_all_components_test.go"
       ]
+    },
+    "tests/testinfra/gatewaypki/": {
+      "unit": ["tests/testinfra/gatewaypki/...", "pkg/gateway/sessionserver/...", "cmd/lenny-gateway/..."],
+      "contract": ["tests/tier3_contract/holderforward/..."],
+      "security": ["tests/tier9_security/holder_forward_material_refusal_test.go"]
     },
     "tests/testinfra/tcpfault/": {
       "unit": ["tests/testinfra/tcpfault/..."],
@@ -727,7 +735,8 @@
     },
     "pkg/gateway/sessionserver": {
       "unit": ["pkg/gateway/sessionserver/...", "tests/testinfra/lifecyclefence/..."],
-      "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/multiprotocol_journey/...", "tests/tier3_contract/rest_circuitbreaker/..."],
+      "component": ["tests/tier2_component/leases/composite_holder_pgstore_test.go"],
+      "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/multiprotocol_journey/...", "tests/tier3_contract/rest_circuitbreaker/...", "tests/tier3_contract/holderforward/..."],
       "integration": ["tests/tier4_integration/gateway_require_auth_test.go"],
       "chaos": ["tests/tier8_chaos/jwt_keyset_chaos_test.go"],
       "security": ["tests/tier9_security/unauthenticated_tenant_access_test.go"],
@@ -745,9 +754,9 @@
     "cmd/lenny-gateway": {
       "static": ["cmd/lenny-gateway/..."],
       "unit": ["cmd/lenny-gateway/..."],
-      "contract": ["tests/tier3_contract/rest_sessions/..."],
-      "integration": ["tests/tier4_integration/session_lifecycle_test.go", "tests/tier4_integration/gateway_tenancy_mode_test.go", "tests/tier4_integration/gateway_require_auth_test.go", "tests/tier4_integration/oidc_auth_test.go"],
-      "security": ["tests/tier9_security/tenant_claim_spoofing_test.go", "tests/tier9_security/unauthenticated_tenant_access_test.go"]
+      "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/compose_mode/..."],
+      "integration": ["tests/tier4_integration/session_lifecycle_test.go", "tests/tier4_integration/gateway_tenancy_mode_test.go", "tests/tier4_integration/gateway_require_auth_test.go", "tests/tier4_integration/oidc_auth_test.go", "tests/tier4_integration/holder_forward_startup_test.go"],
+      "security": ["tests/tier9_security/tenant_claim_spoofing_test.go", "tests/tier9_security/unauthenticated_tenant_access_test.go", "tests/tier9_security/holder_forward_material_refusal_test.go"]
     },
     "pkg/gateway/operability/health": {
       "unit": ["pkg/gateway/operability/health/..."],
@@ -892,6 +901,7 @@
       ],
       "load_local": [
         "tests/tier7a_load_local/suspension_interleaving_test.go",
+        "tests/tier7a_load_local/holder_forward_interleaving_test.go",
         "tests/tier7a_load_local/stream_failure_release_race_test.go",
         "tests/tier7a_load_local/lifecycle_interleaving_test.go",
         "tests/tier7a_load_local/slot_release_paths_race_test.go",

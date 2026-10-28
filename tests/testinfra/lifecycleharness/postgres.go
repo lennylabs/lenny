@@ -31,6 +31,22 @@ func PostgresStore(t *testing.T) (func(now func() time.Time) sessionstore.Store,
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
 		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
 	})
+	return seededStore(t, pg)
+}
+
+// SharedPostgresStore is PostgresStore over a database of the test's own on
+// shared, a Postgres container the package reuses, rather than over a
+// container of its own. The returned handle cannot stop Postgres, so a
+// scenario that injects a Postgres outage calls PostgresStore instead.
+func SharedPostgresStore(t *testing.T, shared *containers.SharedPostgres) (func(now func() time.Time) sessionstore.Store, *containers.Postgres) {
+	t.Helper()
+	return seededStore(t, shared.Database(t, filepath.Join(schematest.RepoRoot(t), "migrations")))
+}
+
+// seededStore seeds the harness tenant in pg and returns the session store
+// constructor over it, with pg.
+func seededStore(t *testing.T, pg *containers.Postgres) (func(now func() time.Time) sessionstore.Store, *containers.Postgres) {
+	t.Helper()
 	if _, err := pg.Pool.Exec(context.Background(),
 		`INSERT INTO tenants (id, genesis_nonce) VALUES ($1, '\x00') ON CONFLICT (id) DO NOTHING`, Tenant); err != nil {
 		t.Fatalf("seed tenant: %v", err)

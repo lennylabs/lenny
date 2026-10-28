@@ -28,6 +28,10 @@ agent-pod issuance path.
 
 The whole PKI is gated by mtls.enabled. Deployments that use a service
 mesh for mTLS set mtls.enabled: false and let the mesh issue identities.
+Outside global.devMode, gateway-deployment.yaml refuses to render
+mtls.enabled: false while Redis is configured, because the gateway's
+inter-replica forward listener presents the lenny-gateway-tls
+certificate and the gateway refuses to start without it (§10.3 NET-072).
 */ -}}
 {{- if .Values.mtls.enabled }}
 {{- $ns := .Release.Namespace }}

@@ -195,8 +195,7 @@ state that the READY signal is one of them.
    binding ([§7.1](07_session-lifecycle.md#71-normal-flow),
    [§4.2](04_system-components.md#42-session-manager),
    [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)). The §28.3 channel register
-   places one channel on the gateway-to-store boundary, `CH-EVENTRELAY`, which carries the session event
-   backlog on Redis (§28.5.7), so no register entry covers this write and the step names the store role.
+   places two channels on the gateway-to-store boundary, `CH-EVENTRELAY` and `CH-BINDRELEASE`, which carry the session event backlog and the binding-release fan-out on Redis (§28.5.7), so no register entry covers this write and the step names the store role.
 
 10. `gateway` → `client`, no register entry, the client-to-gateway session REST surface. The gateway
     returns the session identifier, the upload token, and `sessionIsolationLevel`
@@ -545,36 +544,83 @@ REST surface is not a channel in the §28 register, so no §28 card owns it and 
 statement of its off-holder behaviour. The matrix applies to the message-send trace above and to every
 other trace in this section that begins on that surface.
 
-Two requirements govern the rows whose required outcome is a forward to the coordinator. The serving
-replica forwards the request to the session's coordinating replica and the coordinator performs the
-effect. On the message-send rows that forward is carried over `LNK-INTERREPLICA`, which is the
-inter-replica link the §28.3 link register carries and whose conversation §28.5.4 states as the
-cross-replica message routing RPC. On the rows whose forwarded request is not a message send, which are
-the interrupt, terminate, delete, resume, interaction-resolution, and upload rows below, the
-specification states no inter-replica
-conversation that carries the request (§28.3, §28.5.4), so those rows require the forward and the
-coordinator-performed effect without naming a carrier for them. A serving replica never reports a successful outcome for an effect that
-did not reach the pod, and never writes a session state transition that depends on an effect at the pod it
-did not perform. When the coordinator is unreachable on one of those rows, a message send to a `running` or
-`input_required` session falls back to inbox buffering with a `queued` delivery receipt so the message is
-not dropped, and every other forwarding
-row fails closed with `TARGET_NOT_READY`, HTTP 409, and the typed refusal carries the identity of the
-session's coordinating replica. This section states that code for the condition of an
-unreachable coordinator; the pre-running condition §15.1 states for the same code is a separate condition.
-The rows whose outcome is not a forward are stated by the rows themselves: the
-`POST /v1/sessions/{id}/start` row addresses a state for which the specification establishes no holder, so
-the serving replica performs the start itself, the `POST /v1/sessions/{id}/finalize` row addresses
-`created` for the same reason, the events streaming and `Accept: application/json` rows are served
-from the shared session-event relay, the logs streaming row is served from the Postgres `EventStore`, the
-built-in adapter row addresses no pre-existing session and so has no holder to forward to, the
-`POST /v1/sessions/{id}/resume` rows for `awaiting_client_action` and for a `suspended` session whose
-pod was released and the `suspended` message-send rows are served on the serving replica without a
-forward, and the store-only row requires no forwarding at all.
+**Forwarding.** On the rows whose required outcome is a forward to the coordinator, the serving replica
+forwards the request to the session's coordinating replica over `CH-HOLDERFORWARD` (§28.5.4), and the
+coordinator performs the effect. The following rules govern every forwarding row.
+
+1. The serving replica decides to forward after it has authenticated the request, read the session row, and
+   found the session in a state for which a row requires a forward. It decides before it writes any state,
+   sends any RPC to the pod, or writes the session inbox or DLQ. It forwards when the `REG-COORDLEASE`
+   holder value names another replica
+   ([§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination)
+   **Replica address:**). When the holder value names the serving replica, the serving replica performs the
+   effect itself.
+2. The forwarded request is the request the serving replica's handler received: its method, path, query,
+   body, and content headers, together with the client credential the serving replica authenticated. A tool
+   call that its tool handler serves without a §15.1 route is forwarded as the `tools/call` request for the
+   same tool and arguments ([§15.2](15_external-api-surface.md#152-mcp-api)). The handler returns the
+   coordinator's response as its own, and the caller receives it as it receives the handler's local response
+   ([§15.2.1](15_external-api-surface.md#1521-restmcp-consistency-contract)).
+3. The coordinator authenticates the forwarded client credential as it authenticates a credential presented
+   to it directly, including the `exp` check of [§13.3](13_security-model.md#133-credential-flow), and applies
+   the authorization of the route or tool. A platform tool call reaches the serving replica over
+   `LNK-GWCONTROL` with no client
+   credential ([§28.5.3](28_communication-channels.md#2853-intra-pod)), so its forward carries the calling
+   session's identifier, and the coordinator runs the call as a call from that session. The coordinator
+   accepts no other principal the forwarding replica asserts
+   ([§10.3](10_gateway-internals.md#103-mtls-pki) NET-072).
+4. A forwarded request is never forwarded again. The coordinator does not apply the
+   [§11.1](11_policy-and-controls.md#111-admission-and-fairness) rate limits, the
+   [§11.5](11_policy-and-controls.md#115-idempotency) idempotency handling, or the
+   [§4.8](04_system-components.md#48-gateway-policy-engine) `PreToolResult` phase to it, because the serving
+   replica applies them.
+5. A replica that receives a forwarded request for a session whose `REG-COORDLEASE` it does not hold
+   performs no effect and applies the not-delivered outcome of rule 6 itself. A coordinator that loses the
+   lease after that check is rejected at the pod on the `coordination_generation` stamp
+   ([§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination)
+   **Generation counters:**, §28.6).
+6. A forward is not delivered when no holder value is readable, when the holder value carries no address,
+   or when the dial or the TLS handshake fails. On a forward that is not delivered, the replica runs the
+   authorization, scope, and rate-limit checks of the route or tool for a message carrying no `inReplyTo` to a
+   `running` or `input_required` session, refuses the message as those checks state, and otherwise enqueues
+   it in the session's DLQ. The
+   entry takes the TTL of the [§7.2](07_session-lifecycle.md#72-interactive-session-model) dead-letter
+   table's recovering-state row. The enqueue runs under §7.2 delivery path 6
+   **Enqueue racing a terminal transition.**, and the message receives the receipt §7.2 delivery path 6
+   **Held messages.** states. The coordinating replica delivers the entry as §7.2 delivery path 6
+   **Delivery of held messages.** states, including the case in which no further message arrives and the
+   entry waits for the next delivery point that bullet names. Every other request whose forward is not
+   delivered fails closed with `TARGET_NOT_READY`, HTTP 409, carrying `currentState`.
+7. A forward's outcome is unknown when it fails after the connection to the coordinator was established. A
+   request whose forward outcome is unknown fails closed with `TARGET_NOT_READY`, HTTP 409, carrying
+   `currentState`, whatever its route, and it is never enqueued in the DLQ. A client's retry is deduplicated
+   by the route's own rules: a sender-supplied message `id`
+   ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)) and the
+   [§15.1](15_external-api-surface.md#151-rest-api) precondition table for an effect that already took place.
+   A message sent without a sender-supplied `id` can be delivered twice.
+8. The forward runs under the client request's deadline and is not retried. The dial and the handshake are
+   bounded as [§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination)
+   **Replica address:** states.
+
+Where a row below says that the serving replica fails closed on an unreachable coordinator, rules 6 and 7
+apply. A serving replica never reports a successful outcome for an effect that did not reach the pod, and
+never writes a session state transition that depends on an effect at the pod it did not perform. This
+section states `TARGET_NOT_READY` for the conditions of rules 6 and 7; the pre-running condition §15.1
+states for the same code is a separate condition. The rows whose outcome is not a forward are stated by the
+rows themselves: the `POST /v1/sessions/{id}/start` row addresses a state for which the specification
+establishes no holder, so the serving replica performs the start itself, the
+`POST /v1/sessions/{id}/finalize` row addresses `created` for the same reason, the events streaming and
+`Accept: application/json` rows are served from the shared session-event relay, the logs streaming row is
+served from the Postgres `EventStore`, the built-in adapter row addresses no pre-existing session and so has
+no holder to forward to, the `POST /v1/sessions/{id}/resume` rows for `awaiting_client_action` and for a
+`suspended` session whose pod was released and the `suspended` message-send rows are served on the serving
+replica without a forward, the tool-use and elicitation resolution row is served through the Postgres
+record that row states, and the store-only row requires no forwarding at all.
 
 | Route | Session state | Required off-holder outcome | Owning section |
 |:--|:--|:--|:--|
-| `POST /v1/sessions/{id}/messages`, no matching `inReplyTo` | `running` | Forward to the coordinator, which evaluates the §7.2 delivery paths and produces the receipt. On an unreachable coordinator the serving replica buffers the message in the session inbox and answers `queued` | §29 |
-| `POST /v1/sessions/{id}/messages` carrying `inReplyTo` | `input_required` | Forward to the coordinator, which resolves the outstanding `lenny/request_input` call. The serving replica does not resolve the call against its own pending-request state and does not answer `delivered`. On an unreachable coordinator it buffers the message and answers `queued` | §29 |
+| `POST /v1/sessions/{id}/messages`, no matching `inReplyTo` | `running` and `input_required` | Forward to the coordinator, which evaluates the §7.2 delivery paths and produces the receipt. In `input_required` the coordinator applies delivery path 3. When the forward is not delivered, **Forwarding.** rule 6 applies | §29 |
+| `POST /v1/sessions/{id}/messages` carrying `inReplyTo` | `input_required` | Forward to the coordinator, which resolves the outstanding `lenny/request_input` call. The serving replica does not resolve the call against its own pending-request state and does not answer `delivered`. When the forward is not delivered or its outcome is unknown, the serving replica fails closed with `TARGET_NOT_READY`, HTTP 409, and holds nothing | §29 |
 | `POST /v1/sessions/{id}/messages`, any `delivery` value | `suspended` | No forwarding is required; the serving replica takes [§7.2](07_session-lifecycle.md#72-interactive-session-model) delivery path 6, which states each outcome by whether the serving replica coordinates the session and whether the session holds a pod | [§7.2](07_session-lifecycle.md#72-interactive-session-model) |
 | `POST /v1/sessions/{id}/interrupt` | `running` | Forward to the coordinator, which issues the interrupt to the adapter. The serving replica does not write `suspended` and does not report an interrupt acknowledgement. On an unreachable coordinator it fails closed | §29 |
 | `POST /v1/sessions/{id}/terminate` | `starting`, `running`, `resume_pending`, and `awaiting_client_action`, and `suspended` while the session row names a pod, the states this route accepts in which the session holds `REG-COORDLEASE` ([§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination), §28.3) | Forward to the coordinator, which performs the termination sequence [§15.1](15_external-api-surface.md#151-rest-api) states for the session's current state and writes `completed`. The serving replica does not write the terminal state itself and does not report a termination outcome for a sequence it did not perform. On an unreachable coordinator it fails closed. In `created`, `finalizing`, and `ready`, the non-terminal states the route accepts other than those above and a `suspended` session whose row names no pod, the session's pod control stream `CH-ATTACH` is not open and the specification states no point at which the coordination lease `REG-COORDLEASE` is acquired for the session (§28.3, §28.5.1), so the specification establishes no coordinating replica for those states and no off-holder condition arises there. A `suspended` session whose row names no pod holds no `REG-COORDLEASE` and has no coordinating replica ([§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination)), so the serving replica performs the termination itself: no pod is bound, and the terminal transition runs the DLQ drain [§7.3](07_session-lifecycle.md#73-retry-and-resume) states | §29 |
@@ -584,7 +630,7 @@ forward, and the store-only row requires no forwarding at all.
 | `POST /v1/sessions/{id}/resume` | `suspended`, pod still held | Forward to the coordinator, which applies [§7.2](07_session-lifecycle.md#72-interactive-session-model) delivery path 6: it writes `suspended → running`, subject to the [Section 11.1](11_policy-and-controls.md#111-admission-and-fairness) **Resume admission.** check, and delivers the held messages. The serving replica writes no state transition of its own. On an unreachable coordinator it fails closed | §29 |
 | `POST /v1/sessions/{id}/start` | `ready` | No forwarding is required. In `ready` the specification establishes no holder, because the session's pod control stream `CH-ATTACH` is not open and the specification states no point at which the coordination lease `REG-COORDLEASE` is acquired for the session (§28.3, §28.5.1), so the serving replica performs the start | §29 |
 | `POST /v1/sessions/{id}/finalize` | `created`, the only state the endpoint's precondition table admits ([§15.1](15_external-api-surface.md#151-rest-api)) | No forwarding is required. In `created` the specification establishes no holder, because the session's pod control stream `CH-ATTACH` is not open and the specification states no point at which the coordination lease `REG-COORDLEASE` is acquired for the session (§28.3, §28.5.1), so the serving replica resolves the pod the session is bound to from the session row's `pod_assignment` column ([§4.2](04_system-components.md#42-session-manager), [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)) and performs the workspace, setup, and credential-assignment sequence of §29.2 steps 15 through 20 against that pod itself | §29 |
-| `POST /v1/sessions/{id}/tool-use/{toolCallId}/approve`, `POST /v1/sessions/{id}/tool-use/{toolCallId}/deny`, `POST /v1/sessions/{id}/elicitations/{elicitationId}/respond`, and `POST /v1/sessions/{id}/elicitations/{elicitationId}/dismiss` | Any non-terminal state | Forward the resolution to the coordinator, which resolves the pending tool-call approval or elicitation the pod is blocked on. The serving replica does not resolve it against its own pending-request state and does not report a resolution it did not deliver. The pending state a reattaching client reads is re-synthesized from durable Postgres state ([§15.2.1](15_external-api-surface.md#1521-restmcp-consistency-contract), [§10.4](10_gateway-internals.md#104-gateway-reliability)), and holding that state is not evidence that the blocked call can be resolved locally. On an unreachable coordinator it fails closed. In a `suspended` session whose row names no pod, the session has no coordinating replica ([§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination)), so the serving replica records the resolution and forwards nothing | §29 |
+| `POST /v1/sessions/{id}/tool-use/{toolCallId}/approve`, `POST /v1/sessions/{id}/tool-use/{toolCallId}/deny`, `POST /v1/sessions/{id}/elicitations/{elicitationId}/respond`, and `POST /v1/sessions/{id}/elicitations/{elicitationId}/dismiss` | Any non-terminal state | No forwarding is required. Each pending tool-call approval and elicitation is a Postgres record keyed by tenant, session, user, and tool call or elicitation identifier, which every replica reads and which the gateway writes before it surfaces the request to the client. The serving replica records the resolution with a write that takes effect only while that record is pending, so the first resolution wins, and a resolution that finds no pending record for the session and user is refused as [§7.2](07_session-lifecycle.md#72-interactive-session-model) and [§9.2](09_mcp-integration.md#92-elicitation-chain) **`respond_to_elicitation` authorization:** state. The replica whose call is blocked on the record reads the record and resolves the call when the record leaves pending. The serving replica does not resolve the call against its own pending-request state and does not report a resolution it did not record | §29 |
 | `POST /v1/sessions/{id}/upload` | `running` | Forward to the coordinator, which performs the mid-session upload against the pod ([§7.4](07_session-lifecycle.md#74-upload-safety)). On an unreachable coordinator it fails closed with `TARGET_NOT_READY`, HTTP 409, whose code and status [§15.1](15_external-api-surface.md#151-rest-api) states and whose replica condition §29 states | §29 |
 | `GET /v1/sessions/{id}/events`, streaming form | Any non-terminal state | Serve both the backlog and the live tail from the shared session-event relay `CH-EVENTRELAY`, which the serving replica reads directly, so no forwarding to the coordinator is required (§28.5.7, [§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)). What a reader receives when the relay is absent, or when the requested entry is absent from the relay stream, is a condition the specification does not state (§28.5.7, §28.8) | §29 |
 | `GET /v1/sessions/{id}/events`, `Accept: application/json` form | Any non-terminal state | Serve the paginated list envelope `{items, cursor, hasMore}` ([§15.1](15_external-api-surface.md#151-rest-api)) from the backlog the serving replica reads from the shared session-event relay `CH-EVENTRELAY`, as the streaming row states, so no forwarding to the coordinator is required (§28.5.7, [§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)). The relay is absent only in single-replica dev mode, where the serving replica is the only replica. What a reader receives when the requested entry is absent from the relay stream is a condition the specification does not state (§28.5.7, §28.8) | §29 |

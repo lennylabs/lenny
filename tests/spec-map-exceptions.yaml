@@ -312,11 +312,6 @@ exceptions:
     justification: The pod-to-gateway cards. The adapter-to-gateway control direction and its hold state have no client today, so no test exercises the channel this boundary carries.
     blocker: R12
     opened_at: 2026-08-15
-  - section: "28.5.4"
-    reason: pending-implementation
-    justification: The inter-replica card. The transport the card states is unimplemented; the step that lands it carries the tests.
-    blocker: R18
-    opened_at: 2026-08-15
   - section: "28.5.5"
     reason: pending-implementation
     justification: The pod-egress cards. The proxy dialects the boundary carries reach no route today, so the card's contract is untested.

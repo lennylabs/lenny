@@ -35,7 +35,10 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
-// Namespace is the agent namespace the harness cluster serves.
+// Namespace is the agent namespace a harness cluster on a private control
+// plane serves. A cluster on a shared control plane serves a namespace of
+// its own instead (ClusterOptions.ControlPlane), which Cluster.Namespace
+// names.
 const Namespace = "lenny-agents"
 
 // RuntimeRef is the runtime every harness session runs.
@@ -48,6 +51,10 @@ const Pool = "echo-pool"
 // template, and its Sandboxes, with an in-process adapter behind each pod.
 type Cluster struct {
 	Client client.Client
+	// Namespace is the agent namespace this cluster serves: the Namespace
+	// constant on a private control plane, and a namespace unique to the
+	// cluster on a shared one.
+	Namespace string
 
 	heartbeat time.Duration
 
@@ -160,6 +167,15 @@ type ClusterOptions struct {
 	// HeartbeatInterval, when set, is every pod adapter's heartbeat
 	// interval.
 	HeartbeatInterval time.Duration
+	// ControlPlane, when set, runs the cluster on that shared envtest
+	// control plane in a namespace unique to the cluster, rather than on a
+	// private control plane in the Namespace constant. Starting a control
+	// plane takes several seconds, so a package that builds many harnesses
+	// shares one (TEST-GAPS T-17.4.22). Every object the harness and the
+	// gateway code under it create is namespaced and is created in the
+	// cluster's namespace, so clusters sharing one control plane do not see
+	// each other's pods, claims, or pools.
+	ControlPlane *envtest.Shared
 }
 
 // NewCluster starts envtest and seeds the warm pool and template.
@@ -167,11 +183,18 @@ func NewCluster(t testing.TB) *Cluster {
 	return NewClusterWith(t, ClusterOptions{})
 }
 
-// NewClusterWith starts envtest and seeds the warm pool and a template
-// configured by opts.
+// NewClusterWith starts envtest, or joins opts.ControlPlane, and seeds the
+// warm pool and a template configured by opts.
 func NewClusterWith(t testing.TB, opts ClusterOptions) *Cluster {
 	t.Helper()
-	env := envtest.Start(t)
+	var env *envtest.Environment
+	ns := Namespace
+	if opts.ControlPlane != nil {
+		env = opts.ControlPlane.Start(t)
+		ns = envtest.NamespaceName(t)
+	} else {
+		env = envtest.Start(t)
+	}
 	s := runtime.NewScheme()
 	if err := lennyv1.AddToScheme(s); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
@@ -184,27 +207,29 @@ func NewClusterWith(t testing.TB, opts ClusterOptions) *Cluster {
 		t.Fatalf("client.New: %v", err)
 	}
 	ctx := context.Background()
-	if err := c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: Namespace}}); err != nil && !apierrors.IsAlreadyExists(err) {
+	if opts.ControlPlane != nil {
+		envtest.CreateNamespace(t, c, ns)
+	} else if err := c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("create namespace: %v", err)
 	}
 	for _, o := range []client.Object{
 		&lennyv1.SandboxWarmPool{
-			ObjectMeta: metav1.ObjectMeta{Name: Pool, Namespace: Namespace},
+			ObjectMeta: metav1.ObjectMeta{Name: Pool, Namespace: ns},
 			Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 64},
 		},
-		template(opts),
+		template(opts, ns),
 	} {
 		if err := c.Create(ctx, o); err != nil {
 			t.Fatalf("create %T: %v", o, err)
 		}
 	}
-	return &Cluster{Client: c, pods: map[string]*Pod{}, nextIP: 10, heartbeat: opts.HeartbeatInterval}
+	return &Cluster{Client: c, Namespace: ns, pods: map[string]*Pod{}, nextIP: 10, heartbeat: opts.HeartbeatInterval}
 }
 
-// template is the warm pool's SandboxTemplate.
-func template(opts ClusterOptions) *lennyv1.SandboxTemplate {
+// template is the warm pool's SandboxTemplate in namespace ns.
+func template(opts ClusterOptions, ns string) *lennyv1.SandboxTemplate {
 	tmpl := &lennyv1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: "echo-tmpl", Namespace: Namespace},
+		ObjectMeta: metav1.ObjectMeta{Name: "echo-tmpl", Namespace: ns},
 		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: RuntimeRef, IsolationProfile: string(isolation.ProfileSandboxed)},
 	}
 	if opts.Recycling {
@@ -239,7 +264,7 @@ func (c *Cluster) AddIdlePod(t testing.TB) *Pod {
 
 	ctx := context.Background()
 	sb := &lennyv1.Sandbox{ObjectMeta: metav1.ObjectMeta{
-		Name: name, Namespace: Namespace, Labels: map[string]string{warmpool.LabelPool: Pool},
+		Name: name, Namespace: c.Namespace, Labels: map[string]string{warmpool.LabelPool: Pool},
 	}}
 	if err := c.Client.Create(ctx, sb); err != nil {
 		t.Fatalf("create sandbox %s: %v", name, err)
@@ -248,7 +273,7 @@ func (c *Cluster) AddIdlePod(t testing.TB) *Pod {
 	u.SetAPIVersion(lennyv1.GroupVersion.String())
 	u.SetKind("Sandbox")
 	u.SetName(name)
-	u.SetNamespace(Namespace)
+	u.SetNamespace(c.Namespace)
 	_ = unstructured.SetNestedField(u.Object, map[string]interface{}{"phase": "idle", "podIP": ip}, "status")
 	if err := c.Client.Status().Patch(ctx, u, client.Apply, client.FieldOwner(string(ownership.WarmPoolController))); err != nil {
 		t.Fatalf("seed sandbox status %s: %v", name, err)
@@ -294,7 +319,7 @@ func (c *Cluster) PodByName(name string) (*Pod, bool) {
 // BoundClaims returns the name of the pod each bound SandboxClaim names.
 func (c *Cluster) BoundClaims(ctx context.Context) ([]string, error) {
 	var claims lennyv1.SandboxClaimList
-	if err := c.Client.List(ctx, &claims, client.InNamespace(Namespace)); err != nil {
+	if err := c.Client.List(ctx, &claims, client.InNamespace(c.Namespace)); err != nil {
 		return nil, err
 	}
 	var out []string
@@ -337,7 +362,7 @@ func (c *Cluster) PodOf(podName string) *Pod {
 // the pod has no claim.
 func (c *Cluster) ClaimPhase(ctx context.Context, podName string) (string, bool, error) {
 	var claim lennyv1.SandboxClaim
-	err := c.Client.Get(ctx, client.ObjectKey{Namespace: Namespace, Name: "claim-" + podName}, &claim)
+	err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: "claim-" + podName}, &claim)
 	if apierrors.IsNotFound(err) {
 		return "", false, nil
 	}
@@ -379,7 +404,7 @@ func (c *Cluster) ProjectPhase(ctx context.Context, p *Pod, phase string) error 
 	u.SetAPIVersion(lennyv1.GroupVersion.String())
 	u.SetKind("Sandbox")
 	u.SetName(p.Name)
-	u.SetNamespace(Namespace)
+	u.SetNamespace(c.Namespace)
 	_ = unstructured.SetNestedField(u.Object, map[string]interface{}{"phase": phase, "podIP": p.IP}, "status")
 	if err := c.Client.Status().Patch(ctx, u, client.Apply, client.FieldOwner(string(ownership.WarmPoolController))); err != nil {
 		return fmt.Errorf("project sandbox %s to %s: %w", p.Name, phase, err)
@@ -401,7 +426,7 @@ func (c *Cluster) SeedAgentPod(ctx context.Context, p *Pod, labels map[string]st
 		podLabels[k] = v
 	}
 	err := c.Client.Create(ctx, &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: p.Name, Namespace: Namespace, Labels: podLabels},
+		ObjectMeta: metav1.ObjectMeta{Name: p.Name, Namespace: c.Namespace, Labels: podLabels},
 		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "agent", Image: "echo"}}},
 	})
 	if err != nil && !apierrors.IsAlreadyExists(err) {
@@ -416,12 +441,12 @@ func (c *Cluster) SeedAgentPod(ctx context.Context, p *Pod, labels map[string]st
 // spec: §4.6 (SandboxClaim deleted when the pod terminates)
 func (c *Cluster) RemoveSandbox(ctx context.Context, p *Pod) error {
 	if err := client.IgnoreNotFound(c.Client.Delete(ctx, &lennyv1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{Name: p.Name, Namespace: Namespace},
+		ObjectMeta: metav1.ObjectMeta{Name: p.Name, Namespace: c.Namespace},
 	})); err != nil {
 		return err
 	}
 	return client.IgnoreNotFound(c.Client.Delete(ctx, &lennyv1.SandboxClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: "claim-" + p.Name, Namespace: Namespace},
+		ObjectMeta: metav1.ObjectMeta{Name: "claim-" + p.Name, Namespace: c.Namespace},
 	}))
 }
 

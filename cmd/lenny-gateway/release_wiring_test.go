@@ -72,11 +72,42 @@ func TestSlotSetRecoveryProbeRunsOnTheWatchdogContext_spec_12_4(t *testing.T) {
 // spec: §11.4 (User Invalidation), §4.9 (Credential Leasing)
 func TestFullRevokeFanOutReleasesThroughTheSessionServer_spec_11_4(t *testing.T) {
 	assertWired(t, []struct{ file, want, seam string }{
-		{"adminrouter.go", "fanOut := &podTerminateFanOut{registry: w.podRegistry, releaser: sessionSrv}", "the binding release through the session server"},
+		{"adminrouter.go", "fanOut := &bindReleaseFanOut{registry: w.podRegistry, releaser: sessionSrv}", "the binding release through the session server"},
 		{"adminrouter.go", "userPods = fanOut", "the pod terminator handed to the admin router"},
 		{"adminrouter.go", "leaseRevoker := leaserevoke.New(w.llmLeases, w.credAssign, nil)", "the lease revoker's credential assigner"},
 		{"adminrouter.go", "userLeases = leaseRevoker", "the lease revoker handed to the admin router"},
 	})
+}
+
+// TestLifecycleDrainsShareTheBindReleaseFanOut_spec_12_8 pins the gateway's
+// wiring of the drain publish: the binding-release fan-out is built once, and
+// the same terminator reaches the erasure drain, the tenant-deletion drain,
+// and the admin router, whose tenant-suspension drain reads it. The drain and
+// the terminator are unit-tested with injected fakes, so a wiring that hands
+// a drain nil, or builds a second fan-out with a second subscriber, is caught
+// only here.
+//
+// spec: §12.8 (Compliance Interfaces: Lifecycle fence and drain), §11.4 (User Invalidation), §28.5.7 (Gateway-to-store)
+func TestLifecycleDrainsShareTheBindReleaseFanOut_spec_12_8(t *testing.T) {
+	assertWired(t, []struct{ file, want, seam string }{
+		{"adminrouter.go", "admin.DrainSessions(ctx, w.sessions, erasureTerm, userPods, tenantID, userID)", "the erasure drain's fan-out"},
+		{"adminrouter.go", "beginTerminal: sessionSrv.BeginTerminal}, userPods, *lifecycleTickBudget, )", "the tenant-deletion drain's fan-out"},
+		{"adminrouter.go", "adminRouter = adminRouter.WithUserRevocation(userPods, userLeases, userTokens)", "the admin router's fan-out"},
+		{"tenantdeletion.go", "admin.DrainSessions(tctx, t.sessions, t.term, t.pods, tenantID, \"\")", "the tenant-deletion terminator's publish"},
+	})
+	b, err := os.ReadFile("adminrouter.go")
+	if err != nil {
+		t.Fatalf("read adminrouter.go: %v", err)
+	}
+	src := string(b)
+	if n := strings.Count(src, "bindrelease.New("); n != 1 {
+		t.Errorf("adminrouter.go builds %d binding-release propagators, want exactly one subscriber", n)
+	}
+	build := strings.Index(src, "fanOut := &bindReleaseFanOut{")
+	erasure := strings.Index(src, "WithSessionDrain(")
+	if build < 0 || erasure < 0 || build > erasure {
+		t.Errorf("the binding-release fan-out is built at offset %d, after the erasure drain at %d", build, erasure)
+	}
 }
 
 // TestLegalHoldEscrowRunsOverTheEscrowStore_spec_12_8 pins the gateway's

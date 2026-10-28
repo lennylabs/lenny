@@ -73,14 +73,8 @@ func (w *gatewayWiring) buildMetricsBackfill() {
 	// releasing the coordination lease when the coordinator gives up.
 	// Wired only when the lease store exists (it needs Release for the
 	// relinquish path); the metrics are now built so the counters move.
-	if w.erasureLeaseStore != nil {
-		w.coordFencer = coordfence.New(
-			sessionGenerationReader{store: w.sessions},
-			w.erasureLeaseStore,
-			w.replica,
-			gwMetrics,
-			coordfence.Options{Logf: log.Printf},
-		)
+	if fencer := w.newCoordFencer(gwMetrics); fencer != nil {
+		w.coordFencer = fencer
 	}
 	// spec: §10.2 — back-fill the JWTSigner breaker observer
 	// with the freshly-built metrics so signing failures and circuit
@@ -503,4 +497,24 @@ func emitKMSSignQuota(m *gatewaymetrics.Metrics, quota int) {
 		log.Fatalf("lenny-gateway: --kms-sign-quota-per-second must be >= 0 (got %d) (§17.8.2)", quota)
 	}
 	m.SetKMSSignQuotaPerSecond(quota)
+}
+
+// newCoordFencer builds the §10.1 CoordinatorFence driver over the lease
+// store, or returns nil when no lease store is wired. Its relinquish
+// releases the lease by the coordination holder value, the value the
+// at-bind Acquire and the Sweeper hold it under.
+//
+// spec: §10.1.1 (Stateless Replicas and Per-Session Coordination) Replica
+// address, §11.3
+func (w *gatewayWiring) newCoordFencer(metrics coordfence.Metrics) *coordfence.Fencer {
+	if w.erasureLeaseStore == nil {
+		return nil
+	}
+	return coordfence.New(
+		sessionGenerationReader{store: w.sessions},
+		w.erasureLeaseStore,
+		w.coordHolder,
+		metrics,
+		coordfence.Options{Logf: log.Printf},
+	)
 }

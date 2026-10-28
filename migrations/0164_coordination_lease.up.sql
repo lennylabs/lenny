@@ -5,7 +5,7 @@
 -- the form
 --
 --   SELECT session_id FROM coordination_lease
---   WHERE coordinator_replica = $this_replica_id AND released_at IS NULL
+--   WHERE coordinator_replica = $this_holder_value AND released_at IS NULL
 --
 -- (not the in-memory lease cache). Reading from Postgres observes
 -- coordinator handoffs that occurred in the seconds before preStop:
@@ -33,9 +33,11 @@
 CREATE TABLE coordination_lease (
     tenant_id               TEXT        NOT NULL,
     session_id              TEXT        NOT NULL,
-    -- coordinator_replica is the OTel service.instance.id of the gateway
-    -- replica that currently holds the session-coordination lease. The
-    -- §10.1.8 barrier-target query filters on it.
+    -- coordinator_replica is the coordination holder value of the gateway
+    -- replica that currently holds the session-coordination lease: its
+    -- replica identity, its process token, and its forward address
+    -- (§10.1.1 Replica address). The §10.1.8 barrier-target query filters
+    -- on it.
     coordinator_replica     TEXT        NOT NULL,
     -- coordination_generation is the §4.2 fenced generation the holder
     -- last observed for the session. The CheckpointBarrier message
