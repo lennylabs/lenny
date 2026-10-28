@@ -2600,7 +2600,10 @@
         "pkg/gateway/sessionserver/delegated_child_materialize_test.go",
         "tests/tier4_integration/delegation_child_materialization_test.go",
         "tests/tier9_security/credential_lookup_failclosed_test.go",
-        "tests/tier9_security/delegation_child_materialization_cred_test.go::TestDelegatedChildMaterializationCredentialDelivery"
+        "tests/tier9_security/delegation_child_materialization_cred_test.go::TestDelegatedChildMaterializationCredentialDelivery",
+        "pkg/gateway/mcpfabric/delegation/child_identity_test.go::TestDelegatedChildIdentityIsItsSessionRow_spec_8_2",
+        "pkg/gateway/mcpfabric/mcptools/delegate_parent_freshness_test.go::TestDelegateTaskParentEndedBeforeInsertAnswersParentRevoked_spec_8_2",
+        "pkg/gateway/mcpfabric/mcptools/delegator_gate_parent_internal_test.go::TestRequireActiveDelegatorIgnoresTerminalParent_spec_12_8"
       ],
       "packages": [
         "pkg/delegation/cycle",
@@ -2691,7 +2694,8 @@
       "tests": [
         "pkg/delegation/lease/...",
         "tests/tier2_component/leasedenial/leasedenialstore_test.go",
-        "tests/tier9_security/budget_extension_failclosed_test.go"
+        "tests/tier9_security/budget_extension_failclosed_test.go",
+        "pkg/gateway/mcpfabric/delegation/parent_freshness_test.go::TestDelegateParentEndedBeforeInsertRefuses_spec_8_2"
       ],
       "packages": [
         "pkg/delegation/lease"
@@ -3484,7 +3488,9 @@
         "pkg/gateway/mcpfabric/playground/token_subject_recheck_test.go::TestPlaygroundAPIKeyMintAppliesStep1aToSubjectRow_spec_10_2",
         "pkg/gateway/mcpfabric/playground/token_subject_recheck_test.go::TestPlaygroundAPIKeyMintNilIssuedTokensSkipsRead_spec_10_2",
         "tests/tier3_contract/playground/playground_subject_recheck_test.go::TestAPIKeyModeRejectsImpersonationSubject_spec_10_2",
-        "tests/tier9_security/ops_revocation_enforcement_test.go::TestImpersonationBearerRefusals_spec_13_3"
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestImpersonationBearerRefusals_spec_13_3",
+        "tests/tier3_contract/rest_mcp_consistency/caller_check_parity_test.go::TestCreateSessionCallerCheckParity_spec_15_2_1",
+        "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestSessionCreationIndependentOfKMSSigning_spec_10_2"
       ],
       "packages": [
         "pkg/auth",
@@ -4423,7 +4429,9 @@
         "tests/tier9_security/tenant_deletion_isolation_test.go::TestRefusedPlaygroundMintAfterPhase4AuditsOnPlatformChain_spec_12_8",
         "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestRefusedMintForMissingTenantAuditsOnPlatformChain_spec_12_8",
         "tests/tier9_security/ops_revocation_enforcement_test.go::TestOpsRefusesRevokedLennyTokens_spec_25_4",
-        "tests/tier11_docs/build_gaps_terminal_pipeline_records_currency_test.go::TestTerminalPipelineOpenFindingsKeepTheirNotes_spec_12_8"
+        "tests/tier11_docs/build_gaps_terminal_pipeline_records_currency_test.go::TestTerminalPipelineOpenFindingsKeepTheirNotes_spec_12_8",
+        "pkg/gateway/mcpfabric/mcptools/delegate_parent_freshness_test.go::TestDelegateTaskParentEndedBeforeInsertAnswersParentRevoked_spec_8_2",
+        "pkg/gateway/mcpfabric/mcptools/delegator_gate_parent_internal_test.go::TestRequireActiveDelegatorIgnoresTerminalParent_spec_12_8"
       ],
       "packages": [
         "pkg/store",
@@ -5195,7 +5203,9 @@
         "pkg/gateway/externalapi/admin/signing_unavailable_test.go::TestRotateTokenSigningErrorReturns503RetryAfter_spec_10_2",
         "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestJWTSigningKMSOutageBreakerAndRecovery",
         "tests/tier4_integration/impersonation_revocation_cross_replica_test.go::TestImpersonationSessionIsSharedAcrossReplicas_spec_13_3",
-        "tests/tier9_security/ops_revocation_enforcement_test.go::TestImpersonationBearerRefusals_spec_13_3"
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestImpersonationBearerRefusals_spec_13_3",
+        "pkg/gateway/mcpfabric/mcptools/delegate_parent_freshness_test.go::TestDelegateTaskParentEndedBeforeInsertAnswersParentRevoked_spec_8_2",
+        "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestSessionCreationIndependentOfKMSSigning_spec_10_2"
       ],
       "packages": [
         "pkg/api/v1/session",

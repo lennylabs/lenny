@@ -289,17 +289,22 @@ func tripSigningBreaker(t *testing.T, who string, stub *kmsstub.AWSServer, mint 
 	return later
 }
 
-// spec: 10.2 (Authentication) "KMS signing failure mode", 11.6 (Circuit Breakers), 15.1 (REST API)
-// diagnosis: a mint other than 503 KMS_SIGNING_UNAVAILABLE during the
-// outage means a signing failure surfaces as another error or issues a
-// token. An open-breaker Retry-After that is not the remaining cooldown, or
-// a Sign request reaching the KMS while the breaker is open, means the
-// breaker does not short-circuit. A pre-fault token refused means
-// verification depends on the KMS. A mint still failing after the cooldown,
-// or a token whose kid is not the KMS key's thumbprint, means the half-open
-// probe does not close the breaker or a token was signed under another key.
-func TestJWTSigningKMSOutageBreakerAndRecovery(t *testing.T) {
-	gateway.SkipUnlessAvailable(t)
+// keySetChaosKMSStack is a gateway and a Token Service on the AWS KMS
+// provider against one local AWS KMS protocol server, with tenant acme and
+// its user alice@acme.com bootstrapped. preA is a gateway-minted
+// impersonation bearer and preB a user bearer for alice, both signed before
+// any fault.
+type keySetChaosKMSStack struct {
+	stub       *kmsstub.AWSServer
+	ts         *tokensvc.Process
+	gw         *gateway.Process
+	preA, preB string
+}
+
+// startKeySetChaosKMSStack starts the stack, bootstraps tenant acme with the
+// echo runtime and alice@acme.com, and mints the pre-fault bearers.
+func startKeySetChaosKMSStack(t *testing.T) *keySetChaosKMSStack {
+	t.Helper()
 	pg := keySetChaosStartPostgres(t)
 	stub := kmsstub.NewAWSServer(t)
 	ts := tokensvc.StartOpts(t, tokensvc.Options{
@@ -317,6 +322,11 @@ func TestJWTSigningKMSOutageBreakerAndRecovery(t *testing.T) {
 	})
 	if r := keySetChaosDo(t, http.MethodPost, gw.BaseURL()+"/v1/admin/bootstrap", "", map[string]any{
 		"tenants": []map[string]any{{"id": "acme", "displayName": "Acme Corp"}},
+		// The echo runtime is the target of the session creations the KMS
+		// independence test posts.
+		"runtimes": []map[string]any{{
+			"name": "echo", "image": "lenny/echo@sha256:abc", "labels": map[string]string{"tier": "test"},
+		}},
 	}, nil); r.status != http.StatusOK {
 		t.Fatalf("bootstrap: %d %v\n%s", r.status, r.body, gw.Logs())
 	}
@@ -325,18 +335,39 @@ func TestJWTSigningKMSOutageBreakerAndRecovery(t *testing.T) {
 	}, nil); r.status != http.StatusCreated {
 		t.Fatalf("create alice: %d %v", r.status, r.body)
 	}
-	bearerOf := func(r keySetChaosResponse) string {
-		tok, _ := r.body["bearerToken"].(string)
-		if r.status != http.StatusOK || tok == "" {
-			t.Fatalf("impersonation mint: %d %v\n%s", r.status, r.body, gw.Logs())
-		}
-		return tok
-	}
-	preA := bearerOf(keySetChaosImpersonate(t, gw))
+	s := &keySetChaosKMSStack{stub: stub, ts: ts, gw: gw}
+	s.preA = s.bearerOf(t, keySetChaosImpersonate(t, gw))
 	// The subject_token is a user bearer for alice signed with the stub's
 	// key, because step (1a) of the §13.3 "Write-before-issue ordering"
 	// refuses an impersonation bearer as a subject_token.
-	preB := stackkey.UserBearer(t, stub.Signer(t), "acme", "alice@acme.com", nil, auth.RoleUser)
+	s.preB = stackkey.UserBearer(t, stub.Signer(t), "acme", "alice@acme.com", nil, auth.RoleUser)
+	return s
+}
+
+// bearerOf returns the bearer of a successful impersonation mint.
+func (s *keySetChaosKMSStack) bearerOf(t *testing.T, r keySetChaosResponse) string {
+	t.Helper()
+	tok, _ := r.body["bearerToken"].(string)
+	if r.status != http.StatusOK || tok == "" {
+		t.Fatalf("impersonation mint: %d %v\n%s", r.status, r.body, s.gw.Logs())
+	}
+	return tok
+}
+
+// spec: 10.2 (Authentication) "KMS signing failure mode", 11.6 (Circuit Breakers), 15.1 (REST API)
+// diagnosis: a mint other than 503 KMS_SIGNING_UNAVAILABLE during the
+// outage means a signing failure surfaces as another error or issues a
+// token. An open-breaker Retry-After that is not the remaining cooldown, or
+// a Sign request reaching the KMS while the breaker is open, means the
+// breaker does not short-circuit. A pre-fault token refused means
+// verification depends on the KMS. A mint still failing after the cooldown,
+// or a token whose kid is not the KMS key's thumbprint, means the half-open
+// probe does not close the breaker or a token was signed under another key.
+func TestJWTSigningKMSOutageBreakerAndRecovery(t *testing.T) {
+	gateway.SkipUnlessAvailable(t)
+	s := startKeySetChaosKMSStack(t)
+	stub, ts, gw, preA, preB := s.stub, s.ts, s.gw, s.preA, s.preB
+	bearerOf := func(r keySetChaosResponse) string { return s.bearerOf(t, r) }
 	if r := keySetChaosExchange(t, ts.BaseURL(), preA, preB); r.status != http.StatusOK {
 		t.Fatalf("pre-fault exchange: %d %v\n%s", r.status, r.body, ts.Logs())
 	}
@@ -376,5 +407,53 @@ func TestJWTSigningKMSOutageBreakerAndRecovery(t *testing.T) {
 		if kid := keySetChaosKID(t, tok); kid != wantKID {
 			t.Errorf("Token Service mint %d after recovery has kid %q, want the KMS key's %q", i, kid, wantKID)
 		}
+	}
+}
+
+// keySetChaosCreateSession posts a session-creation request to gw as
+// bearer and returns the answer.
+func keySetChaosCreateSession(t *testing.T, gw *gateway.Process, bearer string) keySetChaosResponse {
+	t.Helper()
+	return keySetChaosDo(t, http.MethodPost, gw.BaseURL()+"/v1/sessions", bearer, map[string]any{"runtimeRef": "echo"}, nil)
+}
+
+// requireSessionCreatedWithoutSign asserts that one session creation as
+// bearer answers 201 with a session ID and sends no Sign request to the KMS.
+func requireSessionCreatedWithoutSign(t *testing.T, s *keySetChaosKMSStack, what, bearer string) {
+	t.Helper()
+	before := s.stub.SignRequests()
+	r := keySetChaosCreateSession(t, s.gw, bearer)
+	if r.status != http.StatusCreated {
+		t.Fatalf("%s: POST /v1/sessions = %d %v, want 201\n%s", what, r.status, r.body, s.gw.Logs())
+	}
+	if id, _ := r.body["id"].(string); id == "" {
+		t.Errorf("%s: created session carries no id: %v", what, r.body)
+	}
+	if n := s.stub.SignRequests() - before; n != 0 {
+		t.Errorf("%s: session creation sent %d Sign request(s) to the KMS, want 0", what, n)
+	}
+}
+
+// spec: 10.2 (Authentication) "Signing topology", 10.2 (Authentication) "KMS signing failure mode", 15.1 (REST API)
+// diagnosis: a POST /v1/sessions refused while the KMS fails, or answered
+// 503 KMS_SIGNING_UNAVAILABLE once the gateway's signing breaker is open,
+// means session creation depends on the signer, which the specification
+// rules out because session creation mints no JWT. A Sign request counted
+// during a session creation with the breaker still closed means the create
+// path calls the JWTSigner even when its result is discarded.
+func TestSessionCreationIndependentOfKMSSigning_spec_10_2(t *testing.T) {
+	gateway.SkipUnlessAvailable(t)
+	s := startKeySetChaosKMSStack(t)
+	requireSessionCreatedWithoutSign(t, s, "before the KMS outage", s.preB)
+
+	s.stub.SetFailing(true)
+	// With the breaker still closed, a mint attempt would reach the failing
+	// KMS and be counted, so a zero count here shows no Sign call at all.
+	requireSessionCreatedWithoutSign(t, s, "KMS failing, breaker closed", s.preB)
+
+	tripSigningBreaker(t, "gateway", s.stub, func() keySetChaosResponse { return keySetChaosImpersonate(t, s.gw) })
+	requireSessionCreatedWithoutSign(t, s, "KMS failing, breaker open", s.preB)
+	if r := keySetChaosImpersonate(t, s.gw); r.code() != "KMS_SIGNING_UNAVAILABLE" {
+		t.Errorf("impersonation mint after the session creations: %d %v, want the breaker still refusing with KMS_SIGNING_UNAVAILABLE", r.status, r.body)
 	}
 }

@@ -107,7 +107,10 @@ type delegationFixture struct {
 	objects *recordingObjects
 }
 
-func newDelegationFixture(t *testing.T, wireObjects bool) (*delegationFixture, *delegation.Service) {
+// newDelegationFixture builds the service over a reservation-observing store
+// with a running parent. Each mutate function adjusts the service options
+// before the service is built.
+func newDelegationFixture(t *testing.T, wireObjects bool, mutate ...func(*delegation.Options)) (*delegationFixture, *delegation.Service) {
 	t.Helper()
 	f := &delegationFixture{
 		users:   userstore.NewMemory(),
@@ -131,6 +134,9 @@ func newDelegationFixture(t *testing.T, wireObjects bool) (*delegationFixture, *
 	}
 	if wireObjects {
 		opts.SessionObjects = f.objects
+	}
+	for _, m := range mutate {
+		m(&opts)
 	}
 	return f, delegation.NewService(f.store, opts)
 }
