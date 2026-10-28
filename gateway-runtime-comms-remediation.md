@@ -4107,8 +4107,11 @@ legacy single-file proposals carry their status in the prose status bullet, whic
     its bound address, so each harness retries on fresh ports when the child exits on a bind refusal, and its
     readiness wait requires the child itself to hold its listeners (`tests/testinfra/ports`), which also closes
     a probe answered by the process that took the port. The fix filed T-17.4.39.
-  - [ ] **T-17.4.39** (Low): the Redis Cluster fixture probes fixed-range host ports and releases them before
+  - [x] **T-17.4.39** (Low): the Redis Cluster fixture probes fixed-range host ports and releases them before
     its containers publish them, with no retry. Retry the cluster start on a port-binding error. Direct fix.
+    Fixed on `fix/t-17-4-39` with no product change: the fixture retries the whole cluster start on fresh
+    ports through `ports.StartRetrying` when the container runtime reports a port-binding error, removes the
+    failed attempt's container, and takes an injectable port chooser that the tier-4 retry test uses.
   - [x] **F-4.4.32** (Medium, from 0072 §1.8): the gateway declares `chunk_encoding: tar` for chunks
     `ArchiveTree` gzips. Declare `tar.gz`, which §4.4 already permits.
   - [x] **F-4.4.4**, reopened (Medium, from 0072 §1.9): `FirstCheckpointDelay` has no production caller, so
