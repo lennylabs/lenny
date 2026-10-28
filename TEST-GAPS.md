@@ -702,6 +702,15 @@ The checkpoint primitives, enums, retry budgets, and timeout constants in `pkg/c
 **Spec file:** `spec/04_system-components.md`
 **Reviewed:** 2026-07-06
 
+
+### - [ ] T-4.4.22 — `TestRunUsesTenMinuteDefaultIntervalWhenUnset` asserts the default interval without running `Run` [Low] — OPEN
+- **Spec/Doc:** §4.4 "Periodic checkpoint scheduling" (default `periodicCheckpointIntervalSeconds` 600).
+- **Existing tests:** `pkg/gateway/checkpoint/checkpointer` `TestRunUsesTenMinuteDefaultIntervalWhenUnset` calls `FirstCheckpointDelay` only.
+- **Evidence:** Since `df5af6cdd`, `Run` drives the per-session `SweepDue` schedule, and no test runs `Run` with an unset interval to show the 10-minute default reaches the schedule. Filed from the F-4.4.4 re-closure (2026-10-28).
+- **Gap:** A regression in how `Run` resolves the default interval would pass the test named for it.
+- **Suggested test:** Drive `Run` with an injected clock and an unset `Interval`, and assert the first periodic checkpoint falls in `[600 s, 600 s × 1.2]` and the next one 600 s later.
+- **Owner:** the test-infrastructure direct-fix queue.
+
 ### Summary
 §4.5 defines the durable artifact store (MinIO/S3-compatible, local disk in dev), its normative tenant-prefix isolation at the `ArtifactStore` interface boundary, the `DeleteByTenant` prefix-scoped bulk delete, the content-addressed immutable workspace-snapshot lineage with `parent_workspace_ref`, and the derive-time byte-copy into a session-scoped object. The implementation lives in `pkg/blobstore` with `MemoryStore`, `fsstore`, `miniostore`, `s3`, `gcs`, and `azureblob` backends. Coverage is strong at the unit tier and for the MinIO backend at component tier (`tests/tier2_component/stores/miniostore_test.go`), but the core tenant-prefix security control, the `DeleteByTenant` purge, the T4 per-tenant SSE-KMS selection, and the derive byte-copy are all exercised only at unit tier against `MemoryStore`/fakes, never against a real object-store backend at component, integration, e2e, or security tier. Three of the four production backends (S3, GCS, Azure Blob) have no real-backend test above unit tier; `TestCloudCSI` runs only against AWS and the parity matrix marks `cloud_csi`, `cloud_kms`, and `multi_az_minio` as `planned` for every provider. The §4.5 and §12.5 spec-map entries point `TestCloudCSI`/`TestMultiAZMinIO` at `scaffolds_test.go` while the tests live in other files, and several declared suites (File Fabric upload-to-MinIO, MinIO-outage chaos, node-drain-during-outage) are scaffolds or `t.Skip` placeholders. Counts: 3 High, 5 Medium, 2 Low, 2 Info.
 

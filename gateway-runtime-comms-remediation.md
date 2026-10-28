@@ -3826,11 +3826,12 @@ legacy single-file proposals carry their status in the prose status bullet, whic
 `.claude/tools/proposal-status.mjs` reads and does not write.
 
 - Direct-fix lane.
-  - [ ] **F-4.4.32** (Medium, from 0072 §1.8): the gateway declares `chunk_encoding: tar` for chunks
+  - [x] **F-4.4.32** (Medium, from 0072 §1.8): the gateway declares `chunk_encoding: tar` for chunks
     `ArchiveTree` gzips. Declare `tar.gz`, which §4.4 already permits.
-  - [ ] **F-4.4.4**, reopened (Medium, from 0072 §1.9): `FirstCheckpointDelay` has no production caller, so
+  - [x] **F-4.4.4**, reopened (Medium, from 0072 §1.9): `FirstCheckpointDelay` has no production caller, so
     the configured jitter is never applied. It was closed wrongly.
 - With the queued text-corrections proposal, together with F-7.1.32.
+  - [x] F-4.4.4 and F-4.4.32 fixed 2026-10-28 (`df5af6cdd`, `0d2645dce`). Filed from those fixes, direct-fix queue: **F-4.4.33** (Low, the download labels a legacy gzip `tar` manifest `application/x-tar`), **F-4.4.34** (Low, the `chunk_encoding` column default and empty-value readers still say `tar`), **F-4.4.35** (Low, the adapter ignores the declared encoding), and **T-4.4.22** (Low, `TestRunUsesTenMinuteDefaultIntervalWhenUnset` never runs `Run`). **F-4.4.36** (Low, whether the first-checkpoint jitter is a stable per-session draw) rides with the text-corrections proposal.
   - [ ] **F-4.4.30** (Low, from 0072 §1.1): the 60-second checkpoint timeout has no start instant on the
     best-effort path (§4.4.3, §28.5.1 **Timing.**, and the `CheckpointTimeout` comment).
   - [ ] **F-4.4.31** (Low, from 0072 §1.4): §4.4.5 cites the gateway pod's 240 s and 300 s grace periods as

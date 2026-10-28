@@ -944,11 +944,12 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Evidence:** `pkg/gateway/checkpointer/checkpointer.go:26` defines `defaultInterval = 5 * time.Minute`; `cmd/lenny-gateway/main.go:276` registers `--checkpoint-interval` with default `5*time.Minute`.
 - **Resolution:** Both defaults changed to `10 * time.Minute` in `pkg/gateway/checkpointer/checkpointer.go` and `cmd/lenny-gateway/main.go`. Helm value `gateway.periodicCheckpointIntervalSeconds` (default 600) renders into the `--checkpoint-interval` flag via `charts/lenny/templates/gateway-deployment.yaml`. Tier-1 test `TestRunUsesTenMinuteDefaultIntervalWhenUnset` and the helm-unittest `renders --checkpoint-interval from gateway.periodicCheckpointIntervalSeconds` lock in the spec value.
 
-### - [ ] F-4.4.4 — Periodic-checkpoint jitter not implemented [Medium] — OPEN
+### - [x] F-4.4.4 — Periodic-checkpoint jitter not implemented [Medium] — CLOSED
 - **Spec:** line 258 requires per-session jitter on the first periodic checkpoint: `periodicCheckpointIntervalSeconds + random(0, periodicCheckpointIntervalSeconds × periodicCheckpointJitterFraction)` with `periodicCheckpointJitterFraction` default 0.2, range 0.0–1.0, configurable via `gateway.periodicCheckpointJitterFraction` Helm value.
 - **Evidence:** `pkg/gateway/checkpointer/checkpointer.go:56-67` uses a fixed `time.NewTicker(c.interval())` with no jitter. `grep -rn "periodicCheckpointJitter\|checkpointJitter" pkg/ charts/ cmd/` returns no matches. No Helm value is defined.
 - **Resolution:** `checkpointer.FirstCheckpointDelay` returns a stable, session-ID-seeded delay in `[interval, interval + interval × jitterFraction]`; an FNV hash of the session id ensures the same session receives the same jitter across coordinator handoffs and gateway restarts. Helm value `gateway.periodicCheckpointJitterFraction` (default 0.2) renders to the `--checkpoint-jitter-fraction` flag (env-overridable via `LENNY_CHECKPOINT_JITTER_FRACTION`). Tier-1 tests cover stable + bounded jitter, clamp-out-of-range behavior, diversity across sessions, and the empty-session / zero-interval degenerate paths. The helm-unittest `renders --checkpoint-jitter-fraction from gateway.periodicCheckpointJitterFraction` covers the chart wiring.
 - **Reopened 2026-10-28:** The resolution built the delay function and the flag and closed the finding without applying the jitter. `FirstCheckpointDelay` (`pkg/gateway/checkpoint/checkpointer/checkpointer.go`) has no production caller. `Checkpointer.JitterFraction` is assigned from the flag in `cmd/lenny-gateway/pod_lifecycle.go` and read nowhere in production, and the periodic loop is a plain ticker whose sweep checkpoints every binding on the same tick, so every session on a replica checkpoints at once. Found by proposal 0072 §1.9 and confirmed by the audit of unfinished proposals on 2026-10-28. **Suggested resolution:** Direct fix: schedule each session's first periodic checkpoint at `FirstCheckpointDelay` and subsequent ones at the interval, with a tier-1 test that the first checkpoints of several sessions spread across the jitter window. Owner: the direct-fix lane (plan §10.2).
+- **Re-closure (draft proposal 0072 §1.9, retired):** The earlier resolution left `FirstCheckpointDelay` without a production caller, because `Checkpointer.Run` swept every session on one global ticker. `Run` now drives `SweepDue`, a per-session schedule in `pkg/gateway/checkpoint/checkpointer/schedule.go` that fires each session's first periodic checkpoint `FirstCheckpointDelay` after the scheduler first observes its binding (session start or resume), keeps later checkpoints on the fixed interval, and restarts the delay on a rebind. Tier-1 tests in `schedule_internal_test.go` and `schedule_test.go` use an injected clock to cover the bounded first delay, the fixed later period, the spread of a burst, rebind, release, and retry after failure.
 
 ### - [x] F-4.4.5 — `last_successful_checkpoint_at` not tracked on sessions [Medium] — CLOSED
 - **Spec:** line 258 requires "The gateway tracks `last_successful_checkpoint_at` on the session record in Postgres, updated on every successful checkpoint regardless of trigger (periodic, eviction, pre-drain)."
@@ -1129,7 +1130,7 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 **Gap:** Both headroom arguments are measured against the wrong pod, and the budgets they justify are not shown to fit inside the agent pod's grace period.
 **Suggested resolution:** Through the proposal pipeline, restate both bullets against the agent pod's grace period, and state what happens when the 30-second retry budget and the 60-second Postgres fallback do not both fit. Owner: the queued text-corrections proposal (plan §10.2).
 
-### - [ ] F-4.4.32 — The gateway declares `chunk_encoding: tar` for chunks the adapter gzips [Medium] — OPEN
+### - [x] F-4.4.32 — The gateway declares `chunk_encoding: tar` for chunks the adapter gzips [Medium] — CLOSED
 
 **Spec:** §4.4.2 Checkpoint Atomicity and Partial Manifests and §4.4.5 **MinIO object key logging for manual recovery.** (`chunk_encoding` is `tar` or `tar.gz`, and an operator decodes from the logged `chunk_encoding` rather than from the object-key suffix).
 **Evidence:** `Checkpointer.chunkEncoding` (`pkg/gateway/checkpoint/checkpointer/uploaddriver.go`) returns `partialmanifeststore.ChunkEncodingTar` unless an override is set, and the production wiring sets none. `ArchiveTree` (`pkg/adapter/workspace/tree.go`) writes through a `gzip.Writer` unconditionally. In-band restore works because `ExtractTree` gunzips unconditionally too. Filed 2026-10-28 by the audit of unfinished proposals 0060 and above, from proposal 0072 §1.8.
@@ -1139,6 +1140,32 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 ## §4.5 Artifact Store <a id="4.5"></a>
 **Spec file:** `spec/04_system-components.md`
 **Reviewed:** 2026-05-22
+
+- **Resolution:** Fixed in `0d2645dce` (2026-10-28). `chunkEncoding()` in `pkg/gateway/checkpoint/checkpointer/uploaddriver.go` returns `tar.gz`, matching the gzip `workspace.ArchiveTree` producer; the declaration feeds `CheckpointStart`, the manifest row, and every chunk key. The unused `Checkpointer.ChunkEncoding` override is removed. Every reader builds chunk keys from the manifest column and `ExtractTree` always decodes gzip, so older manifests recorded as `tar` with gzip chunks still restore. Tests: tier-1 `encoding_test.go`; tier-2 `tests/tier2_component/stores/checkpoint_encoding_roundtrip_test.go` (both a `tar.gz` and a legacy `tar` manifest).
+
+### - [ ] F-4.4.33 — The workspace download labels a legacy `tar` manifest with gzip chunks as `application/x-tar` [Low] — OPEN
+- **Spec:** §10.1 "Chunked-object storage model" ("The suffix therefore reflects the actual on-disk payload"); §4.4 "MinIO object key logging for manual recovery".
+- **Evidence:** `streamChunkedWorkspace` (`pkg/gateway/sessionserver/session_subresources.go`) serves the content type and filename from the manifest's `chunk_encoding`. Manifests written before `0d2645dce` record `tar` while their chunks are gzip, so the download is labelled `application/x-tar` with a `.tar` name. Filed from the F-4.4.32 fix (2026-10-28).
+- **Gap:** A client that trusts the label reads gzip bytes as a plain tar archive.
+- **Suggested resolution:** Direct fix: label from the archive's gzip magic bytes, or record that pre-fix manifests are accepted as-is before deployment. Owner: direct-fix queue.
+
+### - [ ] F-4.4.34 — The `chunk_encoding` column default and the empty-value readers still say `tar` [Low] — OPEN
+- **Spec:** §10.1 "Chunked-object storage model"; §4.4.
+- **Evidence:** Migrations 0062 and 0178 default `chunk_encoding` to `'tar'`, and the manifest store's `Put` and its readers map an empty value to `tar`, while the only producer now writes and declares `tar.gz` (`0d2645dce`). The gateway always sets the value, so no row takes the default today. Filed from the F-4.4.32 fix (2026-10-28).
+- **Gap:** The schema default and the empty-value fallback describe an encoding no producer writes.
+- **Suggested resolution:** Direct fix: change the default and the fallback to `tar.gz` in a new migration, with a tier-2 test. Owner: direct-fix queue.
+
+### - [ ] F-4.4.35 — The adapter ignores the declared `chunk_encoding` on `CheckpointStart` [Low] — OPEN
+- **Spec:** §4.4 "MinIO object key logging for manual recovery" ("The decompression step MUST be selected from the logged chunk_encoding field").
+- **Evidence:** The adapter's checkpoint writer always gzips and never reads `CheckpointStart.chunk_encoding`, so a gateway that declared `tar` would not be refused and the manifest would misdescribe the chunks. Filed from the F-4.4.32 fix (2026-10-28).
+- **Gap:** The adapter does not enforce the encoding contract the gateway declares.
+- **Suggested resolution:** Direct fix: the adapter refuses a `CheckpointStart` whose declared encoding it does not produce, with a tier-3 contract test. Owner: direct-fix queue.
+
+### - [ ] F-4.4.36 — The first-checkpoint jitter is a stable per-session hash rather than a random draw [Low] — OPEN
+- **Spec:** §4.4 "Periodic checkpoint scheduling", **Jitter:** (`interval + random(0, interval × jitterFraction)`).
+- **Evidence:** `FirstCheckpointDelay` (`pkg/gateway/checkpoint/checkpointer/checkpointer.go`) derives the offset from an FNV hash of the session id, so a resumed session gets the same offset each time. The spread across sessions is uniform. Filed from the F-4.4.4 re-closure (2026-10-28).
+- **Gap:** The code reads `random` as a stable per-session draw; the spec does not say whether the draw is per session or per scheduling.
+- **Suggested resolution:** Decide in the next proposal that edits §4.4 whether the jitter is stable per session (which keeps handoffs from re-randomizing) and state it, or switch to a fresh draw. Owner: the text-corrections proposal.
 
 ### Summary
 
