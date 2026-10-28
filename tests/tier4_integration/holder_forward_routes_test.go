@@ -583,15 +583,17 @@ func TestStaleForwardIsRefusedByTheFormerHolder_spec_29_3(t *testing.T) {
 }
 
 // spec: 29.3 (Interactive message send) Forwarding rules 1, 6, and 7, 7.4
-// (Upload Safety)
+// (Upload Safety), 15.1 (REST API), 7.2 (Session state machine)
 // diagnosis: a mid-session upload or an interrupt sent to the replica that
 // does not coordinate the session was served there, pushing files to or
 // interrupting a pod the serving replica does not hold, or writing
-// suspended, rather than being forwarded; the input_required interrupt
-// discriminates a gate that looks up only running. With the coordinator
-// unreachable, or a forward whose connection fails after it is established,
-// the serving replica wrote a state. Check handleUploadToSession and
-// handleInterrupt in pkg/gateway/sessionserver.
+// suspended, rather than being forwarded. An interrupt of a session in
+// input_required was forwarded or written rather than refused with 409
+// INVALID_STATE_TRANSITION before any forward, because the interrupt row of
+// §15.1 admits running alone. With the coordinator unreachable, or a forward
+// whose connection fails after it is established, the serving replica wrote
+// a state. Check handleUploadToSession and handleInterrupt in
+// pkg/gateway/sessionserver and the interrupt entry in pkg/api/v1/session.
 func TestOffHolderUploadAndInterruptAreForwarded_spec_29_3(t *testing.T) {
 	t.Run("upload-to-session", func(t *testing.T) {
 		h, coordinator, peer := newForwardCompose(t, lifecycleharness.Options{MidSessionUpload: true})
@@ -606,23 +608,37 @@ func TestOffHolderUploadAndInterruptAreForwarded_spec_29_3(t *testing.T) {
 			t.Errorf("upload answered %d %v, want the coordinator's answer", code, body)
 		}
 	})
-	for _, st := range []session.State{session.StateRunning, session.StateInputRequired} {
-		t.Run("interrupt in "+string(st), func(t *testing.T) {
-			h, coordinator, peer := newForwardCompose(t, lifecycleharness.Options{})
-			id := h.StartSession(coordinator)
-			setRowState(t, h, id, st)
-			forwards := countForwards(coordinator)
-			if code, body := h.Do(peer, http.MethodPost, "/v1/sessions/"+id+"/interrupt", nil); code != http.StatusOK {
-				t.Fatalf("interrupt on the serving replica = %d %v, want 200", code, body)
-			}
-			if n := forwards.Load(); n != 1 {
-				t.Errorf("the coordinator's forward listener received %d requests, want 1", n)
-			}
-			if row := h.Row(id); row.State != session.StateSuspended || row.PodAssignment == "" {
-				t.Errorf("row = %q on %q, want suspended on its pod by the coordinator", row.State, row.PodAssignment)
-			}
-		})
-	}
+	t.Run("interrupt in running", func(t *testing.T) {
+		h, coordinator, peer := newForwardCompose(t, lifecycleharness.Options{})
+		id := h.StartSession(coordinator)
+		forwards := countForwards(coordinator)
+		if code, body := h.Do(peer, http.MethodPost, "/v1/sessions/"+id+"/interrupt", nil); code != http.StatusOK {
+			t.Fatalf("interrupt on the serving replica = %d %v, want 200", code, body)
+		}
+		if n := forwards.Load(); n != 1 {
+			t.Errorf("the coordinator's forward listener received %d requests, want 1", n)
+		}
+		if row := h.Row(id); row.State != session.StateSuspended || row.PodAssignment == "" {
+			t.Errorf("row = %q on %q, want suspended on its pod by the coordinator", row.State, row.PodAssignment)
+		}
+	})
+	t.Run("interrupt in input_required is refused before any forward", func(t *testing.T) {
+		h, coordinator, peer := newForwardCompose(t, lifecycleharness.Options{})
+		id := h.StartSession(coordinator)
+		setRowState(t, h, id, session.StateInputRequired)
+		before := h.Row(id)
+		forwards := countForwards(coordinator)
+		code, body := h.Do(peer, http.MethodPost, "/v1/sessions/"+id+"/interrupt", nil)
+		if code != http.StatusConflict || restErrorCode(body) != "INVALID_STATE_TRANSITION" {
+			t.Fatalf("interrupt on the serving replica = %d %v, want 409 INVALID_STATE_TRANSITION", code, body)
+		}
+		if n := forwards.Load(); n != 0 {
+			t.Errorf("the coordinator's forward listener received %d requests, want none", n)
+		}
+		if row := h.Row(id); row.State != session.StateInputRequired || row.PodAssignment != before.PodAssignment {
+			t.Errorf("row = %q on %q, want input_required on %q unwritten", row.State, row.PodAssignment, before.PodAssignment)
+		}
+	})
 	for _, mode := range undeliveredModes {
 		t.Run("interrupt with the "+mode.name, func(t *testing.T) {
 			h, coordinator, peer := newForwardCompose(t, lifecycleharness.Options{})
