@@ -4,7 +4,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: TEST-7 also changes the §28 staged-text supersession test
 
-**Status:** proposed
+**Status:** accepted (2026-10-28, orchestrator under the owner's delegation)
 
 **What the proposal says.** TEST-7 in the non-spec changes lists four targets: `spec_28_register_writers_test.go`, `off_holder_matrix_stated_outcome_test.go`, `redis_key_prefix_registry_test.go`, and `rediskeys.go`. It names no other tier-11 file whose pins the staged spec edits break.
 
@@ -16,7 +16,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: The WIRED CH-BINDRELEASE claim row names the propagator's current type
 
-**Status:** proposed
+**Status:** accepted (2026-10-28, orchestrator under the owner's delegation)
 
 **What the proposal says.** In the REC-1 claim-register table, the row "Lifecycle drain releases the pod..." takes as its surface the DrainSessions publish through `bindReleaseFanOut.TerminateUserSessions`. The new row "CH-BINDRELEASE binding-release fan-out" takes as its surface the propagator construction in `cmd/lenny-gateway/adminrouter.go`.
 
@@ -28,7 +28,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: Step S4 also changes tests/spec-map.json to credit §28
 
-**Status:** proposed
+**Status:** accepted (2026-10-28, orchestrator under the owner's delegation)
 
 **What the proposal says.** REC-1 lists `scripts/seed-claim-register.py`, `tests/claim-map.json`, and the tier-11 currency tests as this step's targets.
 
@@ -40,7 +40,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: CHART-1 fixes the self-peer rule's position and lands its chart tests
 
-**Status:** proposed
+**Status:** accepted (2026-10-28, orchestrator under the owner's delegation)
 
 **What the proposal says.** CHART-1 adds the mirror `from` rule to `allow-gateway-ingress` and does not say where it sits in the rule list. TEST-6, which step S15 implements, owns the helm-unittest coverage of the chart change.
 
@@ -52,7 +52,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: The tier-3 holder-forward contract tests enter through a contract-tagged export
 
-**Status:** proposed
+**Status:** accepted (2026-10-28, orchestrator under the owner's delegation)
 
 **What the proposal says.** TEST-1 item 6 (Tier 3 contract) states that the tier-3 `holderforward` package checks that a forwarded REST request is byte-equal to the client's request, and that the coordinator's status, headers, and body come back unchanged.
 
@@ -73,7 +73,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: The drain publishes transitioned sessions before it returns a context error
 
-**Status:** proposed
+**Status:** accepted (2026-10-28, orchestrator under the owner's delegation)
 
 **What the proposal says.** CODE-3 item 2 states that after the transition loop and before the verifying listing, the drain calls `pods.TerminateUserSessions` with the transitioned session ids. The text does not cover the drain's early return when the caller's context ends between sessions.
 
@@ -85,7 +85,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: Step S12 adds tier-1 and source-level coverage and defers the tier-4 case to S13
 
-**Status:** proposed
+**Status:** accepted (2026-10-28, orchestrator under the owner's delegation)
 
 **What the proposal says.** The implementation checklist and TEST-4 place the tier-4 `lifecycleharness` case (a user erasure on replica A releases a binding held on replica B) and the `release_wiring_test` same-fan-out check in the TEST-4 step, S13. The header for step S12 lists tier 4 among its tiers.
 
@@ -97,7 +97,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: The TEST-4 subscriber case tests delivery, and the primary-row gate is tested in sessionserver and tier 4
 
-**Status:** proposed
+**Status:** accepted (2026-10-28, orchestrator under the owner's delegation)
 
 **What the proposal says.** The TEST-4 "Subscriber case" in the non-spec changes adds a case to `pkg/gateway/podlifecycle/bindrelease/propagator_test.go`. That case shows that a CH-BINDRELEASE request releases only the bindings whose primary row is terminal, leaves bindings on a non-terminal primary in place, and returns the released bindings' credential leases.
 
