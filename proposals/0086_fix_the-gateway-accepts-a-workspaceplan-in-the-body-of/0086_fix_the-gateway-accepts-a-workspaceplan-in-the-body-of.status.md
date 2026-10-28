@@ -2,13 +2,13 @@
 proposal: 0086_fix_the-gateway-accepts-a-workspaceplan-in-the-body-of
 title: Finalize-time WorkspacePlan bind has no specification contract
 kind: fix
-status: Reviewed
+status: Approved
 drafted-date: 2026-09-28
 drafted-by: change-proposal
 reviewed-date: 2026-10-28
-reviewed-by: change-proposal
-approved-date: 
-approved-by: 
+reviewed-by: jaf
+approved-date: 2026-10-28
+approved-by: jaf
 implemented-date: 
 implemented-by: 
 ---
