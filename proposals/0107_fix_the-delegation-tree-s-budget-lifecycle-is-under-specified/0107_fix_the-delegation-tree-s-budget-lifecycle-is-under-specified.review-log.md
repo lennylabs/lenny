@@ -2466,3 +2466,7 @@ FACT: 0105 CODE-4 item 2 **Hook dispatch** hands the watchdog/orphan claim `end`
 FACT: the r2-prefix delta moves the seal-held HandleBudgetKeysExpired case from Testing item 2 (CODE-2, S11) to Testing item 3 (CODE-3, S15), which depends on S11, so the case first runs at the step that adds rule 2's detached root hook. EVIDENCE: non-spec-changes.md:207, implementation-checklist.md:33-34
 USEFUL [review-log WATCHOUT at :2260/:2272]: item 2's "root holds no terminal claim when the handler returns" covers only the guard-refused states, so the moved item 3 case does not contradict it. I did not refile it.
 FACT: OnSessionTerminal is synchronous in the tree today (it calls recordSessionCompleted inline), so item 2's applied-root assertions hold at S11 before CODE-3 item 6 detaches the hook. EVIDENCE: pkg/gateway/sessionserver/usage.go:255-257
+
+### [orchestrator.contested-0105-dependency]
+
+- DECISION (orchestrator under the owner's delegation, 2026-10-28): the contested impact item is settled by recording, in the 0105 row of Impacts on other proposals, that CODE-3 item 6's writer table and the quiescence wait depend on 0105 CODE-4 item 2 (terminal hooks on a detached goroutine). D15 already orders 0105 first, so no sequencing changes. The open-decisions entry is removed; no human decision remains.
