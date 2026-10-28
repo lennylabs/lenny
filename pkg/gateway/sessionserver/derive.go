@@ -481,7 +481,7 @@ func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstor
 	}
 	encoding := parentRec.ChunkEncoding
 	if encoding == "" {
-		encoding = partialmanifeststore.ChunkEncodingTar
+		encoding = partialmanifeststore.ChunkEncodingTarGz
 	}
 	derivedCheckpointID := s.idFn()
 	derivedRef = checkpointSnapshotRef(source.TenantID, derivedID, derivedCheckpointID)

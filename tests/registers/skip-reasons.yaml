@@ -520,15 +520,15 @@ sites:
       call: Skipf
       reason: 'envtest: kube-apiserver/etcd binaries unavailable; set KUBEBUILDER_ASSETS or run `setup-envtest use %s` (scripts/setup-dev.sh installs them)'
     - path: tests/testinfra/gateway/gateway.go
-      function: SkipUnlessAvailable
-      site: 1
-      call: Skipf
-      reason: 'gateway.SkipUnlessAvailable: go not on PATH: %v'
-    - path: tests/testinfra/gateway/gateway.go
       function: Build
       site: 1
       call: Skipf
       reason: 'go not on PATH: %v'
+    - path: tests/testinfra/gateway/gateway.go
+      function: SkipUnlessAvailable
+      site: 1
+      call: Skipf
+      reason: 'gateway.SkipUnlessAvailable: go not on PATH: %v'
     - path: tests/testinfra/helm/helm.go
       function: SkipUnlessAvailable
       site: 1
@@ -614,15 +614,15 @@ sites:
       site: 1
       call: Skip
     - path: tests/testinfra/opsprocess/opsprocess.go
-      function: SkipUnlessAvailable
-      site: 1
-      call: Skipf
-      reason: 'opsprocess.SkipUnlessAvailable: go not on PATH: %v'
-    - path: tests/testinfra/opsprocess/opsprocess.go
       function: Build
       site: 1
       call: Skipf
       reason: 'go not on PATH: %v'
+    - path: tests/testinfra/opsprocess/opsprocess.go
+      function: SkipUnlessAvailable
+      site: 1
+      call: Skipf
+      reason: 'opsprocess.SkipUnlessAvailable: go not on PATH: %v'
     - path: tests/testinfra/schematest/helpers.go
       function: TrackedFiles
       site: 1
@@ -649,15 +649,15 @@ sites:
       call: Skip
       reason: 'zap.SkipUnlessAvailable: zap.sh not on PATH. Install ZAP per https://www.zaproxy.org/download/ or use the docker image owasp/zap2docker-stable.'
     - path: tests/testinfra/tokenservice/tokenservice.go
-      function: SkipUnlessAvailable
-      site: 1
-      call: Skipf
-      reason: 'tokenservice.SkipUnlessAvailable: go not on PATH: %v'
-    - path: tests/testinfra/tokenservice/tokenservice.go
       function: Build
       site: 1
       call: Skipf
       reason: 'go not on PATH: %v'
+    - path: tests/testinfra/tokenservice/tokenservice.go
+      function: SkipUnlessAvailable
+      site: 1
+      call: Skipf
+      reason: 'tokenservice.SkipUnlessAvailable: go not on PATH: %v'
     - path: tests/tier0_static/crds_test.go
       function: TestCRDManifestsInSyncWithGoTypes
       site: 1
@@ -778,11 +778,6 @@ sites:
       site: 3
       call: Skipf
       reason: helm-unittest plugin not installed. Install via `helm plugin install https://github.com/helm-unittest/helm-unittest`
-    - path: tests/tier2_component/controllers/upgrade_digest_patch_test.go
-      function: TestUpgradeOpsRollPatchesDeploymentWithDigestWhenRequireDigest
-      site: 1
-      call: Skip
-      reason: 'pkg/ops/upgradeservice has no OpsRoll Deployment-patch call site: grep for StrategicMergePatchType across pkg/ops/upgradeservice and cmd/lenny-ops finds none. The orchestrator is documented and built as operator-paced (it records phase transitions and audit/events; the actual kubectl/helm mutation is left to the operator or a Kubernetes seam between calls), so there is no product entry point this test can drive. Closing this gap needs a human decision on whether to add an in-process self-patch or keep the operator-paced model as the accepted reading of the spec sentence cited above.'
     - path: tests/tier2_component/embedded/bringup_test.go
       function: requireDockerDaemon
       site: 1
@@ -1289,11 +1284,6 @@ sites:
       call: Skipf
       reason: 'precondition not met: no SandboxClaim binding found for session %s; the e2e gateway runs without --agent-namespace so the §4.6 K8s pod binder is nil — the session is in-memory only and no Sandbox is claimed. Set --agent-namespace=lenny-agents on the gateway Deployment to exercise the TESTING.md §13.19 node-drain path.'
     - path: tests/tier5_e2e_kind/stream_failure_kind_test.go
-      function: requireCoordinatedBy
-      site: 1
-      call: Skip
-      reason: 'precondition not met: the e2e Postgres pod is not running'
-    - path: tests/tier5_e2e_kind/stream_failure_kind_test.go
       function: TestStreamFailureConcurrentPoolDrainsAtThreshold_spec_5_2
       site: 1
       call: Skip
@@ -1303,6 +1293,11 @@ sites:
       site: 2
       call: Skipf
       reason: 'precondition not met: concurrent pool not ready: %v'
+    - path: tests/tier5_e2e_kind/stream_failure_kind_test.go
+      function: requireCoordinatedBy
+      site: 1
+      call: Skip
+      reason: 'precondition not met: the e2e Postgres pod is not running'
     - path: tests/tier6_e2e_cloud/agent_objectstore_egress_test.go
       function: requireAgentNamespace
       site: 1

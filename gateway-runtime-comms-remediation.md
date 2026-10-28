@@ -3818,7 +3818,16 @@ other test in that binary.
     Fixed in `2a0c51c4a` with no product change: tests whose code takes the namespace, or whose manifest
     the test supplies, use per-test namespaces, and each object at a product-fixed namespace and name has
     one owning test. The package fell from 151.7 s to 25.9 s.
-  - [ ] **T-17.4.24** (Low): `tests/tier2_component/controllers` starts one in 17 tests (146.3 s).
+  - [x] **T-17.4.24** (Low): `tests/tier2_component/controllers` starts one in 17 tests (146.3 s).
+    Fixed in `7a75103f6` with no product change: every test shares one control plane in its own namespace,
+    Runtimes carry per-test names, and the fixed-name RuntimeClasses are held by one test at a time and
+    deleted at cleanup. No test keeps a private control plane, because the degraded-mode test faults only a
+    second client and leaves the API server running. The package fell from 157.4 s to 17.7 s. The fix
+    filed T-17.4.34 (the citation gates miss the `N.M line L` spelling).
+  - [ ] **T-17.4.34** (Low): the line-citation gates do not recognize the bare `N.M line L` spelling; 22
+    `// spec:` annotations in 10 Go files use it and none is in the ratchet baseline.
+  - [ ] **T-17.4.35** (Low): component-test directories may lack a `tests/change-graph.json` key, so `--since` never
+    selects them on their own changes. Survey every `tests/tier*/` directory and add a `validate-maps` check. Direct fix.
   - [ ] **T-17.4.25** (Info): `cmd/lenny-gateway` starts one in 5 tests (about 31 s of 86.4 s). It took
     109.1 s in a scoped unit-tier run on 2026-10-27, the slowest of that run.
   - [x] **T-17.4.29** (Medium): parallel implementation worktrees share the one `lenny-e2e` kind cluster,
@@ -3870,6 +3879,20 @@ legacy single-file proposals carry their status in the prose status bullet, whic
     `ArchiveTree` gzips. Declare `tar.gz`, which §4.4 already permits.
   - [x] **F-4.4.4**, reopened (Medium, from 0072 §1.9): `FirstCheckpointDelay` has no production caller, so
     the configured jitter is never applied. It was closed wrongly.
+  - [x] **F-4.4.33** (Low, filed from F-4.4.32): the download labels a legacy gzip `tar` manifest
+    `application/x-tar`. Closed without code under the pre-deployment no-shims rule (2026-10-28).
+  - [x] **F-4.4.34** (Low, filed from F-4.4.32): the `chunk_encoding` column default and the empty-value
+    fallback say `tar`. Migration 0193 and the store and reader fallbacks move both to `tar.gz` (2026-10-28).
+  - [x] **F-4.4.35** (Low, filed from F-4.4.32): the adapter ignores `CheckpointStart.chunk_encoding`. The
+    adapter now refuses any encoding other than `tar.gz` with `InvalidArgument` (2026-10-28).
+  - [x] **T-4.4.22** (Low, filed from F-4.4.4): `TestRunUsesTenMinuteDefaultIntervalWhenUnset` never runs `Run`.
+    The test now drives `Run` with an injected clock and an unset interval (2026-10-28, `47475f2e2`).
+  - [x] **F-4.4.37** (Low, filed from F-4.4.34): `checkpoint_manifest.chunk_encoding` has no CHECK constraint
+    on the `tar` / `tar.gz` enum since migration 0178 replaced the 0062 table. Migration 0194 restores the
+    CHECK (2026-10-28).
+  - [x] **T-4.6.19** (Low, found 2026-10-28): the pod-registry CAS contract test requires a lost
+    compare-and-swap that real concurrency does not guarantee, so it flakes on a loaded host. The subtest now
+    holds the row lock until all eight writers have read the version, so exactly one wins (2026-10-28).
 - With the queued text-corrections proposal, together with F-7.1.32.
   - [x] F-4.4.4 and F-4.4.32 fixed 2026-10-28 (`df5af6cdd`, `0d2645dce`). Filed from those fixes, direct-fix queue: **F-4.4.33** (Low, the download labels a legacy gzip `tar` manifest `application/x-tar`), **F-4.4.34** (Low, the `chunk_encoding` column default and empty-value readers still say `tar`), **F-4.4.35** (Low, the adapter ignores the declared encoding), and **T-4.4.22** (Low, `TestRunUsesTenMinuteDefaultIntervalWhenUnset` never runs `Run`). **F-4.4.36** (Low, whether the first-checkpoint jitter is a stable per-session draw) rides with the text-corrections proposal.
   - [ ] **F-4.4.30** (Low, from 0072 §1.1): the 60-second checkpoint timeout has no start instant on the

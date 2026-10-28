@@ -643,6 +643,14 @@ var prodMigrationSchema = []struct {
 	// the pod-holder predicate. The index and its drop are asserted directly
 	// in TestPodReleasedAtMigration_spec_7_1. spec: §7.1.
 	{migration: "0191", table: "sessions", columns: []string{"pod_released_at"}},
+	// 0194 restores the §10.1 closed-enum CHECK on
+	// checkpoint_manifest.chunk_encoding that migration 0178 dropped. It
+	// adds no column, so the entry names none; it is here so
+	// TestProdMigrationsRollBackPerStep steps through its .down.sql, and
+	// the constraint is asserted directly in
+	// TestCheckpointManifestChunkEncodingCheckMigration_spec_10_1.
+	// spec: §10.1, §4.4.
+	{migration: "0194", table: "checkpoint_manifest"},
 }
 
 // spec: 12.2, 18.5
