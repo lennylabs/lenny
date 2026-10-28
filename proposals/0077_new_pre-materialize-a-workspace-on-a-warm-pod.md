@@ -5,6 +5,7 @@
   and names the questions that decide whether the design is sound. Several of those questions are load
   bearing and none of them is answered here. Treat every mechanism below as a candidate rather than a
   decision.
+- **Owner direction (2026-10-28):** the owner wants this capability built, starting with massive git repositories. The content lives in a read-only pod-wide folder (the cross-session isolation answer), and a session derives its writable repository via git alternates plus a delta fetch from the cached ref to its pinned commit. The proposal is re-derived after proposal 0086 (gateway-runtime-comms-remediation.md §10.2, "Queue after P4b").
 - **Date:** 2026-08-19
 - **Scope:** A warm pod holds no session workspace content, so everything a session's `WorkspacePlan`
   materializes (a repository clone, uploaded archives, inline files, and the setup commands that follow)

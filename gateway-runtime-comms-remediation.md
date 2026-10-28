@@ -3183,6 +3183,20 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   §6.2 setup-failure wording. Its RECORDS-1 files a finding as F-6.2.27, which collides with the existing
   OPEN F-6.2.27 (the `idle → draining` trigger list); a note in its summary file requires renumbering to the
   next free identifier at filing.
+- [ ] **Proposal 0077, re-derived** (Draft; owner decision 2026-10-28): pre-materialize workspace content on a
+  warm pod, starting with massive git repositories, and extensible to other content later. The owner wants the
+  capability built. Settled direction: a pool-level template names a repository and ref; the adapter fills a
+  pod-wide bare object store at warm time on a volume the runtime container mounts read-only (as `sharedAssets`
+  is), which answers cross-session poisoning; each session's repository borrows objects through git alternates,
+  fetches only the delta from the cached ref to its pinned `resolvedCommitSha`, and checks it out, falling back to
+  a full clone when the fetch fails. Because git is content-addressed, a stale cache costs a larger delta and never
+  a different tree. Pre-running setup commands is out of the first version. Open design points for the run: the
+  credential path for a private repository at warm time (a warm pod holds no credential lease, and the gateway
+  clones over its own path today), the cache surviving the §5.2 recycle scrub as pod state, cache refresh cadence,
+  working-tree checkout cost for very large trees (sparse checkout or a reused tree), and disk sizing. A spike that
+  measures delta-fetch-plus-checkout against a cold clone on a large repository opens the run. It follows 0086,
+  which settles when a session's plan binds and pins and how runtime `workspaceDefaults` compose with it.
+
 - [ ] **P2b** (section P2 above): after 0085.
 
 Proposals the R-steps need (added 2026-10-21 by the R7 to R25 re-derivation):
@@ -3257,8 +3271,7 @@ Proposals the R-steps need (added 2026-10-21 by the R7 to R25 re-derivation):
   decides to pursue it.
   - [ ] Proposal 0061 (single-shot adapter pod hold and idle TTL). Whether it becomes a §21 post-v1 item is
     an open owner decision (section 10.5).
-  - [ ] Proposal 0077 (pre-materialize a workspace on a warm pod). It relates to F-5.1.23 and F-7.5.3: the
-    widened 0086 states per-session setup as the default, so that 0077 can add an opt-in warm-time mode.
+  - Proposal 0077 moved to the queue after P4b on 2026-10-28 by owner decision (see "Queue after P4b").
 - [ ] Proposal 0087 part 2: cross-tenant reuse on `in-place` pools by resetting the tenant pin after a
   proven runtime restart, which gives `recycle.allowCrossTenantReuse` effect again. Kata first, after the
   four supervisor properties pass on a KVM-capable host. Hard gate: security review findings 1, 3, 4, and 5
