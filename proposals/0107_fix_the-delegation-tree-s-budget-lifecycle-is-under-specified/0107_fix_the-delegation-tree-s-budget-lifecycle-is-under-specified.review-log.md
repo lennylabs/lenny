@@ -421,3 +421,7 @@ FACT: the erasure orchestrator aborts the job on the first SessionEraser error, 
 FACT: Enforcer.Record's Terminal branch sets deny and calls the Terminator outside the lock, not Enforcer.TerminateSession, so CODE-5's `terminating` flag has two independent setters and Testing item 5 exercises only one — EVIDENCE: pkg/gateway/session/sessionbudget/sessionbudget.go:273-280, :335
 FACT: Elicit already reads the requesting row before Put and returns a wrapped error today; CODE-7 item 1's new pre-Put behavior is only the ErrNotFound/terminal -> ErrRequesterEnded mapping — EVIDENCE: cmd/lenny-gateway/lease_elicit.go:66-70
 WATCHOUT: a "Return on the recorded root" assertion only discriminates F-8.3.5 when the fixture makes treeRoot disagree with RootSessionID (failing parent Get); treeRoot breaks on a read error and returns the deepest node — EVIDENCE: pkg/gateway/sessionserver/usage.go:830-841
+
+### [f2.other-proposals]
+
+DECISION: 0106 impact row (marker:0106:4) rewritten in summary `## Impacts on other proposals`: retires 0106 CODE-A derive item 4 and replay item 3 `registerLeaseTree` calls and TEST item 1's registrar assertion; parent-write removal stands; "replaces the registrar assertion" corrected to deletion under CODE-6 item 7; human-call clause added — EVIDENCE: proposals/0106_*/0106_*.non-spec-changes.md:28, :33, :164; 0106 status.md:10 (approved-date 2026-10-27); 0107 non-spec-changes.md:10, :84, :94, :103. No checklist change.

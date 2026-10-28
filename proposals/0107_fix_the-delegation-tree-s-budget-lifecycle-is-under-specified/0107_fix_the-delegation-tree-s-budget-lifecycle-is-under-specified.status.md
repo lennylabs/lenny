@@ -12,3 +12,12 @@ approved-by:
 implemented-date: 
 implemented-by: 
 ---
+
+## Review history
+
+Recorded 2026-10-27. The adversarial review run had two loops.
+
+- Spec loop: 6 rounds. The loop converged. The run included 1 full-pool sweep.
+- Non-spec loop: 4 rounds. The loop did not converge, so the findings it had not closed remain open. The run included 1 full-pool sweep.
+
+The run fixed 57 findings across both loops. The non-spec loop did not settle the questions it was reviewing. The round-by-round record is in the review log in this directory.

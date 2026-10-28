@@ -98,7 +98,7 @@
 
 | Proposal | Status | What this change does to it | What it must do |
 |:--|:--|:--|:--|
-| 0106 | Approved (2026-10-27) | CODE-6 deletes `registerLeaseTree` and `LeaseTreeRegistrar`, so the `registerLeaseTree` calls 0106 CODE-A adds after the derive insert (derive item 4) and the replay insert (replay item 3) are removed, and the recording-registrar assertion in 0106 TEST item 1 (`derive_test.go`, `replay_test.go`) loses its subject. 0106 CODE-A's removal of the derive and replay parent writes stands. 0106's other deliverables are unaffected. | Nothing. 0106 lands first (D15), and 0107 CODE-6 deletes the calls and replaces the registrar assertion. |
+| 0106 | Approved (2026-10-27) | CODE-6 deletes `registerLeaseTree` and `LeaseTreeRegistrar`. That removes the `registerLeaseTree` calls 0106 CODE-A adds after the derive insert (derive item 4) and the replay insert (replay item 3), and the recording-registrar assertion in 0106 TEST item 1 (`derive_test.go`, `replay_test.go`) loses its subject. 0106 CODE-A's removal of the derive and replay parent writes stands, and 0106's other deliverables are unaffected. CODE-6's delegated-child test (see CODE-6 item 3) does not depend on 0106's parent-write removal. | Nothing. 0106 lands first (D15), and 0107 CODE-6 deletes the calls and, under its item 7, the registration assertion. Proceeding over approved 0106 is the human's call. |
 | 0104 | Approved | File-level overlap only: CODE-6 edits `cmd/lenny-gateway/gwcontrol_server.go` and the `leasecontrol` package, which 0104 CODE-1 also edits for service-account tokens. No statement of 0104 changes. | Nothing. |
 
 ## Deliverable index
