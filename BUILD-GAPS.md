@@ -944,10 +944,11 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Evidence:** `pkg/gateway/checkpointer/checkpointer.go:26` defines `defaultInterval = 5 * time.Minute`; `cmd/lenny-gateway/main.go:276` registers `--checkpoint-interval` with default `5*time.Minute`.
 - **Resolution:** Both defaults changed to `10 * time.Minute` in `pkg/gateway/checkpointer/checkpointer.go` and `cmd/lenny-gateway/main.go`. Helm value `gateway.periodicCheckpointIntervalSeconds` (default 600) renders into the `--checkpoint-interval` flag via `charts/lenny/templates/gateway-deployment.yaml`. Tier-1 test `TestRunUsesTenMinuteDefaultIntervalWhenUnset` and the helm-unittest `renders --checkpoint-interval from gateway.periodicCheckpointIntervalSeconds` lock in the spec value.
 
-### - [x] F-4.4.4 — Periodic-checkpoint jitter not implemented [Medium] — CLOSED
+### - [ ] F-4.4.4 — Periodic-checkpoint jitter not implemented [Medium] — OPEN
 - **Spec:** line 258 requires per-session jitter on the first periodic checkpoint: `periodicCheckpointIntervalSeconds + random(0, periodicCheckpointIntervalSeconds × periodicCheckpointJitterFraction)` with `periodicCheckpointJitterFraction` default 0.2, range 0.0–1.0, configurable via `gateway.periodicCheckpointJitterFraction` Helm value.
 - **Evidence:** `pkg/gateway/checkpointer/checkpointer.go:56-67` uses a fixed `time.NewTicker(c.interval())` with no jitter. `grep -rn "periodicCheckpointJitter\|checkpointJitter" pkg/ charts/ cmd/` returns no matches. No Helm value is defined.
 - **Resolution:** `checkpointer.FirstCheckpointDelay` returns a stable, session-ID-seeded delay in `[interval, interval + interval × jitterFraction]`; an FNV hash of the session id ensures the same session receives the same jitter across coordinator handoffs and gateway restarts. Helm value `gateway.periodicCheckpointJitterFraction` (default 0.2) renders to the `--checkpoint-jitter-fraction` flag (env-overridable via `LENNY_CHECKPOINT_JITTER_FRACTION`). Tier-1 tests cover stable + bounded jitter, clamp-out-of-range behavior, diversity across sessions, and the empty-session / zero-interval degenerate paths. The helm-unittest `renders --checkpoint-jitter-fraction from gateway.periodicCheckpointJitterFraction` covers the chart wiring.
+- **Reopened 2026-10-28:** The resolution built the delay function and the flag and closed the finding without applying the jitter. `FirstCheckpointDelay` (`pkg/gateway/checkpoint/checkpointer/checkpointer.go`) has no production caller. `Checkpointer.JitterFraction` is assigned from the flag in `cmd/lenny-gateway/pod_lifecycle.go` and read nowhere in production, and the periodic loop is a plain ticker whose sweep checkpoints every binding on the same tick, so every session on a replica checkpoints at once. Found by proposal 0072 §1.9 and confirmed by the audit of unfinished proposals on 2026-10-28. **Suggested resolution:** Direct fix: schedule each session's first periodic checkpoint at `FirstCheckpointDelay` and subsequent ones at the interval, with a tier-1 test that the first checkpoints of several sessions spread across the jitter window. Owner: the direct-fix lane (plan §10.2).
 
 ### - [x] F-4.4.5 — `last_successful_checkpoint_at` not tracked on sessions [Medium] — CLOSED
 - **Spec:** line 258 requires "The gateway tracks `last_successful_checkpoint_at` on the session record in Postgres, updated on every successful checkpoint regardless of trigger (periodic, eviction, pre-drain)."
@@ -1113,6 +1114,27 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 **Suggested resolution:** Wire `evictionfallback.Writer` into the eviction path and an `EvictionStateLookup` into the session server, and resume a record-only session as §7.3 step 3e states.
 
 ---
+
+### - [ ] F-4.4.30 — The 60-second checkpoint timeout has no defined start on the best-effort path [Low] — OPEN
+
+**Spec:** §4.4.3 Checkpoint Quiescence, Timeout, and Abort Handling (**Checkpoint timeout and recovery:** "All checkpoint paths enforce a 60-second checkpoint timeout measured from the initial quiescence request to completion"); the same §4.4 subsection's **Basic / Standard-level runtimes** bullet ("Best-effort snapshot without pausing"); §28.5.1 **Timing.** of the checkpoint card ("Every checkpoint path enforces a 60-second timeout measured from the initial quiescence request").
+**Evidence:** The best-effort path for Basic and Standard runtimes issues no quiescence request, so the instant the deadline starts is undefined on that path. `CheckpointTimeout` (`pkg/checkpoint/checkpoint.go`) is documented as "Applies to every checkpoint path" and reproduces the ambiguity. Filed 2026-10-28 by the audit of unfinished proposals 0060 and above, from proposal 0072 §1.1, which was withdrawn after its items were filed.
+**Gap:** Two implementations of the best-effort path can disagree on whether a slow snapshot has timed out.
+**Suggested resolution:** Through the proposal pipeline, state the start instant of the timeout on each path (for example, the start of the snapshot on the best-effort path) in §4.4.3 and §28.5.1, and align the `CheckpointTimeout` comment. Owner: the queued text-corrections proposal (plan §10.2), with F-7.1.32.
+
+### - [ ] F-4.4.31 — §4.4.5 cites the gateway pod's termination grace period as headroom for the agent pod's eviction and Postgres-fallback budgets [Low] — OPEN
+
+**Spec:** §4.4.5 Checkpoint Storage Failure and Eviction Fallback, the **Eviction checkpoints** bullet ("`terminationGracePeriodSeconds` (240s at Tier 1/2, 300s at Tier 3 — see Section 17.8)" as headroom for the 30-second retry budget) and **Postgres fallback retry during failover.** (the 60-second budget "fits comfortably within `terminationGracePeriodSeconds` (240s at Tier 1/2, 300s at Tier 3)"); §17.8 Capacity Planning and Defaults, whose row is labelled `terminationGracePeriodSeconds` (gateway pod).
+**Evidence:** The agent pod's grace period defaults to 120 seconds (the podspec renderer in `pkg/controller/sandbox/podspec/`), and §10.1's agent-pod grace floor computes the same value, so the agent pod has no headroom of the size §4.4.5 claims. Filed 2026-10-28 by the audit of unfinished proposals 0060 and above, from proposal 0072 §1.4.
+**Gap:** Both headroom arguments are measured against the wrong pod, and the budgets they justify are not shown to fit inside the agent pod's grace period.
+**Suggested resolution:** Through the proposal pipeline, restate both bullets against the agent pod's grace period, and state what happens when the 30-second retry budget and the 60-second Postgres fallback do not both fit. Owner: the queued text-corrections proposal (plan §10.2).
+
+### - [ ] F-4.4.32 — The gateway declares `chunk_encoding: tar` for chunks the adapter gzips [Medium] — OPEN
+
+**Spec:** §4.4.2 Checkpoint Atomicity and Partial Manifests and §4.4.5 **MinIO object key logging for manual recovery.** (`chunk_encoding` is `tar` or `tar.gz`, and an operator decodes from the logged `chunk_encoding` rather than from the object-key suffix).
+**Evidence:** `Checkpointer.chunkEncoding` (`pkg/gateway/checkpoint/checkpointer/uploaddriver.go`) returns `partialmanifeststore.ChunkEncodingTar` unless an override is set, and the production wiring sets none. `ArchiveTree` (`pkg/adapter/workspace/tree.go`) writes through a `gzip.Writer` unconditionally. In-band restore works because `ExtractTree` gunzips unconditionally too. Filed 2026-10-28 by the audit of unfinished proposals 0060 and above, from proposal 0072 §1.8.
+**Gap:** An operator following the §4.4.5 manual-recovery procedure runs `tar -x` against gzip bytes, and the manifest's recorded encoding is false.
+**Suggested resolution:** Direct fix: declare `tar.gz` (the value §4.4 already permits) wherever the gateway records the encoding of chunks `ArchiveTree` produced, with a tier-1 test that decodes a produced chunk according to its declared encoding. Owner: the direct-fix lane (plan §10.2).
 
 ## §4.5 Artifact Store <a id="4.5"></a>
 **Spec file:** `spec/04_system-components.md`
@@ -2189,6 +2211,20 @@ F-5.3.14 closes with the same application (proposal Section 10); do not wire its
 **Gap:** Any process in the pod's network namespace that reached the `CH-RUNTIMEOPS` socket became the connection the adapter sends checkpoint, interrupt, credential-rotation, deadline, and terminate signals to, and whose acknowledgements and token counts it trusts.
 **Suggested resolution:** Route the `CH-RUNTIMEOPS` listener through the same `SocketPeerAuth` decision as `CH-MSGSOCK` and the MCP sockets.
 **Resolution (2026-10-03):** `NewRuntimeOps(socketPath, auth SocketPeerAuth)` wraps its listener through `SocketPeerAuth.wrap`: outside nonce-only mode only `auth.ExpectedUID` is admitted, the embedded posture (`EmbeddedPeerAuth()`) and nonce-only mode apply no check, and the zero posture admits only UID 0. A refused connection is logged as `runtimeops_peer_refused` with its UID, closed, and skipped inside `Accept`, so `Run` never serves it and keeps accepting. `cmd/lenny-adapter` passes the shared posture and refuses `--runtime-ops-socket` without `--runtime-uid` unless `--require-so-peercred=false`, as it already did for `--runtime-socket` and `--mcp-socket`. The `CH-RUNTIMEOPS` manifest-nonce handshake stays unimplemented; the runtime-SDK proposal owns it. Every caller passes a posture: the in-process tests and the `tests/testinfra/rotationgate` harness pass their own UID. Tests: `pkg/adapter/runtimeops_peercred_test.go` (a foreign UID through the lookup seam is refused and logged, and the next agent-UID connection is served; the agent UID is served; nonce-only and embedded postures read no peer UID), `pkg/adapter/runtimeops_peercred_linux_test.go` (real `SO_PEERCRED` refusal; the zero posture fails closed), and `TestRuntimeOpsSocketRefusesForeignUIDPeer_spec_4_7_11` in `tests/tier9_security/runtime_socket_peercred_test.go`.
+
+### - [ ] F-4.7.31 — The Full-level rotation in-flight gate is keyed by provider only, so one session's requests delay another session's rotation [Medium] — OPEN
+
+**Spec:** §4.7 Runtime Adapter, the Full-level credential rotation protocol (wait for in-flight LLM requests to drain before `credentials_rotated`, under the 300-second ceiling).
+**Evidence:** `rotateProviderFull` (`pkg/adapter/credentials.go`) rewrites the addressed session's credential file but calls `awaitInflightGate(ctx, r.provider, trigger)`, which takes no session. The in-flight count lives in a map keyed by provider (`inflight` in `pkg/adapter/runtimeops.go`). On a pod serving concurrent sessions, a rotation for one session waits on every session's requests to the same provider. Filed 2026-10-28 by the audit of unfinished proposals 0060 and above, from proposal 0080 §1.5 (originally proposal 0073 §9 Recorded limits), which was withdrawn after its items were filed.
+**Gap:** Rotation is separated per session only for the credential file, and the in-flight gate and its metrics remain pod-scoped.
+**Suggested resolution:** Through the proposal pipeline, state whether the in-flight gate is per session or per pod on a concurrent pod, and key the count accordingly. Owner: proposal 0084's re-convergence (plan §10.2 Phase 3), which settles session attribution on pods whose one runtime process serves several sessions.
+
+### - [ ] F-4.7.32 — The adapter cannot enforce the pod-idleness refusal that the pod-global claim enforced [Low] — OPEN
+
+**Spec:** §4.7 Runtime Adapter and §5.2 Pool Configuration and Execution Modes (the gateway allocates a slot and counts occupancy against `maxConcurrentSessions`).
+**Evidence:** Proposal 0073 replaced the adapter's pod-global session claim with per-slot state, and nothing renders `maxConcurrentSessions` into the adapter's configuration. The ceiling is enforced only by the gateway's slot claimer (`pkg/gateway/podlifecycle/podclaim/slotclaimer.go`). The adapter keeps only the refusal it can evaluate, a `StartSession` or `Resume` for a session that has already started. Filed 2026-10-28 by the audit of unfinished proposals 0060 and above, from proposal 0080 §1.6 (originally proposal 0073 §9 Recorded limits).
+**Gap:** A gateway defect that over-assigns a pod is not caught at the pod. This is likely an accepted limit, because the gateway is the component that allocates slots.
+**Suggested resolution:** Either record the gateway as the sole enforcement point in §5.2 and close this finding as accepted, or render the ceiling into the adapter and refuse a start beyond it. Owner: proposal 0084's re-convergence (plan §10.2 Phase 3).
 
 ## §4.8 Gateway Policy Engine <a id="4.8"></a>
 ### Summary
@@ -3841,6 +3877,7 @@ The audit surfaces three classes of gap. First, a substantial slice of the §5.1
 - **Gap:** The §5.1 derived-runtime feature is incomplete — a derived runtime cannot ship default files or default setup commands, so the operator cannot model the canonical "research-pipeline" example from the spec (which depends on `workspaceDefaults.files: agent.py` and `workspaceDefaults.setupCommands: pip install`). The §14 materialization order claim is unenforceable.
 - **Suggested resolution:** Add a typed `WorkspaceDefaults` struct (with `Files []FileEntry` and `SetupCommands []CommandEntry`) to the store and Postgres schema; wire it into the §14 materialization pipeline; implement the Append merge with conflicting-path replacement.
 - **Resolution:** Added `runtimestore.WorkspaceDefaults{Files []WorkspaceFile, SetupCommands []WorkspaceSetupCommand}` (bare-string and `{cmd,timeoutSeconds}` forms accepted) on `Runtime`, with migration 0075 (`workspace_defaults JSONB`) + pgstore, admin POST/PUT/bootstrap payload + validation + OpenAPI. `Merge` implements the §5.1 Append: derived files appended onto base with a conflicting Path replaced in place, derived setup commands appended after base. The §14 materialization consuming the resolved block is a forward-consuming path; the descriptor now reaches the store and resolver. Resolved in commit 6f70f0c9.
+- **Note (2026-10-28):** The deferred consumption was never built, so the modeled block reaches no session. The defect is tracked as reopened F-7.5.3, which states the evidence and the open specification questions and routes the fix to proposal 0086. This finding stays closed for the store and merge half it delivered.
 
 ### - [x] F-5.1.7 — `runtimeOptionsSchema` field unmodeled — High [Medium] — CLOSED
 
@@ -3994,6 +4031,13 @@ The audit surfaces three classes of gap. First, a substantial slice of the §5.1
 - The §5.1 "minimum configuration" example (lines 339-355) cannot register a working runtime end-to-end: `supportedProviders` (F-5.1.2) is required by the example but unmodeled, and `credentialPools` ships in the bootstrap payload's `tenants` / `runtimes` / `users` sections only — the `credentialPools` section itself is parsed elsewhere and is out of §5.1 scope.
 
 ---
+
+### - [ ] F-5.1.23 — §5.1 places setup commands at pod warm-up, once per pod, while every other site and the code run them per session after slot materialization [Medium] — OPEN
+
+**Spec:** §5.1 Runtime, **Setup Commands and Policy** ("Setup commands run after workspace materialization and before runtime starts. While executing, pod in INIT state, not READY. Pod failure during setup causes pod replacement before warm pool entry. Setup commands run once per pod, not per task."), and the §5.1 merge-table row for `setupCommandPolicy` ("gateway enforces at pod startup").
+**Evidence:** The other sites contradict that paragraph. §6.1 says a pre-warmed pod holds no client files. §7.1 steps 12 and 13 materialize the workspace at finalize and then run setup. §7.5 says setup runs "after workspace finalization, before session start" and caps commands per session (`setupCommandPolicy.maxCommands`). §5.1 **Derived Runtime Instantiation** clears the session's slot before each materialization. The §6.2 pod state machine defines no `INIT` state. In the code, `RunSetup` runs per session after `FinalizeWorkspace` on the bind path (`pkg/gateway/podlifecycle/podsession/bindprepare.go` and `slotbinder.go`). Filed 2026-10-28 by the audit of unfinished proposals 0060 and above.
+**Gap:** A runtime author reading §5.1 expects setup to run once at warm-up, before any session, which is the opposite of what the platform does.
+**Suggested resolution:** Through the proposal pipeline, reword §5.1 as per-session setup that runs after the session's slot is materialized, point it to §7.5, send a setup failure to §6.2, and correct the merge-table row. State this as the default, so that proposal 0077 can later add an opt-in warm-time mode. Owner: proposal 0086, widened on 2026-10-28 (plan §10.2).
 
 ## §5.2 Pool Configuration and Execution Modes <a id="5.2"></a>
 Spec section: `spec/05_runtime-registry-and-pool-model.md` lines 359–637.
@@ -4680,6 +4724,13 @@ The NEEDS-OPERATOR (Kata-enabled host RuntimeClass) gating is cleared: retire-an
 **Gap:** The isolation level a client reads after a pool edit contradicts §7.1, and the session claim and the release disposition disagree on whether the pool recycles.
 **Suggested resolution:** Take the stored `recycle.enabled` whenever the pool has a mirror row, and keep the CRD block only as the fallback when no mirror row exists.
 **Resolution:** Fixed directly on `fix/kind-kubeconfig-and-t9-podreuse`. `foldPoolPolicy` assigns `m.Recycle = mirror.Recycle` when the reader returns a row; `ResolvePool` keeps the CRD-derived value when no reader is wired or the pool has no row. The doc comments of `PoolMatch.Recycle` and `PoolPolicyMirror.Recycle` state the precedence. `TestResolvePoolRecycleFollowsStoredPolicyOverCRDBlock_spec_5_2` (`pkg/gateway/podlifecycle/podsession/resolve_test.go`, envtest-backed) pins eight rows: a stale `keep` block and a stale `vm-restart` block under a disabled stored policy resolve to false, an enabled stored policy resolves to true with or without a CRD block, a disabled stored policy with no block resolves to false, and a missing row or a nil reader falls back to the CRD block. It replaces `TestResolvePoolKeepsCRDRecycleWhenMirrorOmitsIt`, which pinned the OR. The tier-9 test runs against images built from the tree, so its rerun needs `tests/testinfra/kind/install.sh` from a tree carrying this fix; the shared cluster was not reinstalled.
+
+### - [ ] F-5.2.60 — A leaked scrub drains a single-session pod, while §5.2 says such a pod has no leaked sub-state [Low] — OPEN
+
+**Spec:** §5.2 Pool Configuration and Execution Modes, **Scrub model.** ("The `leaked` column applies on a pod serving concurrent sessions ... A pod serving one session has no `leaked` sub-state"); §6.2 Pod State Machine, **`leaked` slot semantics.**
+**Evidence:** `drainLedger.RecordLeak` (`pkg/gateway/session/recycle/scrubreporter_seams.go`) records the leak and stamps the drain-request annotation once `slothealth.Tracker.Unhealthy` reports the threshold crossed. `UnhealthyThreshold` (`pkg/gateway/runtime/slothealth/slothealth.go`) clamps a denominator below 1 to 1, and the function's own comment says "a single-session pool drains on the first leak". Filed 2026-10-28 by the audit of unfinished proposals 0060 and above, from proposal 0080 §1.7 (originally proposal 0073 §9 Recorded limits).
+**Gap:** The code applies the leaked consequence to an exclusive pod, and the specification scopes it to concurrent pods.
+**Suggested resolution:** Through the proposal pipeline, either restate the threshold per pod class in §5.2 and §6.2 or change the ledger so the clamp stops applying to a single-session pod. Owner: the new §5.2 drain and op-lock proposal (plan §10.2 Phase 3), queued with the recycling follow-up proposal.
 
 ## §5.3 Isolation Profiles <a id="5.3"></a>
 Spec section: `spec/05_runtime-registry-and-pool-model.md` lines 638–679.
@@ -8453,7 +8504,7 @@ Effect: the "most restrictive execution mode" promised by §7.5 cannot be select
 
 **Resolution:** Added `SetupPolicy.shell` (proto3 bool, field 3) to the adapter proto so the gateway can plumb the §7.5 line 490 mode through to the adapter. `runtimeSetupPolicy` reads `runtimestore.SetupCommandPolicy.Shell` and stamps it on every gateway → adapter RunSetup call; absent policies keep the legacy `shell=true` path. The adapter's `runSetupCommand` now branches via the new `buildSetupCmd` helper: shell-mode wraps in `/bin/sh -c` (legacy), argv-mode does `strings.Fields(cmd)` and execs `argv[0]` with `argv[1:]` so backticks, pipes, redirects, `&&` chaining, and glob expansion stay literal arguments. `SetupOptions.Shell` is the runtime-level toggle; an empty argv-mode command rejects with a typed error so the §7.5 line 488 rejection reason surfaces upstream.
 
-### - [x] F-7.5.3 — `workspaceDefaults.setupCommands` (base + derived runtime defaults) are never merged into the executed list (High) [Medium] — CLOSED
+### - [ ] F-7.5.3 — `workspaceDefaults.setupCommands` (base + derived runtime defaults) are never merged into the executed list (High) [Medium] — OPEN
 
 **Potential duplicate** (confidence: high) — F-5.1.6 — Both report that workspaceDefaults (files and setupCommands) are unmodeled in the Runtime struct and never merged into execution, breaking the §5.1 append-merge.
 
@@ -8468,6 +8519,10 @@ Evidence:
 Effect: a derived runtime that declares `workspaceDefaults.setupCommands: [pip install -r requirements.txt]` (the very example in `spec/05_runtime-registry-and-pool-model.md:125-126`) does not actually install dependencies — the commands silently never run. The §26 reference-runtime catalog's documented `setupCommands` is dead weight. The deployer-set platform defaults that the spec positions as the strict, server-controlled portion of the setup phase are skipped, and only the (presumably less-trusted) client list is executed.
 
 **Resolution:** Closed by F-5.1.6. `runtimestore.WorkspaceDefaults.SetupCommands` is now modeled and `Merge` appends derived setup commands after base (preserving per-command `timeoutSeconds`), giving the §14 path the resolved base→derived list to prepend before the client commands. Resolved in commit 6f70f0c9.
+
+**Reopened 2026-10-28:** The closure in 6f70f0c9 was wrong. It modeled and merged the block and deferred its consumption as "a forward-consuming path", and nothing consumes it, so runtime `workspaceDefaults` files and setup commands never reach a session. The admin API validates and stores the block, and `runtimestore.Merge` and `mergeWorkspaceDefaults` (`pkg/gateway/runtime/runtimestore/merge.go`) apply the §5.1 Append merge correctly. But `resolvePlanForCreate` (`pkg/gateway/sessionserver/`, called from create, create-and-start, and finalize) stores only the client plan, and every bind path converts that stored plan through `podsession.WorkspacePlanToProto`: finalize, start, resume, the delegated child, and `bind_request.go`. No code outside the admin API and `runtimestore` reads `WorkspaceDefaults`.
+
+The specification states the materialization order and the setup-command order, and it leaves open: where the defaults are pinned (at create or at bind, and whether resume and derive re-read them); whether they are re-applied over a restored checkpoint or a derived snapshot; how they compose with the finalize-time plan bind; the rule for a path that both a default file and a client source write; how a `WorkspaceFile.Ref` is materialized; and whether `setupCommandPolicy` and `maxCommands` apply to default setup commands. **Suggested resolution:** Through the proposal pipeline, state those rules and apply the merged defaults on every bind path, with tests at tiers 1, 2, and 4. Owner: proposal 0086, widened on 2026-10-28 (plan §10.2). F-5.1.6 carries a note pointing here.
 
 ### - [x] F-7.5.4 — Setup-command stdout/stderr are not captured or surfaced (High) [Medium] — CLOSED
 
@@ -14337,6 +14392,27 @@ DEFERRED because this wiring depends on cluster-resident primitives (per-pod ada
 **Gap:** The specification states two fallback mechanisms, and the code implements the one §10.1.1 and the `CH-ATTACH` card exclude, so a reader of the card's exclusivity guard is told the wrong lock and the wrong store.
 **Suggested resolution:** Through the proposal pipeline, restate the §10.1.1 **Fallback:** bullet and the `CH-ATTACH` **Exclusivity.** field to the transaction advisory lock and the `session_leases` row, or move the code to the session-row lock, and make §12.2 and §12.4 agree. The specification contradicts itself, so this needs the proposal pipeline. Owner: unassigned (a new coordination contract proposal, with F-10.1.40).
 
+### - [ ] F-10.1.42 — The pod refuses the same-generation fence retry that §10.1.2 orders [Medium] — OPEN
+
+**Spec:** §10.1.2 Coordinator Handoff Protocol, step 2 ("**If `CoordinatorFence` fails or times out:** The new coordinator must retry the fence RPC with the same generation value"); §29.8 restates the retry.
+**Evidence:** The adapter's fence handler (`pkg/adapter/coordination.go`) refuses `gen <= st.coord.lastFenced` with `FailedPrecondition`, and `Fencer.fence` (`pkg/gateway/coordination/coordfence/coordfence.go`) reads every `FailedPrecondition` as generation-stale and relinquishes the lease. When a fence lands and its acknowledgement is lost, the retry at the same value is refused as stale, and the client drops the response body that accompanies a non-OK status (`pkg/gateway/runtime/adapterclient/coordinatorfence.go`), so the driver cannot tell a re-fence from a stale one. Filed 2026-10-28 by the audit of unfinished proposals 0060 and above, from proposal 0080 §1.16 (derived by proposal 0076's OD2), which was withdrawn after its items were filed. It relates to F-10.1.24.
+**Gap:** A handoff that succeeded can lose its lease and increment `lenny_coordinator_handoff_stale_total` and `lenny_coordinator_fence_relinquished_total`.
+**Suggested resolution:** Through the proposal pipeline, accept the equal generation at the pod (`gen < lastFenced`), restate the `CoordinatorFenceResponse` acceptance comment, state the equal case in §10.1.2, §28.5.1, and §29.8, and correct the F-4.7.2 resolution record. Settle the residual split-brain case for a row minted at generation 0 together with F-10.1.44. Owner: the new coordination fence-refusal proposal (plan §10.2), queued after proposal 0101 and ahead of R12 and R13.
+
+### - [ ] F-10.1.43 — One status code carries three fence-refusal classes, and the §16.1 `handoff_stale_total` row describes only one [Medium] — OPEN
+
+**Spec:** §16.1 Metrics, the `lenny_coordinator_handoff_stale_total` row ("increments when a replica receives a generation-stale rejection"); §10.1.2 Coordinator Handoff Protocol.
+**Evidence:** The adapter returns `FailedPrecondition` for a stale fence and a same-generation re-fence (`pkg/adapter/coordination.go`) and for a fence on a session the slot registry does not hold bound (`checkSessionBound`, `pkg/adapter/slotsession.go`). `Fencer.fence` counts all three as generation-stale, and the response body is dropped with the non-OK status. Filed 2026-10-28 by the audit of unfinished proposals 0060 and above, from proposal 0080 §1.19.
+**Gap:** The counter an operator reads during a handoff incident overcounts, and no signal distinguishes the classes.
+**Suggested resolution:** Through the proposal pipeline, make the classes distinguishable on the wire (a distinct code, a typed error detail, or the body on the refusal path), count each class separately, and restate the §16.1 row. Owner: the new coordination fence-refusal proposal (plan §10.2), after F-10.1.42 settles the classes.
+
+### - [ ] F-10.1.44 — Nothing owns the retirement of the fence path's non-positive generation floor [Low] — OPEN
+
+**Spec:** §10.5 Upgrade and Rollback Strategy (the Phase 3 constraint-tightening rule and its preflight and inter-phase obligations); §10.1.2 Coordinator Handoff Protocol.
+**Evidence:** `Fencer.fence` (`pkg/gateway/coordination/coordfence/coordfence.go`) floors a `gen <= 0` read at 1 before fencing. Proposal 0076's CODE-4 says the release that tightens the `sessions.coordination_generation` check from `>= 0` to `>= 1` retires the floor, and no record outside that landed proposal owns the tightening. The generation is read through `coordfence.GenerationReader`, which may be the in-memory session store, whose snapshot restore bypasses `Create`. Filed 2026-10-28 by the audit of unfinished proposals 0060 and above, from proposal 0080 §1.20.
+**Gap:** The floor either stays forever while a landed proposal promises its retirement, or is retired without establishing that no configured store can return a non-positive value.
+**Suggested resolution:** The owner decides whether to keep the floor permanently or tighten the constraint and retire it (plan §10.5). Record the decision in the coordination fence-refusal proposal (plan §10.2), which also settles the generation-0 residual F-10.1.42 names.
+
 ## §10.2 Authentication <a id="10.2"></a>
 Spec: `spec/10_gateway-internals.md` lines 183–300.
 Scope: Implementation tree under `pkg/auth/`, `pkg/auth/jwt/`, `pkg/gateway/middleware/auth*`, `pkg/tokenservice/`, `pkg/tokenexchange/`, `pkg/gateway/admin/`.
@@ -15914,6 +15990,13 @@ The spec's preserve-unknown-fields guidance (line 437) is conditional on having 
 5. **F-10.5-05** — Platform-upgrade audit events are catalogued but unemitted; a schema migration or pool upgrade leaves no audit trail.
 
 ---
+
+### - [ ] F-10.5.17 — The migrate Job has no run-time budget [Low] — OPEN
+
+**Spec:** §10.5 Upgrade and Rollback Strategy states no run-time budget for the schema-migration Job.
+**Evidence:** `charts/lenny/templates/migrate-job.yaml` sets `backoffLimit` and no `activeDeadlineSeconds`, while the preflight, crd-validate, and backup Jobs each set one. `docs/operator-guide/upgrades.md` shows `--wait --timeout 10m` as an example command, and `docs/runbooks/schema-migration-failure.md` states no expected or maximum run time. The runner applies each migration file as one batch, so an unbatched backfill is one long statement. Filed 2026-10-28 by the audit of unfinished proposals 0060 and above, from proposal 0080 §1.21 (proposal 0076's OD14).
+**Gap:** An operator cannot size a maintenance window, and nothing distinguishes a slow migration from a stuck one.
+**Suggested resolution:** Through a small proposal, state the migrate Job's budget in §10.5, render it as `activeDeadlineSeconds` in the chart, and state the expected and maximum run time in the runbook and the upgrade guide. Owner: unassigned (a small proposal, plan §10.2).
 
 ## §10.6 Environment Resource and RBAC Model <a id="10.6"></a>
 Spec source: `spec/10_gateway-internals.md` lines 550–675.
@@ -30990,6 +31073,20 @@ Summary by severity: **9 High** (HIGH-001…009), **14 Medium** (MED-010…023),
 
 ---
 
+### - [ ] F-15.4.6 — The §15.4.3 level matrix says Basic has no checkpoint support, while §4.4 gives Basic a best-effort snapshot [Low] — OPEN
+
+**Spec:** §15.4.3 Runtime Integration Levels, the **Checkpoint / restore** row of the level comparison matrix (Basic: "No checkpoint support; pod failure loses in-flight context"); §4.4.3, the **Basic / Standard-level runtimes** bullet ("Best-effort snapshot without pausing. Checkpoint tagged `consistency: best-effort`").
+**Evidence:** `ConsistencyForLevel` (`pkg/checkpoint/checkpoint.go`) returns `ConsistencyBestEffort` for `LevelBasic` rather than rejecting the level, which agrees with §4.4. Filed 2026-10-28 by the audit of unfinished proposals 0060 and above, from proposal 0072 §1.2, which was withdrawn after its items were filed.
+**Gap:** A runtime author reading §15.4.3 neither implements nor expects the snapshotting the gateway performs.
+**Suggested resolution:** Through the proposal pipeline, restate the Basic cell of the §15.4.3 matrix to match §4.4. Owner: the queued text-corrections proposal (plan §10.2).
+
+### - [ ] F-15.4.7 — §15.4 and the adapter-contract page name an `AdapterInit` handshake that does not exist [Low] — OPEN
+
+**Spec:** §15.4 Runtime Adapter Specification, the `INIT` row of the adapter state table ("The adapter sends an `AdapterInit` message on the control stream with `adapterProtocolVersion`").
+**Evidence:** `schemas/lenny-adapter.proto` declares no `AdapterInit` or `AdapterInitAck`; the version handshake is `rpc NegotiateVersion`, and the adapter-to-gateway stream is `rpc AdapterEvents`. `docs/reference/adapter-contract.md` repeats the `AdapterInit` sentence. Both sentences also write "control stream", which names no channel identifier; the naming lint does not flag it because its matcher (`scripts/specshift/name/phrase.go`) reserves the two words only before `channel` or `channels`. Filed 2026-10-28 by the audit of unfinished proposals 0060 and above, from proposal 0072 §1.10.
+**Gap:** The prose predates the current contract, and a reader cannot find the mechanism it describes in the channel registers.
+**Suggested resolution:** Through the proposal pipeline, restate both sentences in terms of `NegotiateVersion` and the channel identifier from the §28 registers. The prose correction rides with the queued text-corrections proposal; the matcher extension to the "stream" head noun rides with plan step R2b. Owner: the queued text-corrections proposal and R2b (plan §10.2).
+
 ## §15.5 API Versioning and Stability <a id="15.5"></a>
 **Spec scope.** `spec/15_external-api-surface.md` lines 2423-2477. Seven enumerated items: (1) REST URL versioning + 6-month overlap, (2) MCP two-version coexistence + deprecation header + conversion procedure, (3) runtime adapter independent versioning, (4) CRDs ship at `v1alpha1` and graduate `v1alpha1 → v1beta1 → v1` with conversion webhook deployment procedure + preflight check, (5) breaking-change definition, (6) `stable`/`beta`/`alpha` stability tiers, (7) `schemaVersion` integer field on every persisted record with bifurcated live/durable forward-compat rules and the three-entry degradation annotation catalog.
 
@@ -31924,6 +32021,13 @@ Severity Medium because the alert it gates is critical-severity in §16.5 (and n
 The §16.1 surface is wired in the spec, the alert catalog, and the typed `MetricCatalog()` table, but the **emission layer is missing**: only 16 of 241 §16.1 metrics are actually registered against a Prometheus registry. The remaining 225 alert PromQL expressions and SLO derivations rely on series that do not exist at scrape time. The catalog test asserts list completeness, which is what made this drift invisible — a follow-on test that walks `MetricCatalog()` and asserts a Prometheus registration exists for each name would convert this entire class of findings into compile/test-time failures. Where metrics ARE registered, several diverge from the spec's mandated label set in ways that break the documented PromQL queries even after the alert catalog is wired up.
 
 ---
+
+### - [ ] F-16.1.7 — The §16.1 row for `lenny_checkpoint_storage_failure_total` omits the `reason` label the gateway emits [Low] — OPEN
+
+**Spec:** §16.1 Metrics, the checkpoint storage failure row (labelled by `pool`, `level`, and `trigger`); §4.4.5, which documents the `reason` label.
+**Evidence:** `gatewaymetrics_sessionlifecycle.go` (`pkg/gateway/metrics/gatewaymetrics/`) registers the counter with `pool`, `level`, `trigger`, and `reason`, and `TestCheckpointStorageFailureReasonLabel` asserts `reason="retry_exhausted"` and `reason="kms_unavailable"`. `docs/reference/metrics.md` lists the same three labels as §16.1. Filed 2026-10-28 by the audit of unfinished proposals 0060 and above, from proposal 0072 §1.7, which was withdrawn after its items were filed.
+**Gap:** An operator building from the documented surface cannot distinguish a KMS outage, which no retry clears, from retry exhaustion.
+**Suggested resolution:** Through the proposal pipeline, add `reason` and its values to the §16.1 row, and update `docs/reference/metrics.md`. Owner: the queued text-corrections proposal (plan §10.2).
 
 ## §16.2 Key Latency Breakpoints <a id="16.2"></a>
 **Spec section:** `spec/16_observability.md` lines 305–314.
