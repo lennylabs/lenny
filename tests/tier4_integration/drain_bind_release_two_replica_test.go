@@ -150,6 +150,25 @@ func (l replicaReleaser) TerminateLocal(ctx context.Context, req bindrelease.Req
 	return bindrelease.Result{PodsTerminated: res.PodsTerminated, FailedSessions: res.FailedSessions}
 }
 
+// reportingReleaser is a replicaReleaser that reports each result once
+// every release it ran, including the credential-lease return, has
+// completed. The propagator's subscriber runs one request at a time, so
+// the results arrive in request order; a report blocks until the test
+// reads it or the subscriber's context ends.
+type reportingReleaser struct {
+	replicaReleaser
+	results chan<- bindrelease.Result
+}
+
+func (l reportingReleaser) TerminateLocal(ctx context.Context, req bindrelease.Request) bindrelease.Result {
+	res := l.replicaReleaser.TerminateLocal(ctx, req)
+	select {
+	case l.results <- res:
+	case <-ctx.Done():
+	}
+	return res
+}
+
 // spec: §28.5.7 (Gateway-to-store), §11.4 (User Invalidation)
 // diagnosis: a CH-BINDRELEASE request published on replica a and naming two
 // sessions bound on replica b, one whose primary row is terminal and one
@@ -168,25 +187,35 @@ func TestBindReleaseSubscriberReleasesOnlyTerminalBindings_spec_28_5_7(t *testin
 	clientB := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = clientA.Close(); _ = clientB.Close() })
 	propA := bindrelease.New(replicaReleaser{r: a}, pubsub.New(clientA), a.ID)
-	propB := bindrelease.New(replicaReleaser{r: b}, pubsub.New(clientB), b.ID)
+	results := make(chan bindrelease.Result, 1)
+	propB := bindrelease.New(reportingReleaser{replicaReleaser{r: b}, results}, pubsub.New(clientB), b.ID)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go propB.Run(ctx)
 
 	// A publish that precedes the subscription is dropped, so publish
-	// until b's subscriber has released the terminal session's binding.
+	// until b's subscriber reports a release. The assertions below read
+	// state only after b's TerminateLocal has returned: the registry entry
+	// is removed before the credential lease is returned, so polling the
+	// registry alone can observe the lease mid-release.
 	req := bindrelease.Request{TenantID: lifecycleharness.Tenant, UserID: erasureUser, SessionIDs: []string{done, live}}
-	deadline := time.Now().Add(10 * time.Second)
-	for {
+	deadline := time.After(10 * time.Second)
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	for released := false; !released; {
 		propA.Publish(ctx, req)
-		if _, ok := b.Registry.Get(done); !ok {
-			break
-		}
-		if time.Now().After(deadline) {
+		select {
+		case res := <-results:
+			if len(res.FailedSessions) != 0 {
+				t.Fatalf("replica b failed to release %v", res.FailedSessions)
+			}
+			released = res.PodsTerminated > 0
+		case <-tick.C:
+		case <-deadline:
 			t.Fatalf("replica b never released the binding of terminal session %s", done)
 		}
-		time.Sleep(20 * time.Millisecond)
 	}
+	requireBound(t, b, done, false)
 
 	requireBound(t, b, live, true)
 	if n := len(h.CredLeases.LeasesBySession([]string{done})); n != 0 {
