@@ -3274,9 +3274,9 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
     or JWKS verifier). It lands with TEST-GAPS T-10.2.1 and joins 0097's key set. Fixed in `079b3e3d0`: the
     gateway verifies IdP bearers through the issuer's discovery document and JWK Set and normalizes them to
     `user_bearer`; T-10.2.1 is closed with it.
-  - [ ] **F-8.2.31** (Medium): delegation child tokens are unsigned and absent from `issued_tokens`. Moved
+  - [x] **F-8.2.31** (Medium): delegation child tokens are unsigned and absent from `issued_tokens`. Moved
     out of this queue on 2026-10-26: it needs a proposal, and it joins F-10.2.25 in the **session capability
-    and delegation child token proposal** below.
+    and delegation child token proposal** below. Resolved by proposal 0104, implemented 2026-10-28.
   - [x] **F-25.4.35** (Low): the split-brain reconciliation discards the `RemoveByID` and `SetEpoch` errors.
     Fixed in `0ae8a114e`: `Reconcile` returns an error naming each failed Redis write and retries both on the
     next pass, a failed removal before the Redis locks are read.
@@ -3302,13 +3302,20 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
       2026-10-26 (merge `f7a1c54e4`). Production mode becomes Environment `prod` on `--environment`, which
       every gate reads through one predicate. Implemented 2026-10-27 (merge `83ab31257`), closing F-17.9.24.
       Its unstaged defects are filed below.
-  - [x] **Session capability and delegation child token proposal** (done as a proposal; implementation pending), the follow-up 0097
+  - [x] **Session capability and delegation child token proposal** (implemented), the follow-up 0097
     - **Outcome.** Proposal 0104 (`proposals/0104_fix_two-gaps-leave-lenny-s-session-scoped-and-delegation/`) was
       approved 2026-10-27 (merge `56a8699ff`). It resolves the open points the other way: pods hold no
       Lenny-issued JWT, so the session-creation mint and the internal child-token exchange are dropped, and the
       creation fence refuses a delegated child of a terminal or absent parent. The forwarded-call session binding
       is split out (F-10.2.29). Its spec edits rewrite sentences proposal 0102 adds, so its implementation runs
       after 0102 merges. It closes F-10.2.25 and F-8.2.31. Its unstaged defects are filed below.
+      Implemented 2026-10-28 on `impl/0104-pod-no-jwt`: the creation fence refuses a delegated child of a
+      terminal or absent parent and both cascade walks list children from the primary (61296a96a, f180369d1,
+      and d942fc054), the unsigned child-token minter and `DELEGATION_AUDIT_CONTENTION` are deleted
+      (48d920956), session creation and client-facing `lenny/delegate_task` apply the step (1a) caller check
+      (47562880d), the `TokenStoreUnavailable` description drops delegation minting (d7c1a9d56), and the tests
+      (fc6a2285a and dfaff048f) and docs (ea6fe21cf) follow. F-10.2.25 and F-8.2.31 are closed, and TEST-GAPS
+      T-8.2.7 and T-10.2.2 are resolved.
     names: **F-10.2.25** (Medium, the session-creation mint and the gateway-to-pod renewal path) and
     **F-8.2.31** (Medium, delegation child tokens are unsigned claim records absent from `issued_tokens`),
     joined on 2026-10-26 because the delegation exchange takes the session-creation token as its
@@ -3600,13 +3607,15 @@ endpoint, KMS error codes, or the `lenny-ops` probe.
     whether the metric and alert renames ship with aliases for the old names or without them.
 
 **Defects filed from proposal 0104's unstaged-defect list (2026-10-27).** Proposal 0104 (approved
-2026-10-27, implementation pending) lists defects in the shipped tree that it does not stage, and its REC-1
+2026-10-27, implemented 2026-10-28) lists defects in the shipped tree that it does not stage, and its REC-1
 files them once confirmed. They are filed now, ahead of REC-1, because no defect is dropped. Each was
 re-confirmed against the tree, none was already tracked, and each BUILD-GAPS entry says it was filed ahead of
 REC-1, so 0104's implementor updates the entry rather than filing a duplicate. The §10.7 runtime eval
-credential gap surfaced during the review of 0104 and is filed with them.
+credential gap surfaced during the review of 0104 and is filed with them. 0104's implementation updated
+F-10.2.29, F-8.5.26, and F-13.3.22 in place on 2026-10-28, re-confirming each against the tree, and filed no
+duplicate. Each stays open, and 0104 no longer blocks any of them.
 
-- Direct-fix queue, after 0104's implementation.
+- Direct-fix queue, unblocked by 0104's implementation.
   - [ ] **F-13.3.22** (Medium): the Token Service's `issuedRecord` sets neither `ParentJTI` nor `ActSubject`
     on an external `a2a_delegation` child, so `RevokeCascade` cannot reach the child from its parent. Record
     the `actor_token`'s `jti` and `sub` on an actor-bearing exchange. After 0104 deletes the internal minter,
@@ -3615,8 +3624,8 @@ credential gap surfaced during the review of 0104 and is filed with them.
   - [ ] **F-8.5.26** (Low): `lenny/delegate_task` returns admission's `ErrParentNotRunning` (and
     `ErrParentNotFound`) bare, so the caller receives `INTERNAL_ERROR`, which is `TRANSIENT` and retryable.
     No §15.1 code covers a live parent that is not `running`, so the choice of code needs the proposal
-    pipeline unless an existing row is judged to fit. It can ride with any later §8.5 or §15.1 proposal, and
-    it lands after 0104, which edits the same handler.
+    pipeline unless an existing row is judged to fit. It can ride with any later §8.5 or §15.1 proposal.
+    0104, which edits the same handler, is implemented, so the fix no longer waits on it.
   - [ ] **Forwarded-call session binding proposal** (not yet written), after R14: **F-10.2.29** (Medium). The
     gateway dispatches a `CH-MCP-PLATFORM` or `CH-MCP-CONNECTOR` call forwarded on `LNK-GWCONTROL` under the
     session ID the adapter presents, with no check that the session is assigned to the calling pod

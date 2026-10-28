@@ -2573,6 +2573,8 @@
       "title": "Delegation Mechanism \u2014 cycle detection and maxDepth",
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTRecordsCloseTheMintFindings_spec_8_2",
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTTestGapRecords_spec_8_2",
         "tests/tier4_integration/held_attach_stream_multi_turn_test.go::TestDelegateTaskThenAFollowUpOnTheHeldStream_spec_28_5_1",
         "pkg/gateway/mcpfabric/delegation/parent_freshness_test.go::TestDelegateParentEndedBeforeInsertRefuses_spec_8_2",
         "pkg/delegation/cycle/cycle_test.go::TestAllModesIsExhaustive",
@@ -2674,6 +2676,7 @@
       "title": "Delegation Tools",
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTFiledDefectsMatchTheTree_spec_8_5",
         "pkg/gateway/mcpfabric/mcptools/...",
         "pkg/gateway/mcpfabric/mcptools/schema_alignment_test.go::TestSetTracingContextSchemaMatchesSpec_spec_8_3_8_5",
         "pkg/gateway/mcpfabric/delegation/...",
@@ -3276,6 +3279,8 @@
         "tests/tier11_docs/build_gaps_jwt_signing_records_currency_test.go::TestJWTSigningTier6RecordMatchesTheTree_spec_10_2",
         "tests/tier11_docs/build_gaps_jwt_signing_records_currency_test.go::TestJWTSigningChaosCoverageIsRecorded_spec_10_2",
         "tests/tier11_docs/build_gaps_jwt_signing_records_currency_test.go::TestJWTSigningRecordParsers_spec_10_2",
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTRecordsCloseTheMintFindings_spec_8_2",
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTFiledDefectsMatchTheTree_spec_8_5",
         "tests/tier11_docs/jwt_key_rotation_runbook_test.go::TestJWTKeyRotationRunbookCoversEveryVerifier_spec_10_2",
         "tests/tier11_docs/jwt_key_rotation_runbook_test.go::TestJWTKeyRotationRunbookNamesNoRetiredSurface_spec_10_2",
         "cmd/lenny-gateway/auth_seams_test.go::TestTenantRegistryAdaptersApplyRegisteredReading_spec_10_2",
