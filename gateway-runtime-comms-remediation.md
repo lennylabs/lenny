@@ -3858,6 +3858,8 @@ legacy single-file proposals carry their status in the prose status bullet, whic
     The test now drives `Run` with an injected clock and an unset interval (2026-10-28, `47475f2e2`).
   - [ ] **F-4.4.37** (Low, filed from F-4.4.34): `checkpoint_manifest.chunk_encoding` has no CHECK constraint
     on the `tar` / `tar.gz` enum since migration 0178 replaced the 0062 table.
+  - [ ] **T-4.6.19** (Low, found 2026-10-28): the pod-registry CAS contract test requires a lost
+    compare-and-swap that real concurrency does not guarantee, so it flakes on a loaded host.
 - With the queued text-corrections proposal, together with F-7.1.32.
   - [x] F-4.4.4 and F-4.4.32 fixed 2026-10-28 (`df5af6cdd`, `0d2645dce`). Filed from those fixes, direct-fix queue: **F-4.4.33** (Low, the download labels a legacy gzip `tar` manifest `application/x-tar`), **F-4.4.34** (Low, the `chunk_encoding` column default and empty-value readers still say `tar`), **F-4.4.35** (Low, the adapter ignores the declared encoding), and **T-4.4.22** (Low, `TestRunUsesTenMinuteDefaultIntervalWhenUnset` never runs `Run`). **F-4.4.36** (Low, whether the first-checkpoint jitter is a stable per-session draw) rides with the text-corrections proposal.
   - [ ] **F-4.4.30** (Low, from 0072 §1.1): the 60-second checkpoint timeout has no start instant on the
