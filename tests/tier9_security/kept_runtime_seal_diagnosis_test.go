@@ -10,6 +10,9 @@ import (
 )
 
 // spec: 7.1 (Seal-and-export invariant), 5.2 (Recycle lifecycle)
+// diagnosis: the kept-runtime harness either misses a failed seal, so a
+// retired pod is reported as a claim with an empty phase, or blames the
+// object store for a session that ended cleanly or failed for another reason.
 func TestKeptRuntimeSealDiagnosisNamesOnlyAFailedSeal(t *testing.T) {
 	cases := []struct {
 		name, state, failureClass string
