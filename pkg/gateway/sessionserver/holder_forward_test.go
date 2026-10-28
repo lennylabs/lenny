@@ -832,11 +832,20 @@ func TestForwardFailuresAfterTheConnectionAreUnknown_spec_29_3(t *testing.T) {
 		}
 	})
 	t.Run("the caller cancels after the coordinator read the request", func(t *testing.T) {
+		// The coordinator holds the request until the forward has returned.
+		// Waiting on r.Context() instead lets it answer while the caller's
+		// cancel is closing the connection: tls.Conn.Close sends
+		// close_notify before it closes the socket, the coordinator's
+		// request context ends on that alert, and its empty 200 can reach
+		// the transport's read loop before the socket closes. The transport
+		// then returns that response, and the forward is correctly
+		// ForwardDelivered, which is not the interleaving this case pins.
 		read := make(chan struct{})
+		release := make(chan struct{})
 		waiter := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 			_, _ = io.ReadAll(r.Body)
 			close(read)
-			<-r.Context().Done()
+			<-release
 		})
 		addr := startTLSServer(t, serverTLSFor(t, m, gatewayLeaf(m)), waiter)
 		s := forwardServer(leasesHeldBy("gw-b.00@"+addr), "gw-a.00@10.0.0.1:1", testForwardClient(t, m, time.Second))
@@ -847,7 +856,9 @@ func TestForwardFailuresAfterTheConnectionAreUnknown_spec_29_3(t *testing.T) {
 			cancel()
 		}()
 		rec := httptest.NewRecorder()
-		if got := s.forwardToHolder(rec, clientRequest(ctx, "{}"), forwardRow(), ForwardKindMessage, strings.NewReader("{}")); got != ForwardUnknown {
+		got := s.forwardToHolder(rec, clientRequest(ctx, "{}"), forwardRow(), ForwardKindMessage, strings.NewReader("{}"))
+		close(release)
+		if got != ForwardUnknown {
 			t.Fatalf("outcome = %v, want ForwardUnknown", got)
 		}
 		assertTargetNotReady(t, rec, "running")
