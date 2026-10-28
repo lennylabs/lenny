@@ -2683,7 +2683,8 @@
         "tests/tier4_integration/delegation_await_collect_test.go::TestDelegationAwaitChildren",
         "tests/tier3_contract/sdks/runtime_sdk_test.go",
         "tests/tier11_docs/test_gaps_tracing_context_quote_reconciliation_test.go",
-        "tests/tier7a_load_local/elicitation_xreplica_wake_test.go"
+        "tests/tier7a_load_local/elicitation_xreplica_wake_test.go",
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTFiledDefectRecordsAreCurrent_spec_10_2"
       ],
       "packages": [
         "pkg/delegation/tools"
@@ -3495,7 +3496,9 @@
         "tests/tier3_contract/playground/playground_subject_recheck_test.go::TestAPIKeyModeRejectsImpersonationSubject_spec_10_2",
         "tests/tier9_security/ops_revocation_enforcement_test.go::TestImpersonationBearerRefusals_spec_13_3",
         "tests/tier3_contract/rest_mcp_consistency/caller_check_parity_test.go::TestCreateSessionCallerCheckParity_spec_15_2_1",
-        "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestSessionCreationIndependentOfKMSSigning_spec_10_2"
+        "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestSessionCreationIndependentOfKMSSigning_spec_10_2",
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTFiledDefectRecordsAreCurrent_spec_10_2",
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTProposalLabelProbe_spec_10_2"
       ],
       "packages": [
         "pkg/auth",
@@ -4436,7 +4439,9 @@
         "tests/tier9_security/ops_revocation_enforcement_test.go::TestOpsRefusesRevokedLennyTokens_spec_25_4",
         "tests/tier11_docs/build_gaps_terminal_pipeline_records_currency_test.go::TestTerminalPipelineOpenFindingsKeepTheirNotes_spec_12_8",
         "pkg/gateway/mcpfabric/mcptools/delegate_parent_freshness_test.go::TestDelegateTaskParentEndedBeforeInsertAnswersParentRevoked_spec_8_2",
-        "pkg/gateway/mcpfabric/mcptools/delegator_gate_parent_internal_test.go::TestRequireActiveDelegatorIgnoresTerminalParent_spec_12_8"
+        "pkg/gateway/mcpfabric/mcptools/delegator_gate_parent_internal_test.go::TestRequireActiveDelegatorIgnoresTerminalParent_spec_12_8",
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTRecordsCloseTheMintFindings_spec_8_2",
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTTestGapRecords_spec_8_2"
       ],
       "packages": [
         "pkg/store",
@@ -4900,7 +4905,9 @@
         "tests/tier4_integration/impersonation_admin_cascade_test.go::TestFullRevokeOfPlatformAdminRevokesItsBearersOnEveryReplica_spec_13_3",
         "tests/tier9_security/impersonation_admin_cascade_test.go::TestFullRevokeOfPlatformAdminRevokesItsImpersonationBearers_spec_13_3",
         "tests/tier4_integration/impersonation_revocation_cross_replica_test.go::TestImpersonationSessionIsSharedAcrossReplicas_spec_13_3",
-        "tests/tier9_security/ops_revocation_enforcement_test.go::TestImpersonationBearerRefusals_spec_13_3"
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestImpersonationBearerRefusals_spec_13_3",
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTFiledDefectsMatchTheTree_spec_8_5",
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTFiledDefectRecordsAreCurrent_spec_10_2"
       ],
       "packages": [
         "pkg/credential",
