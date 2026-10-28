@@ -94,6 +94,9 @@ func TestBackupCreationFailsWhenPostgresDown(t *testing.T) {
 	if testing.Short() {
 		t.Skip("starts a Postgres container; skipped under -short")
 	}
+	// A container of its own rather than sharedDatabase: the test stops
+	// Postgres to inject an outage, and a shared container cannot stop for
+	// one test (T-17.4.33).
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
 		Image:    "pgvector/pgvector:pg16",
 		Database: "lenny",
@@ -176,6 +179,8 @@ func TestBackupJobCreationFailsWhenKubernetesAPIDown(t *testing.T) {
 	if testing.Short() {
 		t.Skip("starts a Postgres container; skipped under -short")
 	}
+	// A container of its own rather than sharedDatabase: applyBackupSchema
+	// builds the backup tables on an unmigrated database (T-17.4.33).
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
 		Image:    "pgvector/pgvector:pg16",
 		Database: "lenny",

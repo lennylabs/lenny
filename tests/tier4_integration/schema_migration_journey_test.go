@@ -93,6 +93,8 @@ func newFixtureMigrator(t *testing.T, pg *containers.Postgres) *migrate.Migrate 
 // a real Postgres and the real golang-migrate driver.
 func TestSchemaMigrationJourney_ExpandGateContract(t *testing.T) {
 	t.Parallel()
+	// A container of its own rather than sharedDatabase: the fixture
+	// migrator drives an unmigrated server (T-17.4.33).
 	pg := containers.StartPostgres(t, containers.PostgresOptions{})
 
 	m := newFixtureMigrator(t, pg)
