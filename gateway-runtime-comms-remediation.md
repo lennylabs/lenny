@@ -3848,8 +3848,8 @@ legacy single-file proposals carry their status in the prose status bullet, whic
     `ArchiveTree` gzips. Declare `tar.gz`, which §4.4 already permits.
   - [x] **F-4.4.4**, reopened (Medium, from 0072 §1.9): `FirstCheckpointDelay` has no production caller, so
     the configured jitter is never applied. It was closed wrongly.
-  - [ ] **F-4.4.33** (Low, filed from F-4.4.32): the download labels a legacy gzip `tar` manifest
-    `application/x-tar`.
+  - [x] **F-4.4.33** (Low, filed from F-4.4.32): the download labels a legacy gzip `tar` manifest
+    `application/x-tar`. Closed without code under the pre-deployment no-shims rule (2026-10-28).
   - [x] **F-4.4.34** (Low, filed from F-4.4.32): the `chunk_encoding` column default and the empty-value
     fallback say `tar`. Migration 0193 and the store and reader fallbacks move both to `tar.gz` (2026-10-28).
   - [ ] **F-4.4.35** (Low, filed from F-4.4.32): the adapter ignores `CheckpointStart.chunk_encoding`.
