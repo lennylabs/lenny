@@ -3826,8 +3826,10 @@ other test in that binary.
     filed T-17.4.34 (the citation gates miss the `N.M line L` spelling).
   - [ ] **T-17.4.34** (Low): the line-citation gates do not recognize the bare `N.M line L` spelling; 22
     `// spec:` annotations in 10 Go files use it and none is in the ratchet baseline.
-  - [ ] **T-17.4.35** (Low): component-test directories may lack a `tests/change-graph.json` key, so `--since` never
+  - [x] **T-17.4.35** (Low): component-test directories may lack a `tests/change-graph.json` key, so `--since` never
     selects them on their own changes. Survey every `tests/tier*/` directory and add a `validate-maps` check. Direct fix.
+    Fixed on `fix/test-infra-gaps`: 104 of 115 tier test directories had no key and each now has one, and
+    `validate-maps` fails on a tracked test directory under `tests/tier*/` that no glob key covers.
   - [ ] **T-17.4.25** (Info): `cmd/lenny-gateway` starts one in 5 tests (about 31 s of 86.4 s). It took
     109.1 s in a scoped unit-tier run on 2026-10-27, the slowest of that run.
   - [x] **T-17.4.29** (Medium): parallel implementation worktrees share the one `lenny-e2e` kind cluster,

@@ -26,6 +26,318 @@
     "tests/tier2_component/controllers/": {
       "component": ["tests/tier2_component/controllers/..."]
     },
+    "tests/tier10_conformance/": {
+      "conformance": ["tests/tier10_conformance/..."]
+    },
+    "tests/tier11_docs/": {
+      "docs": ["tests/tier11_docs/..."]
+    },
+    "tests/tier12_load_cloud/": {
+      "load_cloud": ["tests/tier12_load_cloud/..."]
+    },
+    "tests/tier1_unit/concurrency/": {
+      "unit": ["tests/tier1_unit/concurrency/..."]
+    },
+    "tests/tier1_unit/flagdefaults/": {
+      "unit": ["tests/tier1_unit/flagdefaults/..."]
+    },
+    "tests/tier1_unit/helm/": {
+      "unit": ["tests/tier1_unit/helm/..."]
+    },
+    "tests/tier1_unit/lifecycle/": {
+      "unit": ["tests/tier1_unit/lifecycle/..."]
+    },
+    "tests/tier1_unit/rbac/": {
+      "unit": ["tests/tier1_unit/rbac/..."]
+    },
+    "tests/tier2_component/admission/": {
+      "component": ["tests/tier2_component/admission/..."]
+    },
+    "tests/tier2_component/auditintegrity/": {
+      "component": ["tests/tier2_component/auditintegrity/..."]
+    },
+    "tests/tier2_component/auditstore/": {
+      "component": ["tests/tier2_component/auditstore/..."]
+    },
+    "tests/tier2_component/breakers/": {
+      "component": ["tests/tier2_component/breakers/..."]
+    },
+    "tests/tier2_component/coordination/": {
+      "component": ["tests/tier2_component/coordination/..."]
+    },
+    "tests/tier2_component/evalaggregates/": {
+      "component": ["tests/tier2_component/evalaggregates/..."]
+    },
+    "tests/tier2_component/eventstream/": {
+      "component": ["tests/tier2_component/eventstream/..."]
+    },
+    "tests/tier2_component/gateway_subsystems/": {
+      "component": ["tests/tier2_component/gateway_subsystems/..."]
+    },
+    "tests/tier2_component/healthchecks/": {
+      "component": ["tests/tier2_component/healthchecks/..."]
+    },
+    "tests/tier2_component/issuedtokencascade/": {
+      "component": ["tests/tier2_component/issuedtokencascade/..."]
+    },
+    "tests/tier2_component/leasedenial/": {
+      "component": ["tests/tier2_component/leasedenial/..."]
+    },
+    "tests/tier2_component/leases/": {
+      "component": ["tests/tier2_component/leases/..."]
+    },
+    "tests/tier2_component/legalholdescrow/": {
+      "component": ["tests/tier2_component/legalholdescrow/..."]
+    },
+    "tests/tier2_component/legalholdreconciler/": {
+      "component": ["tests/tier2_component/legalholdreconciler/..."]
+    },
+    "tests/tier2_component/lifecycle/": {
+      "component": ["tests/tier2_component/lifecycle/..."]
+    },
+    "tests/tier2_component/migrations/": {
+      "component": ["tests/tier2_component/migrations/..."]
+    },
+    "tests/tier2_component/observability/": {
+      "component": ["tests/tier2_component/observability/..."]
+    },
+    "tests/tier2_component/opsaudit/": {
+      "component": ["tests/tier2_component/opsaudit/..."]
+    },
+    "tests/tier2_component/opsbackup/": {
+      "component": ["tests/tier2_component/opsbackup/..."]
+    },
+    "tests/tier2_component/opsidem/": {
+      "component": ["tests/tier2_component/opsidem/..."]
+    },
+    "tests/tier2_component/opsrevocation/": {
+      "component": ["tests/tier2_component/opsrevocation/..."]
+    },
+    "tests/tier2_component/pgbouncerchart/": {
+      "component": ["tests/tier2_component/pgbouncerchart/..."]
+    },
+    "tests/tier2_component/poolresume/": {
+      "component": ["tests/tier2_component/poolresume/..."]
+    },
+    "tests/tier2_component/postclaimrelease/": {
+      "component": ["tests/tier2_component/postclaimrelease/..."]
+    },
+    "tests/tier2_component/preflight/": {
+      "component": ["tests/tier2_component/preflight/..."]
+    },
+    "tests/tier2_component/quota/": {
+      "component": ["tests/tier2_component/quota/..."]
+    },
+    "tests/tier2_component/ratelimit/": {
+      "component": ["tests/tier2_component/ratelimit/..."]
+    },
+    "tests/tier2_component/rls/": {
+      "component": ["tests/tier2_component/rls/..."]
+    },
+    "tests/tier2_component/runbooks/": {
+      "component": ["tests/tier2_component/runbooks/..."]
+    },
+    "tests/tier2_component/runtimecapoverride/": {
+      "component": ["tests/tier2_component/runtimecapoverride/..."]
+    },
+    "tests/tier2_component/securitycaches/": {
+      "component": ["tests/tier2_component/securitycaches/..."]
+    },
+    "tests/tier2_component/slotrelease/": {
+      "component": ["tests/tier2_component/slotrelease/..."]
+    },
+    "tests/tier2_component/storagequota/": {
+      "component": ["tests/tier2_component/storagequota/..."]
+    },
+    "tests/tier2_component/stores/": {
+      "component": ["tests/tier2_component/stores/..."]
+    },
+    "tests/tier2_component/tenantsalt/": {
+      "component": ["tests/tier2_component/tenantsalt/..."]
+    },
+    "tests/tier2_component/tokensigning/": {
+      "component": ["tests/tier2_component/tokensigning/..."]
+    },
+    "tests/tier2_component/translators/": {
+      "component": ["tests/tier2_component/translators/..."]
+    },
+    "tests/tier2_component/warmlayout/": {
+      "component": ["tests/tier2_component/warmlayout/..."]
+    },
+    "tests/tier2_component/watchdog/": {
+      "component": ["tests/tier2_component/watchdog/..."]
+    },
+    "tests/tier3_contract/adapter_artifact_scope/": {
+      "contract": ["tests/tier3_contract/adapter_artifact_scope/..."]
+    },
+    "tests/tier3_contract/adapter_bind_attempt/": {
+      "contract": ["tests/tier3_contract/adapter_bind_attempt/..."]
+    },
+    "tests/tier3_contract/adapter_checkpointbarrier/": {
+      "contract": ["tests/tier3_contract/adapter_checkpointbarrier/..."]
+    },
+    "tests/tier3_contract/adapter_chunk_encoding/": {
+      "contract": ["tests/tier3_contract/adapter_chunk_encoding/..."]
+    },
+    "tests/tier3_contract/adapter_events/": {
+      "contract": ["tests/tier3_contract/adapter_events/..."]
+    },
+    "tests/tier3_contract/adapter_extendcredlease/": {
+      "contract": ["tests/tier3_contract/adapter_extendcredlease/..."]
+    },
+    "tests/tier3_contract/adapter_frame_resolution/": {
+      "contract": ["tests/tier3_contract/adapter_frame_resolution/..."]
+    },
+    "tests/tier3_contract/adapter_generation_fence/": {
+      "contract": ["tests/tier3_contract/adapter_generation_fence/..."]
+    },
+    "tests/tier3_contract/adapter_jsonl/": {
+      "contract": ["tests/tier3_contract/adapter_jsonl/..."]
+    },
+    "tests/tier3_contract/adapter_negotiate/": {
+      "contract": ["tests/tier3_contract/adapter_negotiate/..."]
+    },
+    "tests/tier3_contract/adapter_observedlevel/": {
+      "contract": ["tests/tier3_contract/adapter_observedlevel/..."]
+    },
+    "tests/tier3_contract/adapter_reportusage/": {
+      "contract": ["tests/tier3_contract/adapter_reportusage/..."]
+    },
+    "tests/tier3_contract/adapter_session_address/": {
+      "contract": ["tests/tier3_contract/adapter_session_address/..."]
+    },
+    "tests/tier3_contract/adapter_session_seal/": {
+      "contract": ["tests/tier3_contract/adapter_session_seal/..."]
+    },
+    "tests/tier3_contract/adapter_supervise/": {
+      "contract": ["tests/tier3_contract/adapter_supervise/..."]
+    },
+    "tests/tier3_contract/adapter_usage_wired/": {
+      "contract": ["tests/tier3_contract/adapter_usage_wired/..."]
+    },
+    "tests/tier3_contract/admin_conflict_codes/": {
+      "contract": ["tests/tier3_contract/admin_conflict_codes/..."]
+    },
+    "tests/tier3_contract/admin_impersonation/": {
+      "contract": ["tests/tier3_contract/admin_impersonation/..."]
+    },
+    "tests/tier3_contract/admin_tenant_suspend/": {
+      "contract": ["tests/tier3_contract/admin_tenant_suspend/..."]
+    },
+    "tests/tier3_contract/admin_user_invalidate/": {
+      "contract": ["tests/tier3_contract/admin_user_invalidate/..."]
+    },
+    "tests/tier3_contract/admission_pod_security/": {
+      "contract": ["tests/tier3_contract/admission_pod_security/..."]
+    },
+    "tests/tier3_contract/checkpoint_stream/": {
+      "contract": ["tests/tier3_contract/checkpoint_stream/..."]
+    },
+    "tests/tier3_contract/cloudevents/": {
+      "contract": ["tests/tier3_contract/cloudevents/..."]
+    },
+    "tests/tier3_contract/compose_mode/": {
+      "contract": ["tests/tier3_contract/compose_mode/..."]
+    },
+    "tests/tier3_contract/crd_schema/": {
+      "contract": ["tests/tier3_contract/crd_schema/..."]
+    },
+    "tests/tier3_contract/embedded_gatewaycallback/": {
+      "contract": ["tests/tier3_contract/embedded_gatewaycallback/..."]
+    },
+    "tests/tier3_contract/fullrevoke_release/": {
+      "contract": ["tests/tier3_contract/fullrevoke_release/..."]
+    },
+    "tests/tier3_contract/gateway_ops/": {
+      "contract": ["tests/tier3_contract/gateway_ops/..."]
+    },
+    "tests/tier3_contract/gatewaycontrol_scrub/": {
+      "contract": ["tests/tier3_contract/gatewaycontrol_scrub/..."]
+    },
+    "tests/tier3_contract/interceptor_immutable_envelope/": {
+      "contract": ["tests/tier3_contract/interceptor_immutable_envelope/..."]
+    },
+    "tests/tier3_contract/interceptor_proto/": {
+      "contract": ["tests/tier3_contract/interceptor_proto/..."]
+    },
+    "tests/tier3_contract/lifecycle_tokens/": {
+      "contract": ["tests/tier3_contract/lifecycle_tokens/..."]
+    },
+    "tests/tier3_contract/mcp_runtimes/": {
+      "contract": ["tests/tier3_contract/mcp_runtimes/..."]
+    },
+    "tests/tier3_contract/mcp_tool_approval_address/": {
+      "contract": ["tests/tier3_contract/mcp_tool_approval_address/..."]
+    },
+    "tests/tier3_contract/multiprotocol_journey/": {
+      "contract": ["tests/tier3_contract/multiprotocol_journey/..."]
+    },
+    "tests/tier3_contract/oauth_token/": {
+      "contract": ["tests/tier3_contract/oauth_token/..."]
+    },
+    "tests/tier3_contract/ocsf_audit/": {
+      "contract": ["tests/tier3_contract/ocsf_audit/..."]
+    },
+    "tests/tier3_contract/playground/": {
+      "contract": ["tests/tier3_contract/playground/..."]
+    },
+    "tests/tier3_contract/rest_auth/": {
+      "contract": ["tests/tier3_contract/rest_auth/..."]
+    },
+    "tests/tier3_contract/rest_circuitbreaker/": {
+      "contract": ["tests/tier3_contract/rest_circuitbreaker/..."]
+    },
+    "tests/tier3_contract/rest_idempotency/": {
+      "contract": ["tests/tier3_contract/rest_idempotency/..."]
+    },
+    "tests/tier3_contract/rest_mcp_consistency/": {
+      "contract": ["tests/tier3_contract/rest_mcp_consistency/..."]
+    },
+    "tests/tier3_contract/rest_openai_chat/": {
+      "contract": ["tests/tier3_contract/rest_openai_chat/..."]
+    },
+    "tests/tier3_contract/rest_openai_responses/": {
+      "contract": ["tests/tier3_contract/rest_openai_responses/..."]
+    },
+    "tests/tier3_contract/rest_pools/": {
+      "contract": ["tests/tier3_contract/rest_pools/..."]
+    },
+    "tests/tier3_contract/rest_sessions/": {
+      "contract": ["tests/tier3_contract/rest_sessions/..."]
+    },
+    "tests/tier3_contract/runtimeops_emitted/": {
+      "contract": ["tests/tier3_contract/runtimeops_emitted/..."]
+    },
+    "tests/tier3_contract/sdks/": {
+      "contract": ["tests/tier3_contract/sdks/..."]
+    },
+    "tests/tier3_contract/tokenservice_release/": {
+      "contract": ["tests/tier3_contract/tokenservice_release/..."]
+    },
+    "tests/tier3_contract/workspaceplan/": {
+      "contract": ["tests/tier3_contract/workspaceplan/..."]
+    },
+    "tests/tier4_integration/": {
+      "integration": ["tests/tier4_integration/..."]
+    },
+    "tests/tier5_e2e_kind/": {
+      "e2e_kind": ["tests/tier5_e2e_kind/..."]
+    },
+    "tests/tier6_e2e_cloud/": {
+      "e2e_cloud": ["tests/tier6_e2e_cloud/..."]
+    },
+    "tests/tier7a_load_local/": {
+      "load_local": ["tests/tier7a_load_local/..."]
+    },
+    "tests/tier7b_load_kind/": {
+      "load_kind": ["tests/tier7b_load_kind/..."]
+    },
+    "tests/tier8_chaos/": {
+      "chaos": ["tests/tier8_chaos/..."]
+    },
+    "tests/tier9_security/": {
+      "security": ["tests/tier9_security/..."]
+    },
     "pkg/gateway/credentials/impersonation/impersonationtest/": {
       "unit": ["pkg/gateway/credentials/impersonation/...", "pkg/gateway/externalapi/admin/..."],
       "component": ["tests/tier2_component/tokensigning/..."]
