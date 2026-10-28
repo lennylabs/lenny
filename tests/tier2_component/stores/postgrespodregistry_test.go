@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/pkg/podregistry"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
@@ -42,6 +43,64 @@ func startPodRegistry(t *testing.T) (*podregistry.PostgresPodRegistry, *containe
 		t.Fatalf("NewPostgres: %v", err)
 	}
 	return r, pg
+}
+
+// newCASRegistry returns a PostgresPodRegistry over a dedicated pool of
+// maxConns connections. The forced-interleaving CAS subtest holds one
+// connection per blocked writer, which the shared default pool, sized
+// from the CPU count, does not guarantee.
+func newCASRegistry(t *testing.T, ctx context.Context, pg *containers.Postgres, maxConns int32) *podregistry.PostgresPodRegistry {
+	t.Helper()
+	cfg, err := pgxpool.ParseConfig(pg.DSN)
+	if err != nil {
+		t.Fatalf("parse DSN: %v", err)
+	}
+	cfg.MaxConns = maxConns
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("CAS pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	r, err := podregistry.NewPostgres(pool)
+	if err != nil {
+		t.Fatalf("NewPostgres: %v", err)
+	}
+	return r
+}
+
+// podStateUpdateWaitDeadline bounds how long the CAS subtest waits for its
+// writers to block behind the holder's row lock.
+const podStateUpdateWaitDeadline = 30 * time.Second
+
+// awaitPodStateUpdateWaiters polls pg_stat_activity until want backends
+// wait on a lock inside an agent_pod_state UPDATE. A writer issues its
+// UPDATE only after its version read, so want waiters means every writer
+// has read the pre-commit version. It fails when a writer returns first
+// (it did not block behind the holder) or the deadline passes.
+func awaitPodStateUpdateWaiters(t *testing.T, ctx context.Context, pg *containers.Postgres, want int, errs <-chan error) {
+	t.Helper()
+	const q = `SELECT count(*) FROM pg_stat_activity
+		WHERE datname = current_database() AND pid <> pg_backend_pid()
+		  AND wait_event_type = 'Lock' AND query LIKE '%UPDATE agent_pod_state%'`
+	deadline := time.Now().Add(podStateUpdateWaitDeadline)
+	for {
+		var waiting int
+		if err := pg.Pool.QueryRow(ctx, q).Scan(&waiting); err != nil {
+			t.Fatalf("poll pg_stat_activity: %v", err)
+		}
+		if waiting >= want {
+			return
+		}
+		select {
+		case err := <-errs:
+			t.Fatalf("a writer returned (%v) before all %d blocked behind the holder's row lock", err, want)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d of %d writers waited on the row lock within %s", waiting, want, podStateUpdateWaitDeadline)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // seedPod inserts an agent_pod_state row directly in the given state so
@@ -131,11 +190,78 @@ func TestPostgresPodRegistryContract_spec_12_6_436(t *testing.T) {
 	})
 
 	t.Run("UpdatePodState races resolve to one winner (CAS)", func(t *testing.T) {
-		// Two no-precondition transitions read the same resource_version
+		// Eight no-precondition transitions read the same resource_version
 		// and race the CAS UPDATE ... WHERE resource_version = expected.
-		// Exactly one wins; the loser's UPDATE affects zero rows and maps
-		// to ErrResourceConflict. The From check is omitted so both pass
-		// the precondition and contend on the version, not the state.
+		// The From check is omitted so every writer passes the precondition
+		// and contends on the version rather than the state.
+		//
+		// The interleaving is forced rather than left to the scheduler. A
+		// holder transaction locks the row with SELECT ... FOR UPDATE. Each
+		// writer's version read is a plain SELECT, which the row lock does
+		// not block, so every writer reads resource_version 1 and then
+		// blocks in its UPDATE. Once all eight wait on the lock, the holder
+		// commits without changing the row. The first writer to take the
+		// lock moves the version to 2. Under READ COMMITTED every other
+		// writer re-evaluates the WHERE clause against the new row version,
+		// matches zero rows, and maps to ErrResourceConflict, so exactly one
+		// writer wins on every run.
+		const writers = 8
+		pool := "pool-" + newUUID(t)[:8]
+		id := pool + "-cas"
+		seedPod(t, ctx, pg, id, pool, "idle")
+		casRegistry := newCASRegistry(t, ctx, pg, writers+2)
+
+		holder, err := pg.Pool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin holder: %v", err)
+		}
+		defer func() { _ = holder.Rollback(ctx) }()
+		if _, err := holder.Exec(ctx,
+			`SELECT 1 FROM agent_pod_state WHERE pod_id = $1 FOR UPDATE`, id); err != nil {
+			t.Fatalf("holder row lock: %v", err)
+		}
+
+		errs := make(chan error, writers)
+		for i := 0; i < writers; i++ {
+			go func() {
+				errs <- casRegistry.UpdatePodState(ctx, podregistry.PodID(id),
+					podregistry.StateTransition{To: "idle"})
+			}()
+		}
+		awaitPodStateUpdateWaiters(t, ctx, pg, writers, errs)
+		if err := holder.Commit(ctx); err != nil {
+			t.Fatalf("commit holder: %v", err)
+		}
+
+		var oks, conflicts int
+		for i := 0; i < writers; i++ {
+			switch err := <-errs; {
+			case err == nil:
+				oks++
+			case errors.Is(err, podregistry.ErrResourceConflict):
+				conflicts++
+			default:
+				t.Errorf("UpdatePodState under contention = %v, want nil or ErrResourceConflict", err)
+			}
+		}
+		// The CAS admits exactly one writer per observed version, and the
+		// conflict mapping is what the §4.6.1 retry loop branches on.
+		if oks != 1 || conflicts != writers-1 {
+			t.Errorf("oks = %d, conflicts = %d; want 1 and %d", oks, conflicts, writers-1)
+		}
+		got, err := r.GetPod(ctx, podregistry.PodID(id))
+		if err != nil {
+			t.Fatalf("GetPod: %v", err)
+		}
+		if got.ResourceVersion != "2" {
+			t.Errorf("resource_version = %q, want 2 (one success over the seeded 1)", got.ResourceVersion)
+		}
+	})
+
+	t.Run("UpdatePodState unforced races lose no update", func(t *testing.T) {
+		// Eight writers race with no forced interleaving. Every writer
+		// either succeeds or conflicts, and no two successes collapse onto
+		// one version.
 		pool := "pool-" + newUUID(t)[:8]
 		id := pool + "-cas"
 		seedPod(t, ctx, pg, id, pool, "idle")
@@ -172,16 +298,17 @@ func TestPostgresPodRegistryContract_spec_12_6_436(t *testing.T) {
 		if oks == 0 {
 			t.Error("no UpdatePodState succeeded under contention")
 		}
-		got, _ := r.GetPod(ctx, podregistry.PodID(id))
+		got, err := r.GetPod(ctx, podregistry.PodID(id))
+		if err != nil {
+			t.Fatalf("GetPod: %v", err)
+		}
 		if got.ResourceVersion != strconv.Itoa(1+oks) {
 			t.Errorf("resource_version = %q, want %d (1 + %d successes)", got.ResourceVersion, 1+oks, oks)
 		}
-		// Real concurrency across the connection pool makes at least one
-		// CAS lose; the conflict mapping is what the §4.6.1 retry loop
-		// branches on.
-		if conflicts == 0 {
-			t.Error("no UpdatePodState observed ErrResourceConflict under contention")
-		}
+		// How many writers conflict depends on how the connection pool
+		// schedules them, and zero is a legal outcome when the writers
+		// serialize. The conflict mapping is asserted deterministically by
+		// the forced-interleaving subtest above.
 	})
 
 	t.Run("UpdatePodState unknown is ErrNotFound", func(t *testing.T) {
