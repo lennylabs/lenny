@@ -71,6 +71,7 @@ func rotatedJTI(t *testing.T, tok string) string {
 // on the channel with lenny-ops still admitting the token past the bound
 // means lenny-ops does not apply the channel to its revocation set.
 func TestTokenServiceRotationReachesPeersOverRedis_spec_13_3(t *testing.T) {
+	t.Parallel()
 	tokensvc.SkipUnlessAvailable(t)
 	refs := map[string]string{kms.AliasJWTSigning: "local-key-1"}
 	_, signer := stackkey.Signer(t, stackkey.MasterKeyFile(t), refs)

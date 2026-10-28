@@ -388,6 +388,13 @@
       "chaos": ["tests/tier8_chaos/jwt_keyset_chaos_test.go"],
       "security": ["tests/tier9_security/ops_revocation_enforcement_test.go"]
     },
+    "tests/testinfra/binbuild/": {
+      "unit": ["tests/testinfra/binbuild/..."],
+      "component": ["tests/tier2_component/opsrevocation/...", "tests/tier2_component/tokensigning/..."],
+      "integration": ["tests/tier4_integration/..."],
+      "chaos": ["tests/tier8_chaos/..."],
+      "security": ["tests/tier9_security/..."]
+    },
     "tests/testinfra/commitfault/": {
       "unit": ["tests/testinfra/commitfault/..."],
       "component": ["tests/tier2_component/stores/sessionstore_commit_ack_test.go"],

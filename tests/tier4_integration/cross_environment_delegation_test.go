@@ -242,6 +242,7 @@ var (
 // parent's providers rather than the forwarded origin pool at the
 // environment boundary.
 func TestCrossEnvironmentDelegationCredentialCompatibility(t *testing.T) {
+	t.Parallel()
 	// Reject: a cross-environment inherit delegation whose child shares no
 	// provider with the origin pool is rejected with
 	// CREDENTIAL_PROVIDER_MISMATCH before any warm pod is claimed and

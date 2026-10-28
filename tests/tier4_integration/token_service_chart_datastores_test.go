@@ -113,6 +113,7 @@ func asSlice(v any) []any {
 // failure naming a datastore Secret key means the Deployment reads a key
 // the chart's lenny-datastore-conn Secret does not render.
 func TestChartConfiguredTokenServiceWritesIssuedTokensAndPublishesRevocations_spec_4_3(t *testing.T) {
+	t.Parallel()
 	helm.SkipUnlessAvailable(t)
 	tokensvc.SkipUnlessAvailable(t)
 	refs := map[string]string{kms.AliasJWTSigning: "local-key-1"}

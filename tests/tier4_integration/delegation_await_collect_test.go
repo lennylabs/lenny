@@ -76,6 +76,7 @@ func (c mcpClient) awaitChildren(parentID string, childIDs []string, mode string
 // §8.8 TaskResult projection diverged from §8.5 when driven through
 // one process.
 func TestDelegationAwaitChildren(t *testing.T) {
+	t.Parallel()
 	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 	c := mcpClient{t: t, base: gw.BaseURL()}
 

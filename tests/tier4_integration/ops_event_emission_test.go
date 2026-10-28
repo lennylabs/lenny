@@ -41,6 +41,7 @@ import (
 // catalog. The subsystem state change succeeded (the breaker opened),
 // so the break is in the event-emission wiring, not the breaker logic.
 func TestOpsEventEmissionCircuitBreakerReachesBuffer(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
 	rd := containers.StartRedis(t, containers.RedisOptions{})
@@ -92,6 +93,7 @@ func TestOpsEventEmissionCircuitBreakerReachesBuffer(t *testing.T) {
 // to succeed even with Redis unreachable, so a Redis outage inducing the
 // transition must not suppress the buffered event.
 func TestOpsEventEmissionHealthStatusChangedReachesBuffer(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
 	// A live Redis backend is registered as a health checker on the

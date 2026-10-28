@@ -24,7 +24,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -40,7 +39,6 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 	"github.com/lennylabs/lenny/tests/testinfra/opsprocess"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 	"github.com/lennylabs/lenny/tests/testinfra/stackkey"
 	"github.com/lennylabs/lenny/tests/testinfra/tcpfault"
 	tokensvc "github.com/lennylabs/lenny/tests/testinfra/tokenservice"
@@ -221,9 +219,7 @@ func aliasArgs(refs map[string]string) []string {
 // startKeySetPostgres starts a migrated Postgres.
 func startKeySetPostgres(t *testing.T) *containers.Postgres {
 	t.Helper()
-	return containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	return sharedDatabase(t)
 }
 
 // bootstrapAcme seeds the default and acme tenants through base and
@@ -328,6 +324,7 @@ func requireUnknownKID(t *testing.T, what, bearer string, gws ...*gateway.Proces
 // restart means a process derives its signing key from something other
 // than the master key and the mapped reference.
 func TestLennyIssuedTokensVerifyAcrossProcesses_spec_10_2(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	stackkey.MasterKeyFile(t)
 	cluster := startAdminCluster(t)
@@ -416,6 +413,7 @@ func TestLennyIssuedTokensVerifyAcrossProcesses_spec_10_2(t *testing.T) {
 // step-2 re-mint did not sign with the swapped key, so removing the old
 // verify key locks the operator out.
 func TestSigningKeyRotationUnderLocal_spec_10_2(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	stackkey.MasterKeyFile(t)
 	cluster := startAdminCluster(t)
@@ -488,6 +486,7 @@ func TestSigningKeyRotationUnderLocal_spec_10_2(t *testing.T) {
 // Lenny-issued token before any read succeeded. Either token wrong after
 // Postgres returns means the read loop does not resume.
 func TestOpsRevocationSetThroughPostgresOutage_spec_25_4(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	envtest.SkipUnlessAvailable(t)
 	stackkey.MasterKeyFile(t)

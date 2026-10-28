@@ -233,6 +233,7 @@ func eagerAdapterDialer(t *testing.T, srv *adapter.Server, opts ...grpc.ServerOp
 // move to the finalize barrier. If the runtime starts before /start, the
 // launch leaked into an earlier phase.
 func TestEagerClaimLifecycleCreateUploadFinalizeStart(t *testing.T) {
+	t.Parallel()
 	rt := &eagerRuntime{}
 	wsRoot := t.TempDir()
 	adapterSrv := adapter.New("adapter-test")

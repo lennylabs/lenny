@@ -68,6 +68,7 @@ func (t devHeaderTransport) RoundTrip(req *http.Request) (*http.Response, error)
 // envelope or field-shape change in one of the four admin LIST endpoints
 // that the fake never would have caught.
 func TestGatewayReaderRunningStateAgainstLiveGatewayE2E(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
 	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")

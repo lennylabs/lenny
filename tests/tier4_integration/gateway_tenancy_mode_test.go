@@ -29,7 +29,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // tenancyTrustKeyID and tenancyTrustSecret are the §17.4 bearer-trust
@@ -131,6 +130,7 @@ func tenancyErrorCode(body map[string]any) string {
 // tenant is refused because the registry is not the tenantstore the admin
 // API writes to.
 func TestMultiTenantGatewayRefusesUnregisteredTenantClaim(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	gw := gateway.StartWith(t, "--dev-mode", "--tenancy-mode=multi", "--multi-tenant",
 		"--bearer-trust-hmac-key-file="+writeTenancyTrustKey(t))
@@ -173,6 +173,7 @@ func TestMultiTenantGatewayRefusesUnregisteredTenantClaim(t *testing.T) {
 // as `default`, so a caller could reach another tenant's rows by naming it
 // in the claim.
 func TestSingleTenantGatewayIgnoresTenantClaim(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	gw := gateway.StartWith(t, "--dev-mode", "--tenancy-mode=single",
 		"--bearer-trust-hmac-key-file="+writeTenancyTrustKey(t))
@@ -194,13 +195,9 @@ func TestSingleTenantGatewayIgnoresTenantClaim(t *testing.T) {
 // would enforce different tenancy postures; a tenancy.mode: multi gateway
 // without --multi-tenant would admit every tenant claim.
 func TestGatewayRefusesContradictoryTenancyFlags(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
-	binary := filepath.Join(t.TempDir(), "lenny-gateway")
-	build := exec.Command("go", "build", "-o", binary, "./cmd/lenny-gateway")
-	build.Dir = schematest.RepoRoot(t)
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build lenny-gateway: %v\n%s", err, out)
-	}
+	binary := gateway.Build(t)
 	for _, flags := range [][]string{
 		{"--tenancy-mode=multi"},
 		{"--tenancy-mode=single", "--multi-tenant"},

@@ -64,6 +64,7 @@ func newReqFn(t *testing.T, base string) func(method, path, roles string, body a
 // against the in-process echo executor selected by --agent-runtime echo
 // (LENNY_AGENT_RUNTIME=echo), the §17.4 zero-credential mode.
 func TestSourceModeSmoke_spec_17_4_276(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	// --agent-runtime echo pins the §17.4 zero-credential built-in echo
 	// runtime explicitly, exercising the F-17.4.15 selector end-to-end.
@@ -136,6 +137,7 @@ func TestSourceModeSmoke_spec_17_4_276(t *testing.T) {
 // the harness drives on cleanup), then boots a second gateway against
 // the same file and asserts the session and runtime are still present.
 func TestSourceModeSmoke_SQLiteDurability_spec_17_4_199(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	dbPath := filepath.Join(t.TempDir(), "lenny.db")
 

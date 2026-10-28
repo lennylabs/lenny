@@ -12,17 +12,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	interactionpg "github.com/lennylabs/lenny/pkg/gateway/session/interactionstore/pgstore"
-	"github.com/lennylabs/lenny/tests/testinfra/containers"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // elicitationExpiryStore starts Postgres with the production migrations,
 // seeds the fixture tenant, and returns the Postgres interaction store.
 func elicitationExpiryStore(t *testing.T) interactionstore.Store {
 	t.Helper()
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: schematest.RepoRoot(t) + "/migrations",
-	})
+	pg := sharedDatabase(t)
 	if _, err := pg.Pool.Exec(context.Background(),
 		`INSERT INTO tenants (id, genesis_nonce) VALUES ($1, $2)`, "acme", []byte{0x01}); err != nil {
 		t.Fatalf("seed tenant: %v", err)
@@ -39,6 +35,7 @@ func elicitationExpiryStore(t *testing.T) interactionstore.Store {
 // elicitation whose runtime is gone, and the answer would reach no one; or a
 // child still waiting on its answer would never receive one.
 func TestFailureEdgeExpiresTheElicitationsTheSessionRaised_spec_9_2(t *testing.T) {
+	t.Parallel()
 	interactions := elicitationExpiryStore(t)
 	rt := newHeartbeatRuntime()
 	const id = "sess-elicit"

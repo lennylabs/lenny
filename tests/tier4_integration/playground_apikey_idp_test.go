@@ -24,6 +24,7 @@ import (
 // audience's token means the playground admits a credential the standard
 // auth chain refuses.
 func TestLivePlaygroundAPIKeyMintAdmitsIdPToken_spec_27_3(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	idp := oidcstub.New(t)
 	foreign := oidcstub.New(t)

@@ -129,6 +129,7 @@ func scrubGatewayClient(t *testing.T, driver *recordingRetireDriver) *gatewaycon
 // spec: 5.2 (Pod retirement policy), 4.7 (ReportPodScrub), 3.4 (recycle
 // disposition)
 func TestRecyclePathRuntimeNotLiveRetires_spec_5_2(t *testing.T) {
+	t.Parallel()
 	c := recycleCluster(t)
 	ops := &recycleScrubOps{}
 	srv, scrubDone := newRecycleAdapter(t, ops, nil)

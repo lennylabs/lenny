@@ -405,6 +405,7 @@ func uploadFilePlan(uploadRef string) []byte {
 // assignment, a DemoteSDK, or a SandboxClaim delete means the refused call
 // ran the prepare phase against the pod the winner holds, or reclaimed it.
 func TestFinalizeEntryRaceRefusedCallIssuesNoPodRPC_spec_15_1(t *testing.T) {
+	t.Parallel()
 	f := newAdmissionFixture(t)
 	body := uploadFilePlan(f.upload(t))
 
@@ -488,6 +489,7 @@ func TestFinalizeEntryRaceRefusedCallIssuesNoPodRPC_spec_15_1(t *testing.T) {
 // change, and revoke its lease without reclaiming the pod, so the
 // SandboxClaim is deleted once, by the DELETE's terminal reclaim.
 func TestFinalizeExitRaceKeepsCancelledAndReclaimsOnce_spec_15_1(t *testing.T) {
+	t.Parallel()
 	f := newAdmissionFixture(t)
 
 	var deleteRR *httptest.ResponseRecorder

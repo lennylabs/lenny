@@ -62,8 +62,12 @@ import (
 // regression the handler-tier fakes cannot catch because they never exercise
 // the live composition root against real backends failing together.
 func TestOpsDualStoreDegradedInMemoryFallback(t *testing.T) {
+	t.Parallel()
 	opsprocess.SkipUnlessAvailable(t)
 
+	// A container of its own rather than sharedDatabase: the test stops
+	// Postgres to inject an outage, and a shared container cannot stop for
+	// one test (T-17.4.33).
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
 		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
 	})

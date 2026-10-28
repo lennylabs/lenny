@@ -19,6 +19,7 @@ import (
 // Dev mode admits unauthenticated requests, so the status is the mux's
 // answer rather than the auth middleware's 401.
 func TestWellKnownJWKSPathNotServedByLiveGateway(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 	for _, method := range []string{http.MethodGet, http.MethodHead} {

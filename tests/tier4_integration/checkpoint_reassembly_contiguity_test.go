@@ -32,6 +32,7 @@ import (
 // valid checkpoint, so an expected extra object corrupts or blocks a
 // resume.
 func TestReassemblyToleratesResidueBeyondChunkCount(t *testing.T) {
+	t.Parallel()
 	const (
 		tenant = "acme"
 		sessID = "sess_residue"
@@ -79,6 +80,7 @@ func TestReassemblyToleratesResidueBeyondChunkCount(t *testing.T) {
 // pipeline, corrupting the stream, instead of failing over to the full
 // checkpoint.
 func TestReassemblyFailsOnGapAndFallsBackToFullCheckpoint(t *testing.T) {
+	t.Parallel()
 	const (
 		tenant  = "acme"
 		sessID  = "sess_gap"
@@ -135,6 +137,7 @@ func TestReassemblyFailsOnGapAndFallsBackToFullCheckpoint(t *testing.T) {
 // instead of failing closed to a full checkpoint, so a resume could splice
 // chunks in the wrong order.
 func TestReassemblyFailsOnOutOfOrderIndex(t *testing.T) {
+	t.Parallel()
 	const (
 		tenant = "acme"
 		sessID = "sess_ooo"

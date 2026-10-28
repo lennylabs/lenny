@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"path/filepath"
 	"slices"
 	"sync"
 	"testing"
@@ -31,7 +30,6 @@ import (
 
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 	"github.com/lennylabs/lenny/tests/testinfra/tcpfault"
 	tokensvc "github.com/lennylabs/lenny/tests/testinfra/tokenservice"
 )
@@ -58,9 +56,7 @@ type impReplicas struct {
 // startImpReplicas starts the two replicas and bootstraps acme.
 func startImpReplicas(t *testing.T) *impReplicas {
 	t.Helper()
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	ts := tokensvc.StartWith(t, "--postgres-dsn="+pg.DSN)
 	key := writeTenancyTrustKey(t)
@@ -223,6 +219,7 @@ func (r *impReplicas) startShortSession(t *testing.T, base, subject string) (str
 // Two 200s or two ended events under concurrent DELETE mean the end is not
 // a conditional update on the active row.
 func TestImpersonationSessionIsSharedAcrossReplicas_spec_13_3(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	r := startImpReplicas(t)
 	// The short session is started first so the other cases run while its

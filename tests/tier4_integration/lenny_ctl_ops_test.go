@@ -19,7 +19,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -27,7 +26,6 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 	"github.com/lennylabs/lenny/tests/testinfra/opsprocess"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // TestLennyCtlOperabilityCommandsE2E boots cmd/lenny-ops against real
@@ -62,11 +60,10 @@ import (
 // httptest-with-stubs component tests that never run the CLI against a live
 // store.
 func TestLennyCtlOperabilityCommandsE2E(t *testing.T) {
+	t.Parallel()
 	opsprocess.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 
 	ops := opsprocess.StartWith(
@@ -237,6 +234,7 @@ func TestLennyCtlOperabilityCommandsE2E(t *testing.T) {
 // gateway-host fallback did not fire (or fired silently) when the
 // gateway advertised no opsServiceURL.
 func TestLennyCtlMCPManagementOpsRoutingE2E(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	opsprocess.SkipUnlessAvailable(t)
 

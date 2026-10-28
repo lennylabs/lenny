@@ -9,13 +9,11 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 	tokensvc "github.com/lennylabs/lenny/tests/testinfra/tokenservice"
 )
 
@@ -98,10 +96,9 @@ func awaitRefusedOnReplicasWithin(t *testing.T, name, bearer string, replicas []
 // tokenRevocationError on the response means the cascade or its
 // cross_tenant_read emit failed on a gateway that wires the audit store.
 func TestFullRevokeOfPlatformAdminRevokesItsBearersOnEveryReplica_spec_13_3(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	ts := tokensvc.StartWith(t, "--postgres-dsn="+pg.DSN)
 	args := deletionGatewayArgs(pg.DSN, rd.Addr, writeTenancyTrustKey(t), ts.BaseURL())

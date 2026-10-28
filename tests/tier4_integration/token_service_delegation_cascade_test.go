@@ -80,6 +80,7 @@ func mintDelegationChild(t *testing.T, base, subject, actor string) string {
 // escaped the parent's subtree. A revoked_count other than 3 separates the
 // two: a count of 1 means the lineage is missing.
 func TestRecursiveRevocationReachesDelegationChildOnAnotherReplica_spec_13_3(t *testing.T) {
+	t.Parallel()
 	tokensvc.SkipUnlessAvailable(t)
 	refs := map[string]string{kms.AliasJWTSigning: "local-key-1"}
 	_, signer := stackkey.Signer(t, stackkey.MasterKeyFile(t), refs)

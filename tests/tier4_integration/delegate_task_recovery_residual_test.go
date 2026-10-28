@@ -46,7 +46,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -61,7 +60,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // spec: 8.10 (duplicate spawn across parent recovery), 11.5 (idempotency)
@@ -76,6 +74,7 @@ import (
 // 422 IDEMPOTENCY_KEY_REUSED, so the mitigation boundary the residual
 // contrasts against is broken.
 func TestDelegateTaskRecoveryResidual(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
 	t.Run("intra_pod_dispatch_creates_duplicate_subtree_ignoring_idempotency_key", func(t *testing.T) {
@@ -283,9 +282,7 @@ func dispatchToolText(res mcp.ToolResult) string {
 //
 // spec: 8.10 (duplicate spawn across parent recovery), 11.5 (idempotency)
 func testClientFacingMitigation(t *testing.T) {
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	// The §11.5 idempotency_keys table must exist for the durable key
 	// cache the mitigation exercises; fail loudly if the migration set
 	// did not create it.

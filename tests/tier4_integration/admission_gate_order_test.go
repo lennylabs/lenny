@@ -25,13 +25,11 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 	stubinterceptor "github.com/lennylabs/lenny/tests/testinfra/stubs/interceptor"
 )
 
@@ -54,11 +52,10 @@ import (
 // with the authenticated caller identity that PreAuth resolves. Either is
 // a policy-ordering or audit-fidelity defect on the operator safety gate.
 func TestCircuitBreakerGateShortCircuitsBeforePostAuthChain_spec_4_8(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 
 	// A recording external interceptor registered on the PostAuth phase.
 	// The default registration priority is 500, inside the 101–999 band

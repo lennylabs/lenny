@@ -152,6 +152,7 @@ func getJSON(t *testing.T, url string) (int, map[string]any) {
 // (GET /v1/admin/runbooks/{name} 404, or /steps empty of api paths) — the
 // join the gateway does not validate at runtime by design has diverged.
 func TestWarmPoolExhaustionRunbookDiscoveryLoopE2E(t *testing.T) {
+	t.Parallel()
 	opsprocess.SkipUnlessAvailable(t)
 
 	ops := opsprocess.StartWith(t)
@@ -229,6 +230,7 @@ func hasAPIAccessPath(steps []any) bool {
 // API's suggestedAction.runbook receives a RUNBOOK_NOT_FOUND from
 // lenny-ops and cannot reach the remediation steps.
 func TestPathBRequiredRunbooksResolveInOpsIndexE2E(t *testing.T) {
+	t.Parallel()
 	opsprocess.SkipUnlessAvailable(t)
 
 	ops := opsprocess.StartWith(t)

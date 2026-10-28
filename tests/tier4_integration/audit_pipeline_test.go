@@ -24,7 +24,6 @@ package tier4_integration_test
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -34,8 +33,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"
 	"github.com/lennylabs/lenny/pkg/audit/siem"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
-	"github.com/lennylabs/lenny/tests/testinfra/containers"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 	siemstub "github.com/lennylabs/lenny/tests/testinfra/stubs/siem"
 	"github.com/lennylabs/lenny/tests/testinfra/wait"
 )
@@ -53,9 +50,7 @@ func TestAuditPipeline(t *testing.T) {
 	// Live stack: a real Postgres container with the production
 	// migrations, and the fake SIEM endpoint standing in for the
 	// external immutable audit log.
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	sinkStub := siemstub.New(t)
 
 	// Seed the tenant whose audit chain the pipeline writes.

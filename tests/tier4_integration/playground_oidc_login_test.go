@@ -68,6 +68,7 @@ func cookieNamed(resp *http.Response, name string) *http.Cookie {
 // names which. A cookie mint other than 200 means the session record the
 // callback wrote does not admit the cookie.
 func TestLivePlaygroundOIDCModeSignsInThroughTheIdP_spec_27_3_1(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	idp := oidcstub.New(t)
 	idp.SetLoginIdentity(oidcstub.MintOptions{Subject: "alice@acme.com", TenantID: "default"})

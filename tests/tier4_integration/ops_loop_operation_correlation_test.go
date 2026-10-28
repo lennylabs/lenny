@@ -28,13 +28,11 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/opsprocess"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // TestOpsLoopRemediationAuditCarriesOperationID drives the §25.17
@@ -56,6 +54,7 @@ import (
 // id entirely, or it recorded it under a payload key the §25.9 query
 // filter (payload.operation_id) does not match.
 func TestOpsLoopRemediationAuditCarriesOperationID(t *testing.T) {
+	t.Parallel()
 	// The operation-correlation contract for lenny-ops audit rows is an
 	// open TEST-GAPS finding: the remediation-lock audit rows drop the
 	// X-Lenny-Operation-ID, so the §25.9 ?operationId= query cannot group
@@ -65,9 +64,7 @@ func TestOpsLoopRemediationAuditCarriesOperationID(t *testing.T) {
 
 	opsprocess.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 
 	ops := opsprocess.StartWith(

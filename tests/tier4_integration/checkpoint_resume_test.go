@@ -39,6 +39,7 @@ import (
 // wrong order, or wrong count, so the adapter concatenates a corrupted
 // stream and the resumed workspace is unrecoverable.
 func TestResumeReassemblesMultiChunkCheckpointFromPresignedGET(t *testing.T) {
+	t.Parallel()
 	const (
 		tenant     = "acme"
 		sessID     = "sess_resume"
@@ -124,6 +125,7 @@ func TestResumeReassemblesMultiChunkCheckpointFromPresignedGET(t *testing.T) {
 // so a barely-started drain partial is spliced over a healthy full
 // checkpoint (or a recoverable partial is discarded).
 func TestResumePartialRecoveryHonoursThreshold(t *testing.T) {
+	t.Parallel()
 	const (
 		tenant  = "acme"
 		sessID  = "sess_partial"

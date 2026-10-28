@@ -27,6 +27,7 @@ import (
 // for the IdP token as the subject_token means the IdP member leaked onto
 // the subject verifier, which §13.3 does not name.
 func TestLiveTokenServiceAdmitsIdPCallerToken_spec_13_3(t *testing.T) {
+	t.Parallel()
 	tokensvc.SkipUnlessAvailable(t)
 	idp := oidcstub.New(t)
 	foreign := oidcstub.New(t)

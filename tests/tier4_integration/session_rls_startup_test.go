@@ -23,15 +23,12 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // spec: §4.2 — "An integration test must verify tenant
@@ -51,11 +48,10 @@ import (
 // migrated without the lenny_tenant_isolation RLS policy, so the
 // database no longer fails closed when the tenant context is unset.
 func TestSessionRLSStartupIsolationThroughGateway(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn="+pg.DSN)
 	base := gw.BaseURL()
 	client := http.DefaultClient

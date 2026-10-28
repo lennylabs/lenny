@@ -41,6 +41,7 @@ import (
 // `delivery:"immediate"` message sent to a suspended, pod-held session
 // (returning `delivered` and returning the session to `running`).
 func TestInteractiveIterationInterruptThenResumeAndDeliver(t *testing.T) {
+	t.Parallel()
 	// A real Redis backs the §7.2 inbox/DLQ coordinator (see
 	// pkg/gateway/sessionserver/messages.go and
 	// cmd/lenny-gateway/stores.go buildSessionMessaging): without it,

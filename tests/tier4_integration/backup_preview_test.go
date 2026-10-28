@@ -19,13 +19,11 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/opsprocess"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // spec: §25.11 — "GET /v1/admin/restore/safety-check | Compare a backup
@@ -48,11 +46,10 @@ import (
 // of which shows the restore-preview surface diverged from §25.11 when
 // driven against a real store rather than an httptest stub.
 func TestRestorePreviewAndSafetyCheckAgainstPostgresE2E(t *testing.T) {
+	t.Parallel()
 	opsprocess.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 
 	ctx := context.Background()

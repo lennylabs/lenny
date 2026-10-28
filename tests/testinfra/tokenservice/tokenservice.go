@@ -24,7 +24,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
+	"github.com/lennylabs/lenny/tests/testinfra/binbuild"
 	"github.com/lennylabs/lenny/tests/testinfra/stackkey"
 )
 
@@ -174,8 +174,8 @@ func (p *Process) Logs() string {
 	return string(b)
 }
 
-// Build compiles cmd/lenny-token-service into a fresh temporary
-// directory, which t's cleanup removes, and returns the binary's path. A
+// Build returns the path of a cmd/lenny-token-service binary in a fresh
+// temporary directory, which t's cleanup removes. A
 // test that runs the binary to exit with its own flags and environment,
 // such as a startup-refusal case, uses it directly; Start uses it before
 // it launches the process. It skips the test when go is not on PATH.
@@ -184,18 +184,9 @@ func Build(t testing.TB) string {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skipf("go not on PATH: %v", err)
 	}
-	tmp, err := os.MkdirTemp("", "lenny-token-service-it-*")
-	if err != nil {
-		t.Fatalf("mkdtemp: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(tmp) })
-	binary := filepath.Join(tmp, "lenny-token-service")
-	build := exec.Command("go", "build", "-o", binary, "./cmd/lenny-token-service")
-	build.Dir = schematest.RepoRoot(t)
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build lenny-token-service: %v\n%s", err, out)
-	}
-	return binary
+	// binbuild links the command once per test process and hands this
+	// test a copy in a directory of its own (TEST-GAPS T-17.4.33).
+	return binbuild.Build(t, "./cmd/lenny-token-service", "lenny-token-service")
 }
 
 // GRPCAddr returns the host:port the gRPC TokenService listens on.

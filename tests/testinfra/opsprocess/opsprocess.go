@@ -33,6 +33,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/binbuild"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 	"github.com/lennylabs/lenny/tests/testinfra/stackkey"
 )
@@ -155,8 +156,8 @@ func StartOpts(t testing.TB, opts Options) *Process {
 	return p
 }
 
-// Build compiles cmd/lenny-ops into a temporary directory removed at test
-// cleanup and returns the binary path, for a test that runs the binary with
+// Build returns the path of a cmd/lenny-ops binary in a temporary directory
+// removed at test cleanup, for a test that runs the binary with
 // its own flags and environment, such as a startup refusal it expects the
 // process to exit on.
 func Build(t testing.TB) string {
@@ -164,18 +165,9 @@ func Build(t testing.TB) string {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skipf("go not on PATH: %v", err)
 	}
-	tmp, err := os.MkdirTemp("", "lenny-ops-it-*")
-	if err != nil {
-		t.Fatalf("mkdtemp: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(tmp) })
-	binary := filepath.Join(tmp, "lenny-ops")
-	build := exec.Command("go", "build", "-o", binary, "./cmd/lenny-ops")
-	build.Dir = schematest.RepoRoot(t)
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build lenny-ops: %v\n%s", err, out)
-	}
-	return binary
+	// binbuild links the command once per test process and hands this
+	// test a copy in a directory of its own (TEST-GAPS T-17.4.33).
+	return binbuild.Build(t, "./cmd/lenny-ops", "lenny-ops")
 }
 
 // BaseURL returns the http://host:port the lenny-ops surface listens on.
