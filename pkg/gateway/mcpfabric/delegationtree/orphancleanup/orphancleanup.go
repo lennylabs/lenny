@@ -207,8 +207,8 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant string, now time.Time)
 		// counts every non-terminal child whose root is terminal,
 		// regardless of whether the cascade window has elapsed. F-8.10.7.
 		activeOrphans++
-		if now.Sub(root.UpdatedAt) <= s.cascadeTimeout {
-			continue // still inside the cascade window
+		if !cascadeWindowElapsed(root, now, s.cascadeTimeout) {
+			continue
 		}
 		applied, err := s.expireOrphan(ctx, tenant, row, root.ID, now)
 		if err != nil {
@@ -247,9 +247,9 @@ func (s *Sweeper) expireOrphan(ctx context.Context, tenant string, row sessionst
 		// spec: §8.8 — orphan cleanup is a wall-clock deadline (the
 		// cascade window after a root settles), so the MCP boundary
 		// surfaces `failed` with code `expired:deadline`. F-8.8.8.
-		if r.FailureReason == "" {
-			r.FailureReason = string(session.FailureExpiredDeadline)
-		}
+		// spec: §6.2, §7.2 — the writer stamps its own reason over any
+		// reason an earlier recovery left on the row.
+		r.FailureReason = string(session.FailureExpiredDeadline)
 		// spec: §5.2 (Slot assignment atomicity) — the stamp reads the clock
 		// inside this row's Update, because an earlier row's post-terminal
 		// hook, seal included, ran after the pass's now was read.
@@ -272,6 +272,19 @@ func (s *Sweeper) expireOrphan(ctx context.Context, tenant string, row sessionst
 		s.archiveOrphan(ctx, updated, rootID)
 	}
 	return true, nil
+}
+
+// cascadeWindowElapsed reports whether root has been terminal for longer than
+// cascadeTimeout. The window counts from the root's TerminatedAt, which a later
+// write to the root does not move, so a root with no recorded termination
+// instant opens no window and its orphans are left for a later pass.
+//
+// spec: §8.10 (the root session has been terminated for cascadeTimeoutSeconds).
+func cascadeWindowElapsed(root sessionstore.Session, now time.Time, cascadeTimeout time.Duration) bool {
+	if root.TerminatedAt.IsZero() {
+		return false
+	}
+	return now.Sub(root.TerminatedAt) > cascadeTimeout
 }
 
 // treeRoot walks the ParentSessionID chain up from row to the tree

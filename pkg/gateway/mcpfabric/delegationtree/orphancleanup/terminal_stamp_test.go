@@ -67,3 +67,33 @@ func TestOrphanCleanupStampsEachTerminalWriteWithItsOwnClockRead_spec_5_2(t *tes
 		t.Errorf("terminated_at = %v, want the pass start and ten minutes later", stamps)
 	}
 }
+
+// spec: §6.2, §7.2
+//
+// The orphan writer stamps its own expired:deadline reason over a reason an
+// earlier recovery left on the row. An orphan that passed through
+// resume_pending or awaiting_client_action carries that funnel's reason, and
+// the expiry replaces it.
+func TestOrphanCleanupStampsItsOwnReasonOverAFunnelReason_spec_7_2(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, st := range []session.State{session.StateResumePending, session.StateAwaitingClientAction} {
+		t.Run(string(st), func(t *testing.T) {
+			store := memstore.New()
+			seed(t, store, "sess_root", "", session.StateCompleted, base)
+			seedRow(t, store, sessionstore.Session{
+				ID: "sess_child", TenantID: "acme", State: st, ParentSessionID: "sess_root",
+				CreatedAt: base, UpdatedAt: base,
+				FailureReason: string(session.FailurePodEvicted),
+			})
+			sw := orphancleanup.New(store, orphancleanup.StaticTenants{"acme"}, orphancleanup.Options{})
+			if n, err := sw.Tick(context.Background(), base.Add(2*time.Hour)); err != nil || n != 1 {
+				t.Fatalf("Tick = %d, %v, want 1 orphan ended", n, err)
+			}
+			row, _ := store.Get(context.Background(), "acme", "sess_child")
+			if row.State != session.StateExpired || row.FailureReason != string(session.FailureExpiredDeadline) {
+				t.Errorf("orphan = %q reason %q, want expired with %q",
+					row.State, row.FailureReason, session.FailureExpiredDeadline)
+			}
+		})
+	}
+}

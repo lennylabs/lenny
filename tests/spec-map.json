@@ -2418,7 +2418,8 @@
         "tests/tier8_chaos/holder_forward_chaos_test.go::TestCoordinatorCrashAfterReadingAForwardIsRefusedAndNotHeld_spec_29_3",
         "pkg/gateway/sessionserver/held_undelivered_forward_internal_test.go::TestHoldUndeliveredForwardHoldsWithTheRecoveringTTL_spec_29_3",
         "tests/tier2_component/migrations/prod_columns_test.go::TestSessionStateEnteredAtMigration_spec_6_2",
-        "pkg/gateway/runtime/watchdog/terminal_stamp_test.go::TestWatchdogExpiryWritersStampTheirOwnReason_spec_7_2"
+        "pkg/gateway/runtime/watchdog/terminal_stamp_test.go::TestWatchdogExpiryWritersStampTheirOwnReason_spec_7_2",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/terminal_stamp_test.go::TestOrphanCleanupStampsItsOwnReasonOverAFunnelReason_spec_7_2"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -2793,7 +2794,10 @@
         "pkg/gateway/sessionserver/treerecovery_driver_internal_test.go::TestTreeRecoverySelectsExactlyResumePendingNodes_spec_8_10",
         "pkg/gateway/sessionserver/treerecovery_driver_internal_test.go::TestTreeRecoveryReattachWaitsForTheRestoreOutcome_spec_8_10",
         "tests/tier4_integration/delegation_tree_resume_peer_child_test.go::TestTreeRecoveryLeavesAPeerBoundChildRunning_spec_8_10",
-        "tests/tier7a_load_local/tree_reattach_resume_delete_race_test.go::TestTreeReattachRacingWatchdogDriverClaimsOnePod_spec_8_10"
+        "tests/tier7a_load_local/tree_reattach_resume_delete_race_test.go::TestTreeReattachRacingWatchdogDriverClaimsOnePod_spec_8_10",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup_test.go::TestOrphanCascadeWindowCountsFromRootTerminatedAt_spec_8_10",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup_test.go::TestOrphanCleanupSkipsRootWithZeroTerminatedAt_spec_8_10",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup_test.go::TestOrphanCascadeWindowBoundary_spec_8_10"
       ],
       "packages": [
         "pkg/delegation/tree",
