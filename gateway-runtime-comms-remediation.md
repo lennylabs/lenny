@@ -4014,12 +4014,19 @@ legacy single-file proposals carry their status in the prose status bullet, whic
     move onto the shared Postgres, and 170 tests run in parallel. The package fell from 1773 s to 351 to
     365 s over four runs, one shuffled. The slowest tests wait on the fixed 30 s lenny-ops revocation read
     and now overlap. The fix filed T-17.4.37 and T-17.4.38.
-  - [ ] **T-17.4.37** (Low): `TestFailureEdgeExpiresTheElicitationsTheSessionRaised_spec_9_2` failed once under
+  - [x] **T-17.4.37** (Low): `TestFailureEdgeExpiresTheElicitationsTheSessionRaised_spec_9_2` failed once under
     load, reading the raised elicitations as answerable after `resume_pending`. Establish whether the gateway
     commits the state before it expires them (a product defect) or the test reads too early. Direct fix.
-  - [ ] **T-17.4.38** (Low): the gateway, lenny-ops, and token-service harnesses release a probed free port
+    Fixed on `fix/t-17-4-37-38` with no product change: the gateway expires the elicitations after it commits
+    the edge, which §9.2 permits, so the test now waits on the expiry with a bounded store poll.
+  - [x] **T-17.4.38** (Low): the gateway, lenny-ops, and token-service harnesses release a probed free port
     before the process binds it, a race the tier-4 parallelism widens. Bind port 0 and report the address, or
-    retry on address-in-use. Direct fix.
+    retry on address-in-use. Direct fix. Fixed on `fix/t-17-4-37-38` with no product change: no binary reports
+    its bound address, so each harness retries on fresh ports when the child exits on a bind refusal, and its
+    readiness wait requires the child itself to hold its listeners (`tests/testinfra/ports`), which also closes
+    a probe answered by the process that took the port. The fix filed T-17.4.39.
+  - [ ] **T-17.4.39** (Low): the Redis Cluster fixture probes fixed-range host ports and releases them before
+    its containers publish them, with no retry. Retry the cluster start on a port-binding error. Direct fix.
   - [x] **F-4.4.32** (Medium, from 0072 §1.8): the gateway declares `chunk_encoding: tar` for chunks
     `ArchiveTree` gzips. Declare `tar.gz`, which §4.4 already permits.
   - [x] **F-4.4.4**, reopened (Medium, from 0072 §1.9): `FirstCheckpointDelay` has no production caller, so
