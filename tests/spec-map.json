@@ -2309,6 +2309,7 @@
       "title": "Interactive Session Model",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
+        "tests/tier11_docs/session_transition_doc_reconciliation_test.go::TestSessionDocsCarryStartFailureAndInputRequiredTerminate_spec_7_2",
         "tests/tier4_integration/request_input_persisted_wait_integration_test.go::TestRequestInputWaitOutlastsIdleBoundOffHolder_spec_7_2",
         "tests/tier7a_load_local/request_input_wait_interleaving_test.go::TestRequestInputWaitsFollowEntryAndExitRules_spec_7_2",
         "tests/tier7a_load_local/request_input_wait_interleaving_test.go::TestConcurrentRequestInputWaitsEndRunning_spec_7_2",
@@ -2773,6 +2774,7 @@
       "title": "TaskRecord and TaskResult \u2014 state machine",
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
+        "tests/tier11_docs/session_transition_doc_reconciliation_test.go::TestMCPDocsListInputRequiredStatus_spec_8_8",
         "tests/tier2_component/lifecycle/lifecycle_cells_test.go::TestTerminalWriterCellsOnPostgres_spec_7_2",
         "tests/tier1_unit/lifecycle/terminal_writers_test.go::TestTerminalWriterCells_spec_7_2",
         "pkg/session/state/state_test.go::TestMCPProtocolStateSessionMapping_spec_8_8_871",
@@ -5249,6 +5251,7 @@
       "title": "REST API",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier11_docs/session_transition_doc_reconciliation_test.go::TestStartingFailedCatalogRowCreatesANewSession_spec_15_1",
         "tests/tier3_contract/sdks/go_client_test.go::TestGoClientStartMakesOneAttempt_spec_15_6",
         "tests/tier3_contract/sdks/python_client_test.go::TestPythonClientStartMakesOneAttempt_spec_15_6",
         "tests/tier3_contract/sdks/typescript_client_test.go::TestTypeScriptClientStartMakesOneAttempt_spec_15_6",
@@ -5380,6 +5383,7 @@
       "title": "MCP API",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier11_docs/session_transition_doc_reconciliation_test.go",
         "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardCarriesTheRecordedCredentialOnEverySurface_spec_29_3",
         "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardToolCallReturnsEachCoordinatorResponseToTheClient_spec_29_3",
         "tests/tier11_docs/resume_override_api_doc_reconciliation_test.go",
@@ -5627,6 +5631,7 @@
       "title": "Client SDKs",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier11_docs/session_transition_doc_reconciliation_test.go::TestSDKRetriesParagraphSaysStartSendsOnce_spec_15_6",
         "tests/tier3_contract/sdks/go_client_test.go",
         "tests/tier3_contract/sdks/python_client_test.go",
         "tests/tier3_contract/sdks/typescript_client_test.go",

@@ -28,6 +28,7 @@ stateDiagram-v2
 
     starting --> running : runtime launches
     starting --> completed : POST /v1/sessions/{id}/terminate
+    starting --> failed : start fails or times out
 
     running --> suspended : POST /v1/sessions/{id}/interrupt
     running --> suspended : idle suspension (maxClientIdleSeconds)
@@ -78,7 +79,7 @@ stateDiagram-v2
 
 `input_required` is a **sub-state of `running`**, not a peer state. When an agent runtime calls `lenny/request_input`, the session enters `input_required`: the pod is live and the runtime is active, but the session is blocked waiting for client input. The `input_required` sub-state is surfaced to clients via `status_change` events. The session transitions back to `running` when input is provided.
 
-While in `input_required`, the session is logically active and `maxSessionAge` keeps running. The `maxClientIdleSeconds` idle clock is not evaluated, because the runtime is waiting for the client, so the session is not idle-suspended; it keeps its pod until `maxSessionAge` expires it or the `lenny/request_input` call expires. From `input_required`, the session can also transition to `cancelled` (if the parent cancels), `expired` (if a deadline is reached), `resume_pending` (on a retryable failure with retries remaining), `awaiting_client_action` (on a retryable failure with retries exhausted), or `failed` (on a non-retryable failure). The session's `retryPolicy` classifies each pod or runtime failure as retryable or non-retryable.
+While in `input_required`, the session is logically active and `maxSessionAge` keeps running. The `maxClientIdleSeconds` idle clock is not evaluated, because the runtime is waiting for the client, so the session is not idle-suspended; it keeps its pod until `maxSessionAge` expires it or the `lenny/request_input` call expires. From `input_required`, the session can also transition to `cancelled` (if the parent cancels), `expired` (if a deadline is reached), `resume_pending` (on a retryable failure with retries remaining), `awaiting_client_action` (on a retryable failure with retries exhausted), `failed` (on a non-retryable failure), or `completed` (on `POST /v1/sessions/{id}/terminate`). The session's `retryPolicy` classifies each pod or runtime failure as retryable or non-retryable.
 
 ---
 

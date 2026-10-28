@@ -32,6 +32,7 @@ stateDiagram-v2
     finalizing --> ready : Workspace materialized
     ready --> starting : StartSession
     starting --> running : Agent session started
+    starting --> failed : Start fails or times out
 
     running --> suspended : interrupt_request + acknowledged
     running --> suspended : Idle suspension (maxClientIdleSeconds elapsed)
@@ -50,6 +51,7 @@ stateDiagram-v2
     input_required --> resume_pending : Retryable failure (retries remain)
     input_required --> awaiting_client_action : Retryable failure (retries exhausted)
     input_required --> failed : Non-retryable failure / BUDGET_KEYS_EXPIRED
+    input_required --> completed : terminate
 
     suspended --> running : resume_session or POST resume (pod still held)
     suspended --> running : Any message (pod still held)
@@ -113,6 +115,7 @@ The session's retry policy (`retryPolicy`) classifies each pod or runtime failur
 | `finalizing` | `ready` | Workspace validation and setup complete | Internal |
 | `ready` | `starting` | Client calls StartSession | `POST /v1/sessions/{id}/start` |
 | `starting` | `running` | Agent runtime reaches ready | Internal |
+| `starting` | `failed` | Start fails or times out | `POST /v1/sessions/{id}/start`, or internal timer |
 | `running` | `suspended` | Interrupt acknowledged (or timeout) | `POST /v1/sessions/{id}/interrupt` |
 | `running` | `suspended` | Idle suspension: `maxClientIdleSeconds` elapsed with no activity, and the runtime adapter observed none in the window; workspace checkpointed and pod or slot released. Applies only to a session that can be idle-suspended, which excludes a `type: mcp` runtime and an `executionMode: service` pool | Internal timer |
 | `running` | `input_required` | Runtime calls `lenny/request_input` | Internal (pod -> gateway) |
@@ -129,6 +132,7 @@ The session's retry policy (`retryPolicy`) classifies each pod or runtime failur
 | `input_required` | `resume_pending` | Retryable failure with retries remaining | Internal |
 | `input_required` | `awaiting_client_action` | Retryable failure with retries exhausted | Internal |
 | `input_required` | `failed` | Non-retryable failure | Internal |
+| `input_required` | `completed` | Terminate | `POST /v1/sessions/{id}/terminate` |
 | `suspended` | `running` | Resume or any message, whatever its `delivery` value (pod still held); subject to the concurrent-session admission check | `POST /v1/sessions/{id}/resume`, `resume_session`, or a message |
 | `suspended` | `resume_pending` | Resume or any message, whatever its `delivery` value (pod released), subject to the concurrent-session admission check; or a retryable failure with retries remaining (pod still held) | `POST /v1/sessions/{id}/resume`, `resume_session`, a message, or internal |
 | `suspended` | `awaiting_client_action` | Retryable failure with retries exhausted (pod still held) | Internal |
@@ -291,6 +295,7 @@ stateDiagram-v2
     input_required --> cancelled : Parent cancels
     input_required --> expired : Deadline reached
     input_required --> failed : Non-retryable failure / BUDGET_KEYS_EXPIRED
+    input_required --> completed : terminate
 
     completed --> [*]
     failed --> [*]
