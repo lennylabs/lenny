@@ -1238,7 +1238,7 @@ R10a/R10b split), and not parallel with R22, which rewrites the resume path this
 and a clear operator-facing message, and §29's matrix names R19 as the successor so the interim behavior
 is documented as interim.
 
-**Re-derived 2026-10-21.** Routes are registered in `pkg/gateway/sessionserver/route_table.go`, and the count of twenty still holds; 0091 to 0093 added no route and 0094 removes `DELETE /v1/responses/{id}`. Proposal 0092 added `coordinatesSession`, which reads the `REG-COORDLEASE` holder and gates the held-pod `POST /resume` and the held-message drain; it is the gate primitive this step reuses. Three changes of scope follow. The `Adapter/Terminate` work item is dropped: `040323634` deleted the RPC, and a holder-side terminal write now reaches the pod through the post-terminal release and the adapter `Shutdown`. The duplicate-terminal half of 8.7 is closed by 0092 (F-10.1.34), and the reconciler's leader gating moves to P3. The off-holder terminate and delete forward is P2's (F-10.1.33), so R10 owns the typed fail-closed refusal on every other route. Two items are added: the MCP tool surface, which §29.3 maps onto the REST rows (`mcptools_register.go`), and a restatement of the §29.3 interaction-resolution rows as store-and-wake, which is how the four routes already work across replicas. Proposal 0094 adds Article 18 checks in `interactions.go`, so R10b sequences against it as well as R20.
+**Re-derived 2026-10-21.** Routes are registered in `pkg/gateway/sessionserver/route_table.go`, and the count of twenty still holds; 0091 to 0093 added no route and 0094 removes `DELETE /v1/responses/{id}`. Proposal 0092 added `coordinatesSession`, which reads the `REG-COORDLEASE` holder and gates the held-pod `POST /resume` and the held-message drain; it is the gate primitive this step reuses. Three changes of scope follow. The `Adapter/Terminate` work item is dropped: `040323634` deleted the RPC, and a holder-side terminal write now reaches the pod through the post-terminal release and the adapter `Shutdown`. The duplicate-terminal half of 8.7 is closed by 0092 (F-10.1.34), and the reconciler's leader gating moves to P3, which proposal 0105 implements (`0cdc46ecb`). The off-holder terminate and delete forward is P2's (F-10.1.33), so R10 owns the typed fail-closed refusal on every other route. Two items are added: the MCP tool surface, which §29.3 maps onto the REST rows (`mcptools_register.go`), and a restatement of the §29.3 interaction-resolution rows as store-and-wake, which is how the four routes already work across replicas. Proposal 0094 adds Article 18 checks in `interactions.go`, so R10b sequences against it as well as R20.
 
 **Size.** M (was L).
 
@@ -3109,31 +3109,49 @@ Proposals, second wave:
     `delivered_message_ids`, beside TT-81 and TT-82), and R16 and R4 (adapter-side shutdown, beside the
     gateway shutdown of TT-6, which stays in P2).
   - **Drafting.** Under the drafting rules and the test instruction above.
-- [x] **P3. Session timers and sweep ownership** (done as a proposal; implementation pending), beside P2.
+- [x] **P3. Session timers and sweep ownership** (done as proposal 0105; implementation landed 2026-10-28 on
+  `impl/0105-session-timers`, final gate and merge pending), beside P2.
   - **Scope.** The per-state deadlines and the watchdog sweeps that enforce them: the timestamp each
     deadline is anchored on, the reason each expiry stamps, which replica runs each terminal sweep, how a
-    sweep re-checks its listed row, how a sweep runs the hooks of the rows it ends, and which states each
-    writer may end. The owner is the watchdog, leader-gated. The spec gains a state-entry timestamp as the
-    anchor of every per-state deadline, the edges (or the refusal) for terminal writes from the paused and
-    recovering states, and where `perChildMaxAge` is stored.
+    sweep re-checks its listed row, how a sweep continues past errors and runs the hooks of the rows it
+    ends, and which states each writer may end. The watchdog sweeps and orphan cleanup run on every replica
+    under the §10.1.1 locked-row re-check, because the resume driver, idle suspension, and the suspended-pod
+    release act only on the coordinating replica, and the row lock with the sweep sentinels already allows
+    one write and one hook per session. Only the §10.1.4 orphan-session reconciler is leader-gated. The
+    specification gains the persisted `state_entered_at` instant (§6.2), the §7.2 `/start` edges through
+    `starting`, the §7.2 paragraph of terminal writes from any non-terminal state, the per-state
+    `maxSessionAge` expiry edges from `starting`, `resume_pending`, and `resuming`, the §7.2 terminate edge
+    from `input_required`, the §8.2 `perChildMaxAge` binding counted from the child's creation, and the
+    §10.1.1 sweep replica assignment. No storage field is added for `perChildMaxAge`, because the child row
+    already stores its granted slice.
   - **Members.** F-7.2.31 (TT-46), F-8.3.1 (TT-43), F-10.1.34 (TT-40), and F-11.3.37 to F-11.3.43 (TT-33,
     TT-37, TT-39, TT-41, TT-42, TT-44, and TT-45), plus the `resume_pending` and `awaiting_client_action`
-    cases of F-6.2.28 (TT-38) that 0092 does not settle. Three are High, counting TT-38.
-  - **Dependencies.** After 0092, because its CODE-1 (active-time age) and CODE-6 (idle suspension,
-    `sweepSuspended`) rewrite the sweeps behind TT-37 to TT-41; re-derive those against the landed 0092
-    first. TT-44 needs P2's bounded hook context. Run it in parallel with P2 when the watchdog files are not
-    in flight.
-  - **Overlapping plan steps.** R20 (the cross-replica input wait TT-39 needs).
+    cases of F-6.2.28 (TT-38) that 0092 does not settle. Three are High, counting TT-38. F-11.3.40 closes on
+    its sweep-write half; its expiry-warning half is F-11.3.46. F-10.1.36, F-5.2.57, and F-7.2.43 stay open
+    and are not staged by 0105.
+  - **Dependencies.** After 0092, whose active-time age and idle suspension rewrote the sweeps behind TT-37
+    to TT-41, and after P2a (proposal 0100), whose bounded terminal pipeline context and terminal claim the
+    off-pass hooks rely on. It ran after 0101 and 0102 merged, because they share files.
+  - **Overlapping plan steps.** R20 (the shared input-wait store). The idle-expiry fix for TT-39 does not
+    wait on R20: `lenny/request_input` persists `input_required` on the row with the identity of a live
+    wait, and the replica that accepts a pod process's `LNK-GWCONTROL` connection recovers that pod's rows
+    whose named wait it does not hold (owner-delegated decision D13, 2026-10-27). R20 keeps F-8.8.17 and
+    F-7.2.37, which need a cross-replica wait store.
   - **Drafting.** Under the drafting rules and the test instruction above.
   - **Outcome.** Proposal 0105
     (`proposals/0105_fix_the-per-state-session-deadlines-and-the-watchdog-sweeps/`) was approved 2026-10-27
-    (merge `f730122c4`). It measures each per-state deadline from a store-owned `state_entered_at`, makes
-    the sweeps re-check on the locked row, continue past errors, and run hooks off the pass, adds the
-    `/start` `ready → starting` edge, persists the `lenny/request_input` wait with a wait identity and
-    connection-boundary recovery (owner-delegated decision D13), and enforces `perChildMaxAge`. Its
-    implementation, which closes F-6.2.28, F-7.2.31, F-8.3.1, F-10.1.34, and F-11.3.37 to F-11.3.43 (the
-    sweep-write half of F-11.3.40) as its REC-1 states, is pending, and it runs after 0101 and 0102 merge,
-    because they share files. Its unstaged defects are filed below.
+    (merge `f730122c4`), and its implementation landed 2026-10-28: spec commits `ddb970b68`, `f1bf2f8eb`, `b01655d42`, and
+    `a125b2008`; code commits `5a36e678f` (store-owned `state_entered_at`), `8f854d68a` (state-entry anchors,
+    locked-row re-checks, and unconditional expiry reasons), `acd473b60` (`perChildMaxAge` in
+    `sweepMaxAge`), `4ff095845` (orphan cleanup from the root's `TerminatedAt`), `aca894f98` (sweep
+    continuation and off-pass hooks), `3248e62dc`, `a54b7aa06`, and `df58b5039` (`/start` through
+    `starting` and single-attempt SDK `Start`), `e55474c10`, `c36b93e4c`, `6be131c90`, and `18c462e9f` (the
+    persisted `input_required` wait and its recovery), and `0cdc46ecb` (the leader-gated orphan-session
+    reconciler); docs `00bef2772`; tests `7b7b35386` and `f7305e150`. BUILD-GAPS carries resolution notes on
+    F-6.2.28, F-7.2.31, F-8.3.1, F-10.1.34, and F-11.3.37 to F-11.3.43, which close once the merge lands.
+    Its unstaged defects are filed below. Position: with P3 implemented, P2b is the remaining second-wave
+    proposal. The third wave follows: P4a (proposal 0106), whose implementation waited on 0104 and 0105, and
+    then P4b (proposal 0107).
 
 Proposals, third wave:
 
@@ -3435,9 +3453,10 @@ The rest are filed in BUILD-GAPS and routed below.
   - [ ] **F-12.8.60** (Medium), with **P2b**: the session-log close, the billing `Append` with the raw user
     ID, and a chunk upload on a late presigned grant can land after user erasure. It needs a later release
     record on the hook path or a second sweep after the grant TTL, after 0100's release record lands.
-  - [ ] **F-5.2.57** (Low), with **P3**: §5.2 says pool admission refuses a pool that misses the
-    `claimOrphanTimeout` bound, while no pool field enters the bound and no admission check exists. P3's
-    deadline edits name the field or strike the clause.
+  - [ ] **F-5.2.57** (Low): §5.2 says pool admission refuses a pool that misses the
+    `claimOrphanTimeout` bound, while no pool field enters the bound and no admission check exists. It was
+    routed to P3, and proposal 0105 does not stage it, so its owner is unassigned. It rides with the next
+    proposal that edits the §5.2 `claimOrphanTimeout` bound.
   - [ ] **F-29.3.3** (Low), with the **inter-replica carrier proposal** (proposal 0101, approved 2026-10-26): the §29.3
     off-holder rows for terminate and DELETE omit `resuming`.
   - [ ] **Postgres HA review proposal** (not yet written): **F-12.3.27** (Medium). §12.3 states RPO 0 for
@@ -3736,13 +3755,13 @@ blocks any of them.
     proposal that edits §10.7 or §23.1, or with any text-corrections proposal.
 
 **Defects filed from proposal 0105's unstaged-defect list (2026-10-27).** Proposal 0105 (P3, approved
-2026-10-27, implementation pending) lists defects in the shipped tree that it does not stage, and its REC-1
-files them once confirmed. They are filed now, ahead of REC-1, because no defect is dropped. Each was
-re-confirmed against the tree, and each BUILD-GAPS entry says it was filed ahead of REC-1, so 0105's
-implementor updates the entry rather than filing a duplicate. F-10.1.36 and F-5.2.57 were already tracked and
-keep their routing. F-7.2.43 named P3 as its owner, and 0105 does not stage it, so it is queued here.
+2026-10-27, implemented 2026-10-28) lists defects in the shipped tree that it does not stage. They were filed
+on 2026-10-27, before 0105's implementation, because no defect is dropped, and each was re-confirmed against
+the tree. 0105's implementation confirmed each BUILD-GAPS entry in place on 2026-10-28 and filed no duplicate.
+F-10.1.36 was already tracked and keeps its routing. F-5.2.57 and F-7.2.43 named P3 as their owner, and 0105
+stages neither, so F-7.2.43 is queued here and F-5.2.57 is re-routed in the 0100 block above.
 
-- Direct-fix queue, after 0105's implementation, which edits the same files.
+- Direct-fix queue, unblocked by 0105's implementation, which edited the same files.
   - [ ] **F-11.3.45** (Low) and **F-11.3.46** (Low), one fix: every replica sends its own
     `session_expiring_soon` and `DEADLINE_APPROACHING` for a session, because the warning's dedup set is per
     process, and the warning is sent from the listing without a re-read, so it can follow a terminal write.
@@ -3762,7 +3781,7 @@ keep their routing. F-7.2.43 named P3 as its owner, and 0105 does not stage it, 
     server tool, so an edge caller can open a wait on a session. Which tools the edge serves needs spec text.
     It can ride with the forwarded-call session binding proposal (F-10.2.29).
   - [ ] **F-15.1.61** (Medium): the §15.1 upload and stale-derive precondition rows do not list
-    `input_required`, so once 0105 persists the sub-state a waiting session is refused both. It rides with
+    `input_required`, so now that 0105 persists the sub-state a waiting session is refused both. It rides with
     the next proposal that edits the §15.1 precondition table.
   - [ ] **F-7.2.43** (Low): a created-state expiry ends the session `failed` while §15.1 names `expired`.
     Owner unassigned since 0105 declined it. It rides with the next proposal that edits the §7.2 state

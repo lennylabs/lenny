@@ -2102,7 +2102,8 @@
         "pkg/gateway/mcpfabric/mcptools/request_input_row_writes_test.go::TestRequestInputExitWriteRestoresRunning_spec_7_2",
         "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartWriteStoreErrorAnswersInternal_spec_15_1",
         "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartFindsAnotherWritersTerminalState_spec_7_2",
-        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartFailedWriteStoreErrorLeavesStartingForTheWatchdog_spec_6_2"
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartFailedWriteStoreErrorLeavesStartingForTheWatchdog_spec_6_2",
+        "tests/tier11_docs/build_gaps_session_timers_records_currency_test.go::TestSessionTimersRecordsResolveTheirMembers_spec_6_2"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -2500,7 +2501,8 @@
         "pkg/session/state/state_test.go::TestValidTransitionsAdmitEveryAnyStateTerminalWriter_spec_7_2",
         "sdks/client/go/lenny/start_single_attempt_test.go::TestStartSendsOneRequestOnStartingFailed_spec_15_6",
         "cmd/lenny-gateway/any_state_terminal_writers_test.go::TestForceTerminateFromRecoveryAndPreRunningStatesWritesFailed_spec_7_2",
-        "cmd/lenny-gateway/any_state_terminal_writers_test.go::TestBudgetTerminatorFromRecoveryAndPausedStatesWritesExpired_spec_7_2"
+        "cmd/lenny-gateway/any_state_terminal_writers_test.go::TestBudgetTerminatorFromRecoveryAndPausedStatesWritesExpired_spec_7_2",
+        "tests/tier11_docs/build_gaps_session_timers_records_currency_test.go::TestSessionTimersFiledDefectsAreConfirmed_spec_7_2"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -2768,7 +2770,8 @@
         "tests/tier7a_load_local/credential_lookup_flapping_race_test.go",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPodReleasePointersLinkTheClaimRule_spec_4_6_3",
         "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderMCPToolCallsForwardAsToolCalls_spec_29_3",
-        "pkg/gateway/mcpfabric/mcptools/messaging_handler_test.go::TestForwardedSendSkipsTheSenderLimitsOnTheCoordinator_spec_29_3"
+        "pkg/gateway/mcpfabric/mcptools/messaging_handler_test.go::TestForwardedSendSkipsTheSenderLimitsOnTheCoordinator_spec_29_3",
+        "tests/tier11_docs/build_gaps_session_timers_records_currency_test.go::TestSessionTimersNotesKeepTheirRecords_spec_8_3"
       ],
       "packages": [
         "pkg/delegation/lease",
@@ -3230,7 +3233,8 @@
         "pkg/gateway/session/orphansession/pass_continuation_test.go::TestReconcilerContinuesPastListAndWriteFailures_spec_10_1_1",
         "tests/tier7a_load_local/watchdog_replica_sweep_race_test.go::TestTwoWatchdogsAndOrphanCleanupEndEachSessionOnce_spec_10_1_1",
         "tests/tier8_chaos/sweep_fault_continuation_test.go::TestSweepsContinuePastListAndWriteFaults_spec_10_1_1",
-        "pkg/gateway/sessionserver/start_starting_state_test.go::TestServiceModeStartTakesNoLease_spec_10_1_1"
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestServiceModeStartTakesNoLease_spec_10_1_1",
+        "tests/tier11_docs/build_gaps_session_timers_records_currency_test.go::TestSessionTimersPlanEntryStatesTheLandedDesign_spec_10_1_1"
       ],
       "packages": [
         "pkg/gateway"
@@ -4014,7 +4018,8 @@
         "tests/tier8_chaos/stream_failure_chaos_test.go::TestPodGRPCPartitionEvictsWithUnavailableAndKeepsTheRow_spec_28_5_1",
         "tests/tier11_docs/suspension_flag_help_doc_consistency_test.go::TestGatewayFlagHelpMatchesTheSuspensionContract",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOrphanTimeoutAndAbsentAnswerAgree_spec_4_7_1",
-        "tests/tier4_integration/concurrent_slot_release_test.go::TestAbandonedCreatedRowTimesOutAndReleasesItsSlot_spec_5_2"
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestAbandonedCreatedRowTimesOutAndReleasesItsSlot_spec_5_2",
+        "tests/tier11_docs/build_gaps_session_timers_records_currency_test.go::TestSessionTimersOpenFindingsKeepTheirNotes_spec_11_3"
       ],
       "packages": [
         "pkg/policy/timeout"
