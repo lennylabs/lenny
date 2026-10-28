@@ -4014,9 +4014,11 @@ legacy single-file proposals carry their status in the prose status bullet, whic
     move onto the shared Postgres, and 170 tests run in parallel. The package fell from 1773 s to 351 to
     365 s over four runs, one shuffled. The slowest tests wait on the fixed 30 s lenny-ops revocation read
     and now overlap. The fix filed T-17.4.37 and T-17.4.38.
-  - [ ] **T-17.4.37** (Low): `TestFailureEdgeExpiresTheElicitationsTheSessionRaised_spec_9_2` failed once under
+  - [x] **T-17.4.37** (Low): `TestFailureEdgeExpiresTheElicitationsTheSessionRaised_spec_9_2` failed once under
     load, reading the raised elicitations as answerable after `resume_pending`. Establish whether the gateway
     commits the state before it expires them (a product defect) or the test reads too early. Direct fix.
+    Fixed on `fix/t-17-4-37-38` with no product change: the gateway expires the elicitations after it commits
+    the edge, which §9.2 permits, so the test now waits on the expiry with a bounded store poll.
   - [ ] **T-17.4.38** (Low): the gateway, lenny-ops, and token-service harnesses release a probed free port
     before the process binds it, a race the tier-4 parallelism widens. Bind port 0 and report the address, or
     retry on address-in-use. Direct fix.
