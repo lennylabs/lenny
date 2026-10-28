@@ -17,6 +17,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/bindrelease"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
@@ -366,5 +367,7 @@ var (
 	// *issuedtokenstore.Store satisfies the consumer-side store interface
 	// the adapter now depends on, so the production wiring is type-checked.
 	_ adminIssuedTokenStore         = (*issuedtokenstore.Store)(nil)
+	_ userTokenStore                = (*issuedtokenstore.Store)(nil)
+	_ crossTenantReadEmitter        = (*auditstore.Store)(nil)
 	_ revocationPropagationObserver = (*recordingRevocationObserver)(nil)
 )

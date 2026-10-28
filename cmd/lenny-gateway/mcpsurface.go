@@ -18,7 +18,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/childtoken"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/export"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/exportwire"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
@@ -45,7 +44,7 @@ import (
 // MCP fabric. It constructs the §8.3 delegation-policy, §4.8/SEC-013
 // external-interceptor, and §16.7 deployment-config stores, the §8.2
 // delegation service (with its §8.7 export materializer, §8.3 export-scan
-// resolver, and §8.2 child-token minter), the §9.1 MCP server, registers
+// resolver), the §9.1 MCP server, registers
 // every MCP tool family on it (lenny/create_session, the §15.2 client-facing
 // lifecycle tools, §8.2 delegate_task, §7.2 send_message, §8.8 await_children,
 // §26.2 vcs_token, and the rest), and wires the §15.2 Streamable HTTP SSE
@@ -145,20 +144,9 @@ func (w *gatewayWiring) buildMCPSurface(
 		policy.NewExportScanObserver(auditAppender, gwMetrics, nil).WithBilling(w.billingEmitter),
 	)
 	// §13.3 revocation cache: the auth middleware rejects a token whose
-	// jti is in this set, and the §8.2 child-token exchange reads
-	// the parent (actor) token's jti against it inside the minting step.
-	// Constructed here so both the delegation child-token minter and the
-	// revocation propagator (below) share the one cache instance. F-8.1.2.
+	// jti is in this set. Constructed here so the auth middleware and the
+	// revocation propagator (below) share the one cache instance.
 	revCache := revocation.NewCache()
-	// §8.2 / §13.3: the in-process child-token minter the
-	// delegation service runs after admission. It narrows scope, builds
-	// the act chain, fixes delegation_depth at parent + 1, caps exp, and
-	// fails closed with DELEGATION_PARENT_REVOKED when the parent jti is
-	// revoked. F-8.1.2 / F-8.2.7.
-	childTokenMinter := childtoken.NewMinter(childtoken.Options{
-		Revocations: revCache,
-		Clock:       clockinject.Now,
-	})
 	delegationSvc := delegation.NewService(w.sessions, delegation.Options{
 		Experiments:             w.experiments,
 		Runtimes:                w.runtimes,
@@ -167,7 +155,6 @@ func (w *gatewayWiring) buildMCPSurface(
 		ExportMaterializer:      exportMaterializer,
 		ExportScanChainResolver: exportScanResolver,
 		TreeBudgetReserver:      w.treeBudgetReserver,
-		ChildTokenMinter:        childTokenMinter,
 		// §8.6: register each admitted child with the lease-
 		// extension budget source, capped at the parent's own lease, so a
 		// later in-process budget-exhaustion extension from the child (the
@@ -260,6 +247,7 @@ func (w *gatewayWiring) buildMCPSurface(
 		DevMode:                    *devMode,
 		Delegation:                 delegationSvc,
 		Users:                      w.users,
+		CallerCheck:                sessionCallerCheck(w.pgPool, w.auditValidator),
 		Runtimes:                   w.runtimes,
 		CapabilityOverrides:        w.capOverrides,
 		Environments:               environments,

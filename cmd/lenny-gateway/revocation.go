@@ -42,7 +42,7 @@ func (w *gatewayWiring) buildRevocationWiring() {
 	// replica within pub/sub latency; with no Redis the propagator is a
 	// local-only pass-through. revCache stays the read primitive the
 	// auth middleware and the rehydration loop use directly. revCache is
-	// constructed above (shared with the §8.2 child-token minter).
+	// constructed with the MCP surface and shared with the auth middleware.
 	revProp := revocationprop.New(w.revCache, w.securityBus, revocationprop.WithErrorHandler(func(err error) {
 		log.Printf("lenny-gateway: token-revocation pub/sub publish failed: %v", err)
 	}))

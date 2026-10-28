@@ -18,8 +18,8 @@ import (
 )
 
 // maxUptimePod builds an agent Pod for the StampMaxPodUptime tests.
-func maxUptimePod(name string) *corev1.Pod {
-	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS}}
+func maxUptimePod(ns, name string) *corev1.Pod {
+	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
 }
 
 // TestStampMaxPodUptimeStampsAnnotation verifies StampMaxPodUptime patches the
@@ -28,15 +28,16 @@ func maxUptimePod(name string) *corev1.Pod {
 // to level-trigger the CreationTimestamp-derived uptime drain.
 // spec: 4.6.1 (gateway delivers the uptime cap the controller reads), 4.6.3 (gateway stamps agent-pod annotations, never Sandbox.status)
 func TestStampMaxPodUptimeStampsAnnotation_spec_4_6(t *testing.T) {
+	ns := testNamespace(t)
 	cl := fake.NewClientBuilder().
 		WithScheme(newScheme(t)).
-		WithObjects(maxUptimePod("pod-1")).
+		WithObjects(maxUptimePod(ns, "pod-1")).
 		Build()
-	if err := podclaim.StampMaxPodUptime(context.Background(), cl, testNS, "pod-1", 3600); err != nil {
+	if err := podclaim.StampMaxPodUptime(context.Background(), cl, ns, "pod-1", 3600); err != nil {
 		t.Fatalf("StampMaxPodUptime: %v", err)
 	}
 	var got corev1.Pod
-	if err := cl.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "pod-1"}, &got); err != nil {
+	if err := cl.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "pod-1"}, &got); err != nil {
 		t.Fatalf("get pod: %v", err)
 	}
 	if v := got.Annotations[lennyv1.AnnotationMaxPodUptimeSeconds]; v != "3600" {
@@ -52,16 +53,17 @@ func TestStampMaxPodUptimeStampsAnnotation_spec_4_6(t *testing.T) {
 // created+0 (unconditionally over-uptime) and drain every no-cap pod.
 // spec: 4.6.1 (optional cap; only a pool that sets it is stamped)
 func TestStampMaxPodUptimeSkipsNonPositiveCap_spec_4_6(t *testing.T) {
+	ns := testNamespace(t)
 	for _, cap := range []int64{0, -1} {
 		cl := fake.NewClientBuilder().
 			WithScheme(newScheme(t)).
-			WithObjects(maxUptimePod("pod-1")).
+			WithObjects(maxUptimePod(ns, "pod-1")).
 			Build()
-		if err := podclaim.StampMaxPodUptime(context.Background(), cl, testNS, "pod-1", cap); err != nil {
+		if err := podclaim.StampMaxPodUptime(context.Background(), cl, ns, "pod-1", cap); err != nil {
 			t.Fatalf("StampMaxPodUptime(cap=%d): %v", cap, err)
 		}
 		var got corev1.Pod
-		if err := cl.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "pod-1"}, &got); err != nil {
+		if err := cl.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "pod-1"}, &got); err != nil {
 			t.Fatalf("get pod: %v", err)
 		}
 		if v, present := got.Annotations[lennyv1.AnnotationMaxPodUptimeSeconds]; present {
@@ -75,8 +77,9 @@ func TestStampMaxPodUptimeSkipsNonPositiveCap_spec_4_6(t *testing.T) {
 // (a concurrent retirement) needs no cap.
 // spec: 4.6.3 (nothing to stamp for a gone pod)
 func TestStampMaxPodUptimeToleratesMissingPod_spec_4_6(t *testing.T) {
+	ns := testNamespace(t)
 	cl := fake.NewClientBuilder().WithScheme(newScheme(t)).Build()
-	if err := podclaim.StampMaxPodUptime(context.Background(), cl, testNS, "ghost", 3600); err != nil {
+	if err := podclaim.StampMaxPodUptime(context.Background(), cl, ns, "ghost", 3600); err != nil {
 		t.Fatalf("StampMaxPodUptime on a missing pod: %v, want nil (NotFound tolerated)", err)
 	}
 }
@@ -87,16 +90,17 @@ func TestStampMaxPodUptimeToleratesMissingPod_spec_4_6(t *testing.T) {
 // pod (fail closed on the delivery seam).
 // spec: 4.6.1 (uptime-cap delivery fails closed on a patch fault)
 func TestStampMaxPodUptimePropagatesPatchError_spec_4_6(t *testing.T) {
+	ns := testNamespace(t)
 	base := fake.NewClientBuilder().
 		WithScheme(newScheme(t)).
-		WithObjects(maxUptimePod("pod-1")).
+		WithObjects(maxUptimePod(ns, "pod-1")).
 		Build()
 	cl := interceptor.NewClient(base, interceptor.Funcs{
 		Patch: func(context.Context, client.WithWatch, client.Object, client.Patch, ...client.PatchOption) error {
 			return errors.New("apiserver unreachable")
 		},
 	})
-	if err := podclaim.StampMaxPodUptime(context.Background(), cl, testNS, "pod-1", 3600); err == nil {
+	if err := podclaim.StampMaxPodUptime(context.Background(), cl, ns, "pod-1", 3600); err == nil {
 		t.Error("StampMaxPodUptime patch error = nil, want non-nil")
 	}
 }
@@ -114,8 +118,9 @@ func TestStampMaxPodUptimePropagatesPatchError_spec_4_6(t *testing.T) {
 // WarmPoolController's reconcileUptime arm always saw the annotation absent.
 // spec: 4.6.1 (the gateway delivers the uptime cap the controller reads), 4.6.3 (gateway stamps agent-pod annotations, never Sandbox.status)
 func TestClaimSlotStampsMaxPodUptimeOnPod_spec_4_6(t *testing.T) {
-	claimer, c, _ := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", ""))
-	mustCreate(t, c, agentPod("sbx-1", ""))
+	ns := testNamespace(t)
+	claimer, c, _ := slotClaimerFor(t, concurrentSandbox(ns, "sbx-1", "idle", ""))
+	mustCreate(t, c, agentPod(ns, "sbx-1", ""))
 
 	req := slotReq("sess-1", "acme", 8)
 	req.MaxPodUptimeSeconds = 3600
@@ -138,8 +143,9 @@ func TestClaimSlotStampsMaxPodUptimeOnPod_spec_4_6(t *testing.T) {
 // controller as created+0 and drain every no-cap pod.
 // spec: 4.6.1 (optional cap; only a pool that sets it is delivered)
 func TestClaimSlotSkipsMaxPodUptimeForNoCapPool_spec_4_6(t *testing.T) {
-	claimer, c, _ := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", ""))
-	mustCreate(t, c, agentPod("sbx-1", ""))
+	ns := testNamespace(t)
+	claimer, c, _ := slotClaimerFor(t, concurrentSandbox(ns, "sbx-1", "idle", ""))
+	mustCreate(t, c, agentPod(ns, "sbx-1", ""))
 
 	// slotReq leaves MaxPodUptimeSeconds at zero (the no-cap pool).
 	if _, err := claimer.ClaimSlot(context.Background(), slotReq("sess-1", "acme", 8)); err != nil {

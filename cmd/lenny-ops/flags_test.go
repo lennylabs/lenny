@@ -103,6 +103,9 @@ func TestParseFlags(t *testing.T) {
 		{"gatewaySATokenFile", *f.gatewaySATokenFile, "/var/run/secrets/lenny/gateway/token"},
 		{"gatewayTokenRefreshBefore", *f.gatewayTokenRefreshBefore, 5 * time.Minute},
 		{"alertingBundleFormats", *f.alertingBundleFormats, "prometheusrule"},
+		// §16.1.1 / §25.4: an unset --platform-tier is tier1, the chart
+		// default for global.deploymentTier. F-25.4.38.
+		{"platformTier", *f.platformTier, "tier1"},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
@@ -159,9 +162,8 @@ func TestOpsProductionModeAndRequiredKeyAreIndependent_spec_17_9_1(t *testing.T)
 		{"prod tier1", "tier1", []string{"--environment=prod"}, true, false},
 		{"staging tier3", "tier3", []string{"--environment=staging"}, false, true},
 		{"dev tier2", "tier2", []string{"--environment=dev"}, false, true},
-		{"local", "", []string{"--environment=local"}, false, false},
-		{"unset environment and tier", "", nil, false, false},
-		{"off-set tier reads as tier1", "Tier2", []string{"--environment=prod"}, true, false},
+		{"local", "tier1", []string{"--environment=local"}, false, false},
+		{"unset environment, default tier", "tier1", nil, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := boundOpsFlags(t, tc.tier, tc.args...)
@@ -210,5 +212,50 @@ func TestOpsProductionGatesReadFinalizedEnvironment_spec_17_9_1(t *testing.T) {
 		if strings.Contains(src, `"LENNY_PRODUCTION"`) {
 			t.Errorf("%s reads LENNY_PRODUCTION; production mode comes from --environment", file)
 		}
+	}
+}
+
+// spec: 16.1.1 (Attribute Naming) deployment_tier; 25.4 (The lenny-ops Service) Idempotency-Key
+//
+// TestValidatePlatformTier_spec_25_4 pins the startup refusal of a
+// --platform-tier outside the §16.1.1 closed set. The three members pass;
+// the empty value, case variants, whitespace variants, and out-of-range
+// tiers are refused with an error naming the value. Without the refusal an
+// off-set value reads as Tier 1 and drops the §25.4 Tier 2/3 required
+// Idempotency-Key. F-25.4.38.
+func TestValidatePlatformTier_spec_25_4(t *testing.T) {
+	for _, tier := range []string{"tier1", "tier2", "tier3"} {
+		if err := validatePlatformTier(tier); err != nil {
+			t.Errorf("validatePlatformTier(%q) = %v, want nil", tier, err)
+		}
+	}
+	for _, tier := range []string{"", "TIER2", "Tier3", "tier4", "tier0", " tier2", "tier2 ", "teir2", "2", "tier-2"} {
+		err := validatePlatformTier(tier)
+		if err == nil {
+			t.Errorf("validatePlatformTier(%q) = nil, want a refusal", tier)
+			continue
+		}
+		want := `--platform-tier "` + tier + `" is not one of tier1, tier2, or tier3`
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("validatePlatformTier(%q) error = %q, want it to contain %q", tier, err, want)
+		}
+	}
+}
+
+// spec: 16.1.1 (Attribute Naming) deployment_tier; 25.4 (The lenny-ops Service) Idempotency-Key
+//
+// TestMainRefusesOffSetPlatformTier_spec_25_4 pins the wiring: main runs
+// validatePlatformTier on the parsed --platform-tier before runOps builds
+// any subsystem, and exits through log.Fatalf on a refusal.
+func TestMainRefusesOffSetPlatformTier_spec_25_4(t *testing.T) {
+	b, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	src := string(b)
+	validate := strings.Index(src, "validatePlatformTier(*f.platformTier)")
+	run := strings.Index(src, "runOps(f)")
+	if validate < 0 || run < 0 || validate > run {
+		t.Fatalf("main does not call validatePlatformTier(*f.platformTier) before runOps(f)")
 	}
 }

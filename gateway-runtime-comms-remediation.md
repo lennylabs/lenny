@@ -3106,7 +3106,7 @@ Proposals, second wave:
     `delivered_message_ids`, beside TT-81 and TT-82), and R16 and R4 (adapter-side shutdown, beside the
     gateway shutdown of TT-6, which stays in P2).
   - **Drafting.** Under the drafting rules and the test instruction above.
-- [ ] **P3. Session timers and sweep ownership** (not yet written), beside P2.
+- [x] **P3. Session timers and sweep ownership** (done as a proposal; implementation pending), beside P2.
   - **Scope.** The per-state deadlines and the watchdog sweeps that enforce them: the timestamp each
     deadline is anchored on, the reason each expiry stamps, which replica runs each terminal sweep, how a
     sweep re-checks its listed row, how a sweep runs the hooks of the rows it ends, and which states each
@@ -3122,10 +3122,31 @@ Proposals, second wave:
     in flight.
   - **Overlapping plan steps.** R20 (the cross-replica input wait TT-39 needs).
   - **Drafting.** Under the drafting rules and the test instruction above.
+  - **Outcome.** Proposal 0105
+    (`proposals/0105_fix_the-per-state-session-deadlines-and-the-watchdog-sweeps/`) was approved 2026-10-27
+    (merge `f730122c4`). It measures each per-state deadline from a store-owned `state_entered_at`, makes
+    the sweeps re-check on the locked row, continue past errors, and run hooks off the pass, adds the
+    `/start` `ready → starting` edge, persists the `lenny/request_input` wait with a wait identity and
+    connection-boundary recovery (owner-delegated decision D13), and enforces `perChildMaxAge`. Its
+    implementation, which closes F-6.2.28, F-7.2.31, F-8.3.1, F-10.1.34, and F-11.3.37 to F-11.3.43 (the
+    sweep-write half of F-11.3.40) as its REC-1 states, is pending, and it runs after 0101 and 0102 merge,
+    because they share files. Its unstaged defects are filed below.
 
 Proposals, third wave:
 
-- [ ] **P4. Delegation tree and budget lifecycle** (not yet written), after P2.
+- [ ] **P4. Delegation tree and budget lifecycle** (split; P4a done as a proposal, P4b drafting), after P2.
+  - **Outcome (P4a).** Proposal 0106
+    (`proposals/0106_fix_the-delegation-tree-s-membership-and-lifecycle-are-under/`) was approved 2026-10-27
+    (merge `d52dc1834`). Derive and replay create independent roots registered for lease extension, tree
+    recovery fails only `resume_pending` nodes level by level and leaves an elapsed resume window to the §6.2
+    cap, the orphan-cleanup sweeper selects by direct parent and becomes the retry owner for interrupted
+    cascades, and the deadlock, orphan-cap fallback, and rollback paths conform. Its implementation closes
+    F-8.2.30, F-8.8.18, F-8.8.19, F-8.9.13, F-8.10.19 to F-8.10.23, F-8.10.25, and F-8.10.26 as its REC-1
+    states. Its REC-1 also re-owns F-8.10.17 to approved proposal 0104 (D6, CODE-2, and SPEC-3 Edit (a)), with
+    0106's orphan sweeper as a one-interval backstop, and closes F-8.10.24 citing `3f943f56f`; both records
+    are applied. Its implementation runs after 0104 and 0105 are implemented, because its staged edits anchor
+    on their text. Its unstaged defects are filed below. P4b (tree budget keys, the §8.6 lease extension, and
+    the per-session enforcer) remains and is being drafted as proposal 0107.
   - **Scope.** Tree membership and lifecycle: which sessions belong to a delegation tree, tree recovery
     after a resume, the cancellation cascade and `cancelSubtree`, orphan cleanup, the deadlock detector's
     local decisions, the delegated child's materializer, tree budget keys and their returns, the §8.6 lease
@@ -3134,7 +3155,8 @@ Proposals, third wave:
   - **Members.** F-8.2.30 (TT-32), F-8.3.2 to F-8.3.5 (TT-50, TT-58, TT-59, and TT-65), F-8.6.24 to
     F-8.6.27 (TT-52, TT-63, TT-64, and TT-67), F-8.8.18 (TT-62), F-8.8.19 (TT-66), F-8.9.13 (TT-47),
     F-8.10.17 (TT-31), F-8.10.19 to F-8.10.26 (TT-49, TT-53 to TT-57, TT-60, and TT-61), and F-11.2.31
-    (TT-68). Four are High.
+    (TT-68). Four are High. F-8.10.17 (TT-31) is re-owned to proposal 0104 and F-8.10.24 (TT-57) is closed,
+    both by 0106's REC-1 (2026-10-27).
   - **Split seam.** If the opening defect list exceeds the bound, split into P4a (tree membership,
     recovery, cascade, cancel, orphan cleanup, deadlock, and the materializer) and P4b (tree budget keys,
     the §8.6 lease extension, and the per-session enforcer: TT-50, TT-52, TT-57 to TT-59, TT-63 to TT-65,
@@ -3265,9 +3287,9 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
     or JWKS verifier). It lands with TEST-GAPS T-10.2.1 and joins 0097's key set. Fixed in `079b3e3d0`: the
     gateway verifies IdP bearers through the issuer's discovery document and JWK Set and normalizes them to
     `user_bearer`; T-10.2.1 is closed with it.
-  - [ ] **F-8.2.31** (Medium): delegation child tokens are unsigned and absent from `issued_tokens`. Moved
+  - [x] **F-8.2.31** (Medium): delegation child tokens are unsigned and absent from `issued_tokens`. Moved
     out of this queue on 2026-10-26: it needs a proposal, and it joins F-10.2.25 in the **session capability
-    and delegation child token proposal** below.
+    and delegation child token proposal** below. Resolved by proposal 0104, implemented 2026-10-28.
   - [x] **F-25.4.35** (Low): the split-brain reconciliation discards the `RemoveByID` and `SetEpoch` errors.
     Fixed in `0ae8a114e`: `Reconcile` returns an error naming each failed Redis write and retries both on the
     next pass, a failed removal before the Redis locks are read.
@@ -3276,7 +3298,7 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
   - [ ] **F-12.4.33** (Low): the EventBus publishes with classic `PUBLISH` on a Cluster. Measure Tier 3
     broadcast load first; a switch to sharded pub/sub is a direct fix.
 - New proposals, each after proposal 0097.
-  - [x] **Impersonation revocation proposal** (done as a proposal; implementation pending), first after 0097:
+  - [x] **Impersonation revocation proposal** (implemented), first after 0097:
     **F-13.3.20** (High). Ending an impersonation session revokes nothing, the session store is replica-local,
     and a full revoke misses the bearer. No section states revocation on end, so the specification needs the
     rule.
@@ -3284,7 +3306,7 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
       (`proposals/0102_fix_ending-a-platform-admin-impersonation-session-revokes-nothin/`) was approved
       2026-10-26 (merge `1b4ff8637`). It records the impersonation bearer in `issued_tokens`, ends the session
       by revoking that row, and adds the platform-admin cascade to a full revoke. Its implementation, which
-      closes F-13.3.20 as its DOCS-1 states, is pending. Its unstaged defects are filed below.
+      closes F-13.3.20 as its DOCS-1 states, landed 2026-10-27 (merge `82c991f56`), with tiers 0 to 5, 8, and 9 green; its accepted deviations are recorded in the proposal. Its unstaged defects are filed below.
   - [x] **Production-mode spelling proposal** (implemented): **F-17.9.24**
     (High). §17.9.1 says `prod`, §11.7, §16.5, and §17.6 say `LENNY_ENV=production`, and the chart sets no
     `LENNY_ENV`, so no value turns on every production gate.
@@ -3293,13 +3315,20 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
       2026-10-26 (merge `f7a1c54e4`). Production mode becomes Environment `prod` on `--environment`, which
       every gate reads through one predicate. Implemented 2026-10-27 (merge `83ab31257`), closing F-17.9.24.
       Its unstaged defects are filed below.
-  - [x] **Session capability and delegation child token proposal** (done as a proposal; implementation pending), the follow-up 0097
+  - [x] **Session capability and delegation child token proposal** (implemented), the follow-up 0097
     - **Outcome.** Proposal 0104 (`proposals/0104_fix_two-gaps-leave-lenny-s-session-scoped-and-delegation/`) was
       approved 2026-10-27 (merge `56a8699ff`). It resolves the open points the other way: pods hold no
       Lenny-issued JWT, so the session-creation mint and the internal child-token exchange are dropped, and the
       creation fence refuses a delegated child of a terminal or absent parent. The forwarded-call session binding
       is split out (F-10.2.29). Its spec edits rewrite sentences proposal 0102 adds, so its implementation runs
       after 0102 merges. It closes F-10.2.25 and F-8.2.31. Its unstaged defects are filed below.
+      Implemented 2026-10-28 on `impl/0104-pod-no-jwt`: the creation fence refuses a delegated child of a
+      terminal or absent parent and both cascade walks list children from the primary (61296a96a, f180369d1,
+      and d942fc054), the unsigned child-token minter and `DELEGATION_AUDIT_CONTENTION` are deleted
+      (48d920956), session creation and client-facing `lenny/delegate_task` apply the step (1a) caller check
+      (47562880d), the `TokenStoreUnavailable` description drops delegation minting (d7c1a9d56), and the tests
+      (fc6a2285a and dfaff048f) and docs (ea6fe21cf) follow. F-10.2.25 and F-8.2.31 are closed, and TEST-GAPS
+      T-8.2.7 and T-10.2.2 are resolved.
     names: **F-10.2.25** (Medium, the session-creation mint and the gateway-to-pod renewal path) and
     **F-8.2.31** (Medium, delegation child tokens are unsigned claim records absent from `issued_tokens`),
     joined on 2026-10-26 because the delegation exchange takes the session-creation token as its
@@ -3434,13 +3463,27 @@ re-confirm against the tree and are filed in BUILD-GAPS and routed below.
 
 - Direct-fix queue, after the post-0097 direct-fix queue above. Each lands after 0103's implementation,
   because each reads its production predicate or edits lines its CHART-1 and CODE-4 change.
-  - [ ] **F-17.6.25** (Low): no preflight check emits the §17.6 etcd Secret encryption or node disk encryption
-    warning. Add both non-blocking checks in production mode, and correct T-17.6.13.
-  - [ ] **F-25.4.37** (Low): the chart sets the `lenny-ops` readinessProbe path to `/readyz` outside
-    production, while §25.4 gives `/healthz` unconditionally. Render `/healthz` in every environment.
-  - [ ] **F-25.4.38** (Low): `lenny-ops --platform-tier` and `global.deploymentTier` accept any string, so an
+  - [x] **F-17.6.25** (Low): no preflight check emits the §17.6 etcd Secret encryption or node disk encryption
+    warning. Add both non-blocking checks in production mode, and correct T-17.6.13. Fixed in `450ef8a47`:
+    `EtcdSecretEncryptionCheck` and `NodeDiskEncryptionCheck` warn in production mode and never block, and
+    T-17.6.13 is corrected.
+  - [x] **F-25.4.37** (Low): the chart sets the `lenny-ops` readinessProbe path to `/readyz` outside
+    production, while §25.4 gives `/healthz` unconditionally. Render `/healthz` in every environment. Fixed in
+    `42bb52ac1`, `a4fc41c0b`, and `7f2dce149`.
+  - [x] **F-25.4.38** (Low): `lenny-ops --platform-tier` and `global.deploymentTier` accept any string, so an
     off-set tier reaches 0103's `idempotencyKeyRequired()` fallback and drops the Tier 2/3 `Idempotency-Key`
     requirement. Refuse a value outside `tier1`, `tier2`, and `tier3` in the binary and the values schema.
+    Fixed in `0b66ec19c`: `lenny-ops` refuses an off-set tier at startup (unset defaults to `tier1`, the
+    chart default), and `global.deploymentTier` carries the enum.
+  - [x] **F-25.4.39** (Low): `lenny-preflight --platform-tier` accepts any string, so an off-set tier reads as
+    Tier 1 in the §25.4 Prometheus advisory. Filed from the F-25.4.38 fix (2026-10-27) and fixed in
+    `32ae0c7ce`: the Job refuses a value outside `tier1`, `tier2`, and `tier3`.
+  - [x] **F-10.5.16** (Low): `make generate` strips the hand-applied CRD additions (the `lenny.dev/schema-version`
+    annotation and the top-level preserve-unknown markers) and rewrites a DeepCopy import, and the tier-0 CRD
+    drift check normalizes the difference away. Filed from the F-25.4.37 fix (2026-10-27) and fixed in
+    `d96ce8485`: kubebuilder markers on the root types emit the annotation and the markers, the `generate`
+    target runs goimports over the DeepCopy file and copies the CRDs into `pkg/embedded/crds/`, and the tier-0
+    checks compare the controller-gen and DeepCopy output byte for byte.
 - Proposal routing.
   - [ ] **§11.7 startup compliance-check proposal** (not yet written): **F-11.7.25** (Medium). The gateway's
     SIEM and pgaudit startup checks, and the retention-floor and grant-check-cadence checks, continue when
@@ -3577,27 +3620,34 @@ endpoint, KMS error codes, or the `lenny-ops` probe.
     whether the metric and alert renames ship with aliases for the old names or without them.
 
 **Defects filed from proposal 0104's unstaged-defect list (2026-10-27).** Proposal 0104 (approved
-2026-10-27, implementation pending) lists defects in the shipped tree that it does not stage, and its REC-1
-files them once confirmed. They are filed now, ahead of REC-1, because no defect is dropped. Each was
-re-confirmed against the tree, none was already tracked, and each BUILD-GAPS entry says it was filed ahead of
-REC-1, so 0104's implementor updates the entry rather than filing a duplicate. The §10.7 runtime eval
-credential gap surfaced during the review of 0104 and is filed with them.
+2026-10-27, implemented 2026-10-28) lists defects in the shipped tree that it does not stage. They were filed
+on 2026-10-27, before 0104's implementation, because no defect is dropped. Each was re-confirmed against the
+tree, and none was already tracked. The §10.7 runtime eval credential gap surfaced during the review of 0104
+and was filed with them. 0104's implementation updated F-10.2.29, F-8.5.26, and F-13.3.22 in place on
+2026-10-28, re-confirmed each against the tree, and filed no duplicate. Each stays open, and 0104 no longer
+blocks any of them.
 
-- Direct-fix queue, after 0104's implementation.
-  - [ ] **F-13.3.22** (Medium): the Token Service's `issuedRecord` sets neither `ParentJTI` nor `ActSubject`
+- Direct-fix queue, unblocked by 0104's implementation.
+  - [x] **F-13.3.22** (Medium): the Token Service's `issuedRecord` sets neither `ParentJTI` nor `ActSubject`
     on an external `a2a_delegation` child, so `RevokeCascade` cannot reach the child from its parent. Record
-    the `actor_token`'s `jti` and `sub` on an actor-bearing exchange. After 0104 deletes the internal minter,
-    this is the only delegation-child issuance path.
+    the `actor_token`'s `jti` and `sub` on an actor-bearing exchange. Proposal 0104 deleted the internal minter
+    (48d920956), so this is the only delegation-child issuance path. Closed by direct fix 51dd597f3
+    (2026-10-28), which writes both columns together or neither so that no delegation row matches the
+    impersonation predicate, with tier-1, tier-2, and tier-4 tests. It filed F-13.3.23.
+  - [ ] **F-13.3.23** (Medium): the Token Service mints an `a2a_delegation` child token with no RFC 8693
+    `act` claim, although §13.3 sets one whenever an `actor_token` is present, and `jwt.Claims` has no field
+    for it. Filed from the direct fix of F-13.3.22 (2026-10-28). Direct fix.
 - Proposal routing.
   - [ ] **F-8.5.26** (Low): `lenny/delegate_task` returns admission's `ErrParentNotRunning` (and
     `ErrParentNotFound`) bare, so the caller receives `INTERNAL_ERROR`, which is `TRANSIENT` and retryable.
     No §15.1 code covers a live parent that is not `running`, so the choice of code needs the proposal
-    pipeline unless an existing row is judged to fit. It can ride with any later §8.5 or §15.1 proposal, and
-    it lands after 0104, which edits the same handler.
+    pipeline unless an existing row is judged to fit. It can ride with any later §8.5 or §15.1 proposal.
+    0104, which edits the same handler, is implemented, so the fix no longer waits on it.
   - [ ] **Forwarded-call session binding proposal** (not yet written), after R14: **F-10.2.29** (Medium). The
     gateway dispatches a `CH-MCP-PLATFORM` or `CH-MCP-CONNECTOR` call forwarded on `LNK-GWCONTROL` under the
-    session ID the adapter presents, with no check that the session is assigned to the calling pod
-    (0104 D11). It depends on R14, which gives the agent pod its client identity. The proposal covers:
+    session ID the adapter presents, with no check that the session is assigned to the calling pod.
+    Proposal 0104 removed the §10.2 pod-token validation paragraph without adding a session-to-pod
+    binding rule. It depends on R14, which gives the agent pod its client identity. The proposal covers:
     - the `pod_assignment` invariant at every state edge (suspend, resume, recycle, and terminal);
     - the RPCs the binding covers, and why `ListPlatformTools` and the scrub reports are excluded;
     - the posture of the dev plaintext listener, which carries no SPIFFE identity;
@@ -3608,9 +3658,129 @@ credential gap surfaced during the review of 0104 and is filed with them.
   - [ ] **F-10.7.21** (Low): the §10.7 Eval Submission Contract Caller row says the agent runtime submits
     evals "via its session credential", and §23.1 item 12 lists the agent runtime as a caller, while no
     section defines a pod-held session credential and no code provides a pod-side eval path. The owner
-    decides whether runtime eval self-reporting exists. If it does not, the example is removed. If it does,
-    a proposal specifies its delivery path, which the owner noted would be an adapter or gateway API rather
-    than an MCP tool.
+    decided on 2026-10-27 that runtime eval self-reporting is not needed (section 10.3), so the fix removes the
+    agent-runtime example from §10.7, §23.1 item 12, and `docs/api/rest.md`. The spec edits ride with the next
+    proposal that edits §10.7 or §23.1, or with any text-corrections proposal.
+
+**Defects filed from proposal 0105's unstaged-defect list (2026-10-27).** Proposal 0105 (P3, approved
+2026-10-27, implementation pending) lists defects in the shipped tree that it does not stage, and its REC-1
+files them once confirmed. They are filed now, ahead of REC-1, because no defect is dropped. Each was
+re-confirmed against the tree, and each BUILD-GAPS entry says it was filed ahead of REC-1, so 0105's
+implementor updates the entry rather than filing a duplicate. F-10.1.36 and F-5.2.57 were already tracked and
+keep their routing. F-7.2.43 named P3 as its owner, and 0105 does not stage it, so it is queued here.
+
+- Direct-fix queue, after 0105's implementation, which edits the same files.
+  - [ ] **F-11.3.45** (Low) and **F-11.3.46** (Low), one fix: every replica sends its own
+    `session_expiring_soon` and `DEADLINE_APPROACHING` for a session, because the warning's dedup set is per
+    process, and the warning is sent from the listing without a re-read, so it can follow a terminal write.
+    Record the warning on the row in a locked-row `Update` and send it only from the replica whose write
+    applied. F-11.3.46 is the expiry-warning half of F-11.3.40.
+  - [ ] **F-15.4.5** (Low): `lenny/request_input` accepts a caller-supplied `requestId`, while §15.4 says the
+    gateway generates it. Drop the argument and always generate the value. It lands after 0105 and 0101,
+    which both edit the handler.
+- Proposal routing.
+  - [ ] With P4b (proposal 0107, drafting): **F-8.2.32** (Medium, a delegated child that omits
+    `perChildMaxAge` is unbounded by it, because no `DelegationPolicy` default exists to store). It was routed
+    to P4; P4a (proposal 0106) does not stage it, and it is a lease budget default in P4b's scope.
+  - [ ] With the next proposal that edits the §7.2 state machine, together with F-7.2.43: **F-7.2.45** (Low,
+    the delegated child commit writes `created → running`, an edge §7.2 and `state.ValidTransitions` do not
+    list, through the `/start` transition helper). It is a state-machine edge rather than a budget item.
+  - [ ] **F-9.1.12** (Medium): the gateway-edge `/mcp` endpoint serves `lenny/request_input`, a platform MCP
+    server tool, so an edge caller can open a wait on a session. Which tools the edge serves needs spec text.
+    It can ride with the forwarded-call session binding proposal (F-10.2.29).
+  - [ ] **F-15.1.61** (Medium): the §15.1 upload and stale-derive precondition rows do not list
+    `input_required`, so once 0105 persists the sub-state a waiting session is refused both. It rides with
+    the next proposal that edits the §15.1 precondition table.
+  - [ ] **F-7.2.43** (Low): a created-state expiry ends the session `failed` while §15.1 names `expired`.
+    Owner unassigned since 0105 declined it. It rides with the next proposal that edits the §7.2 state
+    machine or the §15.1 state table, such as the one F-15.1.61 needs.
+  - [ ] **F-5.2.58** (Low): a by-name reclaim of a pre-running concurrent-workspace slot sends no
+    `Shutdown` and counts no leak, although a slot whose setup ran at `/start` has run a workspace RPC. It
+    rides with the next proposal that edits the §5.2 scrub model.
+  - [ ] Text corrections, with any text-corrections proposal: **F-7.1.32** (Low, the §7.1
+    `starting_timeout` row links §6.3 where §6.2 defines `STARTING_TIMEOUT`) and **F-15.1.62** (Low, the
+    Open Responses status mapping disagrees with `docs/api/open-responses.md`, and the specification states
+    no mapping).
+
+**Defects filed from proposal 0106's unstaged-defect list (2026-10-27).** Proposal 0106 (P4a, approved
+2026-10-27, implementation pending) lists defects in the shipped tree that it does not stage, and its REC-1
+files them once confirmed. They are filed now, ahead of REC-1, because no defect is dropped. Each was
+re-confirmed against the tree at `d52dc1834`, and each new BUILD-GAPS entry says it was filed ahead of REC-1,
+so 0106's implementor updates the entry rather than filing a duplicate. Item (b), the cascaded descendant's
+`archiveSettledChild` signal tail, and the `lenny/cancel_session` and `cancelSubtree` half of item (a) were
+already tracked by F-7.2.35 and keep its routing to P2b; F-7.2.35 carries a note naming them. None of the
+items is budget-related, so none goes to P4b.
+
+- With P2b, together with F-7.2.35, after 0106's implementation.
+  - [ ] **F-8.10.28** (Medium): tree recovery's `failSession` and `expireSession` run `settledChildSignals`
+    as their signal tail, so a session tree recovery ends skips the `cascadeOnFailure` evaluation and the
+    `maxOrphanTasksPerTenant` fallback. The specification already requires the evaluation on every terminal
+    write, and the fix is F-7.2.35's single terminal-signal set, so it rides with that finding.
+- Direct-fix queue, after 0106's implementation, which edits the same Manager.
+  - [ ] **F-8.8.22** (Low): the deadlock Manager records `resolution="resolved"`, which §16.1 does not list,
+    and the detection, resolution, and duration metrics are labelled by tenant or resolution rather than by
+    `pool`. Classify the cleared deadlock as `client_input` or `child_cancel` and add the `pool` label. A
+    clearing cause outside the listed values goes through the proposal pipeline.
+- Proposal routing.
+  - [ ] **F-4.2.17** (Low): `ResumeEligibleUntil` is stamped as `CreatedAt` plus the resume window, returned
+    to clients as `resumeEligibleUntil`, and enforced by nothing, and once 0106 CODE-B deletes
+    `remainingResumeWindow` nothing reads it. Deleting or defining the field is a specification choice. It
+    rides with the next proposal that edits the §4.2 session record or the §7.3 resume window.
+  - [ ] Text corrections, with any text-corrections proposal: **F-4.5.21** (Low, §4.5 **Workspace lineage:**
+    names uploads and derive as the sources of `parent_workspace_ref` and omits replay, which also writes
+    it).
+
+**Test-harness direct fixes (2026-10-27).** The unit tier reported a package timeout for
+`pkg/gateway/podlifecycle/podsession` whenever the host was loaded, which hid the results of every
+other test in that binary.
+
+- [x] **Direct fix: T-17.4.22** (Medium): `podsession` started a fresh envtest control plane per test and
+  ran for about 1700 to 1960 s under `-race`, at or over the 1800-second unit-tier budget. Fixed in
+  `49d4b019c` and `e89d988f9`: the package, and `pkg/controller/warmpool` and
+  `pkg/gateway/podlifecycle/podclaim` with it, starts one control plane per binary and isolates each test in
+  its own namespace. `podsession` fell from 1776.6 s to 46.0 s, `warmpool` from 791.0 s to 64.8 s, and
+  `podclaim` from 761.0 s to 19.7 s.
+- Direct-fix queue, filed from the T-17.4.22 survey.
+  - [x] **T-17.4.26** (Medium): `pkg/controller/sandbox` starts a control plane in each test (345.9 s alone,
+    464.3 s in a scoped unit-tier run), now the slowest measured unit-tier package. Fixed in `229f9d829`: the
+    package shares one control plane, and each test gets its own namespace and a `Runtime` named after it.
+    The package fell from 378.4 s to 18.7 s.
+  - [x] **T-17.4.28** (Medium): `pkg/gateway/session/recycle` starts a control plane in each of its 21
+    envtest-backed tests and, at 251.5 s in a scoped unit-tier run, is now the slowest measured unit-tier
+    package. Filed from the T-17.4.26 fix (2026-10-27). Fixed in `1edca69df`: the package shares one control
+    plane and each test gets its own namespace. The package fell from 237.4 s to 19.4 s. The slowest measured
+    unit-tier package is now `pkg/gateway/sessionserver` (T-17.4.27, 198.9 s).
+  - [ ] **T-17.4.27** (Medium): `pkg/gateway/sessionserver` starts a private control plane per test in
+    parallel, and under load one start failed the unit tier with "resource quota evaluation timed out".
+  - [x] **T-17.4.23** (Low): `pkg/embedded/stack` starts a control plane in each of 19 tests (127.4 s).
+    Fixed in `2a0c51c4a` with no product change: tests whose code takes the namespace, or whose manifest
+    the test supplies, use per-test namespaces, and each object at a product-fixed namespace and name has
+    one owning test. The package fell from 151.7 s to 25.9 s.
+  - [ ] **T-17.4.24** (Low): `tests/tier2_component/controllers` starts one in 17 tests (146.3 s).
+  - [ ] **T-17.4.25** (Info): `cmd/lenny-gateway` starts one in 5 tests (about 31 s of 86.4 s). It took
+    109.1 s in a scoped unit-tier run on 2026-10-27, the slowest of that run.
+  - [ ] **T-17.4.29** (Medium): parallel implementation worktrees share the one `lenny-e2e` kind cluster,
+    and `tests/testinfra/kind/install.sh` runs the installing branch's migrations against the shared
+    Postgres, so branches with different migration sets leave the database ahead of each other or dirty. On
+    2026-10-27, 0102's migration 0192 left it dirty and every kind-backed test skipped until the owner
+    approved a reset. Give each worktree its own database or namespace, or make `install.sh` refuse a
+    database ahead of the branch, and document the reset procedure.
+
+**Direct fixes filed while verifying proposal 0102 (2026-10-27).** Both were found on the shared `lenny-e2e`
+cluster and predate 0102. They are fixed on `fix/kind-kubeconfig-and-t9-podreuse`, which branches from the
+proposal-b tip `fb88c8c2e`.
+
+- [x] **Direct fix: T-17.4.30** (Medium): `TestEtcdEncryption` created and deleted its dedicated kind
+  cluster against the inherited `$KUBECONFIG`, so a tier-5 run with `KUBECONFIG=~/.kube/lenny-e2e.yaml` left
+  that file with no current-context. The rewrite was first blamed on `install.sh`. The test now uses a
+  private kubeconfig through `kind.DedicatedClusterArgs`, a tier-1 guard rejects a bare `kind create cluster`
+  or `kind delete cluster` in `tests/`, and `install.sh` re-exports the kubeconfig on every run.
+- [x] **Direct fix: F-5.2.59** (Medium): pool resolution ORed the SandboxTemplate's `sessionPolicy.recycle`
+  block into the stored `recycle.enabled`, so a session created after an update to `recycle.enabled: false`,
+  and before the next reconcile, reported `podReuse: true` and recycled its pod at release. The stored
+  policy now decides whenever the pool has a mirror row. Verified at the envtest tier. The tier-9
+  `TestPoolEditOutsideRuleNeverDispatchesIntoKeptRuntime/hold_ended_by_the_acquisition` rerun needs a
+  reinstall of the shared cluster from a tree carrying the fix.
 
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 
@@ -3744,6 +3914,12 @@ Answered on 2026-10-01 for the later phases:
     the §25 degraded-mode design is reachable in production. Deferring the probe fix was rejected.
   - Under the owner's delegation, `lenny-ops` reuses the gateway's revoked-token response, and the missing
     §15 catalog row is recorded as a defect.
+
+- Runtime eval self-reporting (owner, 2026-10-27): not needed. Lenny's eval offering is the runtime-native
+  eval platforms (tier 1 of the §10.7 two-tier model) and the built-in `POST /v1/sessions/{id}/eval` endpoint
+  called by the session owner or a deployer-operated scorer, with the results API and replay `evalRef`
+  (tier 2). The §10.7 and §23.1 agent-runtime caller example is removed (F-10.7.21). Had it been wanted, the
+  owner's direction was an adapter or gateway API rather than an MCP tool.
 
 ### 10.4 Related work outside this track
 

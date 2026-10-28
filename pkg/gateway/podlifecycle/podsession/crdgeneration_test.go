@@ -19,11 +19,12 @@ import (
 // PoolScalingController stamps on the pool's SandboxTemplate, backing the
 // production sync-status endpoint outside the Postgres-only dev posture.
 func TestCRDGenerationReadsAnnotations_spec_4_6_2(t *testing.T) {
+	ns := testNamespace(t)
 	at := time.Unix(1700000000, 0).UTC()
 	tmpl := &lennyv1.SandboxTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "p",
-			Namespace: testNS,
+			Namespace: ns,
 			Annotations: map[string]string{
 				lennyv1.AnnotationConfigGeneration: "12",
 				lennyv1.AnnotationLastReconciledAt: at.Format(time.RFC3339Nano),
@@ -31,7 +32,7 @@ func TestCRDGenerationReadsAnnotations_spec_4_6_2(t *testing.T) {
 		},
 	}
 	c := fake.NewClientBuilder().WithScheme(newScheme(t)).WithObjects(tmpl).Build()
-	l := podsession.PoolStatusLookup{Reader: c, Namespace: testNS}
+	l := podsession.PoolStatusLookup{Reader: c, Namespace: ns}
 
 	gen, lastAt, ok, err := l.CRDGeneration(context.Background(), "p")
 	if err != nil || !ok {
@@ -49,8 +50,9 @@ func TestCRDGenerationReadsAnnotations_spec_4_6_2(t *testing.T) {
 // reconciled into a SandboxTemplate reports ok=false so the handler
 // renders the pending state rather than a misleading synced=false-at-0.
 func TestCRDGenerationMissingTemplate_spec_4_6_2(t *testing.T) {
+	ns := testNamespace(t)
 	c := fake.NewClientBuilder().WithScheme(newScheme(t)).Build()
-	l := podsession.PoolStatusLookup{Reader: c, Namespace: testNS}
+	l := podsession.PoolStatusLookup{Reader: c, Namespace: ns}
 	gen, lastAt, ok, err := l.CRDGeneration(context.Background(), "ghost")
 	if err != nil {
 		t.Fatalf("CRDGeneration: %v", err)
@@ -65,11 +67,12 @@ func TestCRDGenerationMissingTemplate_spec_4_6_2(t *testing.T) {
 // generation 0 with ok=true, so the handler reports inSync=false against
 // the Postgres counter.
 func TestCRDGenerationUnstampedTemplate_spec_4_6_2(t *testing.T) {
+	ns := testNamespace(t)
 	tmpl := &lennyv1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: ns},
 	}
 	c := fake.NewClientBuilder().WithScheme(newScheme(t)).WithObjects(tmpl).Build()
-	l := podsession.PoolStatusLookup{Reader: c, Namespace: testNS}
+	l := podsession.PoolStatusLookup{Reader: c, Namespace: ns}
 	gen, lastAt, ok, err := l.CRDGeneration(context.Background(), "p")
 	if err != nil || !ok {
 		t.Fatalf("CRDGeneration: ok=%v err=%v", ok, err)

@@ -54,11 +54,13 @@ func (impersonationStub) Issue(context.Context, impersonation.IssueRequest) (imp
 	return impersonation.Ticket{}, "", nil
 }
 
-func (impersonationStub) End(context.Context, string, string) (impersonation.Ticket, error) {
-	return impersonation.Ticket{}, nil
+func (impersonationStub) End(context.Context, string, string) (impersonation.EndResult, error) {
+	return impersonation.EndResult{}, nil
 }
 
-func (impersonationStub) ListActive(context.Context) ([]impersonation.Ticket, error) { return nil, nil }
+func (impersonationStub) ListActive(context.Context, string) ([]impersonation.Session, error) {
+	return nil, nil
+}
 
 // migrationStub satisfies admin.MigrationManager.
 type migrationStub struct{}

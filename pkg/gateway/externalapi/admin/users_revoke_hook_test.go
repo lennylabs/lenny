@@ -11,8 +11,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
@@ -193,6 +195,29 @@ func (p *orderedPods) TerminateUserSessions(_ context.Context, _, _ string, ids 
 	return admin.UserTerminationResult{}
 }
 
+// orderedUsers logs when the user-row update has returned, so a test can
+// assert that §11.4 step 5 starts only after the invalidation level commits.
+type orderedUsers struct {
+	userstore.Store
+	log *orderLog
+}
+
+func (u *orderedUsers) Update(ctx context.Context, tenantID, subject string, mutate func(*userstore.User) error) (userstore.User, error) {
+	out, err := u.Store.Update(ctx, tenantID, subject, mutate)
+	u.log.add("users-updated")
+	return out, err
+}
+
+// orderedTokens records the §11.4 step 5 issued-token revocation.
+type orderedTokens struct {
+	log *orderLog
+}
+
+func (o *orderedTokens) RevokeUserTokens(context.Context, string, string, string, time.Time, bool) ([]string, error) {
+	o.log.add("tokens")
+	return nil, nil
+}
+
 // revokeRecorder is one full_revoke router wired with the ordered fakes.
 type revokeRecorder struct {
 	log    *orderLog
@@ -212,9 +237,10 @@ func newRevokeRecorder(t *testing.T, rows ...sessionstore.Session) *revokeRecord
 		leases: &orderedLeases{log: log},
 		pods:   &orderedPods{log: log},
 	}
-	router, users, inner, _ := newFullRevokeAdmin(t, rec.pods, rec.leases, nil)
+	router, users, inner, _ := newFullRevokeAdmin(t, rec.pods, rec.leases, &orderedTokens{log: log})
 	rec.store = &orderedStore{Store: inner, log: log}
-	rec.router = router.WithSessions(rec.store).WithRevokeHook(rec.hook)
+	rec.router = router.WithSessions(rec.store).WithRevokeHook(rec.hook).
+		WithUsers(&orderedUsers{Store: users, log: log})
 	seedUser(t, users, "acme", "alice@acme.com")
 	for _, row := range rows {
 		row.TenantID, row.UserID = "acme", "alice@acme.com"
@@ -252,7 +278,9 @@ func (rec *revokeRecorder) assertClaimEndsAtOnce(t *testing.T, id string) {
 // claim, then the binding release. A row another writer ends between the
 // listing and its cancel write is in the lease step, its claim ends right
 // after the superseded write, and it reaches neither the reclaim nor the
-// binding release. No claim is still open when the handler returns.
+// binding release. No claim is still open when the handler returns. The
+// user-row update returns before the listing, and the issued-token
+// revocation runs after it.
 //
 // spec: §11.4 (User Invalidation), §10.1.5 (Stale Replica Behavior)
 func TestFullRevokeRunsItsStepsInOrder_spec_11_4(t *testing.T) {
@@ -281,9 +309,17 @@ func TestFullRevokeRunsItsStepsInOrder_spec_11_4(t *testing.T) {
 		t.Errorf("events = %v; a terminal session got a cancel write", rec.log.snapshot())
 	}
 	ev := rec.log.snapshot()
+	// spec: §11.4 (Full revoke propagation mechanism) — the user-row update
+	// returns before any propagation step, and step 5 runs after it.
+	if rec.log.index("users-updated") != 0 {
+		t.Fatalf("events = %v; want the user-row update to return before every propagation step", ev)
+	}
+	if tok := rec.log.index("tokens"); tok <= 0 {
+		t.Errorf("events = %v; the issued-token revocation did not run after the user-row update", ev)
+	}
 	leases := rec.log.index("leases")
-	if rec.log.index("list") != 0 || leases != 1 {
-		t.Fatalf("events = %v; want the listing then the lease step first", ev)
+	if rec.log.index("list") != 1 || leases != 2 {
+		t.Fatalf("events = %v; want the listing then the lease step first after the user-row update", ev)
 	}
 	updates := rec.log.withPrefix("update:")
 	lastUpdate := updates[len(updates)-1]

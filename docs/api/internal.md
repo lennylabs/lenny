@@ -58,7 +58,7 @@ Each pod is issued a SPIFFE identity at startup -- a cryptographic identity enco
 
 - The gateway validates the pod's **SPIFFE URI** against the expected pool and pod name on each connection. A mismatch refuses the connection.
 - Each gateway replica has a **distinct certificate** so compromise of one replica can be detected and revoked independently.
-- Pods cannot forge or extend session JWTs. The gateway validates JWT signatures on every pod-to-gateway request.
+- The gateway validates the signature, expiry, and audience of the pod's projected ServiceAccount token on every pod-to-gateway request.
 
 ### Trust domain
 

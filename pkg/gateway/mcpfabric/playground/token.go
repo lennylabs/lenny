@@ -4,6 +4,7 @@ package playground
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/common/scopes"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 )
 
 // playgroundAllowedScope is the §27.3 / §10.2 playground_allowed_scope
@@ -207,7 +209,10 @@ func (h *Handler) mintAPIKey(w http.ResponseWriter, r *http.Request) {
 		h.emitMintRejected(r, claims.TenantID, claims.JWTID, string(claims.Typ), "subject_typ_invalid")
 		writeError(w, http.StatusUnauthorized, "LENNY_PLAYGROUND_BEARER_TYPE_REJECTED",
 			"the pasted bearer token typ must be user_bearer, got "+string(claims.Typ),
-			map[string]any{"presentedTyp": string(claims.Typ)})
+			map[string]any{"subjectTyp": string(claims.Typ)})
+		return
+	}
+	if !h.admitSubjectRow(w, r, claims) {
 		return
 	}
 	subject := jwt.Claims{
@@ -223,6 +228,53 @@ func (h *Handler) mintAPIKey(w http.ResponseWriter, r *http.Request) {
 		Expiry: claims.Expiry,
 	}
 	h.completeMint(w, r, subject, nil)
+}
+
+// admitSubjectRow applies §13.3 "Write-before-issue ordering" step (1a)
+// to the pasted subject: it reads the subject's issued_tokens row and
+// refuses a revoked token or a platform-admin impersonation bearer, so a
+// playground JWT is never minted from a token that would otherwise outlive
+// its own revocation or the end of an impersonation session. A token with
+// no row passes. A refusal emits playground.bearer_mint_rejected with the
+// step (1a) reason and returns the invariant 1 response; any other read
+// error fails the mint closed with 500. Both paths return before signing.
+// It returns true when the mint may proceed. A nil reader skips the read.
+//
+// spec: §10.2 (Playground mint invariants, invariant 1), §13.3 (Credential
+// Flow: Write-before-issue ordering, step (1a); Platform-admin
+// impersonation, rule 5).
+func (h *Handler) admitSubjectRow(w http.ResponseWriter, r *http.Request, claims jwt.Claims) bool {
+	if h.issued == nil {
+		return true
+	}
+	row, err := h.issued.Get(r.Context(), claims.TenantID, claims.JWTID)
+	if errors.Is(err, issuedtokenstore.ErrNotFound) {
+		return true
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"the pasted bearer token's issued-token record could not be read", nil)
+		return false
+	}
+	refusal := row.SourceRefusal(issuedtokenstore.SourceSubjectToken)
+	if refusal == nil {
+		return true
+	}
+	reason := refusalReason(refusal)
+	h.emitMintRejected(r, claims.TenantID, claims.JWTID, string(claims.Typ), reason)
+	writeError(w, http.StatusUnauthorized, "LENNY_PLAYGROUND_BEARER_TYPE_REJECTED",
+		"the pasted bearer token is refused by the write-before-issue re-read: "+reason,
+		map[string]any{"subjectTyp": string(claims.Typ)})
+	return false
+}
+
+// refusalReason returns the step (1a) reason a SourceRefusal error
+// carries.
+func refusalReason(err error) string {
+	if rr, ok := err.(interface{ Reason() string }); ok {
+		return rr.Reason()
+	}
+	return err.Error()
 }
 
 // devCallerType is the §13.3 caller_type the synthetic dev-mode

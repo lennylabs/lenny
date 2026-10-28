@@ -82,7 +82,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/impersonation"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/revocation"
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/credentials/revocation/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/usercreds"
@@ -335,7 +334,6 @@ type gatewayWiringFields struct {
 	eventBus                    *sessionevents.Bus
 	eventBusRetranscriber       *eventbus.Retranscriber
 	failOpenReplicas            *failopen.ReplicaCount
-	impersonationSvc            *impersonation.Service
 	inputWaits                  *inputwait.Registry
 	kmsProbeLifecycle           *tenantkms.Lifecycle
 	mtlsDenyProp                *mtlsdenylistprop.Propagator

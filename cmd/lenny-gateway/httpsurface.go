@@ -10,13 +10,17 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/introspection"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
 	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/audit/auditscope"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/jwtaudit"
+	"github.com/lennylabs/lenny/pkg/gateway/callercheck"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/barrier"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialserver"
@@ -55,6 +59,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/dualstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradeguard"
 	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradestore"
 	"github.com/lennylabs/lenny/pkg/storerouter"
@@ -437,6 +442,10 @@ func (w *gatewayWiring) buildHTTPSurface(
 			// spec: §27.3.1 — the oidc-mode authorization-code
 			// exchanger against the --oidc-issuer-url provider. F-27.3.15.
 			OIDC: buildPlaygroundOIDC(w.f, w.idpVerifier, pgCfg.AuthMode),
+			// spec: §10.2 (Playground mint invariants, invariant 1) — the
+			// apiKey mint applies §13.3 step (1a) to the pasted subject's
+			// issued_tokens row.
+			IssuedTokens: playgroundIssuedTokens(w.pgPool),
 		}).WithAuditEmitter(playground.ChainAuditEmitter{Sink: auditSink})
 		// spec: §27.6 — wire the playground idle/duration caps
 		// into the session-creation path so an origin=playground session is
@@ -1015,4 +1024,39 @@ func platformAdminServiceAccountRoles(accounts []string) map[string][]auth.Role 
 		out[a] = []auth.Role{auth.RolePlatformAdmin}
 	}
 	return out
+}
+
+// playgroundIssuedTokens returns the issued-token reader the playground
+// apiKey mint applies §13.3 step (1a) through, or a nil interface when the
+// gateway has no Postgres pool. Returning an untyped nil rather than a
+// *issuedtokenstore.Store over a nil pool keeps the handler's nil check
+// meaningful.
+// spec: §10.2 (Playground mint invariants, invariant 1).
+func playgroundIssuedTokens(pool *pgxpool.Pool) playground.IssuedTokenReader {
+	if pool == nil {
+		return nil
+	}
+	return issuedtokenstore.New(pool)
+}
+
+// sessionCallerCheck returns the collaborators of the §10.2
+// session-creation caller check, or a zero callercheck.Deps when the
+// gateway has no Postgres pool. Without the pool no issued_tokens row and
+// no impersonation route exist, so the zero value passes every caller.
+// With the pool the reader is the issued-token store, and the auditor is
+// the gateway's tenant-scope-validated durable audit chain: its Append
+// takes the §11.7 per-tenant audit advisory lock and commits the
+// token.exchanged rejection row before it returns, so a refusal reaches
+// the client only once its row is durable. Session creation and
+// lenny/delegate_task both run over the value it returns.
+// spec: §10.2 (Signing topology), §11.7, §13.3, §16.7.
+func sessionCallerCheck(pool *pgxpool.Pool, auditor *auditscope.Validator) callercheck.Deps {
+	if pool == nil {
+		return callercheck.Deps{}
+	}
+	deps := callercheck.Deps{IssuedTokens: issuedtokenstore.New(pool)}
+	if auditor != nil {
+		deps.Audit = auditor
+	}
+	return deps
 }

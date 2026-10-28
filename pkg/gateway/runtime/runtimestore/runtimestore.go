@@ -489,9 +489,9 @@ func (a *AgentInterface) Clone() *AgentInterface {
 
 // MetadataVisibility is the §5.1 publishedMetadata visibility class. It
 // governs which meta-fetch endpoint serves an entry and how the gateway
-// filters it: a public entry needs no auth, an internal entry needs a
-// valid session JWT, and a tenant entry is additionally scoped to the
-// JWT's tenant.
+// filters it: a public entry needs no auth, an internal entry needs an
+// authenticated caller, and a tenant entry is additionally filtered by the
+// caller's tenant_id.
 type MetadataVisibility string
 
 const (

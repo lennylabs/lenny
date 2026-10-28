@@ -26,7 +26,8 @@ import (
 //     cookie, bearer, or dev-mode admission to the bearer mint.
 //   - GET /v1/runtimes/{name}/meta/{key} serves a runtime's public
 //     publishedMetadata entry, which §5.1 serves with no auth.
-//   - GET /internal/runtimes/{name}/meta/{key} requires a session JWT, but
+//   - GET /internal/runtimes/{name}/meta/{key} requires an authenticated
+//     caller, but
 //     §5.1 requires a not-authorized request to receive the same response
 //     as a not-found one, so the handler refuses a missing principal with
 //     its 404 rather than the middleware refusing it with a 401.

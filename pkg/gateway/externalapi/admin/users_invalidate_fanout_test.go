@@ -62,13 +62,17 @@ type fakeUserTokenRevoker struct {
 	gotTenant string
 	gotSub    string
 	gotReason string
-	jtis      []string
-	err       error
+	// gotRevokeImpersonations records the §13.3 rule 6 cascade decision
+	// the router passed on the last call.
+	gotRevokeImpersonations bool
+	jtis                    []string
+	err                     error
 }
 
-func (f *fakeUserTokenRevoker) RevokeUserTokens(_ context.Context, tenantID, subject, reason string, _ time.Time) ([]string, error) {
+func (f *fakeUserTokenRevoker) RevokeUserTokens(_ context.Context, tenantID, subject, reason string, _ time.Time, revokeImpersonations bool) ([]string, error) {
 	f.calls++
 	f.gotTenant, f.gotSub, f.gotReason = tenantID, subject, reason
+	f.gotRevokeImpersonations = revokeImpersonations
 	return f.jtis, f.err
 }
 

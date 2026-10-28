@@ -94,7 +94,7 @@ Best practice: refresh proactively before expiry. Most identity providers includ
 
 ### Token Rotation and Exchange (`/v1/oauth/token`)
 
-For token lifecycle operations inside Lenny (rotating an admin token, minting a narrowed scoped token for an agent service account, or any internal delegation child-token issuance) Lenny exposes the OAuth token endpoint `POST /v1/oauth/token` compliant with [RFC 6749 §5](https://www.rfc-editor.org/rfc/rfc6749#section-5) and [RFC 8693 (Token Exchange)](https://www.rfc-editor.org/rfc/rfc8693).
+For token lifecycle operations inside Lenny (rotating an admin token or minting a narrowed scoped token for an agent service account) Lenny exposes the OAuth token endpoint `POST /v1/oauth/token` compliant with [RFC 6749 §5](https://www.rfc-editor.org/rfc/rfc6749#section-5) and [RFC 8693 (Token Exchange)](https://www.rfc-editor.org/rfc/rfc8693).
 
 **Example: rotate an admin token:**
 

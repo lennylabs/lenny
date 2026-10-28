@@ -14,16 +14,22 @@ package tier5_e2e_kind_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
+	"github.com/lennylabs/lenny/tests/testinfra/stackkey"
 )
 
 // keySetOpsAcceptBound is how long after lenny-ops is Ready a Lenny-issued
@@ -122,6 +128,75 @@ func mintKeySetImpersonation(t *testing.T, base string) string {
 		t.Fatalf("impersonate alice@acme.com through %s: status %d body %v", base, code, body)
 	}
 	return tok
+}
+
+// installedUserBearer signs a user bearer for alice@acme.com with the
+// installed gateway's platform:jwt-signing key and returns it. It reads the
+// local master key from the Secret the gateway's kms-master-key volume
+// names and the --kms-alias references from the gateway's args, and derives
+// the signer every process of the install holds. The bearer has no
+// issued_tokens row, so step (1a) of the §13.3 "Write-before-issue
+// ordering" passes it as a subject_token, which an impersonation bearer no
+// longer is. An install on a cloud KMS provider skips, because its key
+// never leaves the KMS.
+//
+// spec: §10.2 (Authentication) "Signing topology", §13.3 (Credential Flow) "Platform-admin impersonation", §17.4.
+func installedUserBearer(t *testing.T, c *kind.Cluster) string {
+	t.Helper()
+	args, err := c.KubectlOut(t, "-n", t5SystemNS, "get", "deployment", "lenny-gateway",
+		"-o", "jsonpath={.spec.template.spec.containers[?(@.name==\"gateway\")].args}")
+	if err != nil {
+		t.Fatalf("read lenny-gateway args: %v\n%s", err, args)
+	}
+	if !strings.Contains(args, "--kms-provider=local") {
+		t.Skipf("blocked: the install's signing key lives in a cloud KMS, so the test cannot sign a subject token (gateway args %s)", args)
+	}
+	secret, err := c.KubectlOut(t, "-n", t5SystemNS, "get", "deployment", "lenny-gateway",
+		"-o", "jsonpath={.spec.template.spec.volumes[?(@.name==\"kms-master-key\")].secret.secretName}")
+	if err != nil || strings.TrimSpace(secret) == "" {
+		t.Fatalf("read the gateway's kms-master-key volume: %v\n%s", err, secret)
+	}
+	encoded, err := c.KubectlOut(t, "-n", t5SystemNS, "get", "secret", strings.TrimSpace(secret),
+		"-o", "jsonpath={.data.master-key}")
+	if err != nil {
+		t.Fatalf("read master key Secret %s: %v", secret, err)
+	}
+	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
+	if err != nil || len(key) == 0 {
+		t.Fatalf("decode master key Secret %s: %v", secret, err)
+	}
+	keyFile := filepath.Join(t.TempDir(), "master-key")
+	if err := os.WriteFile(keyFile, key, 0o600); err != nil {
+		t.Fatalf("write master key: %v", err)
+	}
+	refs, err := providerflags.ParseAliases(gatewayAliasArg(args))
+	if err != nil {
+		t.Fatalf("parse the gateway's --kms-alias: %v", err)
+	}
+	if len(refs) == 0 {
+		// A process started without --kms-alias derives each alias from its
+		// own name, which a nil reference map reproduces.
+		refs = nil
+	}
+	_, signer := stackkey.Signer(t, keyFile, refs)
+	return stackkey.UserBearer(t, signer, "acme", "alice@acme.com", nil, auth.RoleTenantAdmin)
+}
+
+// gatewayAliasArg returns the value of the --kms-alias flag in the
+// gateway's rendered args, or "" when the chart renders none.
+func gatewayAliasArg(args string) string {
+	const flag = "--kms-alias="
+	i := strings.Index(args, flag)
+	if i < 0 {
+		return ""
+	}
+	rest := args[i+len(flag):]
+	// kubectl prints the args as a JSON array, so the value ends at its
+	// closing quote; the value itself is comma-separated.
+	if end := strings.IndexAny(rest, "\"]"); end >= 0 {
+		rest = rest[:end]
+	}
+	return rest
 }
 
 // requireSameIdentityOnBothReplicas presents bearer to GET /v1/admin/me on
@@ -274,10 +349,13 @@ func TestLennyIssuedBearerVerifiesAcrossChartReplicas_spec_10_2(t *testing.T) {
 		}
 	}
 
-	second := mintKeySetImpersonation(t, baseB)
+	// The impersonation bearer stays the caller; the subject_token is a
+	// user bearer for the same tenant and subject signed with the
+	// installed signing key.
+	subject := installedUserBearer(t, c)
 	form := url.Values{
 		"grant_type":         {"urn:ietf:params:oauth:grant-type:token-exchange"},
-		"subject_token":      {second},
+		"subject_token":      {subject},
 		"subject_token_type": {"urn:ietf:params:oauth:token-type:jwt"},
 	}
 	code, body := keySetCall(t, http.MethodPost, baseA+"/v1/oauth/token", minted, nil, form)

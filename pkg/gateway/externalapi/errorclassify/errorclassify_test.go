@@ -314,3 +314,24 @@ func TestCreationFenceCodesArePolicyNonRetryable(t *testing.T) {
 		}
 	}
 }
+
+// TestDelegationAuditContentionIsNotAClassifiedCode pins the removal of
+// DELEGATION_AUDIT_CONTENTION from the §15.1 catalog: lenny/delegate_task
+// mints no token, so no audit-locked mint can contend and nothing produces
+// the code. The classifier treats the string as an unknown code, while
+// DELEGATION_PARENT_REVOKED, which the creation fence returns for a
+// terminal or absent parent, stays POLICY and not retryable.
+// spec: 15.1 (REST API: Error code catalog), 8.2 (Delegation Mechanism: Parent freshness)
+func TestDelegationAuditContentionIsNotAClassifiedCode(t *testing.T) {
+	if Known("DELEGATION_AUDIT_CONTENTION") {
+		t.Fatal("DELEGATION_AUDIT_CONTENTION is still a known catalog code; it has no producer")
+	}
+	cat, retr := Classify("DELEGATION_AUDIT_CONTENTION")
+	ucat, uretr := Classify("UNDEFINED_FUTURE_CODE")
+	if cat != ucat || retr != uretr {
+		t.Errorf("Classify(DELEGATION_AUDIT_CONTENTION) = (%q, %v), want the unknown-code fallback (%q, %v)", cat, retr, ucat, uretr)
+	}
+	if cat, retr := Classify("DELEGATION_PARENT_REVOKED"); cat != CategoryPolicy || retr {
+		t.Errorf("DELEGATION_PARENT_REVOKED = (%s, %v), want (POLICY, false)", cat, retr)
+	}
+}

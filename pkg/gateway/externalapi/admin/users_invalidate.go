@@ -4,6 +4,7 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -72,9 +73,22 @@ type UserLeaseRevoker interface {
 // adapter. A deployment without an issued-token index wires nil.
 type UserTokenRevoker interface {
 	// RevokeUserTokens marks every not-yet-revoked token for the user as
-	// revoked and returns the JTIs it revoked.
-	RevokeUserTokens(ctx context.Context, tenantID, subject, reason string, at time.Time) ([]string, error)
+	// revoked. When revokeImpersonations is true it also revokes, in every
+	// tenant, the live platform-admin impersonation bearers the user minted
+	// (§13.3 Platform-admin impersonation rule 6). It returns the JTI of
+	// every token it durably revoked, and returns those JTIs even when the
+	// error is non-nil, so a failure of one revocation never hides another
+	// that committed.
+	RevokeUserTokens(ctx context.Context, tenantID, subject, reason string, at time.Time, revokeImpersonations bool) ([]string, error)
 }
+
+// errImpersonationCascadeSkipped is the §11.4 step 5 partial-failure
+// detail recorded when the caller does not hold platform-admin. Without
+// platform-admin the gateway may not run the cross-tenant impersonation
+// query (§13.3 Platform-admin impersonation rule 6), so it cannot tell
+// whether the user started an impersonation session and reports the
+// revocation as skipped.
+var errImpersonationCascadeSkipped = errors.New("impersonation bearers minted by the user were not revoked: the caller does not hold platform-admin")
 
 // UserPlaygroundRevoker revokes a user's §27 playground sessions on
 // §11.4 full_revoke. On user invalidation the gateway drives every
@@ -149,7 +163,7 @@ type fullRevokeOutcome struct {
 // the user's cached auth and revokes their playground sessions. Each step is
 // independently best-effort and skipped when its dependency is not wired.
 // The lease step ran before the cancel writes, in terminateUserSessions.
-func (r *Router) runFullRevokeFanOut(ctx context.Context, tenantID, userID, reason string, revoked []RevokedSession) fullRevokeOutcome {
+func (r *Router) runFullRevokeFanOut(ctx context.Context, tenantID, userID, reason string, revoked []RevokedSession, revokeImpersonations bool) fullRevokeOutcome {
 	var out fullRevokeOutcome
 
 	r.reclaimRevokedPreRunning(ctx, revoked)
@@ -162,26 +176,8 @@ func (r *Router) runFullRevokeFanOut(ctx context.Context, tenantID, userID, reas
 		out.podTerminateFailed = res.FailedSessions
 	}
 
-	// §11.4 step 5: invalidate the user's cached auth. The durable
-	// issued-token index is revoked first, then every revoked JTI is
-	// pushed into the in-memory revocation cache so the next request
-	// presenting one of the user's tokens is rejected. When the
-	// revocation cache is a cross-replica propagator the push also fans
-	// the revocation out to peer replicas. A failure to reach the token
-	// index is recorded and does not abort the rest of full_revoke.
-	if r.userTokens != nil {
-		jtis, err := r.userTokens.RevokeUserTokens(ctx, tenantID, userID, reason, r.clock())
-		if err != nil {
-			out.tokenRevokeError = err.Error()
-		} else {
-			out.tokensRevoked = len(jtis)
-			if r.revocationCache != nil {
-				for _, jti := range jtis {
-					r.revocationCache.Revoke(jti)
-				}
-			}
-		}
-	}
+	// §11.4 step 5: invalidate the user's cached auth.
+	out.tokensRevoked, out.tokenRevokeError = r.revokeUserTokens(ctx, tenantID, userID, reason, revokeImpersonations)
 
 	// §11.4 / §27.6: drive the user's playground sessions through
 	// the §27.6 revocation primitive so the OIDC invalidation disconnects
@@ -231,4 +227,35 @@ func revokedPreRunning(st session.State) bool {
 	default:
 		return false
 	}
+}
+
+// revokeUserTokens runs §11.4 step 5. The durable issued-token index is
+// revoked first, then every returned JTI is pushed into the in-memory
+// revocation cache, so the next request presenting one of the user's
+// tokens is rejected; a cross-replica propagator behind the cache also
+// fans the revocation out to peer replicas. Every returned JTI is pushed
+// and counted even when the revoker also returns an error, because the
+// revoker returns only JTIs it durably revoked. When revokeImpersonations
+// is false the skipped impersonation cascade is reported in the error
+// text. A failure is recorded and does not abort the rest of full_revoke.
+// A deployment without an issued-token index skips the step.
+//
+// spec: §11.4 step 5, §13.3 (Platform-admin impersonation, rule 6)
+func (r *Router) revokeUserTokens(ctx context.Context, tenantID, userID, reason string, revokeImpersonations bool) (int, string) {
+	if r.userTokens == nil {
+		return 0, ""
+	}
+	jtis, err := r.userTokens.RevokeUserTokens(ctx, tenantID, userID, reason, r.clock(), revokeImpersonations)
+	if r.revocationCache != nil {
+		for _, jti := range jtis {
+			r.revocationCache.Revoke(jti)
+		}
+	}
+	if !revokeImpersonations {
+		err = errors.Join(errImpersonationCascadeSkipped, err)
+	}
+	if err != nil {
+		return len(jtis), err.Error()
+	}
+	return len(jtis), ""
 }

@@ -87,7 +87,7 @@ ROTATED=$(curl -s -X POST "$LENNY_URL/v1/oauth/token" \
 TOKEN=$ROTATED
 ```
 
-For delegation child-token minting, additionally supply `actor_token=$PARENT_SESSION_TOKEN` and a narrowed `scope` string. See [Authentication](../authentication.md#token-rotation-and-exchange-v1oauthtoken).
+For `a2a_delegation` child-token minting, additionally supply `actor_token=$DELEGATING_CALLER_TOKEN`, set to the delegating caller's token, and a narrowed `scope` string. See [Authentication](../authentication.md#token-rotation-and-exchange-v1oauthtoken).
 
 ---
 

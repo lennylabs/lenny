@@ -293,8 +293,8 @@ Generic metadata publication mechanism on `Runtime`, replacing any named protoco
 
 **Visibility levels:**
 
-- **`internal`** — served at `GET /internal/runtimes/{name}/meta/{key}`, requires valid Lenny session JWT. Only reachable from inside the cluster.
-- **`tenant`** — same as internal but additionally filtered by `tenant_id` claim in the JWT. An agent in tenant A cannot discover tenant B's agents.
+- **`internal`** — served at `GET /internal/runtimes/{name}/meta/{key}`, requires an authenticated caller ([§10.2](10_gateway-internals.md#102-authentication)). Only reachable from inside the cluster.
+- **`tenant`** — same as internal but additionally filtered by the caller's `tenant_id`. An agent in tenant A cannot discover tenant B's agents.
 - **`public`** — served at `GET /v1/runtimes/{name}/meta/{key}`, no auth required. A2A cards meant for cross-organization discovery live here.
 
 Not-found and not-authorized produce identical responses — no enumeration. Gateway treats content as **opaque pass-through** — stores and serves without parsing or validating. Validation is the runtime author's responsibility.

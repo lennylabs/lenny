@@ -4,6 +4,7 @@ package stack_test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"testing/fstest"
@@ -17,7 +18,6 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/lennylabs/lenny/pkg/embedded/stack"
-	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -28,12 +28,15 @@ import (
 // apply order (the Deployment first) so the test exercises the applier's
 // reordering. Every object lands in the same namespace, so a Deployment
 // applied before its Namespace would be rejected by the API server; the test
-// passing proves the applier sequenced the Namespace first.
+// passing proves the applier sequenced the Namespace first. The fixture is a
+// format string: %[1]s is the test's namespace and %[2]d is the Service's
+// NodePort, both unique to the test because every test applies the fixture to
+// the package's shared control plane (fixtureFS).
 const controlPlaneFixture = `apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: lenny-gateway
-  namespace: lenny-embed
+  namespace: %[1]s
 spec:
   replicas: 1
   selector:
@@ -53,7 +56,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: lenny-gateway
-  namespace: lenny-embed
+  namespace: %[1]s
 spec:
   type: NodePort
   selector:
@@ -62,13 +65,13 @@ spec:
     - name: http
       port: 8059
       targetPort: 8059
-      nodePort: 30080
+      nodePort: %[2]d
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: lenny-gateway-config
-  namespace: lenny-embed
+  namespace: %[1]s
 data:
   mode: embedded
 ---
@@ -76,17 +79,23 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: lenny-gateway
-  namespace: lenny-embed
+  namespace: %[1]s
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: lenny-embed
+  name: %[1]s
 `
 
-func fixtureFS() fstest.MapFS {
+// fixtureFS renders controlPlaneFixture into test t's namespace with t's
+// NodePort, so the Namespace, the namespaced objects, and the allocated
+// NodePort do not collide with another test's on the shared control plane.
+// Repeated calls in one test render the same manifest set.
+func fixtureFS(t *testing.T) fstest.MapFS {
+	t.Helper()
+	data := fmt.Sprintf(controlPlaneFixture, testNamespace(t), testNodePort(t))
 	return fstest.MapFS{
-		"manifests.yaml": &fstest.MapFile{Data: []byte(controlPlaneFixture)},
+		"manifests.yaml": &fstest.MapFile{Data: []byte(data)},
 	}
 }
 
@@ -106,11 +115,11 @@ func fixtureFS() fstest.MapFS {
 //
 // spec: §17.4 (in-cluster control plane apply path and order).
 func TestApplyManifestsCreatesControlPlaneAcrossPhases_spec_17_4(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	ctx := context.Background()
 	cfg := env.RESTConfig()
 
-	if err := stack.ApplyManifestsFromConfigForTest(ctx, cfg, fixtureFS()); err != nil {
+	if err := stack.ApplyManifestsFromConfigForTest(ctx, cfg, fixtureFS(t)); err != nil {
 		t.Fatalf("apply manifests: %v", err)
 	}
 
@@ -118,7 +127,7 @@ func TestApplyManifestsCreatesControlPlaneAcrossPhases_spec_17_4(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build core client: %v", err)
 	}
-	const ns = "lenny-embed"
+	ns := testNamespace(t)
 	if _, err := cs.CoreV1().Namespaces().Get(ctx, ns, metav1.GetOptions{}); err != nil {
 		t.Fatalf("namespace not created: %v", err)
 	}
@@ -155,16 +164,16 @@ func TestApplyManifestsCreatesControlPlaneAcrossPhases_spec_17_4(t *testing.T) {
 //
 // spec: §17.4 (idempotent re-apply of the in-cluster control plane).
 func TestApplyManifestsIsIdempotentOnReapply_spec_17_4(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	ctx := context.Background()
 	cfg := env.RESTConfig()
 
-	if err := stack.ApplyManifestsFromConfigForTest(ctx, cfg, fixtureFS()); err != nil {
+	if err := stack.ApplyManifestsFromConfigForTest(ctx, cfg, fixtureFS(t)); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
 	// The second apply must reconverge in place rather than fail on the
 	// objects the first apply created.
-	if err := stack.ApplyManifestsFromConfigForTest(ctx, cfg, fixtureFS()); err != nil {
+	if err := stack.ApplyManifestsFromConfigForTest(ctx, cfg, fixtureFS(t)); err != nil {
 		t.Fatalf("re-apply must be idempotent, got: %v", err)
 	}
 
@@ -172,7 +181,7 @@ func TestApplyManifestsIsIdempotentOnReapply_spec_17_4(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build core client: %v", err)
 	}
-	const ns = "lenny-embed"
+	ns := testNamespace(t)
 	deps, err := cs.AppsV1().Deployments(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		t.Fatalf("list deployments after re-apply: %v", err)
@@ -212,7 +221,7 @@ func TestApplyManifestsIsIdempotentOnReapply_spec_17_4(t *testing.T) {
 //
 // spec: §17.4 (in-cluster control plane apply path).
 func TestApplyManifestsRejectsUnknownGVK_spec_17_4(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	ctx := context.Background()
 	cfg := env.RESTConfig()
 
@@ -247,12 +256,12 @@ metadata:
 //
 // spec: §17.4 (in-cluster control plane apply path).
 func TestApplyManifestsFromKubeconfigEntryPoint_spec_17_4(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	ctx := context.Background()
 	cfg := env.RESTConfig()
 
 	kubeconfigPath := writeKubeconfig(t, cfg)
-	if err := stack.ApplyManifestsFromKubeconfigForTest(ctx, kubeconfigPath, fixtureFS()); err != nil {
+	if err := stack.ApplyManifestsFromKubeconfigForTest(ctx, kubeconfigPath, fixtureFS(t)); err != nil {
 		t.Fatalf("apply via kubeconfig: %v", err)
 	}
 
@@ -260,7 +269,7 @@ func TestApplyManifestsFromKubeconfigEntryPoint_spec_17_4(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build core client: %v", err)
 	}
-	if _, err := cs.AppsV1().Deployments("lenny-embed").Get(ctx, "lenny-gateway", metav1.GetOptions{}); err != nil {
+	if _, err := cs.AppsV1().Deployments(testNamespace(t)).Get(ctx, "lenny-gateway", metav1.GetOptions{}); err != nil {
 		t.Errorf("Deployment not applied through the kubeconfig entry point: %v", err)
 	}
 }
@@ -281,7 +290,7 @@ func TestApplyManifestsFromKubeconfigEntryPoint_spec_17_4(t *testing.T) {
 //
 // spec: §17.4 (apply the Deployments after the image import lands).
 func TestApplyManifestsTwoPhaseFenceWithholdsDeployments_spec_17_4(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	ctx := context.Background()
 	cfg := env.RESTConfig()
 	kubeconfigPath := writeKubeconfig(t, cfg)
@@ -290,10 +299,10 @@ func TestApplyManifestsTwoPhaseFenceWithholdsDeployments_spec_17_4(t *testing.T)
 	if err != nil {
 		t.Fatalf("build core client: %v", err)
 	}
-	const ns = "lenny-embed"
+	ns := testNamespace(t)
 
 	// The non-Deployment phase applies everything but the Deployment.
-	if err := stack.ApplyNonDeploymentsFromKubeconfigForTest(ctx, kubeconfigPath, fixtureFS()); err != nil {
+	if err := stack.ApplyNonDeploymentsFromKubeconfigForTest(ctx, kubeconfigPath, fixtureFS(t)); err != nil {
 		t.Fatalf("non-deployment phase apply: %v", err)
 	}
 	if _, err := cs.CoreV1().Services(ns).Get(ctx, "lenny-gateway", metav1.GetOptions{}); err != nil {
@@ -304,7 +313,7 @@ func TestApplyManifestsTwoPhaseFenceWithholdsDeployments_spec_17_4(t *testing.T)
 	}
 
 	// The Deployment phase then applies only the Deployment.
-	if err := stack.ApplyDeploymentsFromKubeconfigForTest(ctx, kubeconfigPath, fixtureFS()); err != nil {
+	if err := stack.ApplyDeploymentsFromKubeconfigForTest(ctx, kubeconfigPath, fixtureFS(t)); err != nil {
 		t.Fatalf("deployment phase apply: %v", err)
 	}
 	if _, err := cs.AppsV1().Deployments(ns).Get(ctx, "lenny-gateway", metav1.GetOptions{}); err != nil {
@@ -325,7 +334,7 @@ func TestApplyManifestsTwoPhaseFenceWithholdsDeployments_spec_17_4(t *testing.T)
 // spec: §17.4 (the cluster commands reach the in-cluster control plane through
 // the embedded kubeconfig).
 func TestNewClusterClientLoadsKubeconfig_spec_17_4(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	ctx := context.Background()
 	cfg := env.RESTConfig()
 	kubeconfigPath := writeKubeconfig(t, cfg)

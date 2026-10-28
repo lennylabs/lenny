@@ -858,7 +858,7 @@
       "post": {
         "operationId": "postV1SessionsByIdUploadToSession",
         "summary": "Upload files into a running session's workspace (mid-session upload)",
-        "description": "The §7.4 mid-session upload surface. Admitted only when the bound runtime declares capabilities.midSessionUpload and the deployer policy permits it; uses the caller's session-scoped bearer credential (no uploadToken). The gateway streams the files into the session's /workspace/slots/{sessionId}/staging and overlays them onto /workspace/slots/{sessionId}/current, signaling the runtime once promotion completes so the agent never sees partially-written files.",
+        "description": "The §7.4 mid-session upload surface. Admitted only when the bound runtime declares capabilities.midSessionUpload and the deployer policy permits it; uses the caller's bearer (no uploadToken). The gateway streams the files into the session's /workspace/slots/{sessionId}/staging and overlays them onto /workspace/slots/{sessionId}/current, signaling the runtime once promotion completes so the agent never sees partially-written files.",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "requestBody": {
@@ -3164,7 +3164,21 @@
         "x-lenny-category": "security",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "responses": { "204": { "description": "Ended" } }
+        "responses": {
+          "200": {
+            "description": "Ended",
+            "content": { "application/json": { "schema": {
+              "type": "object",
+              "required": ["impersonationSessionId", "endedAt"],
+              "properties": {
+                "impersonationSessionId": { "type": "string" },
+                "endedAt": { "type": "string", "format": "date-time" }
+              }
+            } } }
+          },
+          "404": { "description": "Not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "409": { "description": "Invalid state transition", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
       }
     },
     "/v1/admin/interceptors": {

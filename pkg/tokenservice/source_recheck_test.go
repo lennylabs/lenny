@@ -81,7 +81,7 @@ func recheckClaims(jti string) jwt.Claims {
 	}
 }
 
-// spec: 13.3 (Credential Flow), 8.2 (Delegation Mechanism) — the step
+// spec: 13.3 (Credential Flow) — the step
 // (1a) re-read rejects an exchange whose subject or actor token is
 // revoked between the pre-check and the in-lock re-read: the handler
 // returns 400 invalid_grant with the role's reason, discards the signed
@@ -215,4 +215,63 @@ func TestSourceRevokedErrorReason_spec_13_3(t *testing.T) {
 			t.Errorf("Error() = %q, want it to name %s", e.Error(), role)
 		}
 	}
+}
+
+// spec: 13.3 (Credential Flow: Write-before-issue ordering, step (1a);
+// Platform-admin impersonation, rule 5) — before the impersonation
+// refusal, an impersonation bearer presented as subject_token or
+// actor_token minted a token that outlived the end of the session. The
+// handler now returns 400 invalid_grant with the role's impersonation
+// reason, commits nothing, and writes one rejection token.exchanged row;
+// a revoked actor still outranks a live impersonation subject.
+func TestHandlerRefusesImpersonationSource_spec_13_3(t *testing.T) {
+	revokedAt := time.Unix(1_700_000_000, 0)
+	cases := []struct {
+		name          string
+		impersonation map[string]bool
+		revoked       map[string]time.Time
+		wantReason    string
+	}{
+		{name: "impersonation subject", impersonation: map[string]bool{"subj-1": true}, wantReason: "subject_token_impersonation"},
+		{name: "impersonation actor", impersonation: map[string]bool{"actor-1": true}, wantReason: "actor_token_impersonation"},
+		{
+			name:          "revoked actor outranks impersonation subject",
+			impersonation: map[string]bool{"subj-1": true},
+			revoked:       map[string]time.Time{"actor-1": revokedAt},
+			wantReason:    "actor_token_revoked",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &txStore{revoked: tc.revoked, impersonation: tc.impersonation}
+			auditor := &recordingAuditor{}
+			srv, signer := rotationServer(t, store, auditor, nil)
+
+			resp := doExchange(t, srv, mintToken(t, signer, recheckClaims("caller-1")), Request{
+				GrantType:    grantTypeExchange,
+				SubjectToken: mintToken(t, signer, recheckClaims("subj-1")),
+				ActorToken:   mintToken(t, signer, recheckClaims("actor-1")),
+				Scope:        "sessions:read", Audience: "lenny-gateway",
+			})
+			assertOAuthRejection(t, resp, http.StatusBadRequest, "invalid_grant", tc.wantReason)
+			if len(store.records) != 0 || len(store.audits) != 0 {
+				t.Errorf("store committed records=%d audits=%d, want none", len(store.records), len(store.audits))
+			}
+			assertSingleRejectionAudit(t, auditor.snapshot(), "rejected:"+tc.wantReason)
+		})
+	}
+}
+
+// spec: 13.3 (Credential Flow: Write-before-issue ordering) — when the
+// rejection audit for an impersonation source cannot be written, the
+// handler fails closed with 500 token_exchange_failed carrying the reason.
+func TestHandlerImpersonationRejectionAuditFailure_spec_13_3(t *testing.T) {
+	store := &txStore{impersonation: map[string]bool{"subj-1": true}}
+	srv, signer := rotationServer(t, store, &failingAuditor{err: errors.New("audit chain unavailable")}, nil)
+	resp := doExchange(t, srv, mintToken(t, signer, recheckClaims("caller-1")), Request{
+		GrantType:    grantTypeExchange,
+		SubjectToken: mintToken(t, signer, recheckClaims("subj-1")),
+		Scope:        "sessions:read", Audience: "lenny-gateway",
+	})
+	assertOAuthRejection(t, resp, http.StatusInternalServerError, "token_exchange_failed", "subject_token_impersonation")
 }

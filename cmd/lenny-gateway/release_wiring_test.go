@@ -3,10 +3,26 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	pkgauth "github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/gateway/audit/auditscope"
+	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/impersonation"
+	revocationprop "github.com/lennylabs/lenny/pkg/gateway/credentials/revocation/propagator"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 )
 
 // assertWired fails the test for every seam whose wiring text is missing
@@ -135,5 +151,109 @@ func TestErasureListsAndTenantListersAreWired_spec_12_8(t *testing.T) {
 		{"billing_security_workers.go", "idemGC := idempgstore.New(w.pgPool) lister := tenantsLister{w.tenants}", "the idempotency-key GC over live tenants"},
 		{"billing_security_workers.go", "w.startIssuedTokenGC(issuedtokenstore.New(w.pgPool), time.Duration(*issuedTokenGCIntervalSeconds)*time.Second)", "the issued-token GC start"},
 		{"billing_security_workers.go", "lister := allTenantsLister{w.tenants} sweepIssuedTokens(context.Background(), gc, lister, clockinject.Now)", "the issued-token GC over every tenant row"},
+	})
+}
+
+// fullImpersonationCollaborators returns one non-nil value of every
+// collaborator the impersonation service needs. None is dialled: the
+// wiring helper only stores them.
+func fullImpersonationCollaborators() impersonationCollaborators {
+	return impersonationCollaborators{
+		pool:     &pgxpool.Pool{},
+		signer:   &jwt.BreakerSigner{},
+		cache:    &revocationprop.Propagator{},
+		audit:    &auditstore.Store{},
+		appender: &auditscope.Validator{},
+	}
+}
+
+// impersonationListStatus serves GET /v1/admin/impersonation as a
+// tenant-admin through an admin router wired with svc. A registered route
+// answers 403 from the handler's platform-admin gate before any service
+// call; an unregistered route answers 404 from the mux.
+func impersonationListStatus(t *testing.T, svc admin.ImpersonationService) int {
+	t.Helper()
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{}).WithImpersonation(svc)
+	req := httptest.NewRequest(http.MethodGet, "/v1/admin/impersonation", nil)
+	req = req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{
+		Subject: "alice@acme.com", TenantID: "acme", Roles: []pkgauth.Role{pkgauth.RoleTenantAdmin},
+	}))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	return rr.Code
+}
+
+// TestImpersonationRoutesRequireEveryCollaborator_spec_13_3 asserts that a
+// gateway missing any one of the Postgres pool, the signer, the revocation
+// propagator, or the audit store builds no impersonation service, that the
+// absent service is a true nil interface rather than a typed-nil
+// *impersonation.Service, and that the admin router then registers no
+// impersonation route. A typed nil would pass the router's nil check and
+// register routes that panic on first use, and a service built without a
+// collaborator would mint a bearer nobody can revoke.
+//
+// spec: 13.3 (Credential Flow: Platform-admin impersonation), 16.7 (Section 25 audit events), 12.3 (Postgres HA Requirements)
+func TestImpersonationRoutesRequireEveryCollaborator_spec_13_3(t *testing.T) {
+	cfg := impersonation.Config{NewID: func() string { return "imp-x" }}
+	missing := map[string]func(*impersonationCollaborators){
+		"postgres pool":         func(c *impersonationCollaborators) { c.pool = nil },
+		"signer":                func(c *impersonationCollaborators) { c.signer = nil },
+		"revocation propagator": func(c *impersonationCollaborators) { c.cache = nil },
+		"audit store":           func(c *impersonationCollaborators) { c.audit = nil },
+		"audit validator":       func(c *impersonationCollaborators) { c.appender = nil },
+	}
+	for name, drop := range missing {
+		t.Run("without "+name, func(t *testing.T) {
+			c := fullImpersonationCollaborators()
+			drop(&c)
+			svc := newImpersonationService(c, cfg)
+			if svc != nil {
+				t.Fatalf("service = %#v, want a nil interface", svc)
+			}
+			if code := impersonationListStatus(t, svc); code != http.StatusNotFound {
+				t.Fatalf("GET /v1/admin/impersonation status = %d, want 404 (no route)", code)
+			}
+		})
+	}
+	t.Run("with every collaborator", func(t *testing.T) {
+		svc := newImpersonationService(fullImpersonationCollaborators(), cfg)
+		if svc == nil {
+			t.Fatal("service is nil with every collaborator present")
+		}
+		if code := impersonationListStatus(t, svc); code != http.StatusForbidden {
+			t.Fatalf("GET /v1/admin/impersonation status = %d, want 403 from the registered handler", code)
+		}
+	})
+}
+
+// TestNoImpersonationSweepRuns_spec_16_7 asserts that no impersonation
+// expiry sweep exists to start: the service has no sweep method, and no
+// gateway source file starts one. Only a winning DELETE writes the ended
+// event, so a sweep would write a second, unsanctioned one.
+//
+// spec: 16.7 (Section 25 audit events), 13.3 (Credential Flow: Platform-admin impersonation)
+func TestNoImpersonationSweepRuns_spec_16_7(t *testing.T) {
+	if _, ok := reflect.TypeOf(&impersonation.Service{}).MethodByName("SweepExpired"); ok {
+		t.Fatal("impersonation.Service still has a SweepExpired method")
+	}
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		if strings.Contains(string(b), "SweepExpired") {
+			t.Errorf("%s starts an impersonation sweep", f)
+		}
+	}
+	assertWired(t, []struct{ file, want, seam string }{
+		{"adminrouter.go", "adminRouter = adminRouter.WithImpersonation(newImpersonationService(impersonationCollaborators{", "the impersonation service through the collaborator guard"},
+		{"adminrouter.go", "pool: w.pgPool, signer: w.jwtSigner, cache: revProp, audit: auditOpsStore, appender: auditValidator,", "every collaborator handed to the guard"},
 	})
 }

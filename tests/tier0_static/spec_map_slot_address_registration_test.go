@@ -384,6 +384,7 @@ var slotAddressCaseFiles = []string{
 	"tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go",
 	"tests/tier11_docs/build_gaps_data_lifecycle_records_currency_test.go",
 	"tests/tier11_docs/build_gaps_jwt_signing_records_currency_test.go",
+	"tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go",
 	"tests/tier11_docs/checkpoint_pipeline_consistency_test.go",
 	"tests/tier11_docs/checkpoint_scoping_key_test.go",
 	"tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go",

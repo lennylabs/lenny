@@ -18,14 +18,20 @@ const (
 	RefusalErasureInProgress = "ERASURE_IN_PROGRESS"
 	RefusalTenantSuspended   = "TENANT_SUSPENDED"
 	RefusalTenantNotActive   = "TENANT_NOT_ACTIVE"
+	// RefusalDelegationParentRevoked refuses a delegated child whose parent
+	// session is terminal or has no row. spec: §8.2 (Parent freshness).
+	RefusalDelegationParentRevoked = "DELEGATION_PARENT_REVOKED"
 )
 
 // CreationMarkers is the lifecycle-marker state the creation fence reads for
-// one session insert: the tenant row and the row of the user who owns the
-// new session. The Postgres store reads both rows FOR SHARE inside the
-// transaction that inserts the session row, so a marker write, which holds
-// an exclusive lock on the row it changes, serializes with the insert.
-// spec: §12.8 (Lifecycle fence and drain), §11.4 (User Invalidation).
+// one session insert: the tenant row, the row of the user who owns the new
+// session, and, for a delegated child's insert, the parent session row. The
+// Postgres store reads these rows FOR SHARE inside the transaction that
+// inserts the session row, so a marker write or a parent's terminal write,
+// each of which holds an exclusive lock on the row it changes, serializes
+// with the insert.
+// spec: §12.8 (Lifecycle fence and drain), §11.4 (User Invalidation), §8.2
+// (Parent freshness).
 type CreationMarkers struct {
 	// TenantFound is false when no tenant row exists. In Postgres the
 	// sessions.tenant_id foreign key rejects such an insert before the fence
@@ -57,6 +63,14 @@ type CreationMarkers struct {
 	// the source session, and classifying by it would admit a soft-disabled
 	// owner's derive or replay.
 	IsDelegatedChild bool
+	// ParentSessionID is the delegated child's parent session. It names the
+	// parent in a DELEGATION_PARENT_REVOKED refusal.
+	ParentSessionID string
+	// ParentTerminal is true when the insert transaction read the delegated
+	// child's parent row in a terminal state or found no parent row. Only
+	// the insert transaction sets it: an ID reservation and an endpoint's
+	// early check read no parent row.
+	ParentTerminal bool
 }
 
 // CreationRefusal is the typed error the creation fence returns when it
@@ -86,12 +100,16 @@ func (e *CreationRefusal) Error() string {
 //  3. The tenant is suspended: TENANT_SUSPENDED with tenantId.
 //  4. The tenant's state is neither empty nor active: TENANT_NOT_ACTIVE with
 //     tenantId and state.
+//  5. The row is a delegated child and its parent is terminal or has no
+//     row: DELEGATION_PARENT_REVOKED with parentSessionId. It comes after
+//     the other rules, so a tenant or user code wins when both match.
 //
 // A missing tenant row and a missing user row carry no marker. Tenant
 // markers and the restriction refuse every row, delegated children and rows
 // created terminal included.
 //
-// spec: §12.8 (Lifecycle fence and drain), §11.4 (User Invalidation).
+// spec: §12.8 (Lifecycle fence and drain), §11.4 (User Invalidation), §8.2
+// (Parent freshness).
 func (m CreationMarkers) Refusal(tenantID, userID string) *CreationRefusal {
 	if m.UserFound && (m.UserDeleted || (m.UserDisabled && !m.IsDelegatedChild)) {
 		return &CreationRefusal{
@@ -120,6 +138,13 @@ func (m CreationMarkers) Refusal(tenantID, userID string) *CreationRefusal {
 			Code:    RefusalTenantNotActive,
 			Message: "the tenant is being disabled or deleted and is not accepting new sessions",
 			Details: map[string]any{"tenantId": tenantID, "state": m.TenantState},
+		}
+	}
+	if m.IsDelegatedChild && m.ParentTerminal {
+		return &CreationRefusal{
+			Code:    RefusalDelegationParentRevoked,
+			Message: "the parent session has ended and cannot create delegated children",
+			Details: map[string]any{"parentSessionId": m.ParentSessionID},
 		}
 	}
 	return nil

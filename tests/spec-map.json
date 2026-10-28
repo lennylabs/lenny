@@ -2584,7 +2584,10 @@
       "title": "Delegation Mechanism \u2014 cycle detection and maxDepth",
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTRecordsCloseTheMintFindings_spec_8_2",
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTTestGapRecords_spec_8_2",
         "tests/tier4_integration/held_attach_stream_multi_turn_test.go::TestDelegateTaskThenAFollowUpOnTheHeldStream_spec_28_5_1",
+        "pkg/gateway/mcpfabric/delegation/parent_freshness_test.go::TestDelegateParentEndedBeforeInsertRefuses_spec_8_2",
         "pkg/delegation/cycle/cycle_test.go::TestAllModesIsExhaustive",
         "pkg/delegation/cycle/cycle_test.go::TestIdentityEqualsRequiresBothFields",
         "pkg/delegation/cycle/cycle_test.go::TestDecideNonCyclicHopAdmits",
@@ -2611,24 +2614,15 @@
         "tests/tier4_integration/delegation_child_materialization_test.go",
         "tests/tier9_security/credential_lookup_failclosed_test.go",
         "tests/tier9_security/delegation_child_materialization_cred_test.go::TestDelegatedChildMaterializationCredentialDelivery",
-        "pkg/tokenservice/caller_origin_test.go::TestPlaygroundOriginSubjectTokenAccepted_spec_13_3",
-        "tests/tier3_contract/oauth_token/oauth_token_caller_origin_test.go::TestOAuthTokenAcceptsPlaygroundOriginSubjectToken_spec_13_3",
-        "pkg/gateway/storage/issuedtokenstore/recheck_test.go::TestSourceRevokedErrorNamesRole_spec_13_3",
-        "pkg/tokenservice/source_recheck_test.go::TestHandlerSourceRevokedAtInLockReRead_spec_13_3",
-        "pkg/tokenservice/rotation_test.go::TestHandlerRetriedRotationRejectedSubjectTokenRevoked_spec_13_3",
-        "tests/tier2_component/issuedtokencascade/source_recheck_test.go::TestIssuanceReReadsSourceRevocationUnderLock_spec_13_3",
-        "tests/tier3_contract/oauth_token/oauth_token_source_revoked_test.go::TestOAuthTokenSourceRevokedAtReReadIsInvalidGrant_spec_13_3",
-        "tests/tier7a_load_local/token_double_rotation_race_test.go::TestConcurrentDoubleRotationCommitsExactlyOne_spec_13_3",
-        "tests/tier9_security/token_source_revoked_refusal_test.go::TestTokenServiceRefusesRevokedSubjectAndActor_spec_13_3"
+        "pkg/gateway/mcpfabric/delegation/child_identity_test.go::TestDelegatedChildIdentityIsItsSessionRow_spec_8_2",
+        "pkg/gateway/mcpfabric/mcptools/delegate_parent_freshness_test.go::TestDelegateTaskParentEndedBeforeInsertAnswersParentRevoked_spec_8_2",
+        "pkg/gateway/mcpfabric/mcptools/delegator_gate_parent_internal_test.go::TestRequireActiveDelegatorIgnoresTerminalParent_spec_12_8"
       ],
       "packages": [
         "pkg/delegation/cycle",
         "pkg/delegation/lease",
         "pkg/gateway/mcpfabric/mcptools",
-        "pkg/gateway/externalapi/errorclassify",
-        "pkg/gateway/storage/issuedtokenstore",
-        "pkg/tokenservice",
-        "pkg/gateway/mcpfabric/delegation/childtoken"
+        "pkg/gateway/externalapi/errorclassify"
       ],
       "blocked_until_phase": "9",
       "notes": "Phase 9 ships the \u00a78.2 cycle-detection three-layer AND gate (CycleMode enum + Decide function), the \u00a78.2 LeaseSlice budget arithmetic with parent-ceiling validation, and the \u00a78.2.bis maxDepth precedence chain (explicit > preset > runtime > policy > Helm fallback). The Redis Lua scripts (budget_reserve.lua, budget_return.lua) and the \u00a78.2 delegate_task gateway handler are deferred to the K8s-integration phase that ships the delegation-echo runtime."
@@ -2695,13 +2689,15 @@
       "title": "Delegation Tools",
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTFiledDefectsMatchTheTree_spec_8_5",
         "pkg/gateway/mcpfabric/mcptools/...",
         "pkg/gateway/mcpfabric/mcptools/schema_alignment_test.go::TestSetTracingContextSchemaMatchesSpec_spec_8_3_8_5",
         "pkg/gateway/mcpfabric/delegation/...",
         "tests/tier4_integration/delegation_await_collect_test.go::TestDelegationAwaitChildren",
         "tests/tier3_contract/sdks/runtime_sdk_test.go",
         "tests/tier11_docs/test_gaps_tracing_context_quote_reconciliation_test.go",
-        "tests/tier7a_load_local/elicitation_xreplica_wake_test.go"
+        "tests/tier7a_load_local/elicitation_xreplica_wake_test.go",
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTFiledDefectRecordsAreCurrent_spec_10_2"
       ],
       "packages": [
         "pkg/delegation/tools"
@@ -2715,7 +2711,8 @@
       "tests": [
         "pkg/delegation/lease/...",
         "tests/tier2_component/leasedenial/leasedenialstore_test.go",
-        "tests/tier9_security/budget_extension_failclosed_test.go"
+        "tests/tier9_security/budget_extension_failclosed_test.go",
+        "pkg/gateway/mcpfabric/delegation/parent_freshness_test.go::TestDelegateParentEndedBeforeInsertRefuses_spec_8_2"
       ],
       "packages": [
         "pkg/delegation/lease"
@@ -3298,6 +3295,12 @@
       "title": "Authentication",
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
+        "pkg/gateway/callercheck/callercheck_test.go",
+        "pkg/gateway/sessionserver/caller_check_test.go",
+        "pkg/gateway/mcpfabric/mcptools/delegate_caller_check_test.go",
+        "cmd/lenny-gateway/caller_check_wiring_test.go",
+        "tests/tier9_security/session_creation_impersonation_refusal_test.go::TestSessionCreationRefusesImpersonationBearer_spec_10_2",
+        "tests/tier9_security/session_creation_impersonation_refusal_test.go::TestDelegateTaskRefusesImpersonationBearer_spec_10_2",
         "tests/tier4_integration/oidc_auth_test.go::TestLiveGatewayAuthenticatesUpstreamOIDCBearer_spec_10_2",
         "tests/tier3_contract/rest_auth/oidc_bearer_test.go::TestOIDCBearerAuthenticatesThroughDiscoveredJWKS_spec_10_2",
         "cmd/lenny-gateway/idp_verifier_test.go::TestBuildTokenSigningStoresTrustsTheUpstreamIdP_spec_10_2",
@@ -3317,6 +3320,8 @@
         "tests/tier11_docs/build_gaps_jwt_signing_records_currency_test.go::TestJWTSigningTier6RecordMatchesTheTree_spec_10_2",
         "tests/tier11_docs/build_gaps_jwt_signing_records_currency_test.go::TestJWTSigningChaosCoverageIsRecorded_spec_10_2",
         "tests/tier11_docs/build_gaps_jwt_signing_records_currency_test.go::TestJWTSigningRecordParsers_spec_10_2",
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTRecordsCloseTheMintFindings_spec_8_2",
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTFiledDefectsMatchTheTree_spec_8_5",
         "tests/tier11_docs/jwt_key_rotation_runbook_test.go::TestJWTKeyRotationRunbookCoversEveryVerifier_spec_10_2",
         "tests/tier11_docs/jwt_key_rotation_runbook_test.go::TestJWTKeyRotationRunbookNamesNoRetiredSurface_spec_10_2",
         "cmd/lenny-gateway/auth_seams_test.go::TestTenantRegistryAdaptersApplyRegisteredReading_spec_10_2",
@@ -3525,7 +3530,15 @@
         "tests/tier4_integration/jwt_keyset_cross_process_test.go::TestOpsRevocationSetThroughPostgresOutage_spec_25_4",
         "tests/tier5_e2e_kind/jwt_keyset_cross_replica_test.go::TestLennyIssuedBearerVerifiesAcrossChartReplicas_spec_10_2",
         "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestJWTSigningKMSOutageBreakerAndRecovery",
-        "tests/tier9_security/jwt_keyset_forgery_all_components_test.go::TestEveryVerifierRefusesForgedLennyTokens_spec_10_2"
+        "tests/tier9_security/jwt_keyset_forgery_all_components_test.go::TestEveryVerifierRefusesForgedLennyTokens_spec_10_2",
+        "pkg/gateway/mcpfabric/playground/token_subject_recheck_test.go::TestPlaygroundAPIKeyMintAppliesStep1aToSubjectRow_spec_10_2",
+        "pkg/gateway/mcpfabric/playground/token_subject_recheck_test.go::TestPlaygroundAPIKeyMintNilIssuedTokensSkipsRead_spec_10_2",
+        "tests/tier3_contract/playground/playground_subject_recheck_test.go::TestAPIKeyModeRejectsImpersonationSubject_spec_10_2",
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestImpersonationBearerRefusals_spec_13_3",
+        "tests/tier3_contract/rest_mcp_consistency/caller_check_parity_test.go::TestCreateSessionCallerCheckParity_spec_15_2_1",
+        "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestSessionCreationIndependentOfKMSSigning_spec_10_2",
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTFiledDefectRecordsAreCurrent_spec_10_2",
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTProposalLabelProbe_spec_10_2"
       ],
       "packages": [
         "pkg/auth",
@@ -3911,7 +3924,10 @@
         "tests/tier9_security/ops_revocation_enforcement_test.go::TestOpsRefusesRevokedLennyTokens_spec_25_4",
         "tests/tier4_integration/drain_bind_release_two_replica_test.go::TestUserErasureDrainReleasesABindingHeldOnThePeer_spec_12_8",
         "tests/tier4_integration/drain_bind_release_two_replica_test.go::TestBindReleaseSubscriberReleasesOnlyTerminalBindings_spec_28_5_7",
-        "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestUserErasureReleasesTheRemoteBindingOnBindRelease_spec_12_8"
+        "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestUserErasureReleasesTheRemoteBindingOnBindRelease_spec_12_8",
+        "tests/tier4_integration/impersonation_admin_cascade_test.go::TestFullRevokeOfPlatformAdminRevokesItsBearersOnEveryReplica_spec_13_3",
+        "tests/tier9_security/impersonation_admin_cascade_test.go::TestFullRevokeOfPlatformAdminRevokesItsImpersonationBearers_spec_13_3",
+        "tests/tier4_integration/impersonation_revocation_cross_replica_test.go::TestImpersonationSessionIsSharedAcrossReplicas_spec_13_3"
       ],
       "packages": [
         "pkg/auth/invalidate"
@@ -3999,6 +4015,7 @@
       "title": "Audit Logging",
       "spec_file": "spec/11_policy-and-controls.md",
       "tests": [
+        "tests/tier11_docs/impersonation_revocation_docs_test.go::TestReaderDocsDescribeImpersonationRevocation_spec_13_3",
         "cmd/lenny-gateway/production_gates_test.go::TestSIEMAndPgauditGateFatalOnlyOnMessageInProductionMode_spec_11_7",
         "cmd/lenny-gateway/production_gates_test.go::TestPgauditPreflightFatalNeedsProductionAndRegulatedTenant_spec_11_7",
         "cmd/lenny-gateway/auth_seams_test.go::TestAuthFailureTenantNotFoundOnPlatformChain_spec_11_7",
@@ -4385,6 +4402,20 @@
         "tests/tier2_component/stores/sessionstore_reservations_test.go::TestSessionStoreReservations_spec_12_8",
         "tests/tier2_component/stores/sessionstore_reservations_test.go::TestSessionStoreReservedSessionIDsReadsPrimary_spec_12_8",
         "tests/tier7a_load_local/creation_fence_race_test.go::TestCreationFenceRaceAgainstMarkerAndDrain_spec_12_8",
+        "tests/tier7a_load_local/creation_fence_parent_race_test.go::TestCreationFenceRaceAgainstParentTerminalWrite_spec_12_8",
+        "tests/tier2_component/stores/sessionstore_creation_fence_parent_test.go::TestSessionStoreCreationFenceParentRow_spec_12_8",
+        "tests/tier2_component/stores/sessionstore_creation_fence_parent_test.go::TestSessionStoreCreationFenceSerializesWithParentTerminalWrite_spec_12_8",
+        "pkg/gateway/session/sessionstore/creation_fence_test.go::TestCreationRefusalParentTerminalRefusesOnlyDelegatedChild_spec_12_8",
+        "pkg/gateway/session/sessionstore/cascade_listing_test.go::TestChildrenByParentListsPrimary_spec_12_8",
+        "pkg/gateway/session/sessionstore/memstore/fence_parent_test.go::TestMemstoreCreateFenceParentStates_spec_12_8",
+        "pkg/gateway/session/sessionstore/memstore/fence_parent_test.go::TestMemstoreCreateFenceAbsentParentRefuses_spec_12_8",
+        "pkg/gateway/session/sessionstore/memstore/fence_parent_test.go::TestMemstoreCreateFenceParentRuleScope_spec_12_8",
+        "pkg/gateway/session/sessionstore/memstore/fence_parent_test.go::TestMemstoreCreateFenceParentTerminalWriteSerializes_spec_12_8",
+        "pkg/gateway/sessionserver/cascade_read_source_internal_test.go::TestCascadeToChildrenListsPrimaryPerLevel_spec_12_8",
+        "pkg/gateway/sessionserver/cascade_read_source_internal_test.go::TestCascadeToChildrenListsNoReplica_spec_12_8",
+        "pkg/gateway/mcpfabric/mcptools/cancel_release_test.go::TestCancelChildListsPrimaryPerLevel_spec_12_8",
+        "pkg/gateway/mcpfabric/mcptools/cancel_release_test.go::TestCancelChildPrimaryListingErrorFailsTheCall_spec_12_8",
+        "pkg/gateway/mcpfabric/delegation/parent_freshness_test.go::TestDelegateParentEndedBeforeInsertRefuses_spec_8_2",
         "tests/tier7a_load_local/replay_transcript_erasure_race_test.go::TestReplayTranscriptCopyRaceAgainstErasure_spec_12_8",
         "tests/tier3_contract/rest_mcp_consistency/error_matrix_test.go",
         "tests/tier4_integration/gateway_postgres_e2e_test.go",
@@ -4472,7 +4503,11 @@
         "tests/tier11_docs/build_gaps_terminal_pipeline_records_currency_test.go::TestTerminalPipelineOpenFindingsKeepTheirNotes_spec_12_8",
         "tests/tier4_integration/drain_bind_release_two_replica_test.go::TestUserErasureDrainReleasesABindingHeldOnThePeer_spec_12_8",
         "tests/tier4_integration/drain_bind_release_two_replica_test.go::TestUserErasureDrainWithoutTheFanOutLeavesThePeerBinding_spec_12_8",
-        "tests/tier8_chaos/holder_forward_chaos_test.go::TestLostBindReleaseFanOutHoldsErasureUntilReleaseOrWindowCap_spec_28_5_7"
+        "tests/tier8_chaos/holder_forward_chaos_test.go::TestLostBindReleaseFanOutHoldsErasureUntilReleaseOrWindowCap_spec_28_5_7",
+        "pkg/gateway/mcpfabric/mcptools/delegate_parent_freshness_test.go::TestDelegateTaskParentEndedBeforeInsertAnswersParentRevoked_spec_8_2",
+        "pkg/gateway/mcpfabric/mcptools/delegator_gate_parent_internal_test.go::TestRequireActiveDelegatorIgnoresTerminalParent_spec_12_8",
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTRecordsCloseTheMintFindings_spec_8_2",
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTTestGapRecords_spec_8_2"
       ],
       "packages": [
         "pkg/store",
@@ -4832,7 +4867,12 @@
       "spec_file": "spec/13_security-model.md",
       "tests": [
         "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardCarriesTheRecordedCredentialOnEverySurface_spec_29_3",
+        "tests/tier11_docs/impersonation_revocation_docs_test.go::TestReaderDocsDescribeImpersonationRevocation_spec_13_3",
         "tests/tier4_integration/token_service_revocation_publish_test.go::TestTokenServiceRotationReachesPeersOverRedis_spec_13_3",
+        "tests/tier4_integration/token_service_delegation_cascade_test.go::TestRecursiveRevocationReachesDelegationChildOnAnotherReplica_spec_13_3",
+        "tests/tier2_component/issuedtokencascade/delegation_lineage_test.go::TestRecursiveRevocationReachesExternalDelegationChildren_spec_13_3",
+        "pkg/tokenservice/delegation_lineage_test.go::TestIssuedRecordLineagePerExchangeType_spec_13_3",
+        "pkg/tokenservice/delegation_lineage_test.go::TestDelegationLineageWritesBothColumnsOrNeither_spec_13_3",
         "cmd/lenny-token-service/revocation_publish_test.go::TestTokenServiceRevocationPublisher_spec_13_3",
         "cmd/lenny-token-service/redis_topology_test.go::TestTokenServicePublishesRevocationsOnTheCachePubSubConcern_spec_13_3",
         "pkg/gateway/credentials/revocation/propagator/publish_test.go::TestPublishReachesPeerPropagator_spec_13_3",
@@ -4926,7 +4966,23 @@
         "tests/tier9_security/token_source_revoked_refusal_test.go::TestTokenServiceRefusesRevokedSubjectAndActor_spec_13_3",
         "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestOpsRevocationSetUnderPostgresLoss",
         "tests/tier9_security/ops_revocation_enforcement_test.go::TestOpsRefusesRevokedLennyTokens_spec_25_4",
-        "tests/tier9_security/ops_revocation_enforcement_test.go::TestPlaygroundBearerRefusedOnOpsAndAsCaller_spec_25_4"
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestPlaygroundBearerRefusedOnOpsAndAsCaller_spec_25_4",
+        "pkg/gateway/storage/issuedtokenstore/impersonation_test.go::TestNotActiveErrorMatchesSentinel_spec_13_3",
+        "pkg/gateway/storage/issuedtokenstore/impersonation_test.go::TestRecordImpersonationRejectsMalformedInputWithoutWriting_spec_13_3",
+        "pkg/gateway/storage/issuedtokenstore/impersonation_test.go::TestCheckUserNotInvalidated_spec_13_3",
+        "pkg/gateway/storage/issuedtokenstore/impersonation_test.go::TestInactiveImpersonationErrorClassifiesMiss_spec_13_3",
+        "pkg/gateway/storage/issuedtokenstore/recheck_test.go::TestSourceImpersonationErrorNamesRole_spec_13_3",
+        "pkg/gateway/storage/issuedtokenstore/recheck_test.go::TestIssuedTokenSourceRefusal_spec_13_3",
+        "pkg/tokenservice/source_recheck_test.go::TestHandlerRefusesImpersonationSource_spec_13_3",
+        "pkg/tokenservice/source_recheck_test.go::TestHandlerImpersonationRejectionAuditFailure_spec_13_3",
+        "tests/tier2_component/stores/issuedtokenstore_test.go::TestImpersonationIssuedTokensContract_spec_13_3",
+        "cmd/lenny-gateway/release_wiring_test.go::TestImpersonationRoutesRequireEveryCollaborator_spec_13_3",
+        "tests/tier4_integration/impersonation_admin_cascade_test.go::TestFullRevokeOfPlatformAdminRevokesItsBearersOnEveryReplica_spec_13_3",
+        "tests/tier9_security/impersonation_admin_cascade_test.go::TestFullRevokeOfPlatformAdminRevokesItsImpersonationBearers_spec_13_3",
+        "tests/tier4_integration/impersonation_revocation_cross_replica_test.go::TestImpersonationSessionIsSharedAcrossReplicas_spec_13_3",
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestImpersonationBearerRefusals_spec_13_3",
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTFiledDefectsMatchTheTree_spec_8_5",
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTFiledDefectRecordsAreCurrent_spec_10_2"
       ],
       "packages": [
         "pkg/credential",
@@ -5131,6 +5187,8 @@
       "title": "REST API",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier11_docs/impersonation_revocation_docs_test.go::TestReaderDocsDescribeImpersonationRevocation_spec_13_3",
+        "tests/tier3_contract/admin_impersonation/openapi_document_test.go::TestServedDocumentImpersonationDeleteResponses_spec_15_1",
         "tests/tier11_docs/shared_jwt_signing_docs_test.go::TestErrorCatalogKMSSigningUnavailableRow_spec_15",
         "tests/tier11_docs/data_lifecycle_fence_drain_doc_reconciliation_test.go",
         "tests/tier7a_load_local/tenant_suspend_concurrent_test.go::TestTenantSuspendConcurrentFirstSuspendsDecideNewnessUnderLock_spec_15_1",
@@ -5233,7 +5291,11 @@
         "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestJWTSigningKMSOutageBreakerAndRecovery",
         "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderTerminateAndDeleteRunOnTheCoordinator_spec_29_3",
         "tests/tier4_integration/holder_forward_routes_test.go::TestForwardedCrossTenantTerminateIsNotFound_spec_29_3",
-        "pkg/gateway/sessionserver/holder_forward_sites_test.go::TestTerminateWithoutAHolderIsWrittenLocally_spec_29_3"
+        "pkg/gateway/sessionserver/holder_forward_sites_test.go::TestTerminateWithoutAHolderIsWrittenLocally_spec_29_3",
+        "tests/tier4_integration/impersonation_revocation_cross_replica_test.go::TestImpersonationSessionIsSharedAcrossReplicas_spec_13_3",
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestImpersonationBearerRefusals_spec_13_3",
+        "pkg/gateway/mcpfabric/mcptools/delegate_parent_freshness_test.go::TestDelegateTaskParentEndedBeforeInsertAnswersParentRevoked_spec_8_2",
+        "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestSessionCreationIndependentOfKMSSigning_spec_10_2"
       ],
       "packages": [
         "pkg/api/v1/session",
@@ -5271,6 +5333,7 @@
       "title": "REST/MCP Consistency Contract",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier3_contract/rest_mcp_consistency/caller_check_parity_test.go::TestCreateSessionCallerCheckParity_spec_15_2_1",
         "pkg/gateway/mcpfabric/mcp/...",
         "tests/tier3_contract/rest_mcp_consistency/error_matrix_test.go",
         "tests/tier3_contract/rest_mcp_consistency/lifecycle_pagination_test.go",
@@ -5784,6 +5847,7 @@
       "title": "Section 25 Audit Events",
       "spec_file": "spec/16_observability.md",
       "tests": [
+        "cmd/lenny-gateway/release_wiring_test.go::TestNoImpersonationSweepRuns_spec_16_7",
         "pkg/observability/audit/catalog_test.go::TestCatalogIsCompleteAgainstSpec167",
         "pkg/observability/audit/catalog_test.go::TestCatalogHasNoUnspecifiedEvents",
         "pkg/observability/audit/catalog_test.go::TestCatalogHasNoDuplicatesOrEmpties",
@@ -5802,7 +5866,9 @@
         "pkg/ops/configservice/configservice_test.go::TestApply_DryRunNoConfigChanged_spec_16_7",
         "pkg/ops/configservice/configservice_test.go::TestApply_ValidationFailureNoConfigChanged_spec_16_7",
         "pkg/ops/configservice/configservice_test.go::TestApply_GatewayErrorNoConfigChanged_spec_16_7",
-        "pkg/ops/configservice/configservice_test.go::TestApply_IdempotentConfirmEmitsConfigChanged_spec_16_7"
+        "pkg/ops/configservice/configservice_test.go::TestApply_IdempotentConfirmEmitsConfigChanged_spec_16_7",
+        "tests/tier4_integration/impersonation_revocation_cross_replica_test.go::TestImpersonationSessionIsSharedAcrossReplicas_spec_13_3",
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestImpersonationBearerRefusals_spec_13_3"
       ],
       "packages": [
         "pkg/observability/audit",
@@ -6795,7 +6861,8 @@
         "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestOpsRevocationSetUnderPostgresLoss",
         "tests/tier9_security/jwt_keyset_forgery_all_components_test.go::TestEveryVerifierRefusesForgedLennyTokens_spec_10_2",
         "tests/tier9_security/ops_revocation_enforcement_test.go::TestOpsRefusesRevokedLennyTokens_spec_25_4",
-        "tests/tier9_security/ops_revocation_enforcement_test.go::TestPlaygroundBearerRefusedOnOpsAndAsCaller_spec_25_4"
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestPlaygroundBearerRefusedOnOpsAndAsCaller_spec_25_4",
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestImpersonationBearerRefusals_spec_13_3"
       ],
       "packages": [
         "cmd/lenny-ops",

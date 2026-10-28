@@ -72,7 +72,10 @@ type IssuedToken struct {
 	RevokedAt     time.Time
 	RevokedReason string
 	// ActSubject and ParentJTI are populated for delegation children
-	// (§8): the acting subject and the parent token's JTI.
+	// (§8): the acting subject and the parent token's JTI. A
+	// platform-admin impersonation bearer carries ActSubject (the
+	// impersonating admin) and no ParentJTI (§13.3 "Platform-admin
+	// impersonation" rule 2).
 	ActSubject string
 	ParentJTI  string
 }
@@ -189,8 +192,10 @@ func (s *Store) Record(ctx context.Context, tok IssuedToken) error {
 //     lock (auditstore.AcquireLockInTx).
 //  3. Step (1a): the issued_tokens rows of the sources are re-read in
 //     one SELECT. A source whose row has revoked_at set returns a
-//     *SourceRevokedError naming its role, and no issuance statement
-//     runs. A source with no row passes.
+//     *SourceRevokedError naming its role; otherwise a source whose row
+//     is an impersonation row returns a *SourceImpersonationError naming
+//     its role. Either way no issuance statement runs. A source with no
+//     row passes.
 //  4. The audit_log row is INSERTed under the same advisory lock.
 //  5. The issued_tokens row is INSERTed.
 //
@@ -212,7 +217,7 @@ func (s *Store) Record(ctx context.Context, tok IssuedToken) error {
 // returned row carries the assigned sequence number and prev_hash so a
 // caller can trace the audit chain forward.
 //
-// spec: §13.3 (Credential Flow: Write-before-issue ordering), §8.2,
+// spec: §13.3 (Credential Flow: Write-before-issue ordering),
 // §11.7.
 func (s *Store) RecordWithAudit(ctx context.Context, tok IssuedToken, sources []SourceToken, auditEventType string, auditPayload json.RawMessage, auditAt time.Time) (audit.Row, error) {
 	var committed audit.Row

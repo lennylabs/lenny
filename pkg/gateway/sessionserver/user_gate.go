@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/lennylabs/lenny/pkg/gateway/callercheck"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
@@ -22,10 +23,49 @@ import (
 // principals and service tokens that were never provisioned through
 // the admin user API still create sessions.
 //
+// Before either gate it runs the §10.2 session-creation caller check
+// (requireCreatingBearerAllowed), so a revoked or impersonation bearer is
+// refused before any claim or store write, whether or not a user registry
+// is wired.
+//
 // requireActiveUser returns true when the request may proceed. When it
 // returns false it has already written the response.
+// spec: §10.2 (Signing topology), §11.4, §12.8.
 func (s *Server) requireActiveUser(w http.ResponseWriter, r *http.Request) bool {
+	if !s.requireCreatingBearerAllowed(w, r) {
+		return false
+	}
 	return s.requireActiveUserForAction(w, r, "cannot create sessions")
+}
+
+// requireCreatingBearerAllowed applies §13.3 step (1a) to the bearer that
+// creates a session, through callercheck.Check. A refusal answers 403
+// FORBIDDEN once its token.exchanged rejection row is durable; a failed
+// issued_tokens read or rejection write answers 500 INTERNAL_ERROR and
+// creates nothing. It runs only on session creation:
+// requireActiveUserForAction, which interaction resolution shares, does
+// not call it. It returns true when the request may proceed; when it
+// returns false it has already written the response.
+// spec: §10.2 (Signing topology), §13.3 (Credential Flow: Write-before-issue
+// ordering, step (1a)).
+func (s *Server) requireCreatingBearerAllowed(w http.ResponseWriter, r *http.Request) bool {
+	principal, ok := getPrincipal(r)
+	if !ok {
+		return true
+	}
+	err := callercheck.Check(r.Context(), s.callerCheck, principal, s.clock())
+	if err == nil {
+		return true
+	}
+	var refused *callercheck.Refused
+	if errors.As(err, &refused) {
+		s.writeError(w, http.StatusForbidden, "FORBIDDEN",
+			"the presented bearer cannot create sessions: "+refused.Reason, nil)
+		return false
+	}
+	s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+		"session-creation caller check failed: "+err.Error(), nil)
+	return false
 }
 
 // requireActiveUserForAction is the caller check: the §11.4 gate on the

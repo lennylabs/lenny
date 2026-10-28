@@ -71,3 +71,32 @@ func TestAllPodsRunningAndReadyRejectsRunningButNotReady(t *testing.T) {
 		})
 	}
 }
+
+// TestParseDirtySchemaVersionSkipsOnDirtyMigration pins the tier-5
+// install gate on the migration row. A lenny-migrate Job that fails
+// mid-migration leaves the previous release deployed and Ready, so the
+// release and readiness gates admitted it and tier-5 tests ran stale
+// images against a partly applied schema. The gate reports the dirty
+// version so InstallLenny skips with a blocked reason instead.
+func TestParseDirtySchemaVersionSkipsOnDirtyMigration(t *testing.T) {
+	cases := []struct {
+		name        string
+		out         string
+		wantVersion string
+		wantDirty   bool
+	}{
+		{name: "dirty", out: "192|t\n", wantVersion: "192", wantDirty: true},
+		{name: "clean", out: "192|f\n", wantDirty: false},
+		{name: "empty table", out: "\n", wantDirty: false},
+		{name: "malformed", out: "192\n", wantDirty: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			version, dirty := parseDirtySchemaVersion(tc.out)
+			if dirty != tc.wantDirty || version != tc.wantVersion {
+				t.Fatalf("parseDirtySchemaVersion(%q) = (%q, %v), want (%q, %v)",
+					tc.out, version, dirty, tc.wantVersion, tc.wantDirty)
+			}
+		})
+	}
+}

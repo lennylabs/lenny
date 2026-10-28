@@ -744,55 +744,64 @@ func (s *Server) cascadeToChildren(ctx context.Context, sess sessionstore.Sessio
 		return
 	}
 	_ = orphanCapFallback // referenced via recordCascadeApplied above
-	all, err := s.store.List(ctx, sess.TenantID, sessionstore.ListFilter{})
-	if err != nil {
-		return
-	}
-	byParent := map[string][]sessionstore.Session{}
-	for _, row := range all {
-		if row.ParentSessionID != "" {
-			byParent[row.ParentSessionID] = append(byParent[row.ParentSessionID], row)
-		}
-	}
-	// Breadth-first over the subtree. A node is cancelled, then its own
-	// children are cascaded only when the cancelled node's own policy
-	// is `cancel_all` — a `detach` node keeps its descendants alive.
+	// spec: §12.8 (Lifecycle fence and drain), §8.10 — breadth-first, one
+	// level at a time. Each level's children come from a listing of the
+	// primary taken after the parent's terminal commit, or after the
+	// previous level's terminal writes returned, so a child the creation
+	// fence admitted before its parent's terminal write is never missed. A
+	// node's children are queued only when the node's own terminal write
+	// applied and its own policy is `cancel_all`: a `detach` node keeps its
+	// descendants alive.
 	seen := map[string]bool{sess.ID: true}
-	queue := append([]sessionstore.Session(nil), byParent[sess.ID]...)
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		if seen[cur.ID] {
-			continue
-		}
-		seen[cur.ID] = true
-		if session.IsTerminal(cur.State) {
-			// Already settled — its own cascade ran when it settled.
-			continue
-		}
-		// spec: §7.2, §8.10 — a hook-path terminal writer per descendant: the
-		// claim opens before the Update, the write applies only over a
-		// non-terminal locked row and records the Terminated fact, and the
-		// post-terminal hook (cancel, seal, drain, the terminal events, the
-		// archive, and the pod release with the cancelled disposition) runs
-		// on a goroutine on a detached context, so one descendant's seal
-		// window does not delay the next. A descendant another writer
-		// already ended is skipped with none of its children queued.
-		end := s.BeginTerminal(cur.ID)
-		from, updated, err := s.writeTerminal(ctx, sess.TenantID, cur.ID, session.StateCancelled, nonTerminalGuard)
+	level := []string{sess.ID}
+	for len(level) > 0 {
+		byParent, err := sessionstore.ChildrenByParent(ctx, s.store, sess.TenantID)
 		if err != nil {
-			end()
-			continue
+			return
 		}
-		hctx := context.WithoutCancel(ctx)
-		go func() {
-			defer end()
-			s.AfterTerminalWrite(hctx, from, updated, s.archiveSettledChild)
-		}()
-		if cur.CascadeOnFailure.Resolve() == session.CascadeCancelAll {
-			queue = append(queue, byParent[cur.ID]...)
+		var next []string
+		for _, parentID := range level {
+			for _, cur := range byParent[parentID] {
+				if seen[cur.ID] {
+					continue
+				}
+				seen[cur.ID] = true
+				if s.cancelCascadedChild(ctx, sess.TenantID, cur) && cur.CascadeOnFailure.Resolve() == session.CascadeCancelAll {
+					next = append(next, cur.ID)
+				}
+			}
 		}
+		level = next
 	}
+}
+
+// cancelCascadedChild makes the hook-path terminal write for one descendant
+// the cascade reached and reports whether it applied. An already-terminal
+// row is skipped: its own cascade ran when it settled.
+//
+// spec: §7.2, §8.10 — the claim opens before the Update, the write applies
+// only over a non-terminal locked row and records the Terminated fact, and
+// the post-terminal hook (cancel, seal, drain, the terminal events, the
+// archive, and the pod release with the cancelled disposition) runs on a
+// goroutine on a detached context, so one descendant's seal window does not
+// delay the next. A descendant another writer already ended reports false,
+// so none of its children are queued.
+func (s *Server) cancelCascadedChild(ctx context.Context, tenantID string, cur sessionstore.Session) bool {
+	if session.IsTerminal(cur.State) {
+		return false
+	}
+	end := s.BeginTerminal(cur.ID)
+	from, updated, err := s.writeTerminal(ctx, tenantID, cur.ID, session.StateCancelled, nonTerminalGuard)
+	if err != nil {
+		end()
+		return false
+	}
+	hctx := context.WithoutCancel(ctx)
+	go func() {
+		defer end()
+		s.AfterTerminalWrite(hctx, from, updated, s.archiveSettledChild)
+	}()
+	return true
 }
 
 // detachExceedsOrphanCap reports whether the tenant's active orphan

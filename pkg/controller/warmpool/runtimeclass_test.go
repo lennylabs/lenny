@@ -48,8 +48,9 @@ func degradedCondition(t *testing.T, p lennyv1.SandboxWarmPool) (metav1.Conditio
 //
 // spec: §5.3.
 func TestReconcileRuntimeClassMissing_spec_5_3(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(3, 10))
+	c := newClient(t, s, template(ns), pool(ns, 3, 10))
 	stub := &stubRuntimeClassChecker{exists: false}
 
 	r := &warmpool.Reconciler{Client: c, Scheme: s, RuntimeClasses: stub}
@@ -82,8 +83,9 @@ func TestReconcileRuntimeClassMissing_spec_5_3(t *testing.T) {
 //
 // spec: §5.3.
 func TestReconcileRuntimeClassPresent_spec_5_3(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(2, 10))
+	c := newClient(t, s, template(ns), pool(ns, 2, 10))
 	stub := &stubRuntimeClassChecker{exists: true}
 
 	r := &warmpool.Reconciler{Client: c, Scheme: s, RuntimeClasses: stub}
@@ -110,8 +112,9 @@ func TestReconcileRuntimeClassPresent_spec_5_3(t *testing.T) {
 //
 // spec: §5.3.
 func TestReconcileRuntimeClassRecovers_spec_5_3(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(2, 10))
+	c := newClient(t, s, template(ns), pool(ns, 2, 10))
 	stub := &stubRuntimeClassChecker{exists: false}
 	r := &warmpool.Reconciler{Client: c, Scheme: s, RuntimeClasses: stub}
 
@@ -138,12 +141,13 @@ func TestReconcileRuntimeClassRecovers_spec_5_3(t *testing.T) {
 //
 // spec: §5.3.
 func TestReconcileRuntimeClassCheckerError_spec_5_3(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(1, 10))
+	c := newClient(t, s, template(ns), pool(ns, 1, 10))
 	stub := &stubRuntimeClassChecker{err: errors.New("apiserver unreachable")}
 
 	r := &warmpool.Reconciler{Client: c, Scheme: s, RuntimeClasses: stub}
-	if _, err := r.Reconcile(testContext(), reconcileRequest()); err == nil {
+	if _, err := r.Reconcile(testContext(), reconcileRequest(ns)); err == nil {
 		t.Fatal("Reconcile returned nil error on RuntimeClass check failure, want error")
 	}
 	if got := poolSandboxes(t, c); len(got) != 0 {
@@ -157,8 +161,9 @@ func TestReconcileRuntimeClassCheckerError_spec_5_3(t *testing.T) {
 //
 // spec: §5.3.
 func TestReconcileNilRuntimeClassChecker_spec_5_3(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(2, 10))
+	c := newClient(t, s, template(ns), pool(ns, 2, 10))
 
 	reconcile(t, c, s) // builds a Reconciler with no RuntimeClasses checker
 
@@ -199,10 +204,11 @@ func TestReaderRuntimeClassChecker_spec_5_3(t *testing.T) {
 //
 // spec: §5.3.
 func TestReconcileUnsetProfileSkipsRuntimeClassCheck_spec_5_3(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	tmpl := template()
+	tmpl := template(ns)
 	tmpl.Spec.IsolationProfile = "" // optional; maps to no RuntimeClass
-	c := newClient(t, s, tmpl, pool(1, 10))
+	c := newClient(t, s, tmpl, pool(ns, 1, 10))
 	stub := &stubRuntimeClassChecker{exists: false}
 
 	r := &warmpool.Reconciler{Client: c, Scheme: s, RuntimeClasses: stub}
@@ -219,8 +225,9 @@ func TestReconcileUnsetProfileSkipsRuntimeClassCheck_spec_5_3(t *testing.T) {
 // guard against an accidental message-format regression that would drop
 // the actionable remediation half of the §5.3 message.
 func TestRuntimeClassMissingMessageActionable_spec_5_3(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(1, 10))
+	c := newClient(t, s, template(ns), pool(ns, 1, 10))
 	r := &warmpool.Reconciler{Client: c, Scheme: s, RuntimeClasses: &stubRuntimeClassChecker{exists: false}}
 	reconcileWith(t, r)
 	cond, _ := degradedCondition(t, getPool(t, c))
@@ -234,8 +241,9 @@ func TestRuntimeClassMissingMessageActionable_spec_5_3(t *testing.T) {
 // (e.g. `runsc`) so the presence check queries the right object and a
 // Degraded message references it.
 func TestRuntimeClassOverrideRoutesPresenceCheck_spec_17_5(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(1, 10))
+	c := newClient(t, s, template(ns), pool(ns, 1, 10))
 	stub := &stubRuntimeClassChecker{exists: false}
 
 	r := &warmpool.Reconciler{

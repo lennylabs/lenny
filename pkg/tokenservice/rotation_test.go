@@ -47,7 +47,7 @@ func (f *fakeRotationStore) RecordWithAudit(_ context.Context, tok issuedtokenst
 ) (audit.Row, error) {
 	f.recordWithAud++
 	f.sources = append([]issuedtokenstore.SourceToken(nil), sources...)
-	if err := fakeRecheck(sources, f.revoked); err != nil {
+	if err := fakeRecheck(sources, f.revoked, nil); err != nil {
 		return audit.Row{}, err
 	}
 	f.minted = append(f.minted, tok)
@@ -63,7 +63,7 @@ func (f *fakeRotationStore) RecordWithRotationAudit(_ context.Context, tok issue
 ) (string, bool, error) {
 	f.gotPrevJTI = prevJTI
 	f.sources = append([]issuedtokenstore.SourceToken(nil), sources...)
-	if err := fakeRecheck(sources, f.revoked); err != nil {
+	if err := fakeRecheck(sources, f.revoked, nil); err != nil {
 		return "", false, err
 	}
 	f.minted = append(f.minted, tok)
@@ -287,7 +287,7 @@ func TestHandlerRotationPreviousAbsentEmitsNoRevoked_spec_16_7_5(t *testing.T) {
 	}
 }
 
-// spec: 13.3 (Credential Flow), 8.2 (Delegation Mechanism) — a retried
+// spec: 13.3 (Credential Flow) — a retried
 // rotation presents a subject token the first rotation already revoked.
 // The in-lock step (1a) re-read finds it revoked, so the exchange fails
 // with 400 invalid_grant subject_token_revoked, no second token is minted,

@@ -83,7 +83,8 @@ tests:
 
   # spec: §25.4, §17.9.1 "Production mode" — the tier2 preset sets the
   # §25.4 platform tier on lenny-ops, which selects the required
-  # Idempotency-Key; capacity tier does not select production mode.
+  # Idempotency-Key; capacity tier does not select production mode. The
+  # readiness path is /healthz in every environment (§25.4, F-25.4.37).
   - it: tier2 preset renders the tier2 platform tier on lenny-ops
     values:
       - ../presets/values-tier2.yaml
@@ -100,7 +101,7 @@ tests:
           content: --platform-tier=tier2
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
-          value: /readyz
+          value: /healthz
 
   - it: tier3 preset renders the tier3 platform tier on lenny-ops
     values:
