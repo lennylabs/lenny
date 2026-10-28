@@ -52,7 +52,8 @@ func TestIdleSweepExpiresIdleRunningSession_spec_11_3_199(t *testing.T) {
 	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, idleCfg(600), nil)
 
 	// 10 minutes after birth with no activity: past the 600s idle cap (the
-	// anchor falls back to UpdatedAt = born). maxSessionAge is disabled here,
+	// anchor falls back to StateEnteredAt, which Create stamps as CreatedAt =
+	// born). maxSessionAge is disabled here,
 	// so this is purely the idle path.
 	res, err := w.Tick(context.Background(), born.Add(10*time.Minute+time.Second))
 	if err != nil {
