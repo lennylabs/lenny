@@ -1060,6 +1060,8 @@ step depends on it.
 
 **Re-derived 2026-10-21.** The step text predates proposals 0091 to 0093, which built `tests/testinfra/lifecycleharness`: N in-process `sessionserver` replicas over one session store (in-memory or Postgres), shared miniredis, envtest, an in-process adapter with a recording runtime, a stepped clock, a trace-indexed fault injector, the `Checker` invariants, the `MaxConcurrentSessions` concurrent-slot dimension, and `Proxy` partitions. It already runs at tiers 1, 2, 4, 7a, and 8, and a non-holder case exists (`TestHeldPodSuspendedMessageWaitsInTheDLQ_spec_7_2`). R7 narrows to what that harness cannot do: a two-replica lane that boots real `cmd/lenny-gateway` subprocesses, so the composition root's wiring is exercised; a tier-5 lane that pins a request to a non-holder (the chart already runs `gateway.replicas: 2`); and the default-values parity gate with the nightly stock-defaults lane, which also covers `controller.replicas: 1` and the overlay's other `enabled: false` overrides. `tests/testinfra/kind/e2e-values.yaml` still disables mTLS and `tests/tier9_security/tls_test.go` still self-skips; the overlay's stated reason (F-10.3.10) is closed, and the remaining blocker is the per-pod serving certificate that R14 adds. R10, R19, R20, R21, and R22 use `lifecycleharness` as their primary substrate and state which of their cases need the subprocess lane. `resolveReplicaID` now lives in `cmd/lenny-gateway/coordination_identity.go`.
 
+**Re-derived 2026-10-28.** Narrowed and widened. Proposal 0101 added the forward lane to `lifecycleharness` (`tests/testinfra/lifecycleharness/forward_test.go`), so off-holder requests at tiers 2, 4, 7a, and 8 already reach the coordinator over `CH-HOLDERFORWARD`, and its two-replica route tests (`tests/tier4_integration/holder_forward_routes_test.go`) run on that harness. The subprocess lane and the default-values parity gate are unbuilt. The tier-5 non-holder lane gains a precondition: the e2e overlay sets `global.devMode: true` and `mtls.enabled: false`, and §10.3 NET-072 says a dev-mode gateway without the replica certificate does not forward, so the Kind install runs no forward listener and every off-holder request there takes the not-delivered outcome (TEST-GAPS T-10.3.15, filed 2026-10-28). The lane therefore lands with or after R14, which lets the overlay turn mTLS on. R19 and R21 have landed, so the steps that use this harness are R10, R20, and R22.
+
 **Size.** M (was L).
 
 ### R8. Reciprocal host-conformance battery
@@ -1090,6 +1092,8 @@ rendered podspec rather than a synthesized manifest.
 lane instead. Decide on measurement rather than in advance.
 
 **Re-derived 2026-10-21.** Unblocked: R1b and R6 have landed, and nothing is built yet. The fake host in `cmd/lenny-compliance/full.go` now writes the `runtimeOps` manifest key. Proposal 0090 adds host-side assertions: the `session_start`, `session_started`, and `session_end` frames and their write table, the `session_started` gate before session-scoped `CH-RUNTIMEOPS` frames, the required `sessionId`, the deleted `terminate` frame, `DemoteSDK` failing closed, and the `_lennyNonce` handshake. The claim register defers two `ABSENT` rows here (the runtime-ops-events schema in `cmd/lenny-compliance/schemavalidate.go`, and third-party slot-bind conformance). `tests/testinfra/ackruntime` serves as the reference runtime.
+
+**Re-derived 2026-10-28.** Still needed as written. Nothing landed since 2026-10-21 touches the host-conformance surface. Proposal 0087 part 1 (implemented 2026-10-24) adds `CH-SUPERVISE` inside the pod, and the battery asserts host behavior on the rendered podspec that now carries it. The two `ABSENT` claim rows deferred here are unchanged.
 
 **Size.** L.
 
@@ -1181,6 +1185,8 @@ escape hatch, and each entry is countable rather than anonymous.
 
 **Re-derived 2026-10-21.** Not started; `opsDeadCodePackages` still covers four packages. A partial G2a exists as `adapterClientReachableRPCs` in `tests/tier0_static/claim_register_test.go`, applied to the credential rows only; generalize it. The 2026-07-27 revert `54292da1b` (the eviction-trigger proposal) removed `Options.InterReplicaAddress` and `coordlease.GetBySession`, so those stage-3 rows are void, and 0092 wired `maxSuspendedPodHoldSeconds`; stage 3 keeps the `Interrupt` literal and `PodSpiffeURI`. G2b has seven rows (`pkg/adapter/adapterevents.go`), and the `RATE_LIMITED` trap still holds. G2c has grown: 0090 and 0093 added adapter collectors, the catalog lists three `lenny_adapter_*` metrics, and the adapter still serves no metrics endpoint. New register candidates: `slotcounter.Counter.Reset` (F-10.1.38) and the `inbox_cleared` emitter (F-7.2.40, which R20 wires).
 
+**Re-derived 2026-10-28.** Still needed as written. One register candidate is added: `pkg/gateway/session/routingcache` has no caller outside its package, and under 0101's D2 `REG-COORDLEASE` is the only authority for the forward target, so R24 decides it. `Server.ForwardToHolder` exists only under the `contract` build tag, and stage 1 must not count it as a production reference.
+
 **Size.** M.
 
 ### R10. Coordinator gate on the session REST surface, and the duplicate terminal
@@ -1240,7 +1246,9 @@ is documented as interim.
 
 **Re-derived 2026-10-21.** Routes are registered in `pkg/gateway/sessionserver/route_table.go`, and the count of twenty still holds; 0091 to 0093 added no route and 0094 removes `DELETE /v1/responses/{id}`. Proposal 0092 added `coordinatesSession`, which reads the `REG-COORDLEASE` holder and gates the held-pod `POST /resume` and the held-message drain; it is the gate primitive this step reuses. Three changes of scope follow. The `Adapter/Terminate` work item is dropped: `040323634` deleted the RPC, and a holder-side terminal write now reaches the pod through the post-terminal release and the adapter `Shutdown`. The duplicate-terminal half of 8.7 is closed by 0092 (F-10.1.34), and the reconciler's leader gating moves to P3. The off-holder terminate and delete forward is P2's (F-10.1.33), so R10 owns the typed fail-closed refusal on every other route. Two items are added: the MCP tool surface, which §29.3 maps onto the REST rows (`mcptools_register.go`), and a restatement of the §29.3 interaction-resolution rows as store-and-wake, which is how the four routes already work across replicas. Proposal 0094 adds Article 18 checks in `interactions.go`, so R10b sequences against it as well as R20.
 
-**Size.** M (was L).
+**Re-derived 2026-10-28.** Narrowed, and R10b is retired. Proposal 0101 forwards every pod-touching §29.3 row: terminate and delete (`session_transitions.go`), interrupt, the held-pod resume, `/upload-to-session`, the message batch, and the MCP `lenny/send_message` and `lenny/cancel_session` tools, each answering 409 `TARGET_NOT_READY` when the forward is not delivered. Its SPEC-5 restates the interaction-resolution rows as store-and-wake and states that a route touching only the `SessionStore`, `ArtifactStore`, or `EventStore` needs no forward. Every other §29.3 row therefore needs no gate, and the typed fail-closed refusal on "every other route" is void. R10 keeps three items: a tier-0 ratchet that fails when a session-scoped route or MCP tool is registered with no §29.3 classification; a table-driven suite over the §29.3 rows 0101's TEST-2 does not cover, on `lifecycleharness`; and an audit of the session-addressed MCP tools that map onto a forwarded REST row (for example `lenny/cancel_child`), each either forwarded or recorded as outside the forwarded set. The duplicate-terminal half of 8.7 stays closed by 0092, and R10 no longer sequences against R20 or against 0094's `interactions.go` edits.
+
+**Size.** S (was M on 2026-10-21, L before).
 
 ### R11. LLM proxy dialects reach a route
 
@@ -1268,6 +1276,8 @@ presupposes R5.
 **Risk.** Minimal. The only judgement is which direction to take, and the card forces it to be recorded.
 
 **Re-derived 2026-10-21.** The one route moved to `cmd/lenny-gateway/llmproxy_server.go`. Registering an `openai` route is not sufficient: `llmproxy.Handler` hardcodes `DialectAnthropic` for request and response translation, and the OpenAI-direct and Azure translators accept only `openai`, so a lease whose provider resolves to `openai_direct` or `azure_openai` already fails translation on the existing route. The step parameterizes the handler by dialect, adds the routes the §28.5.5 card lists (`/v1/chat/completions`, `/v1/embeddings`, and the streaming variant), and states the dialect-to-provider matrix. Every dependency has landed.
+
+**Re-derived 2026-10-28.** Still needed as written. No change since 2026-10-21 touches `llmproxy` or the dialect routes.
 
 **Size.** M (was S).
 
@@ -1351,6 +1361,8 @@ whether a deployer has a stored pool on a retired dialect, which the startup che
 
 **Re-derived 2026-10-21.** Not started; the plan's spec line citations are stale and the §28.5.5 card already lists only `openai` and `anthropic`. Added scope: `credential.UserProxyDialect` maps `ProviderVertexAI` to `google` and `ProviderCursorDirect` to `cursor` for the user-credential path (`usercreds.go`, `credential_preclaim.go`), so narrowing the enum remaps Vertex (its translator accepts only `anthropic`) and removes proxy delivery for `cursor_direct`. The startup check also reports stored user credentials on a retired dialect.
 
+**Re-derived 2026-10-28.** Still needed as written. No change since 2026-10-21 touches `credential.ProxyDialect` or the §26 catalog entries.
+
 **Size.** S.
 
 ### R12. The adapter-to-gateway control direction, with hold state
@@ -1419,6 +1431,8 @@ for the stream.
 
 **Re-derived 2026-10-21.** The stream handler and hold state live in `pkg/adapter/adapterevents.go` and `holdstate.go`. The concurrent-slot correction is stale: since `3997f502b` hold state arms on `hasStartedSession()`, but the hold is pod-scoped, so its timeout ends every started session and it blocks every sibling session's coordinator. R12 replaces "per-slot hold state" with a correct entry condition for that pod-scoped hold, and reconciles one-stream-per-pod ownership with per-session `REG-COORDLEASE` and 0091's Sweeper eviction. The consumers wire into what has landed since: `AdapterTerminating` feeds 0091's failure funnel so the session ends `resume_pending` and 0092's resume driver restores it, and `FINAL_USAGE_REPORT` feeds the budget return. R6 added the `--otlp-endpoint` and `--otlp-tls-disabled` exception-register rows. §28.5.2 lists a slot-failure event with no event type in the code; R12 adds it or records that the `CH-ATTACH` stream end replaces it. The claim register's "Runtime lifecycle channel (at deployment)" row belongs to R17, and its service-account-token row moves to R14. R7 remains a test dependency for the concurrent-slot row.
 
+**Re-derived 2026-10-28.** Still needed as written, with one new predecessor. The coordination fence-refusal proposal in section 10.2 (F-10.1.42, F-10.1.43, and F-10.1.44) precedes R12, because R12's reconnect and arbitration read the same `FailedPrecondition` the fence refusal overloads. Proposal 0101 changes no adapter-side surface. The claim register still defers four rows here, two of which (the deployment-time `CH-RUNTIMEOPS` row and the service-account token row) the 2026-10-21 paragraph re-owns to R17 and R14, and R25 re-points them.
+
 **Size.** L.
 
 ### R13. Bind-time coordinator resolution
@@ -1450,6 +1464,8 @@ design note for the address format.
 **Risk.** Low, given the address-format edge is honored.
 
 **Re-derived 2026-10-21.** The premise is gone. Revert `54292da1b` removed the spec statement that the session server seeds the mirror at bind, `coordlease.GetBySession`, the `coordinator_address` column, and `InterReplicaAddress`; §28.3 names the Sweeper as the only `REG-COORDMIRROR` writer. Routing identifies the coordinator by the `REG-COORDLEASE` holder, acquired at every bind. R13 narrows to refreshing the mirror at bind and at the resume commit, which closes F-10.1.35 (a barrier sent within one Sweeper interval of a resume commit carries a stale generation). The replica address moves to the inter-replica carrier proposal that precedes R18, because `resolveReplicaID` returns a hostname with a random suffix rather than a dialable address.
+
+**Re-derived 2026-10-28.** Narrowed further. Proposal 0101 landed the replica address in the `REG-COORDLEASE` holder value (§10.1.1 **Replica address:**), states that `REG-COORDMIRROR` is never read for routing (its D2), and rewrites the §10.1.8 barrier-target query to match the holder value. R13 keeps the mirror refresh at bind and at the resume commit, which closes F-10.1.35 and the `ABSENT` "Mirror seed at bind" claim row; the refresh writes the composite holder value. Two claim rows deferred here leave the step: "`coordlease.GetBySession` routing read" names a symbol that no longer exists (R25 removes it), and "Redis hot routing cache" moves to R24. The carrier-proposal predecessor is met, and the coordination fence-refusal proposal in section 10.2 now precedes R13.
 
 **Size.** S (was M).
 
@@ -1502,6 +1518,8 @@ converted into another.
 
 **Re-derived 2026-10-21.** The facts hold, with the podspec now in `pkg/controller/sandbox/podspec/` (R6). R6 seeded three exception-register rows with `blocker: R14` (`--tls-cert-file`, `--tls-key-file`, `--tls-client-ca-file`), which this step deletes in the same change. The claim register defers the service-account-token row to R12; this step owns it, and the register row is re-pointed. More RPCs ride `LNK-GWCONTROL` since 0079 (`ReportPodScrub`, `ReportSessionScrub`).
 
+**Re-derived 2026-10-28.** Widened. Proposal 0101's D5 makes a gateway with a lease store refuse to start without the replica certificate outside dev mode, and CHART-1 refuses `mtls.enabled: false` with Redis outside `global.devMode`. The e2e overlay can turn mTLS on only once agent pods carry the per-pod certificate this step adds, and until then the Kind install runs no `CH-HOLDERFORWARD` listener (TEST-GAPS T-10.3.15). The exit criterion therefore also covers the overlay: after R14 the e2e overlay sets `mtls.enabled: true`, `tests/tier9_security/tls_test.go` stops skipping, and R7's tier-5 non-holder lane runs against a serving forward listener. Proposal 0104 (implemented 2026-10-28) leaves pods holding no Lenny-issued JWT and split out the forwarded-call session binding as F-10.2.29, which the section 10.2 queue places after R14.
+
 **Size.** L.
 
 ### R15. Runtime-frame schema conformance
@@ -1536,6 +1554,8 @@ window opens (serialization rule S-2).
 **Risk.** Low. Making an emitter match a schema is bounded work.
 
 **Re-derived 2026-10-21.** Partly done. Proposal 0090 deleted the `terminate` frame, the 0092 series rejects an unknown deadline trigger (`tests/tier3_contract/runtimeops_emitted/deadline_trigger_test.go`), an emitted-bytes round trip exists (`emitted_frames_test.go`), and `files_updated` has a fixture. Remaining: the `omitempty` zero-value omissions in `runtimeops.go` (such as `remainingMs: 0`), the `deadlineMs` lower bound, inbound validation of `credentials_acknowledged` and `llm_request_*` fields, fixtures for `credentials_acknowledged` and `llm_request_started`, a schema-member bijection, and zero-value round-trip cases. The `ready_for_input` frame moves to R20, which decides it against 0092's `heartbeat_ack.busy`.
+
+**Re-derived 2026-10-28.** Still needed as written. No change since 2026-10-21 touches `runtimeops.go` or the runtime-ops schema.
 
 **Size.** S (was M).
 
@@ -1578,6 +1598,8 @@ only after a proposal settles them. The measured numbers and the two candidate d
 outcome.
 
 **Re-derived 2026-10-21.** Revert `54292da1b` removed `AdapterEvicting`, `setEvicting`, `isEvicting`, and the best-effort snapshot, and the specification states no eviction message name. R16 therefore re-creates the flag, the event, and both best-effort branches rather than wiring them, and it is preceded by the adapter shutdown and eviction proposal in §10.2 (F-4.6.31's budget, the eviction signal, and the best-effort snapshot), sequenced against 0087 part 1's pod-exit ordering. R16 also takes the items 0093 handed it: the pod-side `Shutdown` generation fence, the lease and mirror release at a terminal write, the §10.1.1 statement of when a pre-running start acquires the lease, and 0093 register row A18. F-4.6.37 (the preStop hook exec'd a binary the image lacks) was fixed directly on 2026-10-22. Its tier-5 test then exposed F-4.6.38: the `prestop` subcommand SIGTERMs PID 1 of its own container and is SIGKILLed with it, so every deletion records FailedPreStopHook; R16 replaces the hook body with the §4.6.1 eviction checkpoint trigger and lifts that test's `blocked:` skip. The claim register's eviction rows become `ABSENT`, and its PDB row is closed against R6.
+
+**Re-derived 2026-10-28.** Still needed as written. Proposal 0087 part 1 is implemented, so the adapter shutdown and eviction proposal is written against the supervised pod-exit ordering. Proposal 0100 landed the gateway-side shutdown wait (F-10.1.27) and the post-terminal window, which leave R16's adapter-side items unchanged. Proposal 0101 moves the off-holder terminate and delete terminal write to the coordinator, so the release at a terminal write runs on the holder for those routes; the drain's forced transition stays off-holder (F-12.8.61). The coordination contract proposal (F-10.1.40 and F-10.1.41) can join R16's §10.1.1 edit for F-10.1.39.
 
 **Size.** L, plus the proposal.
 
@@ -1627,6 +1649,8 @@ control, and the tier-8 eviction-edge matrix from R16 is the regression net.
 
 **Re-derived 2026-10-21.** The hazard and rule S-5 hold. The heartbeat-hung path no longer SIGTERMs the runtime (it escalates through `Runtime.Interrupt` and ends the stream), and `RuntimeConnected()` does not exist; the quiesce block is additionally gated by 0090's `session_started` checkpoint gate. The dead-runtime branch is restated for a runtime crash, a heartbeat-hung runtime, and the gap between runtime generations under 0087. R17 serializes with 0087 part 1's podspec edits under S-4, and 0087's stale-binary decision covers the socket render.
 
+**Re-derived 2026-10-28.** Still needed as written. Proposal 0087 part 1 landed on 2026-10-24, so the S-4 serialization against its podspec edits is met.
+
 **Size.** L.
 
 ### R18. The inter-replica transport
@@ -1656,6 +1680,8 @@ subsystem be built alongside the largest existing-code chain.
 **Risk.** A new listening port on the gateway is a security surface. Tier 9 coverage is not optional here.
 
 **Re-derived 2026-10-21.** Nothing exists yet. Scope widens from `ForwardMessage` to a general request-forwarding service: §29.3 names no carrier for the interrupt, terminate, delete, resume, interaction-resolution, and upload rows, and F-29.3.1 needs one. The step is preceded by the inter-replica carrier proposal in §10.2, which also defines the replica address and states why gRPC is chosen over the existing Redis pub/sub propagator (`podterminate/propagator`). The chart's policies are now `agent-`, `ops-`, `self-managed-backend-`, and `system-network-policies.yaml`.
+
+**Landed 2026-10-28.** Proposal 0101 (merge `9c69b8398`) built the transport as an HTTP channel, `CH-HOLDERFORWARD`, rather than the proto service this entry planned (its D1). The replica address is part of the `REG-COORDLEASE` holder value (D2 and D3), the listener runs on `gateway.holderForwardPort`, default 50054 (D4), both ends present the gateway replica certificate under §10.3 NET-072 (D5), and CHART-1 adds the self-peer rules to `allow-gateway-egress` and `allow-gateway-ingress`. Tier 3 covers the forward helper through the contract-tagged `Server.ForwardToHolder` (an accepted deviation), and tier 9 covers the port under a live CNI (`TestHolderForwardPortAdmitsOnlyGatewayPeers_spec_13_2_4`), which discharges 8.4b. The claim rows are `WIRED`.
 
 **Size.** L, plus the proposal.
 
@@ -1693,6 +1719,8 @@ and address), R20 (duplicate suppression), and R7.
 circuit-breaking belong in the §28 card.
 
 **Re-derived 2026-10-21.** 0092's re-derivation holds. R19 owns F-7.2.38, F-29.3.2, and F-29.3.1 (the off-holder held-pod resume), and its first spec step still rewrites the §29.3 inbox fallback to the DLQ. Its R13 dependency becomes the carrier proposal's address. The claim register's `inputwait` row moves from R19 to R20.
+
+**Landed 2026-10-28.** Proposal 0101 (checklist steps S8 to S10) forwards each §29.3 forwarded route, holds a not-delivered message without `inReplyTo` in the session DLQ under §29.3 **Forwarding.** rule 6, forwards the held-pod resume, and fails a not-delivered `inReplyTo` reply closed. It closed F-7.2.38, F-29.3.1, F-29.3.2, and F-10.1.33. Three items stay open under other owners. The claim row "SSE live tail across replicas" (`RedisRelay.LiveFromCursor` has no caller, and §29.3 serves the live tail from `CH-EVENTRELAY`) still names R19 and moves to R24, with R25 re-pointing the row. Duplicate suppression is F-7.2.41 under R20, and 0101's tier-7a interleaving test skips the held redelivery as blocked on it (deviation D1). F-29.3.3 (the `resuming` state in the terminate and delete rows) was not taken by 0101 and is re-routed in section 10.2.
 
 **Size.** M.
 
@@ -1735,6 +1763,8 @@ held-message delivery after a restore; the suppression set's lifetime has to sur
 
 **Re-derived 2026-10-21.** The elicitation case of 8.5 landed in `79b5fc933`, so it leaves the step. R20 gains `ready_for_input` from R15 and F-7.2.40: 0092 removed the only caller of `ClearInboxOnAcquire`, so no code emits `inbox_cleared`, and R20 wires it at Sweeper adoption.
 
+**Re-derived 2026-10-28.** Widened. The duplicate-suppression and trimmer bullets above are BUILD-GAPS F-7.2.41 and F-7.2.42, and closing F-7.2.41 lifts the blocked skip in 0101's `holder_forward_interleaving_test.go`. The `ABSENT` claim row "Single-consumer enforcement on `Attach` at the pod" carries deferral R20 since proposal 0071's retirement and is in scope. Proposal 0101 forwards an `inReplyTo` reply to the coordinator, while the `lenny/request_input` wait sits on the replica the pod's `LNK-GWCONTROL` connection reached, so the shared input-wait store is what lets the coordinator resolve it. Proposal 0105 (approved) persists `input_required` with an `input_wait_id` and recovers it at the `LNK-GWCONTROL` connection boundary (its D13), and it removed F-11.3.39's dependency on R20. R20 builds the shared store on 0105's wait identity and follows 0105's implementation, which edits `pkg/gateway/session/inputwait`. F-8.8.17 and F-7.2.37 stay here, and 0106's deadlock changes leave F-8.8.17 unchanged. The R19 predecessor has landed.
+
 **Size.** M.
 
 ### R21. The off-holder eviction leg
@@ -1760,6 +1790,8 @@ card must be enforced rather than documented.
 
 **Re-derived 2026-10-21.** The plan's premise is obsolete: the `spec/04` requirement to dial the pod off-holder was removed by revert `54292da1b`, and §4.6.1 and §28 now state that only the lease-holding coordinator drives the eviction checkpoint. Proposal 0093 rejected the durable release record this step was to consume. Proposal 0094 points a claim-register row (the `admin.DrainSessions` terminal tail) at R21 as the step that releases a pod bound on another gateway replica. R21 is rewritten around that duty: a cross-replica release request carried over R18 or the existing Redis propagator, specified by the carrier proposal. The concurrent-slot eviction leg is dropped unless the carrier proposal re-justifies it against current §28.
 
+**Landed 2026-10-28.** Proposal 0101 (checklist steps S11 to S13) carries the cross-replica release on the existing Redis propagator, registered as `CH-BINDRELEASE` and renamed to the `bindrelease` package (its D14 and D15), rather than on `CH-HOLDERFORWARD`. `DrainSessions` publishes its transitioned sessions, including after its context ends (an accepted deviation), and each peer's subscriber releases only bindings whose primary row is terminal. It closed F-12.8.43 together with 0100. The drain's forced transition still runs on the replica that runs the drain (F-12.8.61, admin session investigation proposal), the Sweeper backstop release has no spec basis (F-10.1.40, coordination contract proposal), and the concurrent-slot eviction leg stays dropped (a 0101 non-goal).
+
 **Size.** M.
 
 ### R22. Concurrent-slot resume and restore
@@ -1780,6 +1812,8 @@ carved `start.go`).
 **Risk.** Restore correctness on a shared pod is the highest data-loss surface in the plan.
 
 **Re-derived 2026-10-21.** Mostly done. `040323634` removed every `slot_id` and addresses each slot by session, so the handler layer of 6b.9 is closed and there are no gateway fields to populate. The adapter `Resume` claims its slot through `claimSessionSlot`, `Binder.Resume` reserves a counted slot (`7c34d7be7`), and 0093 keyed the slot set by session. What remains is a tier-4 restore onto a concurrent pod with a live co-tenant, built on `lifecycleharness`; the R1b dependency is dropped. F-5.2.51, F-5.2.54, and the D9 race stay with their owners.
+
+**Re-derived 2026-10-28.** Still needed as written. The tier-4 restore onto a concurrent pod with a live co-tenant remains, and nothing since 2026-10-21 builds it.
 
 **Size.** S (was L).
 
@@ -1805,6 +1839,8 @@ safe compression, and both cannot be true. It is a leaf.
 **Risk.** Low.
 
 **Re-derived 2026-10-21.** The sidecar half moved to 0087 part 1 (F-6.1.28), so the option of wiring `Server.PreConnect` into the sidecar is dropped. R23 keeps the gateway `DemoteSDK` fallback in `podsession/bindlaunch.go`, treating 0090's fail-closed `DeadlineExceeded` as "fail the pod and claim a replacement", the §28 card note, and the handler doc-comment fix, and it depends on 0087 part 1 for an end-to-end sidecar test. The claim register defers the pod `grpc.health.v1.Health` client row here, and marks the SDK-warm pod row `WIRED`, which R25 corrects to `UNWIRED`.
+
+**Re-derived 2026-10-28.** Still needed as written. Proposal 0087 part 1 landed on 2026-10-24, so the end-to-end sidecar test this step depends on can run.
 
 **Size.** S (was M).
 
@@ -1833,6 +1869,8 @@ file is not in flight, rather than as one change.
 **Risk.** Low individually, wide collectively.
 
 **Re-derived 2026-10-21.** `maxSuspendedPodHoldSeconds` is consumed by `watchdog.sweepSuspended` since 0092, so that row is dropped. The other rows are still open; `Checkpointer.Deadline` and `checkpoint.CheckpointTimeout` are now duplicated by a 60-second constant in `sessionserver/suspend_release.go`, which the disposition folds. `slotcounter.Counter.Reset` (F-10.1.38) is added unless P1 or 0087 claims it.
+
+**Re-derived 2026-10-28.** Widened by two claim rows that other steps deferred. The "SSE live tail across replicas" row (deferral R19) is the `RedisRelay.LiveFromCursor` row of this list, and §29.3 requires the live tail from `CH-EVENTRELAY`, so its verdict is to wire it. The "Redis hot routing cache" row (deferral R13) is the hot routing cache of this list, and under 0101's D2 the lease is the only forward-target authority, so its verdict is delete or record as intentional. R25 re-points both rows to R24.
 
 **Size.** M.
 
@@ -1864,6 +1902,8 @@ or partial R2b cannot leave half-open; and running every tier, which is 8.1's ac
 **Risk.** If this step is dropped, the plan's closures are assertions.
 
 **Re-derived 2026-10-21.** The reconciliation test extends the existing claim-register test, which validates statuses and checks reachability for the credential rows only. Seeds are `AdapterEvents` and the hold-state arm in `adapterevents.go`. `TestEvictingFlag_spec_4_6_1` no longer exists; `TestControlEventDroppedWhenNoStream_spec_4_7` remains. The tier-11 conversion covers 23 source-reading files. `tests/registers/line-citations.yaml` is already empty, so the emptiness check is a one-line assertion. Added: reconcile `tests/claim-map.json` with this re-derivation (stale statuses, dead surfaces, and the owner moves recorded under R12, R14, R15, R16, R19, R20, and R23, and the kubelet-probe row still deferred to the landed R6).
+
+**Re-derived 2026-10-28.** Widened. The claim-register reconciliation also re-points "SSE live tail across replicas" from R19 to R24 and "Redis hot routing cache" from R13 to R24, and removes "`coordlease.GetBySession` routing read", whose symbol no longer exists.
 
 **Size.** M.
 
@@ -2367,6 +2407,34 @@ it, and name the commit or merge.
 
 ### 10.1 Remediation steps
 
+**Re-derivation after 0101 (2026-10-28).** Proposal 0101 (merge `9c69b8398`) landed R18, R19, and R21.
+R7 to R25 were then re-derived against the tree at `99b79c90d`, which also carries proposals 0097, 0100,
+0102, 0103, and 0104 implemented, proposals 0105 and 0106 approved, proposal 0107 drafting, and the
+BUILD-GAPS direct fixes closed from 2026-10-26 to 2026-10-28. Each open step's section 5 entry carries a
+**Re-derived 2026-10-28** paragraph, and the changes are these:
+
+- Ticked: R18, R19, and R21. R19's one remaining claim-register row, the SSE live tail across replicas,
+  moves to R24, which already lists `RedisRelay.LiveFromCursor`.
+- Narrowed: R7, because 0101 added a forward lane to `lifecycleharness`; R10, because 0101 forwards every
+  pod-touching route and restates the interaction rows as store-and-wake, so R10 keeps the
+  route-classification ratchet and the residual matrix and MCP rows; and R13, because the replica address
+  landed in 0101, so R13 keeps the mirror refresh that closes F-10.1.35.
+- Widened: R7 and R14, which together own the new TEST-GAPS T-10.3.15 (the Kind install runs no
+  `CH-HOLDERFORWARD` listener); R20, which now names F-7.2.41 and F-7.2.42, takes the single-consumer
+  `Attach` claim row, un-skips 0101's blocked tier-7a case, and builds on 0105's persisted wait identity;
+  R24, which takes the SSE live tail and the hot routing cache claim rows; and R25, which re-points or
+  removes three claim-register rows.
+- Retired: R10b. The message routes forward through 0101 and the interaction routes are store-and-wake, so
+  nothing is left to gate in `messages.go` or `interactions.go`.
+- Still needed as written: R8, R9, R11, R11a, R12, R15, R16, R17, R22, and R23. R9 gains one register
+  candidate. R12 and R13 follow the coordination fence-refusal proposal, which 0101's landing unblocked.
+  Proposal 0087 part 1 is implemented, so the R16, R17, and R23 edges to it are met.
+- Re-ordering: none is forced. R18, R19, and R21 landed through 0101 ahead of section 6.6 waves 5 and 6,
+  R10b leaves wave 4, and R10 no longer sequences against R20. Section 6 is not redrawn.
+- Completeness: F-5.2.53 joins the recycling follow-up proposal, F-7.2.41 and F-7.2.42 are named under
+  R20, F-15.1.54 is queued, F-29.3.3 is re-routed because 0101 did not take it, and TEST-GAPS T-10.3.15 is
+  filed. Every unticked queue line in section 10.2 still names at least one open finding.
+
 - [x] **R0.** Proposal 0062 reads `Retired`.
 - [x] **R1a.** Naming law, registers, and prose, landed through proposals 0064 to 0066.
 - [x] **R1b.** Wire rename, landed through proposals 0064 to 0066. `schemas/lenny-adapter.proto` carries
@@ -2397,36 +2465,59 @@ entry carries a **Re-derived 2026-10-21** paragraph and a revised size. The step
 inter-replica carrier proposal (before R13's residue, R18, R19, and R21) and the adapter shutdown and
 eviction proposal (before R16), both listed in section 10.2.
 
-- [ ] **R7.** Not started. About half its harness exists as `lifecycleharness` from 0091 to 0093.
+- [ ] **R7.** Not started. About half its harness exists as `lifecycleharness` from 0091 to 0093, and 0101
+  added its forward lane. Widened 2026-10-28 by TEST-GAPS T-10.3.15: the tier-5 non-holder lane needs a
+  Kind install that serves `CH-HOLDERFORWARD`, which waits on R14.
 - [ ] **R8.** Not started; unblocked. The claim register carries rows deferred to it.
 - [ ] **R9.** Not started.
-- [ ] **R10a.** Not started.
-- [ ] **R10b.** Not started.
+- [ ] **R10a.** Not started. Narrowed 2026-10-28 (see R10): it is now the whole of R10.
+- [x] **R10b.** Retired 2026-10-28. Proposal 0101 forwards the message routes in `messages.go`, and its
+  SPEC-5 restates the four interaction routes in `interactions.go` as store-and-wake, which is how they
+  already work across replicas. No gate remains to add in either file.
 - [ ] **R11a.** Not started (verified 2026-10-21).
 - [ ] **R11.** Not started. The claim register carries rows deferred to it.
 - [ ] **R12.** Not started. The claim register carries rows deferred to it. It also closes BUILD-GAPS
-  F-10.1.20: the gateway consumes `AdapterTerminating` after a coordinator hold timeout.
-- [ ] **R13.** Not started. Narrowed to the mirror refresh that closes F-10.1.35; the address moves to
-  the carrier proposal. The claim register carries rows deferred to it.
-- [ ] **R14.** Not started. The claim register carries rows deferred to it.
+  F-10.1.20: the gateway consumes `AdapterTerminating` after a coordinator hold timeout. It follows the
+  coordination fence-refusal proposal (F-10.1.42) in section 10.2.
+- [ ] **R13.** Not started. Narrowed to the mirror refresh that closes F-10.1.35 and the "Mirror seed at
+  bind" claim row. The replica address landed in proposal 0101 (2026-10-28). It follows the coordination
+  fence-refusal proposal in section 10.2.
+- [ ] **R14.** Not started. The claim register carries rows deferred to it. Widened 2026-10-28: with mTLS
+  on in the e2e overlay the Kind install serves `CH-HOLDERFORWARD` (TEST-GAPS T-10.3.15), and BUILD-GAPS
+  F-10.2.29 follows it.
 - [ ] **R15.** Partly done by 0090 and 0092. `ready_for_input` moves to R20.
 - [ ] **R16.** Not started. After proposal 0079, no `terminate` frame is sent at pod exit or at the
   coordinator hold timeout, and pod-exit drain coordination belongs to R16 and R17.
 - [ ] **R17.** Not started.
-- [ ] **R18.** Not started. The claim register carries rows deferred to it.
-- [ ] **R19.** Not started. The claim register carries rows deferred to it.
+- [x] **R18.** Landed 2026-10-28 through proposal 0101 (merge `9c69b8398`, checklist steps S5 to S7): the
+  replica address in the `REG-COORDLEASE` holder value, the `CH-HOLDERFORWARD` listener on
+  `gateway.holderForwardPort` (default 50054) with NET-072 gateway peer validation, and the `lenny-system`
+  self-peer NetworkPolicy. The claim-register rows "Replica address in the REG-COORDLEASE holder value" and
+  "Inter-replica forward listener with gateway peer validation (NET-072)" are `WIRED`. Nothing remains.
+- [x] **R19.** Landed 2026-10-28 through proposal 0101 (checklist steps S8 to S10), which closed F-7.2.38,
+  F-29.3.1, F-29.3.2, and F-10.1.33: every §29.3 forwarded route and MCP tool site forwards to the
+  coordinator, and a not-delivered message without `inReplyTo` is held in the session DLQ. The remainder
+  has other owners: the "SSE live tail across replicas" claim row (still deferred to R19) moves to R24,
+  duplicate suppression (F-7.2.41) stays with R20, and F-29.3.3 is re-routed in section 10.2.
 - [ ] **R20.** Not started. The claim register carries rows deferred to it. It also closes two defects
   from the terminal-transition table run (owner decision, 2026-10-12), each of which needs the shared
   input-wait store R20 builds: BUILD-GAPS F-8.8.17 (TT-51, `DEADLOCK_TIMEOUT` never fires when the await
   edge and the `request_input` wait sit on different replicas) and F-7.2.37 (TT-90, the input-wait forget
   runs only on the writing replica while the `one_shot` `request_input` counter lives on the serving
-  replica). Its tests follow the expansive-test instruction in section 10.2.
-- [ ] **R21.** Not started. Rewritten as the cross-replica release step (owner decision, 2026-10-21, in
-  section 10.3).
+  replica). Its tests follow the expansive-test instruction in section 10.2. Widened 2026-10-28: it also
+  closes F-7.2.41 (`delivered_message_ids`) and F-7.2.42 (the durable-inbox trimmer), and closing F-7.2.41
+  lifts the blocked skip in `tests/tier7a_load_local/holder_forward_interleaving_test.go`.
+- [x] **R21.** Landed 2026-10-28 through proposal 0101 (checklist steps S11 to S13), which closed
+  F-12.8.43: the lifecycle drain publishes its transitioned sessions on `CH-BINDRELEASE`, and the
+  propagator package is `bindrelease`. The claim-register drain row is `WIRED`. The remainder has other
+  owners: the drain's forced transition on the holder is F-12.8.61 (admin session investigation proposal),
+  and the unspecified Sweeper backstop release is F-10.1.40 (coordination contract proposal). The
+  concurrent-slot eviction leg stays dropped.
 - [ ] **R22.** Mostly done (`040323634`, `7c34d7be7`, and 0093); a tier-4 restore test remains.
 - [ ] **R23.** Not started. The claim register carries rows deferred to it.
-- [ ] **R24.** Not started. The `maxSuspendedPodHoldSeconds` row is closed by 0092.
-- [ ] **R25.** Not started.
+- [ ] **R24.** Not started. The `maxSuspendedPodHoldSeconds` row is closed by 0092. Widened 2026-10-28 by
+  the SSE live tail and hot routing cache claim rows.
+- [ ] **R25.** Not started. Widened 2026-10-28 by three claim-register re-points or removals.
 
 ### 10.2 Proposal track
 
@@ -3133,7 +3224,9 @@ Proposals, second wave:
     connection-boundary recovery (owner-delegated decision D13), and enforces `perChildMaxAge`. Its
     implementation, which closes F-6.2.28, F-7.2.31, F-8.3.1, F-10.1.34, and F-11.3.37 to F-11.3.43 (the
     sweep-write half of F-11.3.40) as its REC-1 states, is pending, and it runs after 0101 and 0102 merge,
-    because they share files. Its unstaged defects are filed below.
+    because they share files. Its unstaged defects are filed below. Both have merged (0102 on 2026-10-27
+    and 0101 on 2026-10-28), so the implementation is unblocked. R20 follows it, because R20 builds the
+    shared input-wait store on its `input_wait_id` (R20's 2026-10-28 re-derivation).
 
 Proposals, third wave:
 
@@ -3216,7 +3309,7 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
 
 Proposals the R-steps need (added 2026-10-21 by the R7 to R25 re-derivation):
 
-- [x] **Inter-replica carrier proposal** (done as a proposal; implementation pending). §29.3 names no inter-replica conversation for
+- [x] **Inter-replica carrier proposal** (implemented 2026-10-28). §29.3 names no inter-replica conversation for
   the interrupt, terminate, delete, resume, interaction-resolution, upload, and message rows, and §28.5.4
   states no replica address. The proposal adds the §28.3 channel row and the §28.5.4 card for a general
   request-forwarding service, defines the replica address (`resolveReplicaID` returns a hostname with a
@@ -3230,6 +3323,10 @@ Proposals the R-steps need (added 2026-10-21 by the R7 to R25 re-derivation):
     `REG-COORDLEASE` value, and the drain publish on `CH-BINDRELEASE`. Its implementation, which carries plan
     steps R18, R19, and R21 and closes F-29.3.1, F-29.3.2, F-10.1.33, F-7.2.38, and F-12.8.43 as its REC-1
     states, is pending. Its unstaged defects are filed below.
+  - **Implementation.** Implemented 2026-10-28 (merge `9c69b8398`) with every checklist step ticked and
+    nine accepted deviations. It landed R18, R19, and R21 and closed F-29.3.1, F-29.3.2, F-10.1.33,
+    F-7.2.38, and F-12.8.43. It did not take F-29.3.3, which is re-routed to the upload route proposal
+    below. Its tier-7a interleaving test skips the held redelivery as blocked on F-7.2.41 (R20).
 - [ ] **Adapter shutdown and eviction proposal** (not yet written). It defines the adapter shutdown budget
   and fallback that F-4.6.31 lacks, the eviction signal on `CH-ADAPTEREVENTS` (the specification states no
   message name since revert `54292da1b`), and the best-effort eviction snapshot. It is sequenced against
@@ -3249,7 +3346,9 @@ Proposals the R-steps need (added 2026-10-21 by the R7 to R25 re-derivation):
   scrub report), F-5.2.40 (`ScrubOps` wired in the embedded reference runtimes, with an embedded recycling
   fixture pool), F-5.2.41 (the process-reuse acknowledgment enforced in the runtime registration validator
   and the SandboxTemplate CRD), F-5.2.42 (a recovery claim after a pool edit does not under-report
-  isolation), F-5.2.43 (a retire reason that names a recycling-disabled edit), F-4.6.23 (`Claimer.Claim`
+  isolation), F-5.2.43 (a retire reason that names a recycling-disabled edit), F-5.2.53 (a slot join onto
+  a `recycling` claim shares the pod with the whole-pod scrub, and its rollback deletes the claim mid-scrub;
+  added 2026-10-28, and fixed with F-5.2.48), F-4.6.23 (`Claimer.Claim`
   deletes its claim on a failed tenant stamp; the unused `ClaimPod` implementations read the pin or are
   deleted), F-4.6.24 (`WarmPoolOversized` corrected and evaluated), F-4.6.25 (the
   `podClaimFallbackMaxMirrorLagSeconds` gateway flag), and F-6.2.27 (the §6.2 `idle → draining` trigger
@@ -3438,8 +3537,11 @@ The rest are filed in BUILD-GAPS and routed below.
   - [ ] **F-5.2.57** (Low), with **P3**: §5.2 says pool admission refuses a pool that misses the
     `claimOrphanTimeout` bound, while no pool field enters the bound and no admission check exists. P3's
     deadline edits name the field or strike the clause.
-  - [ ] **F-29.3.3** (Low), with the **inter-replica carrier proposal** (proposal 0101, approved 2026-10-26): the §29.3
-    off-holder rows for terminate and DELETE omit `resuming`.
+  - [ ] **F-29.3.3** (Low), with the **upload route proposal** (not yet written, with F-15.1.57): the §29.3
+    off-holder rows for terminate and DELETE omit `resuming`. Re-routed 2026-10-28: the finding named the
+    inter-replica carrier proposal (proposal 0101) as its owner, and 0101 was implemented without it. The
+    upload route proposal edits the same §29.3 off-holder matrix. The BUILD-GAPS owner line is corrected when
+    that proposal files its records.
   - [ ] **Postgres HA review proposal** (not yet written): **F-12.3.27** (Medium). §12.3 states RPO 0 for
     committed writes, while a write whose standby acknowledgement wait is interrupted is visible on the
     primary and can be lost at failover.
@@ -3451,7 +3553,8 @@ The rest are filed in BUILD-GAPS and routed below.
 **Defects filed from proposal 0101's unstaged-defect list (2026-10-26).** Proposal 0101 (the inter-replica
 carrier proposal) lists defects in the shipped tree that it does not stage. The NET-070 internal TLS
 listener, whose chart default port 8443 collides with `llmProxyPort`, is already tracked as TEST-GAPS
-T-25.4.18 (with T-25.4.20) and is not refiled. The rest are filed in BUILD-GAPS and routed below.
+T-25.4.18 (with T-25.4.20) and is not refiled. The rest are filed in BUILD-GAPS and routed below. Proposal
+0101 was implemented on 2026-10-28, so every item below that follows its implementation is unblocked.
 
 - Proposal routing.
   - [ ] **Gateway request deadline proposal** (not yet written): **F-11.3.44** (Medium, no gateway code
@@ -3476,7 +3579,8 @@ T-25.4.18 (with T-25.4.20) and is not refiled. The rest are filed in BUILD-GAPS 
     `errorclassify` entry, so both classify as TRANSIENT and retryable.
   - [ ] **Upload route proposal** (not yet written): **F-15.1.57** (Low). §15.1 and the §29.3 matrix name
     `POST /v1/sessions/{id}/upload` for the mid-session upload, while the code serves it on
-    `/upload-to-session`.
+    `/upload-to-session`. It also takes F-29.3.3 (re-routed 2026-10-28), since both edit the §29.3
+    off-holder matrix.
   - [ ] **Channel register completeness proposal** (not yet written): **F-28.3.1** (Low). The credential
     revocation, mTLS deny list, credential renewal, and EventBus Redis pub/sub fan-outs appear in no §28
     register.
@@ -3938,7 +4042,7 @@ legacy single-file proposals carry their status in the prose status bullet, whic
   and §29.8 order; relates to F-10.1.24), **F-10.1.43** (Medium, from 0080 §1.19, one status code carries
   three fence-refusal classes, and the §16.1 `handoff_stale_total` row describes one), and **F-10.1.44**
   (Low, from 0080 §1.20, the `gen <= 0` floor in `coordfence.go`, which needs an owner decision recorded in
-  section 10.5).
+  section 10.5). Proposal 0101 was implemented on 2026-10-28, so this proposal is unblocked.
 - [ ] Small proposal: **F-10.5.17** (Low, from 0080 §1.21): `migrate-job.yaml` sets no
   `activeDeadlineSeconds`, and §10.5 states no budget.
 - TEST-GAPS: item 1.11b of 0080 (`TestConcurrentWorkspaceSlots` is still skipped) is already T-6.4.8,
@@ -3946,6 +4050,26 @@ legacy single-file proposals carry their status in the prose status bullet, whic
 - Already handled, from 0080: its items 1.1, 1.2, 1.9, 1.11a, 1.14, and 1.17 are resolved. Items 1.3 and
   1.4 are owned by 0084, item 1.10 by T-4.4.21 and R22, items 1.12 and 1.18 by their claim-register rows,
   item 1.13 by the R-steps, and item 1.15 by F-4.7.23. Item 1.8 was not filed (Phase 3 above).
+
+**Completeness pass after 0101 (2026-10-28).** Every OPEN BUILD-GAPS finding and every open TEST-GAPS
+entry whose text names an R-step, a P-item, or this plan was checked against this section and section 5.
+Four findings were missing, and one entry is new:
+
+- F-5.2.53 (Medium) is added to the recycling follow-up proposal in Phase 3, which its text names as owner.
+- F-7.2.41 and F-7.2.42 (Medium) are named under R20, whose duplicate-suppression and trimmer bullets
+  already described them.
+- [ ] **F-15.1.54** (Medium): `GET /v1/responses/{id}` returns any tenant session's metadata to any caller
+  in the tenant. It was found by the P5 dossier and is outside P5's scope. First confirm the §15.1 and §13
+  read-authorization rule: a direct fix with a tier-9 test if the specification states it, otherwise a
+  small proposal. It is independent of the R-steps.
+- [ ] **TEST-GAPS T-10.3.15** (Medium, filed 2026-10-28): the Kind install runs no `CH-HOLDERFORWARD`
+  listener, because the e2e overlay runs `global.devMode: true` with `mtls.enabled: false` and §10.3 NET-072
+  disables the forward in that configuration, so no tier-5 test exercises a forward and an off-holder
+  request on the two-replica Kind gateway takes the not-delivered outcome. R14 lets the overlay turn mTLS
+  on, and R7's tier-5 non-holder lane is the test.
+
+The unticked queue lines in this section were checked in the other direction, and each still names at least
+one open finding. F-29.3.3 is re-routed above, because its named owner, proposal 0101, landed without it.
 
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 
