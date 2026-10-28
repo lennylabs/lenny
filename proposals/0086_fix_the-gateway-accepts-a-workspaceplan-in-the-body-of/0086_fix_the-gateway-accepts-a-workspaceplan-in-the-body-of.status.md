@@ -14,4 +14,10 @@ implemented-by:
 ---
 ## Review history
 
-An adversarial review run was conducted on 2026-09-28. The spec review did not run and the non-spec review did not run. No findings were fixed. The run did not converge, and findings remain open.
+On 2026-10-28, an adversarial review run covered this proposal. The run had two review loops, a spec loop and a non-spec loop.
+
+The spec loop ran 12 rounds and did not converge. It ran 4 full-pool sweeps and fixed 19 findings. Findings that the spec loop had not closed when it stopped remain open. The review log records the findings of each round.
+
+The non-spec loop did not run. The non-spec changes in this proposal have not been reviewed.
+
+Because the spec loop did not converge, the run did not settle the questions it was reviewing.
