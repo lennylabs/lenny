@@ -1073,8 +1073,9 @@
       "docs": ["tests/tier11_docs/..."]
     },
     "tests/testinfra/containers": {
+      "unit": ["tests/testinfra/containers/..."],
       "component": ["tests/testinfra/containers/postgres_test.go"],
-      "integration": ["tests/tier4_integration/redis_cluster_smoke_test.go"]
+      "integration": ["tests/tier4_integration/redis_cluster_smoke_test.go", "tests/tier4_integration/redis_cluster_port_retry_test.go"]
     },
     "tests/testinfra/fixtures/expand_contract_migration": {
       "integration": ["tests/tier4_integration/schema_migration_journey_test.go"]
