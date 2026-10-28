@@ -157,12 +157,19 @@ func (c *Checkpointer) chunkSize() int64 {
 }
 
 // chunkEncoding returns the wire encoding the gateway declares in Start,
-// defaulting to tar.
+// records in the manifest's chunk_encoding column, and names each chunk
+// object with. It is always tar.gz, because the only checkpoint producer,
+// the adapter's workspace.ArchiveTree, writes a gzip-compressed tar.
+// Declaring tar for those bytes would make the manifest misstate the
+// payload, and §4.4 manual recovery selects the decode pipeline from the
+// declared encoding rather than from the bytes.
+//
+// spec: §10.1 (Chunked-object storage model) — "The suffix therefore
+// reflects the actual on-disk payload"; §4.4 (MinIO object key logging for
+// manual recovery) — "The decompression step MUST be selected from the
+// logged chunk_encoding field".
 func (c *Checkpointer) chunkEncoding() partialmanifeststore.ChunkEncoding {
-	if c.ChunkEncoding != "" {
-		return partialmanifeststore.ChunkEncoding(c.ChunkEncoding)
-	}
-	return partialmanifeststore.ChunkEncodingTar
+	return partialmanifeststore.ChunkEncodingTarGz
 }
 
 // levelLabel returns the level-label value stamped onto the driver's

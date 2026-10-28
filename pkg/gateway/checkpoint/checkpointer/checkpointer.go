@@ -239,9 +239,6 @@ type Checkpointer struct {
 	// Zero selects DefaultChunkSizeBytes.
 	// spec: §10.1.
 	ChunkSizeBytes int64
-	// ChunkEncoding is the wire encoding the gateway declares in Start.
-	// Empty selects tar.
-	ChunkEncoding string
 	// ReleaseGone releases this replica's binding of a session whose row is
 	// absent on the primary. CheckpointWithTrigger calls it when the
 	// attempt's primary row read returns sessionstore.ErrNotFound, which
