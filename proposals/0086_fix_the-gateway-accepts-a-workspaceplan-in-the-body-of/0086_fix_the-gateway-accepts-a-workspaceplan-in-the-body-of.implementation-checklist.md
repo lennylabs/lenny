@@ -13,7 +13,7 @@
 - [ ] **S5 · spec** — SPEC-4. Lands the staged §7.1 and §7.4 edits.
       Tiers 0, 11. Depends on: S2
 - [ ] **S6 · spec** — SPEC-5. Lands the staged §29.2 step edits.
-      Tiers 0, 11. Depends on: S2
+      Tiers 0, 11. Depends on: S2, S3
 - [ ] **S7 · spec** — SPEC-6. Lands every staged §24 and §26 edit.
       Tiers 0, 11. Depends on: S2, S4
 - [ ] **S8 · spec** — SPEC-7. Lands the §7.5 setup-timing home and every SPEC-7 edit that cites it.
