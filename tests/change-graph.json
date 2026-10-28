@@ -23,6 +23,9 @@
     "tests/tier2_component/embedded/": {
       "component": ["tests/tier2_component/embedded/..."]
     },
+    "tests/tier2_component/controllers/": {
+      "component": ["tests/tier2_component/controllers/..."]
+    },
     "pkg/gateway/credentials/impersonation/impersonationtest/": {
       "unit": ["pkg/gateway/credentials/impersonation/...", "pkg/gateway/externalapi/admin/..."],
       "component": ["tests/tier2_component/tokensigning/..."]

@@ -8,8 +8,6 @@ import (
 	"context"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -20,7 +18,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
-	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
 // spec: §4.7, §5.3
@@ -42,7 +39,7 @@ import (
 // round-trip through the real SandboxTemplate CRD schema and the status
 // subresource configuration.
 func TestPoolScalingControllerMirrorsNonceOnlyAck(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -54,8 +51,7 @@ func TestPoolScalingControllerMirrorsNonceOnlyAck(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	const ns = "lenny-agents"
-	mustCreate(t, ctx, c, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})
+	ns := testNamespaces.Create(t, c)
 
 	// Seed the gateway pool store with one acknowledged and one
 	// unacknowledged nonce-only-eligible pool. The PoolStoreSource adapts
