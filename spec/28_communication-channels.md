@@ -106,11 +106,6 @@ connection, and the connection takes a link entry at the point a second channel 
 |:--|:--|:--|:--|:--|:--|:--|
 | `LNK-POD-GRPC` | Gateway replica and pod adapter | Gateway | gRPC | Pod IP, TCP 50051 | One connection per gateway replica per pod | C1 |
 | `LNK-GWCONTROL` | Pod adapter and gateway replica | Pod adapter | gRPC | Gateway service ClusterIP, TCP 50051 | One connection per pod process to one replica | C7 |
-| `LNK-INTERREPLICA` | Gateway replica and gateway replica | Forwarding replica | gRPC | The internal gRPC `ForwardMessage` RPC, whose address the specification does not state | One connection per forwarding replica to a session's coordinating replica | C19 |
-
-`LNK-INTERREPLICA` carries no channel row, because the specification states the connection and the
-cross-replica message routing it carries is not implemented. That status is recorded as an `ABSENT`
-claim-register row per §28.4 rather than as an absent transport in this register.
 
 #### Channel register
 
@@ -129,14 +124,16 @@ claim-register row per §28.4 rather than as an absent transport in this registe
 | `CH-SUPERVISE` | None | `intra-pod` | Control | Runtime supervisor | Both | Unix socket JSON Lines | Runtime process launch, end, sweep, and liveness, and the supervisor's self-test report | None |
 | `CH-LLMPROXY` | None | `pod-egress` | Content | Runtime | Runtime | HTTP | Proxy-mode model calls | C12 |
 | `CH-OBJSTORE` | None | `pod-egress` | State | Pod adapter | Pod adapter | HTTP | Checkpoint chunk upload and restore | C13 |
+| `CH-HOLDERFORWARD` | None | `inter-replica` | Content | Forwarding replica | Forwarding replica | HTTP | Off-holder session requests forwarded to the session's coordinating replica | C19 |
 | `CH-EVENTRELAY` | None | `gateway-to-store` | State | Gateway | Gateway | Redis | Cross-replica session event backlog | C16 |
+| `CH-BINDRELEASE` | None | `gateway-to-store` | Control | Gateway | Gateway | Redis | Binding-release requests for terminal sessions, fanned out to every gateway replica | None |
 | `CH-ADMISSION` | None | `control-plane` | Control | Admission webhook | Admission webhook | HTTP | Drain-readiness admission on pod eviction | C22 |
 
 #### Register-entry register
 
 | Identifier | Store | Key or table | Writer set | Reader set | Semantics | Provenance |
 |:--|:--|:--|:--|:--|:--|:--|
-| `REG-COORDLEASE` | Redis | `t:<tenant>:lease:session:<session>` | Gateway replicas | Gateway replicas | One holder per tenant and session, on a compare-and-set with a 60 second expiry | C14 |
+| `REG-COORDLEASE` | Redis, and Postgres during a Redis outage ([§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination) **Fallback:**) | `t:<tenant>:lease:session:<session>` | Gateway replicas | Gateway replicas | One holder per tenant and session, on a compare-and-set with a 60 second expiry. [§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination) **Replica address:** states the holder value | C14 |
 | `REG-COORDMIRROR` | Postgres | `coordination_lease` | Gateway sweeper | Gateway replicas | A single-valued row per tenant and session, and a projection rather than an exclusion primitive | C15 |
 | `REG-SLOTCOUNT` | Redis | `lenny:pod:<pod>:active_slots` | Gateway replicas | Gateway replicas | An atomic per-pod set of the sessions holding slots and of the leaked slots, whose cardinality ceilings concurrent slots ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) | C18 |
 | `REG-PODSTATE` | Postgres | `agent_pod_state` | WarmPoolController for the mirrored `Sandbox` status columns, and gateway replicas for `sessions_served` and `scrub_failure_count` | Gateway replicas | One row per pod. A read-optimized mirror carrying the pod phase the orphan-session reconciler reads, together with the gateway-written reuse counters the recycle disposition evaluates ([§12.6](12_storage-architecture.md#126-interface-design), [§4.7](04_system-components.md#47-runtime-adapter)) | C21 |
@@ -1477,33 +1474,58 @@ The adapter normalizes this to the canonical form `{"type": "response", "session
 
 #### 28.5.4 Inter-replica
 
-This boundary carries the channels between two gateway replicas. The §28.3 channel register places no
-channel on this boundary, so this subsection carries no card. The §28.3 link register declares the
-connection such a channel would be carried on, `LNK-INTERREPLICA`, between a forwarding gateway replica
-and a session's coordinating gateway replica, dialled by the forwarding replica over gRPC, with one
-connection per forwarding replica to a session's coordinating replica. The specification does not state
-the address that connection is reached at (§28.3).
+This boundary carries the channels between two gateway replicas. The §28.3 channel register places one
+channel on this boundary, `CH-HOLDERFORWARD`, between a forwarding gateway replica and a session's
+coordinating gateway replica, and it carries `None` in its Link column, so its own register row together
+with the endpoint stated in its card describes the connection.
 
 ```
   forwarding replica                                 coordinating replica
   +----------------------+                    +----------------------+
-  |                      |                    |                      |
-  |   gateway replica    |  LNK-INTERREPLICA  |   gateway replica    |
+  |                      |  CH-HOLDERFORWARD  |                      |
+  |   gateway replica    |                    |   gateway replica    |
   |                      |        =====>      |                      |
   +----------------------+                    +----------------------+
 
-  LNK-INTERREPLICA: gRPC, dialled by the forwarding replica, at an address the
-  specification does not state. The §28.3 channel register places no channel on
-  this boundary, so this subsection carries no card.
+  CH-HOLDERFORWARD: HTTP over mutual TLS, dialled by the forwarding replica,
+  at the address in the coordinating replica's REG-COORDLEASE holder value,
+  TCP gateway.holderForwardPort.
 ```
 
-The conversation the connection carries is the internal gRPC `ForwardMessage` RPC used for cross-replica
-message routing. A replica that is not the session's coordinator forwards a message to the coordinator, which it
-identifies through the coordination lease, over this connection in the cases the off-holder matrix of
-[§29.3](29_communication-scenarios.md#293-interactive-message-send) states, with the fallback each row
-states when the coordinator is unreachable. §28.3 records that this cross-replica message
-routing is not implemented and that the status is carried as an `ABSENT` claim-register row per §28.4.
-This subsection gains a card at the point the §28.3 channel register places a channel on this boundary.
+**`CH-HOLDERFORWARD`**
+
+- **Link.** `None` (§28.3).
+- **Endpoint.** The `<address>` part of the coordinating replica's `REG-COORDLEASE` holder value, which is
+  its pod IP and TCP `gateway.holderForwardPort`
+  ([§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination) **Replica address:**).
+  Both ends present the gateway replica certificate under the peer validation
+  [§10.3](10_gateway-internals.md#103-mtls-pki) **Gateway ↔ Gateway mTLS peer validation (NET-072).** states,
+  and the gateway NetworkPolicy admits the port from gateway pods alone
+  ([§13.2](13_security-model.md#132-network-isolation)).
+- **Axes.** Content plane, dialled by the forwarding replica, message authority with the forwarding
+  replica, HTTP transport (§28.3).
+- **Messages.** The forwarded request and its response, as
+  [§29.3](29_communication-scenarios.md#293-interactive-message-send) **Forwarding.** rule 2 states, in the
+  request and response formats of the route forwarded
+  ([§15.1](15_external-api-surface.md#151-rest-api), [§15.2](15_external-api-surface.md#152-mcp-api)).
+- **Preconditions.** [§29.3](29_communication-scenarios.md#293-interactive-message-send) **Forwarding.**
+  rule 1 states when a replica forwards, and rules 3 and 4 state what the coordinator applies to a forwarded
+  request. A replica forwards only when it holds the gateway replica certificate material
+  ([§10.3](10_gateway-internals.md#103-mtls-pki) NET-072).
+- **Timing.** The forward runs under the client request's deadline and is not retried
+  ([§29.3](29_communication-scenarios.md#293-interactive-message-send) **Forwarding.** rule 8). The dial and
+  handshake bound is the one
+  [§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination) **Replica address:**
+  states.
+- **Exclusivity.** Any replica may forward to the coordinating replica, and several may do so at the same
+  time. A forwarded request reaches the session's pod only through the coordinating replica, under the
+  receiving replica's lease check of [§29.3](29_communication-scenarios.md#293-interactive-message-send)
+  **Forwarding.** rule 5 and the `coordination_generation` stamp
+  ([§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination)
+  **Generation counters:**, §28.6).
+- **Degradation.** [§29.3](29_communication-scenarios.md#293-interactive-message-send) **Forwarding.**
+  rule 6 states the outcome of a forward that is not delivered, and rule 7 states the outcome of a forward
+  whose outcome is unknown.
 
 #### 28.5.5 Pod-egress
 
@@ -1782,9 +1804,9 @@ here.
 #### 28.5.7 Gateway-to-store
 
 This boundary carries the channels a gateway replica opens to a datastore that mediates state between
-gateway replicas. The §28.3 channel register places one channel on this boundary, `CH-EVENTRELAY`, and it
-carries `None` in its Link column, so its own register row together with the endpoint stated in its card
-describes the connection. The stores on this boundary divide by role: Postgres carries the authoritative
+gateway replicas. The §28.3 channel register places two channels on this boundary, `CH-EVENTRELAY` and `CH-BINDRELEASE`, and
+each carries `None` in its Link column, so each channel's own register row together with the endpoint stated
+in its card describes the connection. The stores on this boundary divide by role: Postgres carries the authoritative
 session and event state through the `SessionStore` and `EventStore` roles, while Redis data is treated as
 ephemeral, is not a system of record, and carries a durable fallback or reconstruction path for every role
 placed on it, so a total loss of Redis data is recoverable
@@ -1810,7 +1832,8 @@ reaches neither Postgres nor Redis ([§13.2](13_security-model.md#132-network-is
   +-----------------------------------------------------------------------+
 
   CH-EVENTRELAY: Redis, dialled by the gateway, on a stream per session, wired
-  only when Redis is present.
+  only when Redis is present. The diagram shows CH-EVENTRELAY alone;
+  CH-BINDRELEASE is a Redis pub/sub channel every replica subscribes to.
 ```
 
 **`CH-EVENTRELAY`**
@@ -1875,6 +1898,28 @@ reaches neither Postgres nor Redis ([§13.2](13_security-model.md#132-network-is
   ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes),
   [§10.1](10_gateway-internals.md#101-horizontal-scaling)).
 
+**`CH-BINDRELEASE`**
+
+- **Link.** `None` (§28.3).
+- **Endpoint.** The Redis pub/sub channel `lenny:session:terminate`, on the deployment's Redis endpoint,
+  under the TLS, AUTH, and client-certificate requirements the `CH-EVENTRELAY` **Endpoint.** bullet states
+  ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes),
+  [§10.3](10_gateway-internals.md#103-mtls-pki)).
+- **Axes.** Control plane, dialled by the gateway, message authority with the gateway, Redis transport
+  (§28.3).
+- **Messages.** The [§11.4](11_policy-and-controls.md#114-user-invalidation) step-2 release request,
+  published by full revoke and by the [§12.8](12_storage-architecture.md#128-compliance-interfaces) drain.
+- **Preconditions.** The channel is wired only when Redis is present in the deployment
+  ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)). Every gateway replica subscribes,
+  and a subscriber releases a binding as [§11.4](11_policy-and-controls.md#114-user-invalidation) step 2
+  states.
+- **Timing.** Peer replicas apply a request within seconds
+  ([§11.4](11_policy-and-controls.md#114-user-invalidation)). The specification states no publish
+  deadline, retry count, or interval for the channel.
+- **Exclusivity.** The specification states no exclusivity constraint on the channel.
+- **Degradation.** Delivery is at-most-once, and the specification does not state a redelivery. A dropped
+  request leaves the binding on the replica that holds it.
+
 ### 28.6 Exclusivity and concurrency model
 
 Each contract card in §28.5 states its channel's exclusivity constraint and the guard that enforces it, or
@@ -1893,7 +1938,10 @@ that has just acquired coordination completes the
 [§10.1.2](10_gateway-internals.md#1012-coordinator-handoff-protocol) handoff protocol before it sends any
 operational RPC, and from the fence onward the pod rejects every RPC carrying a generation older than the
 one it holds for that session ([§10.1](10_gateway-internals.md#101-horizontal-scaling),
-[§4.7](04_system-components.md#47-runtime-adapter)).
+[§4.7](04_system-components.md#47-runtime-adapter)). `CH-HOLDERFORWARD` carries the same unit to its receiving end: a replica performs a forwarded request only
+while it holds the session's `REG-COORDLEASE`, as
+[§29.3](29_communication-scenarios.md#293-interactive-message-send) **Forwarding.** rule 5 states, so a
+forwarded request reaches these channels only through the holder (§28.5.4).
 
 **The second opener on those channels.** A replica that opens `CH-ATTACH`, `CH-CHECKPOINT`, or `CH-BARRIER`
 carrying a generation other than the one the pod holds for the session the RPC names is rejected on the
@@ -1932,8 +1980,7 @@ pod. Its card states the guards (§28.5.3). No gateway replica holds the channel
 
 **Channels the specification states no constraint on.** For `CH-PODHEALTH` (§28.5.1), `CH-ADAPTEREVENTS`
 (§28.5.2), `CH-MSGSOCK`, `CH-RUNTIMEOPS`, `CH-MCP-PLATFORM`, and `CH-MCP-CONNECTOR` (§28.5.3),
-`CH-LLMPROXY` and the connection `CH-OBJSTORE` runs on (§28.5.5), `CH-ADMISSION` (§28.5.6), and
-`CH-EVENTRELAY` (§28.5.7), the specification states no exclusivity constraint on the channel and names no
+`CH-LLMPROXY` and the connection `CH-OBJSTORE` runs on (§28.5.5), `CH-ADMISSION` (§28.5.6), and `CH-EVENTRELAY` and `CH-BINDRELEASE` (§28.5.7), the specification states no exclusivity constraint on the channel and names no
 guard that enforces one. It therefore states no rejection or precedence rule for an additional holder on any
 of them, and this subsection supplies none.
 
@@ -2041,10 +2088,9 @@ it admits is named in that column as a scoping constraint (§28.6).
 | `CH-SUPERVISE` | When no supervisor connects and sends `ready` within the adapter's wait before READY, or `ready` reports a failed property that gates a `restart` pod, the adapter exits non-zero, and the pod retires as the [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Liveness.** table states ([§4.7.9](04_system-components.md#479-startup-sequence-for-type-agent-runtimes) step 4, [§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 8, §28.5.3) | A link failure, or an `error` on `launched`, `ended`, or `swept`, takes the outcome the [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Liveness.** table states, and during a whole-pod scrub each reply and link failure takes the outcome of its row in [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) **Supervised scrub sequence.**; the supervisor exits on the close, which ends every process in the runtime container ([§4.7.10](04_system-components.md#4710-deployment-model), [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), §28.5.3) | One connection per pod, and no gateway replica holds the channel (§28.5.3, §28.6) | A pod retired through a channel of the [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Liveness.** table, such as a pod whose adapter exited before READY or a pod retired under "Runtime not live" ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). The specification states no metric or alert for this channel (§28.5.3) |
 | `CH-LLMPROXY` | When the pod's pool is not a proxy-mode pool the supplemental egress policy does not select the pod and the default-deny policy drops the connection ([§13.2](13_security-model.md#132-network-isolation)) | The specification does not state a retry, resumption, or buffering policy for a proxy response stream that fails mid-stream (§28.5.5). When the LLM Proxy circuit breaker is open every new request is rejected immediately with `PROVIDER_UNAVAILABLE` rather than hanging, the adapter receives a `PROVIDER_UNAVAILABLE` event and relays it to the runtime as a tool-result error of the same code, streams established before the circuit opened continue to completion or upstream failure, and a single probe request is allowed at each half-open transition. When the lease expires or is revoked the proxy rejects requests before any upstream call ([§4.9](04_system-components.md#49-credential-leasing-service)) | The specification states no exclusivity constraint on the channel and names no guard that enforces one (§28.5.5, §28.6). The nearest constraint is a per-pod scoping constraint: the lease token is bound to the issuing pod's SPIFFE identity, and a request whose peer SPIFFE URI does not match the lease record is rejected with `LEASE_SPIFFE_MISMATCH` ([§4.9](04_system-components.md#49-credential-leasing-service), §28.6) | The `PROVIDER_UNAVAILABLE` and `CREDENTIAL_REVOKED` errors, the `credential.lease_spiffe_mismatch` audit event ([§4.9](04_system-components.md#49-credential-leasing-service)), and the `LLM_REQUEST_REJECTED` and `LLM_RESPONSE_REJECTED` outcomes of an interceptor rejection ([§4.8](04_system-components.md#48-gateway-policy-engine)) |
 | `CH-OBJSTORE` | When the object store is unreachable on the eviction path and its retries are exhausted, the gateway falls back to writing a minimal session-state record to Postgres. When the Postgres write is also exhausted the gateway logs the committed object keys, the chunk encoding, and the error summary at `WARN`, so an operator can reconstruct the workspace by hand, before entering the total-loss path ([§4.4](04_system-components.md#44-event--checkpoint-store)) | An attempt that ends before every declared byte is confirmed leaves a manifest row flagged `partial = true`; a deadline fire retains its chunks as a recovery aid the resume path reassembles, while a stream truncation, an adapter crash, a supersession, or a quota refusal leaves no resume candidate and the gateway sweeps the prefix by listing it. On the restore path a contiguity failure, a fetch error on a non-final chunk, or a decode error away from the end of the stream aborts reassembly, discards the staging directory, and falls back to the last successful full checkpoint ([§4.4](04_system-components.md#44-event--checkpoint-store), [§10.1](10_gateway-internals.md#101-horizontal-scaling)). The specification does not state a retry policy for a restore `GET` that fails mid-stream (§28.5.5) | The constraint is per capability rather than per connection: a capability names one method and one key, an upload capability additionally names one exact `Content-Length`, the tenant prefix, the method, and the key are bound into the signature, and at most `checkpointGrantWindow` capabilities are outstanding for an attempt at a time, so a request that alters any of them is rejected by the object store before a byte is written or read ([§13.2](13_security-model.md#132-network-isolation), [§10.1](10_gateway-internals.md#101-horizontal-scaling)). Above the transfer the adapter's pod-level operation lock serializes `Checkpoint` across the pod's slots ([§4.7](04_system-components.md#47-runtime-adapter)). The specification states no exclusivity constraint on the connection itself (§28.5.5) | The `lenny_checkpoint_storage_failure_total{reason="retry_exhausted"}` counter and the `CheckpointStorageUnavailable` critical alert ([§4.4](04_system-components.md#44-event--checkpoint-store)), and the manifest row flagged `partial = true` ([§4.4](04_system-components.md#44-event--checkpoint-store)) |
+| `CH-HOLDERFORWARD` | A forward that is not delivered takes the outcome of [§29.3](29_communication-scenarios.md#293-interactive-message-send) **Forwarding.** rule 6 (§28.5.4) | A forward whose outcome is unknown fails closed with `TARGET_NOT_READY`, HTTP 409, and is never held in the DLQ ([§29.3](29_communication-scenarios.md#293-interactive-message-send) **Forwarding.** rule 7, §28.5.4) | A replica that receives a forwarded request for a session whose `REG-COORDLEASE` it does not hold performs no effect and applies rule 6, and a coordinator that loses the lease after that check is rejected at the pod on the `coordination_generation` stamp ([§29.3](29_communication-scenarios.md#293-interactive-message-send) **Forwarding.** rule 5, §28.5.4, §28.6) | The specification names no metric or alert scoped to this channel (§28.5.4) |
 | `CH-EVENTRELAY` | The channel is wired only when Redis is present in the deployment. Single-replica dev mode keeps the session-event bus in memory and writes no stream ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)) | The specification states no buffering or resumption policy for an `XADD` or a blocking read whose transport fails mid-stream, and it does not state what a reader does when an entry it requests is absent from the stream (§28.5.7). The §12.4 failure-behavior table carries no row for this stream, so the general Redis posture applies, under which Redis is not a system of record and the authoritative record of session events is the Postgres `EventStore` ([§12.2](12_storage-architecture.md#122-storage-roles), [§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)). When both Postgres and Redis are unavailable the platform enters dual-store degraded mode: new sessions are rejected with `503` and in-flight sessions continue on cached coordination state ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes), [§10.1](10_gateway-internals.md#101-horizontal-scaling)) | The specification states no exclusivity constraint on the channel and names no guard that enforces one (§28.5.7, §28.6). The constraint runs the other way: every gateway replica serving an attached client for the session may read the stream at the same time, which is the reconnection case the stream exists for ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)). `REG-COORDLEASE` governs session coordination rather than this channel (§28.3) | The `PLATFORM_DEGRADED` event emitted to clients and the `DualStoreUnavailable` alert in dual-store degraded mode ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes), [§10.1](10_gateway-internals.md#101-horizontal-scaling)), and the single protocol-level `gap_detected` frame carrying `{"lastSeenSeq": N, "nextSeq": M}` a resume request receives for a sequence the replay buffer has evicted ([§10.4](10_gateway-internals.md#104-gateway-reliability), [§15.2](15_external-api-surface.md#152-mcp-api)) |
+| `CH-BINDRELEASE` | The publish is not redelivered (§28.5.7) | Delivery is at-most-once, and a request lost mid-publish is not redelivered (§28.5.7, [§11.4](11_policy-and-controls.md#114-user-invalidation)) | The specification states no exclusivity constraint on the channel (§28.5.7) | The specification names no metric or alert scoped to this channel (§28.5.7) |
 | `CH-ADMISSION` | The webhook rejects the eviction when the endpoint is unreachable, so the drain is blocked. The webhook is deployed with `failurePolicy: Fail`, so unavailability of the webhook itself blocks the drain as well, which is stated as the deliberate posture against silent data loss ([§12.5](12_storage-architecture.md#125-artifact-store)) | The specification does not state a retry, buffering, or resumption policy for a callback whose transport fails mid-response (§28.5.6). The webhook invocation that carries it is bounded by the admission webhook timeout, default 5 seconds and tunable via `admissionWebhook.timeoutSeconds` ([§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)) | The specification states no exclusivity constraint on the channel and names no guard that enforces one (§28.5.6, §28.6). The constraint runs the other way: the webhook Deployment carries the uniform admission-plane high-availability contract of two replicas with a pod disruption budget of one available pod, so more than one webhook pod may hold the channel at the same time ([§17.2](17_deployment-topology.md#172-namespace-layout)) | The `lenny_drain_readiness_checks_total` counter, labeled by `outcome` with the values `allowed`, `blocked`, and `forced`, and the `node.drain.forced` critical audit event on an annotated emergency bypass ([§12.5](12_storage-architecture.md#125-artifact-store)). A webhook unreachable for more than five minutes raises the `DrainReadinessWebhookUnavailable` warning alert, whose stated consequence is that node drains and rolling updates may stall, and a feature-flag downgrade after deployment is covered by the `AdmissionPlaneFeatureFlagDowngrade` warning alert ([§16.5](16_observability.md#165-alerting-rules-and-slos)) |
 
-The register places no channel on the inter-replica boundary, so the matrix carries no row for it. The
-connection `LNK-INTERREPLICA` is a link register entry rather than a channel, and §28.5.4 states what the
-specification carries for it (§28.3, §28.5.4). A register entry in the §28.3 register-entry register is
-likewise not a channel and carries no row here.
+A register entry in the §28.3 register-entry register is not a channel and carries no row here.

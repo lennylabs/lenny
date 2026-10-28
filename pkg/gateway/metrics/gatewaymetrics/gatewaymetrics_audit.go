@@ -102,8 +102,10 @@ type auditMetrics struct {
 	// hide a platform-wide spike. spec: §11.5; F-11.5.4.
 	idempotencyCacheWriteFailures *prometheus.CounterVec
 	// idempotencyCacheSkipped counts cache writes the middleware
-	// declined by policy — currently `server_error` (inner-handler
-	// 5xx, must not be replayed for the 24-hour TTL). spec: §11.5; F-11.5.3.
+	// declined by policy: `server_error` (inner-handler 5xx, must not be
+	// replayed for the 24-hour TTL), `streamed` (a streamed response), and
+	// `forward_refused` (a §29.3 Forwarding rule 6 or rule 7
+	// TARGET_NOT_READY refusal). spec: §11.5; F-11.5.3.
 	idempotencyCacheSkipped *prometheus.CounterVec
 }
 
@@ -125,7 +127,8 @@ func newAuditMetrics(reg *prometheus.Registry) (auditMetrics, error) {
 	// §11.5 — `lenny_idempotency_cache_skipped_total` counts
 	// cache writes the middleware declined by policy. reason:
 	// `server_error` (inner-handler 5xx; not replayed for the 24-hour
-	// TTL). spec: §11.5; F-11.5.3.
+	// TTL), `streamed`, or `forward_refused` (a §29.3 Forwarding refusal).
+	// spec: §11.5; F-11.5.3.
 	idempotencyCacheSkipped, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_idempotency_cache_skipped_total",
 		Help: "§11.5 idempotency-key cache writes the middleware declined by policy.",

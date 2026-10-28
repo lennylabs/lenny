@@ -13,8 +13,13 @@
 //     the session message queues, the generation-scoped lease return, the
 //     suspended-session lifetime, the concurrent-session count, and active
 //     session age name symbols their files still declare.
-//   - The "Session inbox redelivery" row stays ABSENT under cross-replica
-//     message forwarding (R19) and names what remains absent.
+//   - The "Session inbox redelivery" row is WIRED and names the §29.3
+//     Forwarding rule 6 DLQ hold (`forwardMessageBatch` and
+//     `HoldUndeliveredForward`).
+//   - The inter-replica rows carry the forward, the replica address, the
+//     forward listener, and the binding-release fan-out at the status the
+//     specification's landing gives them, and the generated rows they
+//     replace are retired.
 //   - The findings the work closed stay closed only while the code that
 //     closed them is in the tree, and every test file their resolutions cite
 //     exists.
@@ -111,27 +116,112 @@ func assertSurfaceDeclared(t *testing.T, root, claim, surface string) {
 	}
 }
 
-// diagnosis: the "Session inbox redelivery" claim row no longer records what
-// remains absent. The coordinating replica dequeues its own inbox, so the row
-// names that surface, and it stays ABSENT under R19 until a message a peer
-// replica buffered in its own in-memory inbox is redelivered. Correct the
+// diagnosis: the "Session inbox redelivery" claim row no longer records the
+// off-holder hold. A message a non-coordinating replica receives is not
+// buffered in that replica's in-process inbox: §29.3 Forwarding rule 6 holds a
+// message whose forward is not delivered in the session DLQ, which the
+// coordinating replica drains, and the REST and MCP message sites enqueue that
+// hold. The row is WIRED and names the declared hold. Correct the
 // SURFACE_OVERRIDES entry in scripts/seed-claim-register.py and regenerate.
-func TestSessionInboxRedeliveryRowStaysAbsentUnderForwarding_spec_29_3(t *testing.T) {
+//
+// spec: 29.3 (Interactive message send), 7.2 (Interactive Session Model)
+func TestSessionInboxRedeliveryRowNamesTheForwardHold_spec_29_3(t *testing.T) {
 	root := repoRoot(t)
 	row, ok := claimRows(t, root)["Session inbox redelivery"]
 	if !ok {
 		t.Fatal("tests/claim-map.json has no row \"Session inbox redelivery\"")
 	}
-	if row["status"] != "ABSENT" || row["deferral_id"] != "R19" {
-		t.Errorf("status %q deferral %q, want ABSENT under R19", row["status"], row["deferral_id"])
+	if row["status"] != "WIRED" || row["deferral_id"] != "" {
+		t.Errorf("status %q deferral %q, want WIRED with no deferral", row["status"], row["deferral_id"])
 	}
-	if strings.Contains(row["surface"], "no dequeue path") {
-		t.Errorf("surface %q still states that no dequeue path exists", row["surface"])
+	for _, stale := range []string{"no dequeue path", "durableInbox: false", "in-process inbox", "no off-holder path"} {
+		if strings.Contains(row["surface"], stale) {
+			t.Errorf("surface %q still names %q, which the DLQ hold replaced", row["surface"], stale)
+		}
 	}
-	if !strings.Contains(row["surface"], "durableInbox: false") {
-		t.Errorf("surface %q does not name the in-process inbox of a non-coordinating replica", row["surface"])
+	for _, want := range []string{"forwardMessageBatch", "HoldUndeliveredForward"} {
+		if !strings.Contains(row["surface"], want) {
+			t.Errorf("surface %q does not name %s", row["surface"], want)
+		}
+	}
+	for _, want := range []string{"DLQ", "Forwarding rule 6", "recovering-row TTL"} {
+		if !strings.Contains(row["note"], want) {
+			t.Errorf("note %q does not name %q", row["note"], want)
+		}
 	}
 	assertSurfaceDeclared(t, root, "Session inbox redelivery", row["surface"])
+}
+
+// interReplicaClaim is a claim-register row the inter-replica forward and the
+// binding-release fan-out carry, with the status, heading, and step it holds
+// while the specification is ahead of the tree.
+type interReplicaClaim struct {
+	claim    string
+	status   string
+	anchor   string
+	deferral string
+}
+
+// interReplicaClaims are the rows that restate the inter-replica mechanisms
+// under the names §28.5.4, §28.5.7, §10.1.1, and §10.3 give them.
+var interReplicaClaims = []interReplicaClaim{
+	{"Off-holder request forward on CH-HOLDERFORWARD", "WIRED", "#2854-inter-replica", ""},
+	{"Replica address in the REG-COORDLEASE holder value", "WIRED", "#2854-inter-replica", ""},
+	{"Inter-replica forward listener with gateway peer validation (NET-072)", "WIRED", "#2854-inter-replica", ""},
+	{"Session inbox redelivery", "WIRED", "#2854-inter-replica", ""},
+	{"Input-wait resolution across replicas", "ABSENT", "#2854-inter-replica", "R20"},
+	{"Tool-approval resolution across replicas", "WIRED", "#2854-inter-replica", ""},
+	{"CH-BINDRELEASE binding-release fan-out", "WIRED", "#2857-gateway-to-store", ""},
+}
+
+// retiredInterReplicaClaims are the generated rows the restated rows above
+// replace. Each one names a mechanism the specification no longer states in
+// those words: a forward with no carrier, a coordinator_address field, and a
+// gateway-to-gateway link entry.
+var retiredInterReplicaClaims = []string{
+	"Cross-replica message forward",
+	"`coordinator_address` population",
+	"Gateway-to-gateway transport",
+}
+
+// diagnosis: the claim register no longer carries the inter-replica rows at the
+// status, heading, and step the specification's landing gives them, still
+// carries a generated row the restated rows replace, or a WIRED
+// CH-BINDRELEASE or off-holder forward row names a symbol the tree no longer
+// declares. Correct
+// RETIRED, SURFACE_OVERRIDES, or EXPLICIT in scripts/seed-claim-register.py and
+// regenerate tests/claim-map.json; do not hand-edit the register.
+//
+// spec: 28.5.4 (Inter-replica), 28.5.7 (Gateway-to-store), 29.3 (Interactive
+// message send), 10.1.1 (Stateless Replicas and Per-Session Coordination),
+// 10.3 (mTLS PKI), 12.8 (Compliance Interfaces)
+func TestInterReplicaClaimRowsCarryTheForwardAndBindingRelease_spec_28_5_4(t *testing.T) {
+	root := repoRoot(t)
+	rows := claimRows(t, root)
+	for _, c := range interReplicaClaims {
+		t.Run(c.claim, func(t *testing.T) {
+			row, ok := rows[c.claim]
+			if !ok {
+				t.Fatalf("tests/claim-map.json has no row %q", c.claim)
+			}
+			if row["status"] != c.status || row["spec_anchor"] != c.anchor || row["deferral_id"] != c.deferral {
+				t.Errorf("row %q: status %q anchor %q deferral %q, want %s at %s deferred to %q",
+					c.claim, row["status"], row["spec_anchor"], row["deferral_id"], c.status, c.anchor, c.deferral)
+			}
+		})
+	}
+	for _, claim := range retiredInterReplicaClaims {
+		if _, ok := rows[claim]; ok {
+			t.Errorf("tests/claim-map.json still carries the retired row %q", claim)
+		}
+	}
+	fanOut := rows["CH-BINDRELEASE binding-release fan-out"]
+	if !strings.Contains(fanOut["surface"], "cmd/lenny-gateway/adminrouter.go") {
+		t.Errorf("CH-BINDRELEASE surface %q does not name the propagator construction in cmd/lenny-gateway/adminrouter.go", fanOut["surface"])
+	}
+	assertSurfaceDeclared(t, root, "CH-BINDRELEASE binding-release fan-out", fanOut["surface"])
+	forward := rows["Off-holder request forward on CH-HOLDERFORWARD"]
+	assertSurfaceDeclared(t, root, "Off-holder request forward on CH-HOLDERFORWARD", forward["surface"])
 }
 
 // closedSuspendResumeFinding is a finding the suspend and resume work closed
@@ -428,22 +518,13 @@ func blockedFindingSkips(t testing.TB, root string, dirs ...string) map[string][
 	return out
 }
 
-// suspendResumeDeviations is the deviations record of the proposal that
-// added the off-holder running-row skip.
-const suspendResumeDeviations = "proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/" +
-	"0092_new_write-the-session-suspend-and-resume-proposal-that-gateway.deviations.md"
-
 // diagnosis: a test skips with "blocked:" on a BUILD-GAPS finding that is
 // closed or absent, so the skip outlived its reason and hides a case that
-// now has to run; remove the skip. Or the off-holder running-row skip has
-// lost the deviations entry that records why a required case is skipped.
+// now has to run; remove the skip.
 func TestBlockedSkipsNameOpenFindings_spec_7_2(t *testing.T) {
 	root := repoRoot(t)
 	findings := buildGapsFindingsByID(t, root)
 	skips := blockedFindingSkips(t, root, "tests", "pkg", "cmd", "sdks")
-	if len(skips["F-7.2.38"]) == 0 {
-		t.Fatal("no test skips on F-7.2.38; the probe no longer reads the skip it was written for")
-	}
 	for id, files := range skips {
 		f, ok := findings[id]
 		switch {
@@ -452,9 +533,6 @@ func TestBlockedSkipsNameOpenFindings_spec_7_2(t *testing.T) {
 		case !f.open:
 			t.Errorf("%v skip on %s, which is closed (BUILD-GAPS.md:%d); remove the skip", files, id, f.line)
 		}
-	}
-	if !strings.Contains(readDocPage(t, filepath.Join(root, filepath.FromSlash(suspendResumeDeviations))), "F-7.2.38") {
-		t.Errorf("%s records no deviation for the F-7.2.38 skip", suspendResumeDeviations)
 	}
 }
 
@@ -482,8 +560,10 @@ func TestRemediationPlanRecordsTheSuspendResumeProposal_spec_7_3(t *testing.T) {
 // diagnosis: the probes above no longer read a skip reason or a selector the
 // way the checks assume, so they pass or fail vacuously.
 func TestSuspendResumeRecordProbes_spec_7_2(t *testing.T) {
-	if got := blockedOnFinding.FindStringSubmatch(`t.Skip("blocked: F-7.2.38 (owner: R19) x")`); len(got) < 2 || got[1] != "F-7.2.38" {
-		t.Errorf("blockedOnFinding read %v, want F-7.2.38", got)
+	// The specimen is split before "blocked:" so the file scan of
+	// TestBlockedSkipsNameOpenFindings_spec_7_2 does not read it as a skip.
+	if got := blockedOnFinding.FindStringSubmatch(`t.Skip("` + `blocked: F-1.2.3 (owner: R1) x")`); len(got) < 2 || got[1] != "F-1.2.3" {
+		t.Errorf("blockedOnFinding read %v, want F-1.2.3", got)
 	}
 	if blockedOnFinding.MatchString(`t.Skip("blocked: the e2e Postgres pod is not running")`) {
 		t.Error("blockedOnFinding matched an environment skip that names no finding")

@@ -5,6 +5,9 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
+	"net"
+	"net/http"
 	"reflect"
 	"sync"
 	"testing"
@@ -291,4 +294,115 @@ type closeRecorder struct {
 func (c closeRecorder) Close() {
 	c.log.add("close")
 	c.Server.Close()
+}
+
+// TestShutdownStopsTheForwardListenerAlongsideTheRESTListener_spec_10_1_7
+// runs the listener stop over two real HTTP servers. A REST client holds an
+// event stream open, so the REST drain lasts until the shutdown timeout, and
+// a forwarded request is in flight on the CH-HOLDERFORWARD listener when the
+// stop begins. The forward listener stops accepting as soon as the stop
+// begins, while the REST drain is still waiting, and the in-flight forwarded
+// request completes with its response before the stop returns. A stop that
+// drained the forward listener only after the REST listener kept accepting
+// forwarded requests for the whole REST drain.
+//
+// spec: 10.1.7 (Terminal pipelines at process exit.), 29.3 (Interactive
+// message send)
+func TestShutdownStopsTheForwardListenerAlongsideTheRESTListener_spec_10_1_7(t *testing.T) {
+	streaming := make(chan struct{})
+	release := make(chan struct{})
+	rest, restURL := startShutdownTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		close(streaming)
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer close(release)
+	inFlight := make(chan struct{})
+	finish := make(chan struct{})
+	forward, forwardURL := startShutdownTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/slow" {
+			close(inFlight)
+			<-finish
+		}
+		_, _ = io.WriteString(w, "forwarded")
+	}))
+
+	streamResp, err := http.Get(restURL + "/v1/sessions/s_1/events")
+	if err != nil {
+		t.Fatalf("open REST stream: %v", err)
+	}
+	defer streamResp.Body.Close()
+	<-streaming
+
+	slow := make(chan string, 1)
+	go func() {
+		resp, err := http.Get(forwardURL + "/slow")
+		if err != nil {
+			slow <- "error: " + err.Error()
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		slow <- string(body)
+	}()
+	<-inFlight
+
+	const timeout = 2 * time.Second
+	stopped := make(chan struct{})
+	started := time.Now()
+	go func() {
+		defer close(stopped)
+		shutdownSequence{timeout: timeout, http: rest, forward: forward}.stopListener()
+	}()
+
+	if !forwardListenerRefuses(forwardURL, timeout/2) {
+		t.Fatalf("forward listener still accepted a new connection %v into the stop, while the REST drain was in progress", timeout/2)
+	}
+	close(finish)
+	select {
+	case body := <-slow:
+		if body != "forwarded" {
+			t.Errorf("in-flight forwarded request = %q, want its response %q", body, "forwarded")
+		}
+	case <-stopped:
+		t.Fatal("the stop returned before the in-flight forwarded request completed")
+	}
+	<-stopped
+	if elapsed := time.Since(started); elapsed > timeout+time.Second {
+		t.Errorf("stop took %v, want at most the shared shutdown timeout %v", elapsed, timeout)
+	}
+}
+
+// startShutdownTestServer serves h on a loopback listener and returns the
+// server and its base URL.
+func startShutdownTestServer(t *testing.T, h http.Handler) (*http.Server, string) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := &http.Server{Handler: h, ReadHeaderTimeout: time.Second}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	return srv, "http://" + ln.Addr().String()
+}
+
+// forwardListenerRefuses polls the listener with fresh connections until one
+// fails or within elapses, and reports whether a connection failed.
+func forwardListenerRefuses(baseURL string, within time.Duration) bool {
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}, Timeout: 200 * time.Millisecond}
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(baseURL + "/new")
+		if err != nil {
+			return true
+		}
+		_ = resp.Body.Close()
+		time.Sleep(20 * time.Millisecond)
+	}
+	return false
 }

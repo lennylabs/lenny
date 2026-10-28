@@ -150,6 +150,15 @@ only the env vars it can satisfy.
 {{- if ne .Values.auth.multiTenant (eq $tenancyMode "multi") -}}
 {{- fail (printf "§10.2: auth.multiTenant=%v contradicts tenancy.mode=%s; set auth.multiTenant: true with tenancy.mode: multi, or auth.multiTenant: false with tenancy.mode: single." .Values.auth.multiTenant $tenancyMode) -}}
 {{- end -}}
+{{- /* §10.3 NET-072 — outside dev mode a gateway configured with a
+   coordination lease store, which it is whenever Redis is configured,
+   refuses to start without the gateway replica certificate that the
+   CH-HOLDERFORWARD listener presents. mtls.enabled=false removes that
+   certificate, so the render fails closed rather than producing a gateway
+   that crash-loops at startup. */ -}}
+{{- if and (not .Values.mtls.enabled) (not .Values.global.devMode) (or $hasRedis $hasRedisCluster $useSentinel) -}}
+{{- fail "§10.3 NET-072: mtls.enabled=false is refused outside global.devMode while Redis is configured; the gateway's inter-replica forward listener (gateway.holderForwardPort) requires the gateway replica certificate, and the gateway refuses to start without it. Set mtls.enabled: true." -}}
+{{- end -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -322,7 +331,11 @@ spec:
           verify the Token Service server cert against the shared
           cluster-internal CA. The mount is gated on mtls.enabled so a
           no-mesh / external-mTLS deployment can opt out, but the chart
-          default is mtls.enabled=true.
+          default is mtls.enabled=true. Outside global.devMode the chart
+          refuses to render mtls.enabled=false while Redis is configured,
+          because the inter-replica forward listener presents this
+          certificate and the gateway refuses to start without it
+          (§10.3 NET-072).
       */ -}}
       {{- if or .Values.mtls.enabled $minioCABundle .Values.security.oidc.bearerTrustKeySecret $localKMS }}
       volumes:
@@ -764,6 +777,21 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            # §10.1.1 Replica address — the gateway advertises
+            # <pod IP>:<gateway.holderForwardPort> in its coordination lease
+            # holder value, and a replica that does not coordinate a session
+            # forwards the session's request to that address over
+            # CH-HOLDERFORWARD (§10.3 NET-072). LENNY_POD_IP is declared
+            # before the advertise address so the $(LENNY_POD_IP) reference
+            # expands; the gateway brackets an IPv6 pod IP.
+            - name: LENNY_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: LENNY_HOLDER_FORWARD_ADVERTISE_ADDR
+              value: "$(LENNY_POD_IP):{{ .Values.gateway.holderForwardPort }}"
+            - name: LENNY_HOLDER_FORWARD_LISTEN_ADDR
+              value: ":{{ .Values.gateway.holderForwardPort }}"
             # §4.1 gateway.maxSessionsPerReplica — per-replica capacity
             # ceiling used as the denominator of the §16.5
             # GatewaySessionBudgetNearExhaustion alert and the §17.8.2
@@ -1637,6 +1665,10 @@ spec:
               containerPort: {{ .Values.gateway.internalPort }}
             - name: grpc
               containerPort: {{ .Values.gateway.grpcPort }}
+            # §10.3 NET-072 — the CH-HOLDERFORWARD inter-replica forward
+            # listener; §13.2.4 admits only gateway pods on this port.
+            - name: holder-forward
+              containerPort: {{ .Values.gateway.holderForwardPort }}
             {{- if .Values.features.llmProxy }}
             - name: llm-proxy
               containerPort: {{ .Values.gateway.llmProxyPort }}

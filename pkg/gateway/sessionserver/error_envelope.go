@@ -34,6 +34,12 @@ type errorBody struct {
 // fallback the code-only Classify returns. spec: §15.2.1
 // (classification consistency).
 func (s *Server) writeError(w http.ResponseWriter, status int, code, message string, details map[string]any) {
+	writeErrorEnvelope(w, status, code, message, details)
+}
+
+// writeErrorEnvelope is writeError for a handler that runs outside a
+// Server, such as the inter-replica forward listener's chain.
+func writeErrorEnvelope(w http.ResponseWriter, status int, code, message string, details map[string]any) {
 	cat, retryable := errorclassify.ClassifyStatus(code, status)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

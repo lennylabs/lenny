@@ -27,10 +27,15 @@ import (
 // clusterChartSet is the chart overrides of a production install on the
 // Redis Cluster topology: no dev mode, so the chart passes no
 // --redis-allow-insecure, and the Cluster AUTH password in redis.password.
+// mtls.enabled is true because the chart refuses to render a production
+// install with Redis configured and no gateway replica certificate
+// (§10.3 NET-072); the test reads only the datastore configuration from
+// the render.
 func clusterChartSet(rc *containers.RedisCluster, password string, extra ...string) []string {
 	return append([]string{
 		"tokenService.enabled=true",
 		"global.devMode=false",
+		"mtls.enabled=true",
 		"redis.provider=cluster",
 		"redis.cluster.addrs=" + strings.Join(rc.Addrs, "\\,"),
 		"redis.password=" + password,

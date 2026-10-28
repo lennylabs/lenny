@@ -51,6 +51,16 @@ func (s *Server) handleTransition(endpoint session.Endpoint, transition func(*se
 // post-terminal hook when the write made the row terminal. The terminal
 // claim opens before the Update and ends after the hook, or at once on a
 // refusal or store error.
+//
+// Before any write, a request in a state in which the session holds its
+// coordination lease is forwarded to the coordinating replica, so the write
+// and the termination sequence run only on that replica, or in a
+// single-gateway deployment. A terminate or delete in created, finalizing,
+// ready, or suspended without a pod has no coordinating replica and is
+// written here. A forward that is not delivered, or whose outcome is
+// unknown, answers 409 TARGET_NOT_READY and writes nothing.
+//
+// spec: §29.3 (Interactive message send) Forwarding, §15.1 (REST API)
 func (s *Server) handleTerminalWrite(w http.ResponseWriter, r *http.Request, endpoint session.Endpoint, transition func(*sessionstore.Session)) {
 	tenantID := s.resolveTenant(r)
 	id := r.PathValue("id")
@@ -68,6 +78,13 @@ func (s *Server) handleTerminalWrite(w http.ResponseWriter, r *http.Request, end
 		CurrentState: row.State,
 	}); err != nil {
 		s.writePreconditionError(w, err)
+		return
+	}
+	// spec: §29.3 (Interactive message send) Forwarding rule 1 — in a state
+	// in which the session holds REG-COORDLEASE, a replica that does not
+	// hold it forwards the request, and the coordinator writes the terminal
+	// state and runs the termination sequence.
+	if s.forwardToHolder(w, r, row, ForwardKindTerminate, r.Body) != ForwardLocal {
 		return
 	}
 	end := s.BeginTerminal(id)

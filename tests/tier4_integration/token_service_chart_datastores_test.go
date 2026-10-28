@@ -121,9 +121,12 @@ func TestChartConfiguredTokenServiceWritesIssuedTokensAndPublishesRevocations_sp
 	base := tlsredis.Start(t, "base-secret")
 	cache := tlsredis.Start(t, "cache-secret")
 
+	// The chart refuses a production render with Redis configured and no
+	// gateway replica certificate (§10.3 NET-072), so mTLS stays on.
 	chartArgs, chartEnv := chartTokenServiceDatastoreConfig(t, []string{
 		"tokenService.enabled=true",
 		"global.devMode=false",
+		"mtls.enabled=true",
 		"postgres.dsn=" + pg.DSN,
 		"redis.provider=external",
 		"redis.url=" + base.URL,

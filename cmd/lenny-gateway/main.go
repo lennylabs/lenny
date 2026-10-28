@@ -103,6 +103,9 @@ func runGateway(f *gatewayFlags) {
 	// stays a synchronous call in runServers (gated on sqliteDB, before
 	// sqliteDB.Close), matching the original timing exactly. F-17.4.2.
 	w.buildStores()
+	// §10.3 NET-072 CH-HOLDERFORWARD client and listener TLS, built before
+	// the session server that takes the client.
+	w.buildHolderForwardTransport()
 	defer func() {
 		if w.tokenServiceConn != nil {
 			_ = w.tokenServiceConn.Close()
@@ -233,6 +236,9 @@ func runGateway(f *gatewayFlags) {
 		w.driftMonitor, dsMonitor, w.failOpenReplicas, w.revCache, revProp, ruStore,
 		w.siemHealthChecker, resolvedNoEnvPolicy,
 	)
+	// §29.3 Forwarding — the CH-HOLDERFORWARD listener over the session mux
+	// and /mcp handler, behind the REST listener's auth options.
+	w.buildHolderForwardServer(sessionSrv, mcpSrv)
 
 	// §4.9 LLM Proxy subsystem (a named §4.1 extraction target).
 	llmProxySrv := w.buildLLMProxy(policyChain,

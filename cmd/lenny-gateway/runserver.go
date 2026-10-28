@@ -191,6 +191,9 @@ func (w *gatewayWiring) runServers() {
 			log.Fatalf("lenny-gateway: listen: %v", err)
 		}
 	}()
+	// spec: §10.3 NET-072 — the CH-HOLDERFORWARD listener serves alongside
+	// the REST listener and stops with it.
+	w.startHolderForwardListener()
 	if w.llmProxySrv != nil {
 		go func() {
 			log.Printf("lenny-gateway: §4.9 LLM proxy listening on %s", w.llmProxySrv.Addr)

@@ -3868,6 +3868,13 @@ legacy single-file proposals carry their status in the prose status bullet, whic
 `.claude/tools/proposal-status.mjs` reads and does not write.
 
 - Direct-fix lane.
+  - [x] **T-17.4.32** (Medium): `tests/tier4_integration` exceeded its 1800 s budget (1989 s on the integration
+    branch, 2568 s with proposal 0101's tests) because every lifecycle harness started its own control plane and
+    Postgres. Fixed on `impl/0101-inter-replica-carrier` (`2f85a0cc2`): one shared control plane and one shared,
+    template-cloned Postgres per test binary; the package now takes 1679 s.
+  - [ ] **T-17.4.33** (Medium): the tier-4 package has about 120 s of headroom and runs nearly serially. Move the
+    remaining per-test `containers.StartPostgres` sites to `containers.SharedPostgres`, add `t.Parallel()` where
+    tests own their fixtures, and look at the slowest tests (114 s, 92 s, 54 s). Direct fix, after 0101 merges.
   - [x] **F-4.4.32** (Medium, from 0072 §1.8): the gateway declares `chunk_encoding: tar` for chunks
     `ArchiveTree` gzips. Declare `tar.gz`, which §4.4 already permits.
   - [x] **F-4.4.4**, reopened (Medium, from 0072 §1.9): `FirstCheckpointDelay` has no production caller, so

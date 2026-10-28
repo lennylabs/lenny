@@ -212,6 +212,8 @@ type gatewayFlags struct {
 	adapterTLSCert                                *string
 	adapterTLSKey                                 *string
 	adapterCA                                     *string
+	holderForwardAdvertiseAddr                    *string
+	holderForwardListenAddr                       *string
 	tokenServiceAddr                              *string
 	tokenServiceHTTPURL                           *string
 	tokenServiceCert                              *string
@@ -905,6 +907,10 @@ func (f *gatewayFlags) registerSessionFlags() {
 		"path to the private key for --adapter-tls-cert.")
 	f.adapterCA = flag.String("adapter-ca", os.Getenv("LENNY_ADAPTER_CA"),
 		"path to the CA bundle that verifies a pod adapter's server certificate on the §4.7 mTLS link.")
+	f.holderForwardAdvertiseAddr = flag.String("holder-forward-advertise-addr", os.Getenv("LENNY_HOLDER_FORWARD_ADVERTISE_ADDR"),
+		"§10.1.1 Replica address: the host:port this replica advertises in its REG-COORDLEASE holder value, at which peer replicas reach its CH-HOLDERFORWARD listener (the chart renders <pod IP>:gateway.holderForwardPort; an IPv6 host is bracketed). Required whenever a coordination lease store is configured (Redis); the gateway refuses to start without a valid value.")
+	f.holderForwardListenAddr = flag.String("holder-forward-listen-addr", envOr("LENNY_HOLDER_FORWARD_LISTEN_ADDR", ":50054"),
+		"§10.3 NET-072 bind address of the CH-HOLDERFORWARD listener, which serves requests forwarded by peer replicas over mTLS with the gateway replica certificate (--adapter-tls-cert, --adapter-tls-key, --adapter-ca). Default :50054.")
 	f.tokenServiceAddr = flag.String("token-service-grpc-addr", os.Getenv("LENNY_TOKEN_SERVICE_GRPC_ADDR"),
 		"§4.3 lenny-token-service gRPC address (host:port). When set, the gateway materializes every §4.9 credential lease over mTLS against the Token Service instead of running pkg/credential.MintLease in-process, enforcing the §4.3 'gateway has no KMS decrypt rights' boundary. Empty falls back to the in-process credassign.Service for dev mode and self-contained tests.")
 	f.tokenServiceHTTPURL = flag.String("token-service-http-url", os.Getenv("LENNY_TOKEN_SERVICE_HTTP_URL"),

@@ -213,13 +213,15 @@ func (r *Router) handleResumeTenant(w http.ResponseWriter, req *http.Request) {
 }
 
 // drainTenant runs the shared lifecycle drain over the whole tenant
-// when the session seams are wired, and is a no-op returning a zero
-// result and nil otherwise. spec: §15.1; §12.8 (Lifecycle fence and drain).
+// when the session seams are wired, publishing the transitioned sessions
+// through the router's binding-release fan-out, and is a no-op returning
+// a zero result and nil otherwise.
+// spec: §15.1; §12.8 (Lifecycle fence and drain); §28.5.7 (Gateway-to-store).
 func (r *Router) drainTenant(ctx context.Context, tenantID string) (DrainResult, error) {
 	if r.sessions == nil || r.sessionAdmin == nil {
 		return DrainResult{}, nil
 	}
-	return DrainSessions(ctx, r.sessions, r.sessionAdmin, tenantID, "")
+	return DrainSessions(ctx, r.sessions, r.sessionAdmin, r.userPods, tenantID, "")
 }
 
 // decodeSuspendReason reads the optional {"reason": "..."} suspend body.

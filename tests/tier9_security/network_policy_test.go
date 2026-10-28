@@ -20,12 +20,17 @@
 package tier9_security_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
+	"github.com/lennylabs/lenny/tests/testinfra/sessiondriver"
 )
 
 // lennySystemNS is the namespace the Lenny control plane runs in.
@@ -458,4 +463,174 @@ func jsonpathOut(t *testing.T, c *kind.Cluster, kind, name, jsonpath string) str
 		t.Fatalf("query %s on %s/%s: %v\n%s", jsonpath, kind, name, err, out)
 	}
 	return strings.TrimSpace(out)
+}
+
+// holderForwardPort is the chart default of gateway.holderForwardPort, the
+// CH-HOLDERFORWARD inter-replica forward port (§10.1.1, §13.2.4).
+const holderForwardPort = 50054
+
+// gatewayPodSelector selects gateway pods by both labels the lenny-gateway
+// Service selects on, so the probe target is a gateway pod rather than a
+// pod that carries only the component label.
+const gatewayPodSelector = "app.kubernetes.io/name=lenny,lenny.dev/component=gateway"
+
+// gatewayPeerOnlyProbeLabels carries only the component label the
+// CH-HOLDERFORWARD self-peer rules select, so the NetworkPolicy treats the
+// probe pod as a gateway peer while the lenny-gateway Service does not
+// select it.
+var gatewayPeerOnlyProbeLabels = map[string]string{"lenny.dev/component": "gateway"}
+
+// spec: 13.2.4 (Gateway row), 28.5.4 (Inter-replica), 10.3 (mTLS PKI)
+// diagnosis: a failure in the gateway-peer case means allow-gateway-egress
+// or allow-gateway-ingress drops a gateway pod's connection to a peer
+// gateway pod on the CH-HOLDERFORWARD port, so every off-holder forward
+// fails as not delivered. A failure in the default-namespace case means a
+// pod outside the gateway reaches the forward port, so the §13.2.4 Gateway
+// row's gateway-only ingress on that port is not enforced. The Kind install
+// runs no forward listener, so a peer probe that the policy admits ends in
+// a refused connection (curl exit 7), and only a dropped one times out
+// (curl exit 28).
+func TestHolderForwardPortAdmitsOnlyGatewayPeers_spec_13_2_4(t *testing.T) {
+	c := kind.InstallLenny(t)
+
+	gatewayIP := podIPBySelector(t, c, lennySystemNS, gatewayPodSelector)
+	if gatewayIP == "" {
+		t.Fatalf("no gateway pod IP found for %s; cannot probe the CH-HOLDERFORWARD port", gatewayPodSelector)
+	}
+	target := fmt.Sprintf("http://%s:%d/", gatewayIP, holderForwardPort)
+
+	t.Run("gateway peer in lenny-system is admitted", func(t *testing.T) {
+		createProbePod(t, c, networkProbePod("np-probe-gateway-peer", gatewayPeerOnlyProbeLabels))
+		res := curlFromPod(t, c, "np-probe-gateway-peer", target, 8*time.Second)
+		if res.exitCode == 28 {
+			t.Fatalf("§13.2.4 violation: a lenny-system probe carrying lenny.dev/component=gateway timed out "+
+				"reaching the CH-HOLDERFORWARD port at %s. allow-gateway-egress and allow-gateway-ingress must "+
+				"admit a gateway peer on that port.\noutput:\n%s", target, res.output)
+		}
+		t.Logf("gateway-peer probe reached the CH-HOLDERFORWARD port at %s (curl exit %d, not dropped)",
+			target, res.exitCode)
+	})
+
+	t.Run("default-namespace pod is dropped", func(t *testing.T) {
+		createProbeInNamespace(t, c, defaultNS, "hf-default-src", nil)
+		requireDefaultNamespaceEgress(t, c, "hf-default-src")
+		res := curlFromNS(t, c, defaultNS, "hf-default-src", target, 8*time.Second)
+		if res.exitCode != 28 {
+			t.Fatalf("§13.2.4 violation: a default-namespace probe reaching the CH-HOLDERFORWARD port at %s "+
+				"ended with curl exit %d, want 28 (connection timed out). Only gateway pods may reach the "+
+				"forward port; a refused or completed connection means the packet reached the gateway pod.\n"+
+				"output:\n%s", target, res.exitCode, res.output)
+		}
+		t.Logf("default-namespace probe dropped at the CH-HOLDERFORWARD port at %s (curl exit 28)", target)
+	})
+}
+
+// requireDefaultNamespaceEgress is the egress positive control the
+// lenny-ops ingress case uses: the default-namespace probe must reach the
+// CoreDNS metrics endpoint, so a later timeout is attributable to the
+// target's ingress policy rather than to a probe with no working egress.
+func requireDefaultNamespaceEgress(t *testing.T, c *kind.Cluster, pod string) {
+	t.Helper()
+	dnsIP := podIPBySelector(t, c, "kube-system", "k8s-app=kube-dns")
+	if dnsIP == "" {
+		t.Fatalf("no CoreDNS pod IP found; cannot establish the egress positive control")
+	}
+	dnsTarget := fmt.Sprintf("http://%s:9153/metrics", dnsIP)
+	res := curlFromNS(t, c, defaultNS, pod, dnsTarget, 8*time.Second)
+	if res.exitCode != 0 {
+		t.Fatalf("egress positive control failed: the default-namespace probe could not reach CoreDNS at %s "+
+			"(curl exit %d), so a timeout on the target cannot be attributed to its ingress policy.\noutput:\n%s",
+			dnsTarget, res.exitCode, res.output)
+	}
+}
+
+// callingSessionHeader is the gateway-internal header that names the
+// calling session of a forwarded platform tool call. Only the
+// CH-HOLDERFORWARD listener reads it.
+const callingSessionHeader = "X-Lenny-Calling-Session"
+
+// publicRequestAs sends one request to the public listener through d's
+// port-forward under the dev-mode identity of user in tenant, with extra
+// headers, and returns the status and body. The identity carries the
+// tenant-scoped platform-admin role the sessiondriver session calls use, so
+// a refusal comes from the tenant scope rather than from a missing
+// permission.
+func publicRequestAs(ctx context.Context, t *testing.T, d *sessiondriver.Driver, method, path, tenant, user string, body string, extra map[string]string) (int, string) {
+	t.Helper()
+	var reader io.Reader
+	if body != "" {
+		reader = strings.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, d.BaseURL()+path, reader)
+	if err != nil {
+		t.Fatalf("build %s %s: %v", method, path, err)
+	}
+	req.Header.Set("X-Lenny-Tenant-ID", tenant)
+	req.Header.Set("X-Lenny-Roles", "platform-admin")
+	req.Header.Set("X-Lenny-User-ID", user)
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range extra {
+		req.Header.Set(k, v)
+	}
+	res, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer res.Body.Close()
+	raw, _ := io.ReadAll(res.Body)
+	return res.StatusCode, string(raw)
+}
+
+// spec: 29.3 (Interactive message send) Forwarding rule 3, 13.2.4 (Gateway row), 28.5.4 (Inter-replica)
+// diagnosis: a failure means the public listener honored the
+// gateway-internal calling-session header and ran a request from another
+// tenant's user under the named session's principal, so any client could
+// act as any session by naming it. Only the CH-HOLDERFORWARD listener,
+// which admits gateway peers alone, may read that header.
+func TestPublicListenerDoesNotRunARequestAsTheCallingSession_spec_29_3(t *testing.T) {
+	d := sessiondriver.New(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	suffix := fmt.Sprintf("-%d", time.Now().UnixNano())
+	owner, intruder := "t9-callsess-acme"+suffix, "t9-callsess-globex"+suffix
+	for _, tenant := range []string{owner, intruder} {
+		if err := d.BootstrapTenant(ctx, tenant); err != nil {
+			t.Fatalf("bootstrap tenant %s: %v", tenant, err)
+		}
+	}
+	if err := d.AllowSessionsWithNoEnvironment(ctx, owner); err != nil {
+		t.Fatalf("allow sessions with no environment for %s: %v", owner, err)
+	}
+	sess, err := d.CreateAndStart(ctx, owner, sessiondriver.EchoRuntimeSidecar)
+	if errors.Is(err, sessiondriver.ErrPoolNotReady) {
+		t.Skipf("precondition not met: warm pool not ready, no session to name: %v", err)
+	}
+	if err != nil {
+		t.Fatalf("create-and-start for %s: %v", owner, err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = d.Terminate(ctx, owner, sess.ID)
+	})
+	// Control: the owner reads its own session, so a 404 below is the
+	// intruder's refusal rather than a missing session.
+	if _, err := d.GetSession(ctx, owner, sess.ID); err != nil {
+		t.Fatalf("control: %s could not read its own session %s: %v", owner, sess.ID, err)
+	}
+
+	naming := map[string]string{callingSessionHeader: sess.ID}
+	path := "/v1/sessions/" + sess.ID
+	if code, body := publicRequestAs(ctx, t, d, http.MethodGet, path, intruder, "bob", "", naming); code != http.StatusNotFound {
+		t.Errorf("GET %s from tenant %s naming the session in %s = %d %s, want 404: the public listener "+
+			"must not run the request as the calling session", path, intruder, callingSessionHeader, code, body)
+	}
+	msg := `{"messages":[{"role":"user","content":"calling-session probe"}]}`
+	if code, body := publicRequestAs(ctx, t, d, http.MethodPost, path+"/messages", intruder, "bob", msg, naming); code < 400 {
+		t.Errorf("POST %s/messages from tenant %s naming the session in %s = %d %s, want a refusal: the "+
+			"public listener must not run the request as the calling session", path, intruder, callingSessionHeader, code, body)
+	}
 }

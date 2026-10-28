@@ -31,9 +31,10 @@ const recoveryPasses = 40
 // newCompose builds a harness over the compose Postgres session store.
 func newCompose(t *testing.T, replicas, pods int) *lifecycleharness.Harness {
 	t.Helper()
-	newStore, _ := lifecycleharness.PostgresStore(t)
+	newStore, _ := lifecycleharness.SharedPostgresStore(t, &harnessPostgres)
 	return lifecycleharness.New(t, lifecycleharness.Options{
 		Replicas: replicas, Pods: pods, CredentialPool: true, NewStore: newStore,
+		ControlPlane: &harnessControlPlane,
 	})
 }
 

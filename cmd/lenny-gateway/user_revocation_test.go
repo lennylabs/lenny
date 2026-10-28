@@ -19,8 +19,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/bindrelease"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	podterminateprop "github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podterminate/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
 )
@@ -71,7 +71,7 @@ func (f *fakeRevokedReleaser) ReleaseRevokedBinding(ctx context.Context, tenantI
 	return r.released, r.err
 }
 
-// TestPodTerminateFanOutReportsTheReleaseOutcomes_spec_11_4 asserts that
+// TestBindReleaseFanOutReportsTheReleaseOutcomes_spec_11_4 asserts that
 // terminateLocal releases each matching registry entry through the
 // revoked-binding releaser rather than sending its own Shutdown, and maps
 // the outcomes into the response: a release counts one pod, an error names
@@ -79,7 +79,7 @@ func (f *fakeRevokedReleaser) ReleaseRevokedBinding(ctx context.Context, tenantI
 // nothing. A session with no registry entry here is not released.
 //
 // spec: §11.4 step 2 (User Invalidation), §10.1.5 (Stale Replica Behavior)
-func TestPodTerminateFanOutReportsTheReleaseOutcomes_spec_11_4(t *testing.T) {
+func TestBindReleaseFanOutReportsTheReleaseOutcomes_spec_11_4(t *testing.T) {
 	reg := podsession.NewRegistry()
 	for _, id := range []string{"run_released", "run_noop", "run_err", "run_other"} {
 		reg.Put(&podsession.BindResult{SessionID: id})
@@ -89,7 +89,7 @@ func TestPodTerminateFanOutReportsTheReleaseOutcomes_spec_11_4(t *testing.T) {
 		"run_noop":     {},
 		"run_err":      {err: errors.New("executor release failed")},
 	}}
-	fan := &podTerminateFanOut{registry: reg, releaser: rel}
+	fan := &bindReleaseFanOut{registry: reg, releaser: rel}
 	res := fan.TerminateUserSessions(context.Background(), "acme", "alice@acme.com",
 		[]string{"run_released", "run_noop", "run_err", "run_unbound"})
 	if res.PodsTerminated != 1 {
@@ -105,17 +105,17 @@ func TestPodTerminateFanOutReportsTheReleaseOutcomes_spec_11_4(t *testing.T) {
 	}
 }
 
-// TestPodTerminateFanOutDetachesTheReleaseContext_spec_11_4 asserts that a
+// TestBindReleaseFanOutDetachesTheReleaseContext_spec_11_4 asserts that a
 // cancelled admin request does not cut a full_revoke release: the context
 // each release receives is not done and carries the
 // userTerminateRPCTimeout deadline.
 //
 // spec: §11.4 step 2 (User Invalidation)
-func TestPodTerminateFanOutDetachesTheReleaseContext_spec_11_4(t *testing.T) {
+func TestBindReleaseFanOutDetachesTheReleaseContext_spec_11_4(t *testing.T) {
 	reg := podsession.NewRegistry()
 	reg.Put(&podsession.BindResult{SessionID: "run_a"})
 	rel := &fakeRevokedReleaser{}
-	fan := &podTerminateFanOut{registry: reg, releaser: rel}
+	fan := &bindReleaseFanOut{registry: reg, releaser: rel}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	start := time.Now()
@@ -135,10 +135,10 @@ func TestPodTerminateFanOutDetachesTheReleaseContext_spec_11_4(t *testing.T) {
 	}
 }
 
-// TestPodTerminateFanOutPublishesCrossReplica is the §11.4 step-2 fix:
+// TestBindReleaseFanOutPublishesCrossReplica is the §11.4 step-2 fix:
 // the handling replica's full_revoke fans the release request out over
 // Redis pub/sub so peer replicas release the bindings they hold. F-11.4.3.
-func TestPodTerminateFanOutPublishesCrossReplica_spec_11_4_step_2(t *testing.T) {
+func TestBindReleaseFanOutPublishesCrossReplica_spec_11_4_step_2(t *testing.T) {
 	mr := miniredis.RunT(t)
 	clientA := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	clientB := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -148,13 +148,13 @@ func TestPodTerminateFanOutPublishesCrossReplica_spec_11_4_step_2(t *testing.T) 
 	// sessions locally. Replica B holds run_b's binding; its local
 	// releaser must observe the request A publishes.
 	peerB := &recordingPeer{}
-	propB := podterminateprop.New(peerB, pubsub.New(clientB), "replica-B")
+	propB := bindrelease.New(peerB, pubsub.New(clientB), "replica-B")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go propB.Run(ctx)
 
-	fanA := &podTerminateFanOut{registry: podsession.NewRegistry(), releaser: &fakeRevokedReleaser{}}
-	fanA.prop = podterminateprop.New(fanA, pubsub.New(clientA), "replica-A")
+	fanA := &bindReleaseFanOut{registry: podsession.NewRegistry(), releaser: &fakeRevokedReleaser{}}
+	fanA.prop = bindrelease.New(fanA, pubsub.New(clientA), "replica-A")
 
 	// miniredis drops a publish that lands before B's SUBSCRIBE registers,
 	// so re-issue the full_revoke until B observes the request.
@@ -178,19 +178,19 @@ func TestPodTerminateFanOutPublishesCrossReplica_spec_11_4_step_2(t *testing.T) 
 	}
 }
 
-// recordingPeer is a podterminateprop.LocalTerminator that records the
+// recordingPeer is a bindrelease.LocalTerminator that records the
 // requests a peer replica's subscriber applies, standing in for the
 // binding-release fan-out on the receiving replica.
 type recordingPeer struct {
 	mu       sync.Mutex
-	requests []podterminateprop.Request
+	requests []bindrelease.Request
 }
 
-func (r *recordingPeer) TerminateLocal(_ context.Context, req podterminateprop.Request) podterminateprop.Result {
+func (r *recordingPeer) TerminateLocal(_ context.Context, req bindrelease.Request) bindrelease.Result {
 	r.mu.Lock()
 	r.requests = append(r.requests, req)
 	r.mu.Unlock()
-	return podterminateprop.Result{}
+	return bindrelease.Result{}
 }
 
 func (r *recordingPeer) count() int {
@@ -199,20 +199,20 @@ func (r *recordingPeer) count() int {
 	return len(r.requests)
 }
 
-func (r *recordingPeer) last() podterminateprop.Request {
+func (r *recordingPeer) last() bindrelease.Request {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(r.requests) == 0 {
-		return podterminateprop.Request{}
+		return bindrelease.Request{}
 	}
 	return r.requests[len(r.requests)-1]
 }
 
-func TestPodTerminateFanOutEmptySessionSet(t *testing.T) {
+func TestBindReleaseFanOutEmptySessionSet(t *testing.T) {
 	reg := podsession.NewRegistry()
 	reg.Put(&podsession.BindResult{SessionID: "run_a"})
 	rel := &fakeRevokedReleaser{}
-	fan := &podTerminateFanOut{registry: reg, releaser: rel}
+	fan := &bindReleaseFanOut{registry: reg, releaser: rel}
 	res := fan.TerminateUserSessions(context.Background(), "acme", "bob@acme.com", nil)
 	if res.PodsTerminated != 0 || len(res.FailedSessions) != 0 || len(rel.calls) != 0 {
 		t.Errorf("an empty session set produced %+v with calls %v, want a zero result", res, rel.calls)
@@ -362,7 +362,7 @@ func TestAdminDurableRevokeNoObserveOnAlreadyRevoked_SEC_TS_1(t *testing.T) {
 // The fan-out adapters satisfy the §11.4 admin-router interfaces they
 // are wired against in WithUserRevocation.
 var (
-	_ admin.UserPodTerminator = (*podTerminateFanOut)(nil)
+	_ admin.UserPodTerminator = (*bindReleaseFanOut)(nil)
 	_ admin.UserTokenRevoker  = (*userTokenRevoker)(nil)
 	// *issuedtokenstore.Store satisfies the consumer-side store interface
 	// the adapter now depends on, so the production wiring is type-checked.

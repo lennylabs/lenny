@@ -153,7 +153,7 @@ github.com/lennylabs/lenny/pkg/gateway/platformtools	github.com/lennylabs/lenny/
 github.com/lennylabs/lenny/pkg/gateway/playground	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/playground
 github.com/lennylabs/lenny/pkg/gateway/podclaim	github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim
 github.com/lennylabs/lenny/pkg/gateway/podsession	github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession
-github.com/lennylabs/lenny/pkg/gateway/podterminate	github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podterminate
+github.com/lennylabs/lenny/pkg/gateway/podterminate	github.com/lennylabs/lenny/pkg/gateway/podlifecycle/bindrelease
 github.com/lennylabs/lenny/pkg/gateway/policy	github.com/lennylabs/lenny/pkg/gateway/policy/policy
 github.com/lennylabs/lenny/pkg/gateway/poolstore	github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore
 github.com/lennylabs/lenny/pkg/gateway/prestop	github.com/lennylabs/lenny/pkg/gateway/podlifecycle/prestop
