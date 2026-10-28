@@ -138,7 +138,7 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | `DataResidencyViolationAttempt` | Storage write or delegation rejected for region mismatch | Investigate misconfiguration or code-path bypass |
 | `PgBouncerAllReplicasDown` | All PgBouncer pods have zero ready replicas | Postgres unreachable; session creation failing |
 | `BillingStreamEntryAgeHigh` | Oldest unacknowledged billing stream entry > 80% of TTL | Billing events at risk of TTL expiry; check Postgres |
-| `TokenStoreUnavailable` | `/v1/oauth/token` returning 503 with `error_type="token_store_unavailable"` for > 30s | Postgres primary unreachable for token issuance (fail-closed); session creation, delegation minting, and credential leasing all fail until Postgres primary recovers |
+| `TokenStoreUnavailable` | `/v1/oauth/token` returning 503 with `error_type="token_store_unavailable"` for > 30s | Postgres primary unreachable for token issuance (fail-closed); session creation and credential leasing both fail until Postgres primary recovers |
 | `LLMUpstreamEgressAnomaly` | Outbound connection from gateway pod to non-allowlisted upstream detected | Investigate pod identity boundary, NetworkPolicy `allow-gateway-egress-llm-upstream` coverage |
 | `AuditGrantDrift` | Unexpected UPDATE/DELETE grants detected on audit tables | Audit integrity at risk; see [OCSF audit guide](audit-ocsf.md) |
 | `ArtifactReplicationResidencyViolation` | ArtifactStore replication residency preflight observed a jurisdiction-tag mismatch or cross-border transfer attempt | Replication for the affected region is suspended; fix jurisdiction mismatch and invoke `POST /v1/admin/artifact-replication/{region}/resume` |

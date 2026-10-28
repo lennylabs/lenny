@@ -251,7 +251,7 @@ GET /v1/admin/metrics?q=lenny_jwt_sign_requests_total&groupBy=component,outcome&
 GET /v1/admin/metrics?q=lenny_kms_sign_quota_per_second&window=30m
 ```
 
-The `component` label is `gateway` or `token-service`, and the `outcome` label is `ok`, `throttled`, `circuit_open`, or `error`. A non-zero `throttled` rate means the provider is already throttling and clients are receiving `503` responses. A rate that rose suddenly on one component points at its traffic, such as a burst of session creation on the gateway or of `POST /v1/oauth/token` exchanges on the Token Service.
+The `component` label is `gateway` or `token-service`, and the `outcome` label is `ok`, `throttled`, `circuit_open`, or `error`. A non-zero `throttled` rate means the provider is already throttling and clients are receiving `503` responses. A rate that rose suddenly on one component points at its traffic, such as a burst of playground-bearer or impersonation mints on the gateway or of `POST /v1/oauth/token` exchanges on the Token Service.
 
 ### Step 2: Confirm the configured quota matches the provider
 
@@ -264,7 +264,7 @@ Compare the value with the asymmetric `Sign` quota the provider reports for the 
 
 ### Step 3: Raise the provider quota and the chart value together
 
-Request an increase of the provider's asymmetric `Sign` quota for the account and region through the provider's quota process. Size the request to at least the deployment's peak sign rate, which is the sum of the session creation rate, the delegation rate, the token renewal rate of every holder that renews before expiry, and infrequent operator mints.
+Request an increase of the provider's asymmetric `Sign` quota for the account and region through the provider's quota process. Size the request to at least the deployment's peak sign rate, which is the sum of the token renewal rate of every holder that renews before expiry and infrequent operator mints.
 
 After the provider applies the increase, set `kms.signQuotaPerSecond` to the new quota and roll out:
 

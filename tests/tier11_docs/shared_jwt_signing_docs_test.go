@@ -124,8 +124,8 @@ func TestReaderDocsStateSharedES256SigningKey_spec_10_2(t *testing.T) {
 		{
 			page:       "operator-guide/security.md",
 			row:        "3. **Bearer tokens**",
-			contains:   []string{"platform-admin impersonation bearers", "web playground bearers", "session-capability tokens of the session-creation path"},
-			notContain: []string{"session tokens", "is the exception"},
+			contains:   []string{"platform-admin impersonation bearers", "web playground bearers"},
+			notContain: []string{"session tokens", "is the exception", "session-capability tokens of the session-creation path"},
 		},
 		{
 			page:     "operator-guide/security.md",

@@ -180,7 +180,7 @@ ROTATED=$(curl -s -X POST "http://localhost:8080/v1/oauth/token" \
 export USER_TOKEN=$ROTATED
 ```
 
-See [Authentication](../client-guide/authentication.md#token-rotation-and-exchange-v1oauthtoken) for the full RFC 8693 parameter set (including `actor_token` for delegation minting).
+See [Authentication](../client-guide/authentication.md#token-rotation-and-exchange-v1oauthtoken) for the full RFC 8693 parameter set (including `actor_token` for `a2a_delegation` child-token minting).
 
 ---
 
