@@ -2,16 +2,19 @@
 
 //go:build security
 
-// Tier-9 security test for the §10.2 "Signing topology" session-creation
+// Tier-9 security tests for the §10.2 "Signing topology" session-creation
 // caller check against a real cmd/lenny-gateway over Postgres: a
-// platform-admin impersonation bearer cannot create a session, and the
-// refusal reaches the client only after its token.exchanged rejection row
-// with exchange_type session_mint is committed to the tenant's audit chain.
+// platform-admin impersonation bearer cannot create a session through
+// POST /v1/sessions or through the client-facing lenny/delegate_task MCP
+// tool, and each refusal reaches the client only after its
+// token.exchanged rejection row with exchange_type session_mint is
+// committed to the tenant's audit chain.
 package tier9_security_test
 
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"testing"
@@ -40,6 +43,62 @@ func (s *opsRevStack) postSessionAsBearer(t *testing.T, bearer string) (int, []b
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, body
+}
+
+// delegateTaskAsBearer calls the client-facing lenny/delegate_task tool on
+// the gateway's /mcp endpoint carrying bearer, naming parentID as the
+// parent session, and returns the tool result's isError flag and the code
+// of its lenny error envelope.
+func (s *opsRevStack) delegateTaskAsBearer(t *testing.T, bearer, parentID string) (bool, string, []byte) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lenny/delegate_task",` +
+		`"arguments":{"parentSessionId":"` + parentID + `","target":"echo",` +
+		`"task":{"input":[{"type":"text","inline":"do work"}]}}}}`
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.gw.BaseURL()+"/mcp", bytes.NewReader([]byte(body)))
+	if err != nil {
+		t.Fatalf("new POST /mcp request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /mcp lenny/delegate_task: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var rpc struct {
+		Result struct {
+			IsError bool `json:"isError"`
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &rpc); err != nil {
+		t.Fatalf("decode lenny/delegate_task response: %v; status %d body %s", err, resp.StatusCode, raw)
+	}
+	for _, c := range rpc.Result.Content {
+		var env struct {
+			Code string `json:"code"`
+		}
+		if json.Unmarshal([]byte(c.Text), &env) == nil && env.Code != "" {
+			return rpc.Result.IsError, env.Code, raw
+		}
+	}
+	return rpc.Result.IsError, "", raw
+}
+
+// childrenOf counts the session rows of tenant whose parent is parentID.
+func (s *opsRevStack) childrenOf(t *testing.T, tenant, parentID string) int {
+	t.Helper()
+	var n int
+	if err := s.pg.Pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM sessions WHERE tenant_id = $1 AND parent_session_id = $2`, tenant, parentID).Scan(&n); err != nil {
+		t.Fatalf("count children of %s/%s: %v", tenant, parentID, err)
+	}
+	return n
 }
 
 // sessionMintRejections counts the committed token.exchanged rows of
@@ -94,6 +153,38 @@ func TestSessionCreationRefusesImpersonationBearer_spec_10_2(t *testing.T) {
 	}
 	if n := s.sessionMintRejections(t, "acme", jti, "rejected:subject_token_impersonation"); n != 1 {
 		t.Errorf("committed session_mint rejection rows for %s = %d, want 1", jti, n)
+	}
+	if n := s.sessionsOwnedBy(t, "acme", subject); n != 0 {
+		t.Errorf("sessions owned by %s = %d, want 0", subject, n)
+	}
+}
+
+// spec: 10.2 (Signing topology), 13.3 (Credential Flow: Write-before-issue ordering, step (1a)), 16.7 (token.exchanged), 8.2
+// diagnosis: an isError=false result or a code other than FORBIDDEN means
+// the built gateway's client-facing lenny/delegate_task accepted a
+// platform-admin impersonation bearer, so the gateway composition root
+// left the delegate tool's caller check unwired. A FORBIDDEN with no
+// committed session_mint row means the refusal was answered before its
+// rejection audit was durable. A child row means the check ran after
+// the child insert.
+func TestDelegateTaskRefusesImpersonationBearer_spec_10_2(t *testing.T) {
+	gateway.SkipUnlessAvailable(t)
+	s := startOpsRevStack(t)
+	const subject = "heidi@acme.com"
+	const parentID = "7b0e3a52-4d1f-4c3e-9a57-2f6b1d0c8e41"
+	imp, _ := s.tenantAdmin(t, "acme", subject)
+	jti := tokenJTI(t, imp)
+
+	isErr, code, raw := s.delegateTaskAsBearer(t, imp, parentID)
+	if !isErr || code != "FORBIDDEN" {
+		t.Fatalf("lenny/delegate_task with an impersonation bearer = (isError %v, code %q), want (true, FORBIDDEN); body %s\n%s",
+			isErr, code, raw, s.gw.Logs())
+	}
+	if n := s.sessionMintRejections(t, "acme", jti, "rejected:subject_token_impersonation"); n != 1 {
+		t.Errorf("committed session_mint rejection rows for %s = %d, want 1", jti, n)
+	}
+	if n := s.childrenOf(t, "acme", parentID); n != 0 {
+		t.Errorf("children of %s = %d, want 0", parentID, n)
 	}
 	if n := s.sessionsOwnedBy(t, "acme", subject); n != 0 {
 		t.Errorf("sessions owned by %s = %d, want 0", subject, n)

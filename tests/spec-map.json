@@ -3261,6 +3261,7 @@
         "pkg/gateway/mcpfabric/mcptools/delegate_caller_check_test.go",
         "cmd/lenny-gateway/caller_check_wiring_test.go",
         "tests/tier9_security/session_creation_impersonation_refusal_test.go::TestSessionCreationRefusesImpersonationBearer_spec_10_2",
+        "tests/tier9_security/session_creation_impersonation_refusal_test.go::TestDelegateTaskRefusesImpersonationBearer_spec_10_2",
         "tests/tier4_integration/oidc_auth_test.go::TestLiveGatewayAuthenticatesUpstreamOIDCBearer_spec_10_2",
         "tests/tier3_contract/rest_auth/oidc_bearer_test.go::TestOIDCBearerAuthenticatesThroughDiscoveredJWKS_spec_10_2",
         "cmd/lenny-gateway/idp_verifier_test.go::TestBuildTokenSigningStoresTrustsTheUpstreamIdP_spec_10_2",
