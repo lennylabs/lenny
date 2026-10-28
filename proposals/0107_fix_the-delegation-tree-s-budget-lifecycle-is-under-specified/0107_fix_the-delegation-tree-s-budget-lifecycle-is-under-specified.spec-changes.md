@@ -2,7 +2,7 @@
 
 ## Design (as the spec must state it)
 
-- The delegation budget return is a step of a delegated child's §7.1 terminal pipeline (SPEC-1, SPEC-2).
+- The delegation budget return is a step of a delegated child's §7.1 terminal pipeline (SPEC-1, SPEC-2), and the adapter's per-session `FINAL_USAGE_REPORT` ends its quiescence wait (SPEC-2, SPEC-10).
 - §8.3 names the first reservation's witness and the scripts' creation and TTL rules, makes the `BUDGET_KEYS_EXPIRED` cleanup idempotent per root, and lets only a reservation detect expiry (SPEC-3, SPEC-8).
 - §8.6 states per-request resolution from the `SessionStore`, the `delegation_tree_budget` row as the record of grants, replica-local consent state with its bound, reclamation, and the terminal-session rule, and rewrites the coordinator-handoff wording for any-replica service (SPEC-4). §8.6 step 2 and §9.2 item 6 state the driver-end dismissal and redrive (SPEC-5, SPEC-7).
 - §12.8 user erasure and tenant deletion name the `delegation_tree_budget` row (SPEC-6).
@@ -30,16 +30,30 @@ the seal-and-export step (**Seal-and-export invariant:** above), the inbox drain
 with
 
 ```markdown
-the seal-and-export step (**Seal-and-export invariant:** above), the inbox drain, the terminal events and signals, the pod or slot release together with, for a delegated child, the delegation budget return that runs concurrently with it ([Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)), and the close of the session log.
+the seal-and-export step (**Seal-and-export invariant:** above), the inbox drain, the terminal events and signals, the pod or slot release, the delegation budget return of a delegated child ([Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)), and the close of the session log.
 ```
 
 ### SPEC-2 · spec/08_recursive-delegation.md § 8.3 Delegation Policy and Lease
 
-Append to numbered item 3 **Return on completion:**, after the sentence ending "returns only restore up to the original allocation.", in the same paragraph:
+**Edit (a).** Append to numbered item 3 **Return on completion:**, after the sentence ending "returns only restore up to the original allocation.", in the same paragraph:
 
 ```markdown
-The return is a step of the child's terminal pipeline ([Section 7.1](07_session-lifecycle.md#71-normal-flow) **Terminal pipeline context:**), so it runs once for the child's terminal transition, after whichever writer committed it. A relabel of an already-terminal child runs no second return. The return addresses the budget keys of the child's recorded `root_session_id`. The quiescence wait of **Usage quiescence before budget return** below starts at the child's terminal transition and runs concurrently with the pod or slot release: it does not wait for the release to complete, and it does not precede the release. The return runs when the child's adapter's `FINAL_USAGE_REPORT` arrives or its stream closes (step 1), which in the normal case happens during the adapter `Shutdown` that the release issues, or when the usage quiescence timeout, counted from the child's terminal transition, elapses (step 2), whichever comes first. An adapter `Shutdown` that does not return therefore delays the return by no more than the timeout. The gateway refuses to start, and pool admission refuses a pool, when a pool's `maxWorkspaceSealDurationSeconds` is not greater than `delegation.usageQuiescenceTimeoutSeconds`, so the quiescence wait ends before the release allowance of the terminal pipeline budget begins.
+The return is a step of the child's terminal pipeline ([Section 7.1](07_session-lifecycle.md#71-normal-flow) **Terminal pipeline context:**), so it runs once for the child's terminal transition, after whichever writer committed it. A relabel of an already-terminal child runs no second return. The return addresses the budget keys of the child's recorded `root_session_id`. The gateway refuses to start, and pool admission refuses a pool, when a pool's `maxWorkspaceSealDurationSeconds` is not greater than `delegation.usageQuiescenceTimeoutSeconds`, so the quiescence wait (**Usage quiescence before budget return** below) ends before the release allowance of the terminal pipeline budget begins.
 ```
+
+**Edit (b).** In the paragraph **Usage quiescence before budget return.**, replace step 1 in full
+
+```markdown
+   1. On receiving a terminal lifecycle event from the pod (or on detecting pod termination), the gateway waits for a `FINAL_USAGE_REPORT` acknowledgement from the child's adapter, or for the gRPC stream to close — whichever comes first. The adapter sends `FINAL_USAGE_REPORT` as the last message on the lifecycle stream before closing, after all in-flight gateway `ReportUsage` pulls have settled.
+```
+
+with
+
+```markdown
+   1. From the child's terminal transition, the gateway waits for the child's `FINAL_USAGE_REPORT` on `CH-ADAPTEREVENTS` ([Section 4.7.3](04_system-components.md#473-adapter-events-on-ch-adapterevents)), or for that stream to close, whichever comes first. The adapter sends `FINAL_USAGE_REPORT` in the session's `Shutdown` ([Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract)), after all in-flight gateway `ReportUsage` pulls have settled. The pod or slot release does not wait for the return, and the return does not wait for the release to complete.
+```
+
+In step 2, replace "within the **usage quiescence timeout** (default: 5s," with "within the **usage quiescence timeout** of the terminal transition (default: 5s,". Keep the three-space list indent, and keep "after all in-flight gateway `ReportUsage` pulls have settled" verbatim, because a tier-11 docs test requires it in §8.3.
 
 ### SPEC-3 · spec/08_recursive-delegation.md § 8.3 Delegation Policy and Lease
 
@@ -232,11 +246,47 @@ serialized per tree on each gateway replica, concurrent requests batched
 
 The table row stays one physical line.
 
+### SPEC-10 · `FINAL_USAGE_REPORT` in §4.7.3, §28.5.2, and §29.4
+
+**Edit (a).** In spec/04_system-components.md § 4.7.3 Adapter Events on CH-ADAPTEREVENTS, in the `FINAL_USAGE_REPORT` row, replace
+
+```markdown
+Final lifecycle-stream message pushed by the child's adapter once all in-flight `ReportUsage` gateway pulls have settled, just before the stream closes.
+```
+
+with
+
+```markdown
+Pushed by the child's adapter for one session once all in-flight `ReportUsage` gateway pulls have settled. Fields: `session_id`.
+```
+
+The row stays one physical line.
+
+**Edit (b).** In spec/28_communication-channels.md § 28.5.2 Pod-to-gateway, in the `CH-ADAPTEREVENTS` **Messages.** bullet, replace
+
+```markdown
+and `FINAL_USAGE_REPORT` as the last message
+  before the stream closes ([§4.7](04_system-components.md#47-runtime-adapter)).
+```
+
+with
+
+```markdown
+and `FINAL_USAGE_REPORT` ([§4.7](04_system-components.md#47-runtime-adapter)).
+```
+
+and reflow the bullet's lines.
+
+**Edit (c).** In spec/29_communication-scenarios.md § 29.4 Interrupt, terminate, and delete, in item 15, replace "pull has settled, as the final message before the stream closes, and the gateway waits for it or for" with "pull has settled, and the gateway waits for it or for", and reflow the item's lines.
+
 ## Spec files touched
 
+- spec/04_system-components.md (SPEC-10)
 - spec/07_session-lifecycle.md (SPEC-1)
 - spec/08_recursive-delegation.md (SPEC-2, SPEC-3, SPEC-4, SPEC-5)
 - spec/09_mcp-integration.md (SPEC-7)
 - spec/12_storage-architecture.md (SPEC-6)
 - spec/16_observability.md (SPEC-8)
 - spec/19_resolved-decisions.md (SPEC-9)
+- spec/28_communication-channels.md (SPEC-10)
+- spec/29_communication-scenarios.md (SPEC-10)
