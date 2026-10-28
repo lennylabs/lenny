@@ -64,13 +64,15 @@ func mustGet(t *testing.T, store sessionstore.Store, id string) sessionstore.Ses
 	return row
 }
 
-// spec: 6.2 (maxSessionAge timer behavior across states)
+// spec: 6.2 (maxSessionAge timer behavior across states), 7.2 (Session State
+// Machine)
 //
 // The watchdog expires by active age. A session older than the cap by wall
 // clock and under it by active time survives; a session whose active age is
 // over the cap expires. A suspended row over the cap is not expired, and
-// resume_pending and awaiting_client_action rows over the cap are expired as
-// before. A paused row older than the cap by wall clock with no active age
+// starting, resume_pending, resuming, and awaiting_client_action rows over the
+// cap are expired with `expired:deadline` on their §7.2 maxSessionAge expiry
+// edges. A paused row older than the cap by wall clock with no active age
 // survives.
 func TestSweepMaxAgeUsesActiveAge_spec_6_2(t *testing.T) {
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
@@ -93,6 +95,8 @@ func TestSweepMaxAgeUsesActiveAge_spec_6_2(t *testing.T) {
 		{"awaiting_client_action over the cap is expired", session.StateAwaitingClientAction, 4 * time.Hour, time.Minute, 3 * time.Hour, true},
 		{"resume_pending old by wall clock with no active age", session.StateResumePending, 10 * time.Hour, time.Minute, 0, false},
 		{"resuming paused for hours", session.StateResuming, 10 * time.Hour, time.Minute, time.Hour, false},
+		{"resuming over the cap is expired", session.StateResuming, 4 * time.Hour, time.Minute, 3 * time.Hour, true},
+		{"awaiting_client_action under the cap", session.StateAwaitingClientAction, 10 * time.Hour, time.Minute, time.Hour, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

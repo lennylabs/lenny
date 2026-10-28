@@ -726,7 +726,9 @@ type DelegationLease struct {
 	MaxTreeMemoryBytes int64 `json:"maxTreeMemoryBytes,omitempty"`
 	// MaxParallelChildren caps concurrent in-flight children.
 	MaxParallelChildren int `json:"maxParallelChildren,omitempty"`
-	// PerChildMaxAge is the wall-clock seconds budget per descendant.
+	// PerChildMaxAge is the wall-clock seconds the session holding this
+	// slice may live, counted from its creation.
+	// spec: §8.2
 	PerChildMaxAge int `json:"perChildMaxAge,omitempty"`
 
 	// The fields below are the §8.10 lease-scoped policy

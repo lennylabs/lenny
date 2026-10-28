@@ -1319,40 +1319,57 @@ func isIdleClockRunning(st session.State) bool {
 }
 
 // errMaxAgeSuperseded is the sentinel the sweepMaxAge mutator returns when the
-// locked row no longer qualifies for expiry: it is terminal, it is suspended,
-// or its active age recomputed on the locked row is at or under the cap.
-// Returning an error aborts the Update, so the row is not rewritten, its
-// UpdatedAt does not advance, and the sweep runs no expiry side effect for it.
-// spec: §6.2 (maxSessionAge timer behavior across states).
+// locked row no longer qualifies for expiry under either leg: it is terminal,
+// or its active age recomputed on the locked row is at or under the cap (or
+// the row is suspended, which no age cap expires) and it is not past its
+// perChildMaxAge. Returning an error aborts the Update, so the row is not
+// rewritten, its UpdatedAt does not advance, and the sweep runs no expiry side
+// effect for it.
+// spec: §6.2 (maxSessionAge timer behavior across states); §8.2.
 var errMaxAgeSuperseded = errors.New("watchdog: maxSessionAge expiry superseded on the locked row")
 
-// sweepMaxAge expires every non-terminal session for the tenant whose active
-// session age exceeds its effective maxSessionAge cap. Active age is
-// sessionstore.ActiveAge: the accumulated_session_age_seconds the store
-// accrues on every write, plus the time since the last write while the row is
-// in a counting state (starting, running, input_required). Time in suspended,
-// resume_pending, resuming, and awaiting_client_action does not count, so a
-// session older than the cap by wall clock and under it by active time
-// survives.
+// sweepMaxAge expires every non-terminal session for the tenant that is past
+// either of two wall-clock bounds.
 //
-// The cap is EffectiveAgeCap: the platform cap (w.cfg.MaxSessionAgeSeconds),
-// tightened by the per-runtime / per-pool resolver and by the per-session
-// retryPolicy.maxSessionAgeSeconds (F-7.3.24).
+// The age leg expires a session whose active session age exceeds its
+// effective maxSessionAge cap. Active age is sessionstore.ActiveAge: the
+// accumulated_session_age_seconds the store accrues on every write, plus the
+// time since the last write while the row is in a counting state (starting,
+// running, input_required). Time in suspended, resume_pending, resuming, and
+// awaiting_client_action does not count, so a session older than the cap by
+// wall clock and under it by active time survives. The cap is
+// EffectiveAgeCap: the platform cap (w.cfg.MaxSessionAgeSeconds), tightened by
+// the per-runtime / per-pool resolver and by the per-session
+// retryPolicy.maxSessionAgeSeconds (F-7.3.24). A suspended row is never
+// expired by the age leg, because its timer is paused and its own suspended
+// lifetime bounds it.
 //
-// A suspended row is never listed for expiry, because no age cap expires a
-// suspended session; its timer is paused and its own suspended lifetime bounds
-// it. The listed row comes from a read-pool listing and only selects the row:
-// the mutator re-checks the locked row, recomputes its active age with the
-// sweep's now, and returns errMaxAgeSuperseded when the locked row is
-// terminal, suspended, or at or under the cap. On that sentinel the sweep
+// An over-cap starting, resume_pending, resuming, or awaiting_client_action
+// row is still expired by the age leg. Its age stopped accruing when it left a
+// counting state, so it is over the cap only when it left that state already
+// past it, and §7.2 lists a maxSessionAge expiry edge from each of those
+// states (resume_pending → expired and awaiting_client_action → expired among
+// them). Leaving an over-cap resume_pending row would not let it recover:
+// DriveResume's readResumable refuses an over-cap row, so the row would only
+// wait out maxResumeWindowSeconds.
+//
+// The lease leg expires a delegated child past its perChildMaxAge: the slice
+// its parent granted, stored on the child's own row, counted in wall-clock
+// time from the child's creation in every non-terminal state, suspended
+// included (leaseDue). Reading the child's own stored slice keeps a later
+// lease extension of the parent from moving an existing child's bound.
+//
+// The listed row comes from a read-pool listing and only selects the row: the
+// mutator recomputes both legs on the locked row with the sweep's now and
+// returns errMaxAgeSuperseded when neither holds. On that sentinel the sweep
 // writes nothing, runs no side effect, and goes on to the next row. Any other
-// Update error ends the tick.
+// Update error ends the tick. The write stamps `expired:lease` when only the
+// lease leg holds and `expired:deadline` otherwise, replacing any reason an
+// earlier recovery left, and the §16.1.1 max_session_age expiry notification
+// fires only when the age leg holds.
 //
-// An over-cap resume_pending or awaiting_client_action row is still expired
-// here: its age stopped accruing when it left a counting state, so it is over
-// the cap only when it left that state already past it.
-//
-// spec: §6.2 (maxSessionAge timer behavior across states); §11.3.
+// spec: §6.2 (maxSessionAge timer behavior across states); §7.2; §8.2; §10.1.1
+// (Primary:); §11.3.
 func (w *Watchdog) sweepMaxAge(ctx context.Context, tenant string, now time.Time, res *Result) error {
 	rows, err := w.store.List(ctx, tenant, sessionstore.ListFilter{})
 	if err != nil {
@@ -1360,26 +1377,34 @@ func (w *Watchdog) sweepMaxAge(ctx context.Context, tenant string, now time.Time
 	}
 	platformCap := time.Duration(w.cfg.MaxSessionAgeSeconds) * time.Second
 	for _, row := range rows {
-		if !maxAgeExpirable(row.State) {
+		if session.IsTerminal(row.State) {
 			continue
 		}
 		ageCap := EffectiveAgeCap(ctx, w.ageResolver, platformCap, row)
-		if sessionstore.ActiveAge(row, now) <= ageCap {
+		if !maxAgeDue(row, ageCap, now) && !perChildMaxAgeDue(row, now) {
 			continue
 		}
 		var from session.State
+		var ageDue bool
 		end := w.beginTerminal(row.ID)
 		updated, err := w.store.Update(ctx, tenant, row.ID, func(r *sessionstore.Session) error {
-			if !maxAgeExpirable(r.State) || sessionstore.ActiveAge(*r, now) <= ageCap {
+			if session.IsTerminal(r.State) {
+				return errMaxAgeSuperseded
+			}
+			ageDue = maxAgeDue(*r, ageCap, now)
+			if !ageDue && !perChildMaxAgeDue(*r, now) {
 				return errMaxAgeSuperseded
 			}
 			from = r.State
 			r.State = session.StateExpired
-			// spec: §8.8 — stamp the `expired:deadline` prefix
-			// for the §11.3 maxSessionAge cap so the MCP adapter
-			// surfaces `failed` with the `expired:*` error code. F-8.8.8.
-			if r.FailureReason == "" {
-				r.FailureReason = string(session.FailureExpiredDeadline)
+			// spec: §8.8, §8.2 — stamp the `expired:*` prefix the MCP adapter
+			// surfaces: `expired:lease` when only the perChildMaxAge leg holds,
+			// `expired:deadline` for the §11.3 maxSessionAge cap otherwise.
+			// The stamp is unconditional so an earlier recovery's reason does
+			// not survive the expiry.
+			r.FailureReason = string(session.FailureExpiredDeadline)
+			if !ageDue {
+				r.FailureReason = string(session.FailureExpiredLease)
 			}
 			// spec: §5.2 (Slot assignment atomicity) — the stamp reads the clock
 			// inside this row's Update, because an earlier row's post-terminal
@@ -1396,9 +1421,12 @@ func (w *Watchdog) sweepMaxAge(ctx context.Context, tenant string, now time.Time
 			return err
 		}
 		res.Expirations++
-		// spec: §16.1.1 — the maxSessionAge age-cap expiry stamps the
-		// `max_session_age` reason on the session_expiry counter.
-		w.notifySessionExpiry(ctx, updated, ExpiryReasonMaxSessionAge)
+		if ageDue {
+			// spec: §16.1.1 — the maxSessionAge age-cap expiry stamps the
+			// `max_session_age` reason on the session_expiry counter. A
+			// perChildMaxAge expiry is not a platform clock and fires none.
+			w.notifySessionExpiry(ctx, updated, ExpiryReasonMaxSessionAge)
+		}
 		// spec: §4.6 — from is the locked row's pre-terminal state.
 		// sweepMaxAge can force a running/resuming session to expired;
 		// passing the true pre-terminal state keeps its teardown on the
@@ -1408,6 +1436,25 @@ func (w *Watchdog) sweepMaxAge(ctx context.Context, tenant string, now time.Time
 		end()
 	}
 	return nil
+}
+
+// maxAgeDue reports whether row is past its maxSessionAge cap by active age
+// in a state the age leg may expire.
+// spec: §6.2 (maxSessionAge timer behavior across states).
+func maxAgeDue(row sessionstore.Session, ageCap time.Duration, now time.Time) bool {
+	return maxAgeExpirable(row.State) && sessionstore.ActiveAge(row, now) > ageCap
+}
+
+// perChildMaxAgeDue reports whether row is a delegated child that has lived
+// longer than the perChildMaxAge its stored slice grants, counted in wall-clock
+// time from its creation. A root session, a child with no stored slice, and a
+// child whose slice carries no perChildMaxAge are never due.
+// spec: §8.2.
+func perChildMaxAgeDue(row sessionstore.Session, now time.Time) bool {
+	if row.ParentSessionID == "" || row.DelegationLease == nil || row.DelegationLease.PerChildMaxAge <= 0 {
+		return false
+	}
+	return now.Sub(row.CreatedAt) > time.Duration(row.DelegationLease.PerChildMaxAge)*time.Second
 }
 
 // maxAgeExpirable reports whether sweepMaxAge may expire a row in st: any

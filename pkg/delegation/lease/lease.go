@@ -77,8 +77,9 @@ type LeaseSlice struct {
 	// child. Bounded above by the parent's MaxParallelChildren.
 	MaxParallelChildren int
 
-	// PerChildMaxAge is the wall-clock seconds budget per descendant.
-	// Bounded above by the parent's PerChildMaxAge.
+	// PerChildMaxAge is the wall-clock seconds the session holding this
+	// slice may live, counted from its creation.
+	// spec: §8.2
 	PerChildMaxAge int
 }
 

@@ -2598,6 +2598,10 @@
       "title": "Delegation Mechanism \u2014 cycle detection and maxDepth",
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
+        "pkg/gateway/runtime/watchdog/per_child_max_age_test.go::TestSweepMaxAgeExpiresChildPastPerChildMaxAge_spec_8_2",
+        "pkg/gateway/runtime/watchdog/per_child_max_age_test.go::TestSweepMaxAgeLeavesRowsWithinOrWithoutPerChildMaxAge_spec_8_2",
+        "pkg/gateway/runtime/watchdog/per_child_max_age_test.go::TestSweepMaxAgeChildPastBothBoundsTakesDeadline_spec_8_2",
+        "pkg/gateway/runtime/watchdog/per_child_max_age_test.go::TestSweepMaxAgeRechecksPerChildMaxAgeOnLockedRow_spec_8_2",
         "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTRecordsCloseTheMintFindings_spec_8_2",
         "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTTestGapRecords_spec_8_2",
         "tests/tier4_integration/held_attach_stream_multi_turn_test.go::TestDelegateTaskThenAFollowUpOnTheHeldStream_spec_28_5_1",

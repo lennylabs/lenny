@@ -123,14 +123,17 @@ func assertStampedAfterTheEarlierHook(t *testing.T, store sessionstore.Store, pa
 	}
 }
 
-// spec: §6.2 (Pod State Machine), §7.2 (Session State Machine)
+// spec: §6.2 (Pod State Machine), §7.2 (Session State Machine), §8.2
+// (LeaseSlice perChildMaxAge)
 //
 // A watchdog expiry writer stamps its own reason on the row, replacing any
 // reason an earlier recovery left. A row that carries a funnel reason from
 // an earlier resume_pending or awaiting_client_action episode is expired by
-// the awaiting_client_action deadline with `expired:deadline` and by the idle
-// expiry with `expired:idle`. Before the fix each writer kept the stale
-// reason, so the client saw the recovery's cause instead of the expiry's.
+// the awaiting_client_action deadline with `expired:deadline`, by the idle
+// expiry with `expired:idle`, by the maxSessionAge cap with `expired:deadline`,
+// and by the perChildMaxAge lease leg with `expired:lease`. Before the fix each
+// writer kept the stale reason, so the client saw the recovery's cause instead
+// of the expiry's.
 func TestWatchdogExpiryWritersStampTheirOwnReason_spec_7_2(t *testing.T) {
 	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	const funnelReason = "runtime_crash"
@@ -140,16 +143,30 @@ func TestWatchdogExpiryWritersStampTheirOwnReason_spec_7_2(t *testing.T) {
 		state session.State
 		at    time.Time
 		want  session.FailureReason
+		// child makes the row a delegated child of a running root with a
+		// 600-second perChildMaxAge slice.
+		child bool
 	}{
-		{"the awaiting_client_action deadline", watchdog.Config{}, session.StateAwaitingClientAction, born.Add(20 * time.Minute), session.FailureExpiredDeadline},
-		{"the idle expiry", idleCfg(600), session.StateRunning, born.Add(601 * time.Second), session.FailureExpiredIdle},
+		{"the awaiting_client_action deadline", watchdog.Config{}, session.StateAwaitingClientAction, born.Add(20 * time.Minute), session.FailureExpiredDeadline, false},
+		{"the idle expiry", idleCfg(600), session.StateRunning, born.Add(601 * time.Second), session.FailureExpiredIdle, false},
+		{"the maxSessionAge cap", ageCfg(600), session.StateRunning, born.Add(601 * time.Second), session.FailureExpiredDeadline, false},
+		{"the perChildMaxAge lease leg", leaseCfg(idleCapDisabled), session.StateAwaitingClientAction, born.Add(601 * time.Second), session.FailureExpiredLease, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := memstore.NewWithClock(func() time.Time { return tc.at })
-			if err := store.Create(context.Background(), sessionstore.Session{
+			row := sessionstore.Session{
 				ID: "sess", TenantID: "acme", State: tc.state, CreatedAt: born, UpdatedAt: born,
-				FailureReason: funnelReason,
-			}); err != nil {
+				LastAgentActivityAt: born, FailureReason: funnelReason,
+			}
+			if tc.child {
+				mustCreate(t, store, sessionstore.Session{
+					ID: "root", TenantID: "acme", State: session.StateRunning,
+					CreatedAt: tc.at, UpdatedAt: tc.at, LastAgentActivityAt: tc.at,
+				})
+				row.ParentSessionID, row.DelegationDepth = "root", 1
+				row.DelegationLease = &sessionstore.DelegationLease{PerChildMaxAge: 600}
+			}
+			if err := store.Create(context.Background(), row); err != nil {
 				t.Fatal(err)
 			}
 			w := watchdog.New(store, watchdog.StaticTenants{"acme"}, tc.cfg, nil).
