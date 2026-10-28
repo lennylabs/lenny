@@ -29,10 +29,10 @@
 - [ ] **S13 · code** — CODE-5. Lands the proto and setup comment corrections and the regenerated bindings.
       Tiers 0, 1. Depends on: S8
 - [ ] **S14 · code** — CODE-6. Lands the runtime-defaults composer, its callers, and the registration check.
-      Tiers 0, 1, 3, 4. Depends on: S3, S9
+      Tiers 0, 1, 3, 4. Depends on: S2, S3, S9
 - [ ] **S15 · test** — TEST-1. Lands the TEST-1 tests.
       Tiers 0, 1, 2, 3, 4, 9. Depends on: S8, S9, S10, S11
 - [ ] **S16 · docs** — DOCS-1. Lands every DOCS-1 page change.
-      Tiers 0, 11. Depends on: S1, S2, S3, S4, S7, S8, S11
+      Tiers 0, 11. Depends on: S1, S2, S3, S4, S5, S7, S8, S11
 - [ ] **S17 · test** — TEST-2. Lands the TEST-2 tests.
       Tiers 0, 1, 3, 4. Depends on: S14
