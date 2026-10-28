@@ -850,7 +850,7 @@ func (s *Server) mintToken(ctx context.Context, w http.ResponseWriter, issued to
 // the exchange is rejected with 400 invalid_grant. It returns true once the record is durable.
 // spec: §13.3 (Credential Flow: Write-before-issue ordering).
 func (s *Server) persistIssuedToken(w http.ResponseWriter, r *http.Request, jti string, issued tokenexchange.Issued, signed string, dialectCap time.Duration, callerClaims, subjectClaims jwt.Claims, actorClaims *jwt.Claims, now time.Time, finish func(string)) bool {
-	rec := issuedRecord(jti, issued, signed, dialectCap, now)
+	rec := issuedRecord(jti, issued, signed, dialectCap, actorClaims, now)
 	isRotation := s.isSelfRotation(issued, callerClaims, subjectClaims, actorClaims)
 	auditPayload := exchangeAuditPayload{
 		ExchangeType:    classifyExchangeType(issued, isRotation, actorClaims),
@@ -878,9 +878,12 @@ func (s *Server) persistIssuedToken(w http.ResponseWriter, r *http.Request, jti 
 }
 
 // issuedRecord builds the issued_tokens row for a signed token. The row
-// carries the SHA-256 digest of the token, never the token itself.
-func issuedRecord(jti string, issued tokenexchange.Issued, signed string, dialectCap time.Duration, now time.Time) issuedtokenstore.IssuedToken {
+// carries the SHA-256 digest of the token, never the token itself. On an
+// a2a_delegation mint (actorClaims non-nil) it also records the child's
+// lineage, as delegationLineage states.
+func issuedRecord(jti string, issued tokenexchange.Issued, signed string, dialectCap time.Duration, actorClaims *jwt.Claims, now time.Time) issuedtokenstore.IssuedToken {
 	hash := sha256.Sum256([]byte(signed))
+	actSub, parentJTI := delegationLineage(actorClaims)
 	return issuedtokenstore.IssuedToken{
 		JTI:       jti,
 		TenantID:  issued.TenantID,
@@ -896,7 +899,38 @@ func issuedRecord(jti string, issued tokenexchange.Issued, signed string, dialec
 		DialectCapAppliedSeconds: int(dialectCap.Seconds()),
 		IssuedAt:                 now,
 		ExpiresAt:                issued.Exp,
+		ActSubject:               actSub,
+		ParentJTI:                parentJTI,
 	}
+}
+
+// delegationLineage returns the act_sub and parent_jti of the issued_tokens
+// row an exchange writes. An a2a_delegation mint is the exchange that
+// carries an actor_token, which §13.3 defines as the delegating caller's
+// token. The child's act claim names the actor's sub, so act_sub is the
+// actor's sub. The child's parent is the actor token, so parent_jti is the
+// actor's jti. RevokeCascade walks parent_jti, so a §13.3 recursive
+// revocation of the actor token reaches the child and its descendants.
+// Every other exchange carries no actor and records neither column.
+//
+// The two columns are written together or not at all. A row with act_sub
+// set and parent_jti null matches the §13.3 "Platform-admin impersonation"
+// rule 2 predicate, so the impersonation listing, the platform-admin full
+// revoke, and the step (1a) re-read would treat such a delegation child as
+// an impersonation bearer. An actor token with no jti therefore records no
+// lineage. The §10.2 key set that verifies the actor_token covers tokens
+// Lenny signs, and every Lenny mint stamps a jti, so this branch is
+// defensive.
+//
+// spec: §13.3 (Credential Flow: RFC 8693 parameter mapping to Lenny claims,
+// actor_token; Platform-admin impersonation, rule 2), §12.2
+// (TokenIssuanceStore act_sub and parent_jti columns), §8.3 (recursive
+// revocation).
+func delegationLineage(actorClaims *jwt.Claims) (actSub, parentJTI string) {
+	if actorClaims == nil || actorClaims.JWTID == "" {
+		return "", ""
+	}
+	return actorClaims.Subject, actorClaims.JWTID
 }
 
 // exchangeSources lists the source tokens the issuance transaction

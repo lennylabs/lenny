@@ -3628,10 +3628,15 @@ and was filed with them. 0104's implementation updated F-10.2.29, F-8.5.26, and 
 blocks any of them.
 
 - Direct-fix queue, unblocked by 0104's implementation.
-  - [ ] **F-13.3.22** (Medium): the Token Service's `issuedRecord` sets neither `ParentJTI` nor `ActSubject`
+  - [x] **F-13.3.22** (Medium): the Token Service's `issuedRecord` sets neither `ParentJTI` nor `ActSubject`
     on an external `a2a_delegation` child, so `RevokeCascade` cannot reach the child from its parent. Record
     the `actor_token`'s `jti` and `sub` on an actor-bearing exchange. Proposal 0104 deleted the internal minter
-    (48d920956), so this is the only delegation-child issuance path.
+    (48d920956), so this is the only delegation-child issuance path. Closed by direct fix 51dd597f3
+    (2026-10-28), which writes both columns together or neither so that no delegation row matches the
+    impersonation predicate, with tier-1, tier-2, and tier-4 tests. It filed F-13.3.23.
+  - [ ] **F-13.3.23** (Medium): the Token Service mints an `a2a_delegation` child token with no RFC 8693
+    `act` claim, although §13.3 sets one whenever an `actor_token` is present, and `jwt.Claims` has no field
+    for it. Filed from the direct fix of F-13.3.22 (2026-10-28). Direct fix.
 - Proposal routing.
   - [ ] **F-8.5.26** (Low): `lenny/delegate_task` returns admission's `ErrParentNotRunning` (and
     `ErrParentNotFound`) bare, so the caller receives `INTERNAL_ERROR`, which is `TRANSIENT` and retryable.
