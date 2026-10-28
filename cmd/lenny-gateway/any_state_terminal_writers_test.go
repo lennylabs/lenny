@@ -34,11 +34,12 @@ func assertAnyStateEdge(t *testing.T, from, to session.State) {
 }
 
 // TestForceTerminateFromRecoveryAndPreRunningStatesWritesFailed_spec_7_2
-// drives the operator force-terminate writer from each non-terminal state
-// the §7.2 per-state block lists no → failed edge for. Each write lands
-// failed with FORCE_TERMINATED, forwards the pre-force state to the terminal
-// pipeline, and takes an edge the transition table admits under the
-// any-state terminal-write paragraph.
+// drives the operator force-terminate writer from the recovery, pre-running,
+// and paused non-terminal states, including the input_required sub-state of
+// running. The any-state terminal-write paragraph admits the failed write
+// from each of them. Each write lands failed with FORCE_TERMINATED, forwards
+// the pre-force state to the terminal pipeline, and takes an edge the
+// transition table admits.
 //
 // spec: §7.2 (Terminal writes from any non-terminal state); §24.11
 func TestForceTerminateFromRecoveryAndPreRunningStatesWritesFailed_spec_7_2(t *testing.T) {
@@ -83,7 +84,8 @@ func TestForceTerminateFromRecoveryAndPreRunningStatesWritesFailed_spec_7_2(t *t
 
 // TestBudgetTerminatorFromRecoveryAndPausedStatesWritesExpired_spec_7_2
 // drives the budget terminator, which also carries credential-lease expiry
-// and fallback exhaustion, from non-running states. Each write lands expired
+// and fallback exhaustion, from the recovery and paused states, including
+// the input_required sub-state of running. Each write lands expired
 // with the caller's reason, runs the terminal pipeline once with the
 // pre-terminal state, and takes an edge the transition table admits under
 // the any-state terminal-write paragraph.
