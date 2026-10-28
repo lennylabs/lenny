@@ -3880,8 +3880,9 @@ legacy single-file proposals carry their status in the prose status bullet, whic
     adapter now refuses any encoding other than `tar.gz` with `InvalidArgument` (2026-10-28).
   - [x] **T-4.4.22** (Low, filed from F-4.4.4): `TestRunUsesTenMinuteDefaultIntervalWhenUnset` never runs `Run`.
     The test now drives `Run` with an injected clock and an unset interval (2026-10-28, `47475f2e2`).
-  - [ ] **F-4.4.37** (Low, filed from F-4.4.34): `checkpoint_manifest.chunk_encoding` has no CHECK constraint
-    on the `tar` / `tar.gz` enum since migration 0178 replaced the 0062 table.
+  - [x] **F-4.4.37** (Low, filed from F-4.4.34): `checkpoint_manifest.chunk_encoding` has no CHECK constraint
+    on the `tar` / `tar.gz` enum since migration 0178 replaced the 0062 table. Migration 0194 restores the
+    CHECK (2026-10-28).
   - [ ] **T-4.6.19** (Low, found 2026-10-28): the pod-registry CAS contract test requires a lost
     compare-and-swap that real concurrency does not guarantee, so it flakes on a loaded host.
 - With the queued text-corrections proposal, together with F-7.1.32.
