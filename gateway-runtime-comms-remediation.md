@@ -3190,7 +3190,12 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   is), which answers cross-session poisoning; each session's repository borrows objects through git alternates,
   fetches only the delta from the cached ref to its pinned `resolvedCommitSha`, and checks it out, falling back to
   a full clone when the fetch fails. Because git is content-addressed, a stale cache costs a larger delta and never
-  a different tree. Pre-running setup commands is out of the first version. Open design points for the run: the
+  a different tree. A slot cannot use `git worktree add` against the shared store: worktree
+  administration, commits, and refs all write to the shared repository, and shared refs and `gc` would couple
+  sessions. A per-slot repository over alternates (`git clone --shared` or `--reference`) keeps refs, index, and new
+  objects slot-local, and a runtime may still create worktrees inside its own slot repository. The shared store must
+  therefore change additively only while slots reference it (fetch adds objects; no `gc`, `prune`, or history
+  rewrite until no slot depends on it, for example at re-warm). Pre-running setup commands is out of the first version. Open design points for the run: the
   credential path for a private repository at warm time (a warm pod holds no credential lease, and the gateway
   clones over its own path today), the cache surviving the §5.2 recycle scrub as pod state, cache refresh cadence,
   working-tree checkout cost for very large trees (sparse checkout or a reused tree), and disk sizing. A spike that
