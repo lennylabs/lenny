@@ -113,9 +113,14 @@ type Checkpointer struct {
 	// Deadline bounds one checkpoint RPC. Zero lets the adapter apply
 	// its own §4.4 default.
 	Deadline time.Duration
-	// Interval is the periodic-checkpoint cadence Run ticks on. Zero
+	// Interval is the fixed per-session periodic-checkpoint cadence Run
+	// schedules after each session's first periodic checkpoint. Zero
 	// selects defaultInterval.
 	Interval time.Duration
+	// ScheduleTick is the cadence Run re-evaluates the per-session
+	// schedule on. Zero selects the smaller of DefaultScheduleTick and
+	// Interval.
+	ScheduleTick time.Duration
 	// JitterFraction spreads each session's first periodic checkpoint
 	// across `Interval + random(0, Interval × JitterFraction)` per
 	// §4.4. Range is [0.0, 1.0]; a negative value or a value
@@ -250,6 +255,10 @@ type Checkpointer struct {
 	// flights holds the per-session single-flight lock the driver
 	// acquires for the duration of one attempt. Lazily populated.
 	flights sync.Map
+
+	// schedule holds each coordinated session's next periodic-checkpoint
+	// instant for Run. spec: §4.4 (Periodic checkpoint scheduling).
+	schedule periodicSchedule
 }
 
 // grantWindow returns the deployment-wide default checkpoint grant
@@ -297,20 +306,31 @@ func (c *Checkpointer) grantWindowForPool(ctx context.Context, pool string) int 
 	return def
 }
 
-// Run drives the periodic-checkpoint loop: every Interval it sweeps a
-// §4.4 checkpoint of every running session this gateway replica
-// coordinates, keeping each session's WorkspaceSnapshot fresh against
-// the §16.5 checkpoint-freshness SLO. Run blocks until ctx is
-// cancelled.
+// Run drives the periodic-checkpoint loop for the sessions this gateway
+// replica coordinates, keeping each session's WorkspaceSnapshot fresh
+// against the §16.5 checkpoint-freshness SLO. Each session is scheduled
+// individually: its first periodic checkpoint fires FirstCheckpointDelay
+// after the scheduler first observes its binding (session start or
+// resume on this replica), and every later one fires Interval after the
+// previous one. Run re-evaluates the schedule every scheduleTick and
+// blocks until ctx is cancelled.
+//
+// spec: §4.4 (Periodic checkpoint scheduling) — the **Jitter:** rule
+// that spreads each session's first periodic checkpoint and keeps the
+// later ones on the fixed interval.
 func (c *Checkpointer) Run(ctx context.Context) {
-	ticker := time.NewTicker(c.interval())
+	// The opening pass registers the sessions already bound when Run
+	// starts, so their first-checkpoint delay is measured from now rather
+	// than from the first tick.
+	c.SweepDue(ctx)
+	ticker := time.NewTicker(c.scheduleTick())
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			c.Sweep(ctx)
+			c.SweepDue(ctx)
 		}
 	}
 }
@@ -351,8 +371,9 @@ func FirstCheckpointDelay(sessionID string, interval time.Duration, jitterFracti
 }
 
 // Sweep takes one §4.4 checkpoint of every session this replica
-// coordinates. A per-session failure is reported through OnError and
-// does not stop the sweep.
+// coordinates, regardless of the per-session schedule Run keeps. A
+// per-session failure is reported through OnError and does not stop the
+// sweep.
 func (c *Checkpointer) Sweep(ctx context.Context) {
 	for _, b := range c.Registry.Snapshot() {
 		if err := c.Checkpoint(ctx, b.TenantID, b.SessionID); err != nil && c.OnError != nil {
