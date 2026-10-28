@@ -46,6 +46,7 @@ A failed root write does not cascade by itself, because `settledChildSignals` ha
 Targets: `pkg/gateway/sessionserver/terminal_hook.go` (`afterTerminalWrite`), `pkg/gateway/sessionserver/usage.go` (`archiveSettledChild`, `returnTreeBudget`), `pkg/gateway/mcpfabric/delegationtree/resultrollup/resultrollup.go` (`SubtreeTokens`, `TreeUsage`), `pkg/gateway/sessionserver/delegation_seams.go` (`TreeBudgetReturner`).
 
 1. `afterTerminalWrite` calls `s.returnTreeBudget(ctx, sess)` after `releaseAfterTerminal` and before `expireRaisedElicitations`. `returnTreeBudget` runs the `SubtreeTokens` read and the `Return` each on its own `context.WithTimeout(context.WithoutCancel(ctx), treeBudgetReturnTimeout)` (a new 5 s constant), as `expireRaisedElicitations` does, so a release whose adapter `Shutdown` used up the terminal pipeline budget does not cut the return, and a read that uses up its bound does not cut the `Return`. Annotate it `// spec: §7.1 (Terminal pipeline context), §8.3`.
+   - Pending redesign (D3): the redesign pass removes the `treeBudgetReturnTimeout` constant and the `WithoutCancel` detachment in favour of the configurable `delegation.usageQuiescenceTimeoutSeconds` inside the terminal pipeline budget.
 2. `returnTreeBudget` runs only for a delegated child (CODE-6 item 3). When such a row has `sess.RootSessionID == sess.ID`, it logs at warn and skips, because an empty root column reads back as the row's own ID. Otherwise it calls `Return` with:
    - `RootSessionID = sess.RootSessionID` and `ParentSessionID = sess.ParentSessionID`;
    - `TreeSizeDelta = 1`, `TreeMemoryDelta = treebudget.PerNodeMemoryBytes`, and `ParallelChildrenDelta = 1`;
@@ -185,6 +186,7 @@ Every test carries its `// spec:` annotation, and every tier-2-and-up test carri
    - `SubtreeTokens` counts a descendant whose live row is gone from its archived usage;
    - a failing or deadline-exceeded `ListByRoot`, `Replay`, or `GetMany` in `SubtreeTokens` gives a zero `TokenDelta` with the other three deltas still returned;
    - a release whose adapter `Shutdown` blocks until the terminal pipeline budget has elapsed still issues exactly one `Return` with the four deltas, on a context that is not done;
+     - Pending redesign (D3): this hung-`Shutdown` case is restated by the redesign pass, because the return no longer waits for `releaseAfterTerminal`.
    - in a tree where the child's parent is not the root, with the parent row's `Get` failing, the `Return` addresses `sess.RootSessionID`'s keys and `archiveSettledChild` archives under `sess.RootSessionID` (the archive row's `RootSessionID` is the discriminating assertion);
    - a `Return` failing with `ErrBudgetUnavailable` still runs the forget and `expireRaisedElicitations`;
    - the return issues no tenant-wide `List`;
