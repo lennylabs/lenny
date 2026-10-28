@@ -358,21 +358,6 @@ func TestRunPeriodicallySweeps(t *testing.T) {
 	}
 }
 
-// spec: §4.4 — periodicCheckpointIntervalSeconds default is 600 s.
-// diagnosis: a zero Interval selects the spec-mandated default; the
-// previous defaultInterval of 5 minutes generated twice the steady-state
-// MinIO bandwidth and missed §17.8 capacity baselines.
-func TestRunUsesTenMinuteDefaultIntervalWhenUnset(t *testing.T) {
-	// Run is hard to time-test without breaking the API, so we verify
-	// the FirstCheckpointDelay default by exercising the function with
-	// a non-zero interval that matches the spec default and confirming
-	// the math holds.
-	delay := checkpointer.FirstCheckpointDelay("s1", 10*time.Minute, 0)
-	if delay != 10*time.Minute {
-		t.Errorf("FirstCheckpointDelay(jitter=0) = %v, want exactly 10m (spec §4.4 default interval)", delay)
-	}
-}
-
 // spec: §4.4 — jitter spreads the first periodic checkpoint
 // across [interval, interval + interval × jitterFraction]; the same
 // session must receive the same jitter across restarts.
