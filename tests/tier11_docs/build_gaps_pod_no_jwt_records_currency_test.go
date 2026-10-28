@@ -131,8 +131,10 @@ func TestPodNoJWTFiledDefectsMatchTheTree_spec_8_5(t *testing.T) {
 			if !strings.Contains(f.body, podNoJWTProposal) {
 				t.Errorf("BUILD-GAPS.md:%d %s\n  no longer names %s", f.line, f.heading, podNoJWTProposal)
 			}
-			if strings.Contains(f.body, "ahead of 0104's REC-1") {
-				t.Errorf("BUILD-GAPS.md:%d %s\n  still says it was filed ahead of the record closure that has landed", f.line, f.heading)
+			for _, stale := range []string{"ahead of 0104", "0104's implementor updates this entry rather than filing a duplicate"} {
+				if strings.Contains(f.body, stale) {
+					t.Errorf("BUILD-GAPS.md:%d %s\n  still says it waits on proposal 0104's implementation (%q)", f.line, f.heading, stale)
+				}
 			}
 			_, ev, _ := strings.Cut(f.body, "**Evidence:**")
 			ev, _, _ = strings.Cut(ev, "\n")
