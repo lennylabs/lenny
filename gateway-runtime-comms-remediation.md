@@ -3183,6 +3183,16 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   §6.2 setup-failure wording. Its RECORDS-1 files a finding as F-6.2.27, which collides with the existing
   OPEN F-6.2.27 (the `idle → draining` trigger list); a note in its summary file requires renumbering to the
   next free identifier at filing.
+- [ ] **Proposal 0061, re-derived** (Draft; owner decision 2026-10-28, part of v1): a conversation on the built-in
+  OpenAI-dialect adapters (`/v1/responses`, and `/v1/chat/completions` if a conversation identity can be defined)
+  is a session. It keeps its pod across turns and follows the same timeouts and TTLs as every other session (the
+  §6.2 idle timeout, `maxSessionAge`, and the per-state deadlines 0105 anchors), reaped by the watchdog sweeps,
+  with no separate pod-hold TTL. A continuation reaching another gateway replica forwards to the holder over
+  `CH-HOLDERFORWARD` (0101) rather than taking the cold path; the cold path with 0056 transcript rehydration stays
+  the correctness floor after the session ends. Open points for the run: the Chat Completions conversation
+  identity (or keeping that endpoint per-request in v1), concurrent turns on one conversation, warm/cold
+  equivalence, and coordination with the pinned-idle proposal. It follows 0105 and 0101, whose timers and
+  forwarding it uses.
 - [ ] **Proposal 0077, re-derived** (Draft; owner decision 2026-10-28): pre-materialize workspace content on a
   warm pod, starting with massive git repositories, and extensible to other content later. The owner wants the
   capability built. Settled direction: a pool-level template names a repository and ref; the adapter fills a
@@ -3274,8 +3284,7 @@ Proposals the R-steps need (added 2026-10-21 by the R7 to R25 re-derivation):
   `opLock.release` conforms.
 - Unscheduled, owner-gated exploration. Neither proposal is scheduled, and each stays `Draft` until the owner
   decides to pursue it.
-  - [ ] Proposal 0061 (single-shot adapter pod hold and idle TTL). Whether it becomes a §21 post-v1 item is
-    an open owner decision (section 10.5).
+  - Proposal 0061 moved to the queue after P4b on 2026-10-28 by owner decision: it is part of v1 (see "Queue after P4b").
   - Proposal 0077 moved to the queue after P4b on 2026-10-28 by owner decision (see "Queue after P4b").
 - [ ] Proposal 0087 part 2: cross-tenant reuse on `in-place` pools by resetting the tenant pin after a
   proven runtime restart, which gives `recycle.allowCrossTenantReuse` effect again. Kata first, after the
@@ -4073,7 +4082,7 @@ recorded here.
 **Owner decisions pending (recorded 2026-10-28).**
 
 - Proposal 0084's attribution option and the fence generation floor were decided on 2026-10-28 (section 10.3).
-- Whether proposal 0061 (single-shot adapter pod hold) becomes a §21 post-v1 item.
+- Proposal 0061 was decided on 2026-10-28: part of v1, as a session (section 10.3 and "Queue after P4b").
 
 ### 10.6 Context and rationale for the proposal track
 
