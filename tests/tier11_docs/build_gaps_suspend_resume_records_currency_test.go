@@ -13,8 +13,9 @@
 //     the session message queues, the generation-scoped lease return, the
 //     suspended-session lifetime, the concurrent-session count, and active
 //     session age name symbols their files still declare.
-//   - The "Session inbox redelivery" row stays ABSENT under cross-replica
-//     message forwarding (R19) and names the DLQ hold that remains absent.
+//   - The "Session inbox redelivery" row is WIRED and names the §29.3
+//     Forwarding rule 6 DLQ hold (`forwardMessageBatch` and
+//     `HoldUndeliveredForward`).
 //   - The inter-replica rows carry the forward, the replica address, the
 //     forward listener, and the binding-release fan-out at the status the
 //     specification's landing gives them, and the generated rows they
