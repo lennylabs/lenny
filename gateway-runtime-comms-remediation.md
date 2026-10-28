@@ -3852,7 +3852,8 @@ legacy single-file proposals carry their status in the prose status bullet, whic
     `application/x-tar`. Closed without code under the pre-deployment no-shims rule (2026-10-28).
   - [x] **F-4.4.34** (Low, filed from F-4.4.32): the `chunk_encoding` column default and the empty-value
     fallback say `tar`. Migration 0193 and the store and reader fallbacks move both to `tar.gz` (2026-10-28).
-  - [ ] **F-4.4.35** (Low, filed from F-4.4.32): the adapter ignores `CheckpointStart.chunk_encoding`.
+  - [x] **F-4.4.35** (Low, filed from F-4.4.32): the adapter ignores `CheckpointStart.chunk_encoding`. The
+    adapter now refuses any encoding other than `tar.gz` with `InvalidArgument` (2026-10-28).
   - [ ] **T-4.4.22** (Low, filed from F-4.4.4): `TestRunUsesTenMinuteDefaultIntervalWhenUnset` never runs `Run`.
   - [ ] **F-4.4.37** (Low, filed from F-4.4.34): `checkpoint_manifest.chunk_encoding` has no CHECK constraint
     on the `tar` / `tar.gz` enum since migration 0178 replaced the 0062 table.

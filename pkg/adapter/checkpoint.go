@@ -34,12 +34,42 @@ func (s *Server) probeWorkspaceBytes(roots []workspace.NamedRoot) (int64, error)
 	return total, nil
 }
 
+// checkChunkEncoding refuses a CheckpointStart whose declared chunk_encoding
+// is not the encoding ArchiveTree produces. The gateway records the declared
+// value on the manifest row and in every chunk key, and the resume path and
+// the operator's manual recovery select the decoder from it, so chunks
+// written in another encoding than the one declared would be undecodable by
+// every reader that follows the manifest. The refusal uses InvalidArgument,
+// the code this handler already returns for a malformed opening frame. It
+// runs before the checkpoint roots are resolved, before the op lock is
+// taken, and before the probe, so no grant is minted and the runtime is
+// never quiesced. FailedPrecondition is not used because the gateway reads
+// it as the workspace-size-probe rejection.
+//
+// An empty value is accepted as tar.gz. It is the proto3 zero value, and the
+// gateway's manifest store and readers resolve an empty chunk_encoding to
+// tar.gz as well, so an undeclared encoding and the produced one agree.
+//
+// spec: §10.1 (Chunked-object storage model: "A fixed chunk_encoding is
+// chosen once at intent-row INSERT time"; the resume path "selects the
+// decoder strictly from the manifest's chunk_encoding column"); §4.4 (MinIO
+// object key logging for manual recovery: "The decompression step MUST be
+// selected from the logged chunk_encoding field").
+func checkChunkEncoding(declared string) error {
+	if declared == "" || declared == workspace.ArchiveTreeEncoding {
+		return nil
+	}
+	return status.Errorf(codes.InvalidArgument,
+		"Checkpoint chunk_encoding %q is not produced by this adapter; it writes %q",
+		declared, workspace.ArchiveTreeEncoding)
+}
+
 // Checkpoint serves the §4.4 / §10.1 gateway-driven Checkpoint stream. The
 // gateway is the gRPC client: it opens the stream with a CheckpointStart
 // carrying the gateway-minted checkpoint_id, the adapter reports the
 // on-disk workspace size (CheckpointProbe) so the gateway reserves storage
 // quota, and then the adapter archives the checkpoint bundle into a
-// continuous tar (or tar.gz) byte stream, slices it into fixed-size
+// continuous tar.gz byte stream, slices it into fixed-size
 // chunks, and for each chunk declares it (ChunkReady), receives a
 // single-chunk presigned PUT capability (CheckpointGrant), PUTs the chunk
 // against object storage replaying every signed header verbatim, and
@@ -47,7 +77,9 @@ func (s *Server) probeWorkspaceBytes(roots []workspace.NamedRoot) (int64, error)
 // on success, a CheckpointFailed carrying the object store's HTTP status
 // and error code when a chunk PUT is rejected, or a FailedPrecondition
 // gRPC status when the §4.4 workspace-size probe rejects the
-// attempt before any grant is minted.
+// attempt before any grant is minted. A CheckpointStart that declares a
+// chunk_encoding other than tar.gz is refused with InvalidArgument before
+// any of that runs (checkChunkEncoding).
 //
 // spec: §4.4 (checkpoint quiescence, hard workspace size limit, storage
 // failure retry budget); §10.1.
@@ -84,6 +116,9 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 	}
 	if err := slotlayout.ValidateSlotID(sessionID); err != nil {
 		return status.Errorf(codes.InvalidArgument, "Checkpoint session id: %v", err)
+	}
+	if err := checkChunkEncoding(start.GetChunkEncoding()); err != nil {
+		return err
 	}
 
 	// spec: §5.2, §6.4 — resolve the checkpoint bundle for the session the

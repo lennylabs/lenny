@@ -337,7 +337,7 @@ func TestCheckpointStreamFrameOrderAndHeaderReplay(t *testing.T) {
 			SessionId:      &adapterv1.SessionId{Value: contractSession},
 			Trigger:        checkpoint.TriggerPreScaleDown.Proto(),
 			ChunkSizeBytes: 1 << 20,
-			ChunkEncoding:  "tar",
+			ChunkEncoding:  "tar.gz",
 		}},
 	}); err != nil {
 		t.Fatalf("send start: %v", err)
@@ -912,7 +912,7 @@ func TestCheckpointStreamRejectsAnUnaddressedStart(t *testing.T) {
 					SessionId:      tc.session,
 					Trigger:        checkpoint.TriggerPreScaleDown.Proto(),
 					ChunkSizeBytes: 1 << 20,
-					ChunkEncoding:  "tar",
+					ChunkEncoding:  "tar.gz",
 				}},
 			}); err != nil {
 				t.Fatalf("send start: %v", err)
