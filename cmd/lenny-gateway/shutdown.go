@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log"
 	"log/slog"
+	"sync"
 	"time"
 )
 
@@ -38,9 +39,9 @@ type shutdownStep struct {
 type shutdownSequence struct {
 	timeout time.Duration
 	http    contextShutdowner
-	// forward is the CH-HOLDERFORWARD listener, stopped with the REST
-	// listener so no forwarded request starts after the stop; nil when the
-	// forward is not enabled.
+	// forward is the CH-HOLDERFORWARD listener, stopped concurrently with
+	// the REST listener so no forwarded request starts after the stop
+	// begins; nil when the forward is not enabled.
 	forward  contextShutdowner
 	sessions terminalWorkServer
 	closers  []shutdownStep
@@ -78,17 +79,31 @@ func (q shutdownSequence) run() {
 }
 
 // stopListener stops the HTTP listener, and the forward listener when one
-// runs, on a shutdown-timeout context.
+// runs, concurrently on one shutdown-timeout context. Both stop accepting at
+// the same moment, so no forwarded request starts while the REST listener
+// drains, and the forward listener's in-flight requests get the whole drain
+// budget rather than what a long REST drain leaves of it.
+//
+// spec: §10.1.7 (Terminal pipelines at process exit.), §29.3
 func (q shutdownSequence) stopListener() {
 	ctx, cancel := context.WithTimeout(context.Background(), q.timeout)
 	defer cancel()
-	if err := q.http.Shutdown(ctx); err != nil {
-		slog.Warn("lenny-gateway: HTTP listener shutdown", "error", err)
-	}
+	var wg sync.WaitGroup
 	if q.forward != nil {
-		if err := q.forward.Shutdown(ctx); err != nil {
-			slog.Warn("lenny-gateway: holder-forward listener shutdown", "error", err)
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			shutdownListener(ctx, q.forward, "holder-forward")
+		}()
+	}
+	shutdownListener(ctx, q.http, "HTTP")
+	wg.Wait()
+}
+
+// shutdownListener stops one listener on ctx and logs a failed stop.
+func shutdownListener(ctx context.Context, l contextShutdowner, name string) {
+	if err := l.Shutdown(ctx); err != nil {
+		slog.Warn("lenny-gateway: listener shutdown", "listener", name, "error", err)
 	}
 }
 
