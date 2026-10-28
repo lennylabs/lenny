@@ -2403,7 +2403,8 @@
         "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderMCPToolCallsForwardAsToolCalls_spec_29_3",
         "pkg/gateway/sessionserver/holder_forward_sites_test.go::TestUndeliveredMessageHoldAnswersEachDLQOutcome_spec_29_3",
         "pkg/gateway/mcpfabric/mcptools/messaging_handler_test.go::TestForwardedSendSkipsTheSenderLimitsOnTheCoordinator_spec_29_3",
-        "tests/tier8_chaos/holder_forward_chaos_test.go::TestCoordinatorCrashAfterReadingAForwardIsRefusedAndNotHeld_spec_29_3"
+        "tests/tier8_chaos/holder_forward_chaos_test.go::TestCoordinatorCrashAfterReadingAForwardIsRefusedAndNotHeld_spec_29_3",
+        "pkg/gateway/sessionserver/held_undelivered_forward_internal_test.go::TestHoldUndeliveredForwardHoldsWithTheRecoveringTTL_spec_29_3"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -3104,7 +3105,11 @@
         "tests/tier4_integration/concurrent_slot_release_test.go::TestSupersededCoordinatorForwardsTheDeleteAndTheAdopterReleasesOnce_spec_10_1_5",
         "charts/lenny/tests/holder-forward_test.yaml",
         "tests/tier5_e2e_kind/holder_forward_chart_test.go::TestGatewayDeploymentAdvertisesHolderForwardAddress_spec_10_1_1",
-        "tests/tier8_chaos/holder_forward_chaos_test.go::TestForwardResolvesTheCoordinatorThroughThePostgresLeaseFallback_spec_10_1_1"
+        "tests/tier8_chaos/holder_forward_chaos_test.go::TestForwardResolvesTheCoordinatorThroughThePostgresLeaseFallback_spec_10_1_1",
+        "pkg/gateway/sessionserver/holder_forward_decode_internal_test.go::TestDecodeToolForwardResponseRejectsUndecodableResponses_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_decode_internal_test.go::TestStreamBodyReportsWriteAndReadFailures_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_decode_internal_test.go::TestForwardRequestBuildFailuresAreReported_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_decode_internal_test.go::TestHolderForwardClientDoesNotFollowRedirects_spec_29_3"
       ],
       "packages": [
         "pkg/gateway"
@@ -3571,7 +3576,9 @@
         "tests/tier5_e2e_kind/mtls_test.go",
         "tests/tier9_security/tls_test.go",
         "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryEveryAdapterInputIsRenderedOrRegistered",
-        "charts/lenny/tests/holder-forward_test.yaml"
+        "charts/lenny/tests/holder-forward_test.yaml",
+        "tests/testinfra/gatewaypki/gatewaypki_test.go::TestMintIssuesAGatewayLeafTheClusterCAVerifies_spec_10_3",
+        "pkg/gateway/sessionserver/holder_forward_marker_internal_test.go::TestVerifyGatewayPeerRefusesAConnectionWithoutAPeerCertificate_spec_10_3"
       ],
       "packages": [
         "pkg/mtls",
@@ -3945,7 +3952,8 @@
         "tests/tier7b_load_kind/credential_lifecycle_test.go::TestCredentialLifecycle",
         "tests/tier7b_load_kind/scenarios/credential_lifecycle",
         "pkg/gateway/sessionserver/holder_forward_sites_test.go::TestWiredResumeForwardRefusalsStayOutOfTheIdempotencyCache_spec_11_5",
-        "pkg/gateway/mcpfabric/mcptools/holder_forward_sites_test.go::TestWiredCancelSessionForwardRefusalsStayOutOfTheIdempotencyCache_spec_11_5"
+        "pkg/gateway/mcpfabric/mcptools/holder_forward_sites_test.go::TestWiredCancelSessionForwardRefusalsStayOutOfTheIdempotencyCache_spec_11_5",
+        "pkg/gateway/sessionserver/holder_forward_marker_internal_test.go::TestForwardedMarkerFlushCarriesTheNoStoreMark_spec_29_3"
       ],
       "packages": [
         "pkg/idempotency",
