@@ -251,6 +251,7 @@ func deleteGatewayPodAndWait(t *testing.T, c *kind.Cluster, pod string) {
 // context.
 func terminateWithHandoffRetry(t *testing.T, ctx context.Context, c *kind.Cluster, tenant, sessionID string) {
 	t.Helper()
+	waitGatewayRollout(t, c)
 	deadline := time.Now().Add(2 * time.Minute)
 	var lastErr error
 	for {
@@ -271,6 +272,20 @@ func terminateWithHandoffRetry(t *testing.T, ctx context.Context, c *kind.Cluste
 				sessionID, ctx.Err())
 		case <-time.After(3 * time.Second):
 		}
+	}
+}
+
+// waitGatewayRollout waits for the replacement of the deleted replica to
+// become Ready. A per-pod session driver gates on every control-plane pod
+// being Ready, so a driver opened while the replacement still starts skips
+// the test as environmental, and the tests that follow it in the package see
+// the same not-Ready replacement. A rollout that never completes is
+// environmental too, matching the InstallLenny precondition model.
+func waitGatewayRollout(t *testing.T, c *kind.Cluster) {
+	t.Helper()
+	if out, err := c.KubectlOut(t, "-n", "lenny-system", "rollout", "status", "deploy/lenny-gateway",
+		"--timeout=180s"); err != nil {
+		t.Skipf("precondition not met: the replacement gateway replica did not become Ready: %v\n%s", err, out)
 	}
 }
 
