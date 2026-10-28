@@ -1137,10 +1137,6 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 **Gap:** An operator following the §4.4.5 manual-recovery procedure runs `tar -x` against gzip bytes, and the manifest's recorded encoding is false.
 **Suggested resolution:** Direct fix: declare `tar.gz` (the value §4.4 already permits) wherever the gateway records the encoding of chunks `ArchiveTree` produced, with a tier-1 test that decodes a produced chunk according to its declared encoding. Owner: the direct-fix lane (plan §10.2).
 
-## §4.5 Artifact Store <a id="4.5"></a>
-**Spec file:** `spec/04_system-components.md`
-**Reviewed:** 2026-05-22
-
 - **Resolution:** Fixed in `0d2645dce` (2026-10-28). `chunkEncoding()` in `pkg/gateway/checkpoint/checkpointer/uploaddriver.go` returns `tar.gz`, matching the gzip `workspace.ArchiveTree` producer; the declaration feeds `CheckpointStart`, the manifest row, and every chunk key. The unused `Checkpointer.ChunkEncoding` override is removed. Every reader builds chunk keys from the manifest column and `ExtractTree` always decodes gzip, so older manifests recorded as `tar` with gzip chunks still restore. Tests: tier-1 `encoding_test.go`; tier-2 `tests/tier2_component/stores/checkpoint_encoding_roundtrip_test.go` (both a `tar.gz` and a legacy `tar` manifest).
 
 ### - [ ] F-4.4.33 — The workspace download labels a legacy `tar` manifest with gzip chunks as `application/x-tar` [Low] — OPEN
@@ -1149,11 +1145,12 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** A client that trusts the label reads gzip bytes as a plain tar archive.
 - **Suggested resolution:** Direct fix: label from the archive's gzip magic bytes, or record that pre-fix manifests are accepted as-is before deployment. Owner: direct-fix queue.
 
-### - [ ] F-4.4.34 — The `chunk_encoding` column default and the empty-value readers still say `tar` [Low] — OPEN
+### - [x] F-4.4.34 — The `chunk_encoding` column default and the empty-value readers still say `tar` [Low] — CLOSED
 - **Spec:** §10.1 "Chunked-object storage model"; §4.4.
 - **Evidence:** Migrations 0062 and 0178 default `chunk_encoding` to `'tar'`, and the manifest store's `Put` and its readers map an empty value to `tar`, while the only producer now writes and declares `tar.gz` (`0d2645dce`). The gateway always sets the value, so no row takes the default today. Filed from the F-4.4.32 fix (2026-10-28).
 - **Gap:** The schema default and the empty-value fallback describe an encoding no producer writes.
 - **Suggested resolution:** Direct fix: change the default and the fallback to `tar.gz` in a new migration, with a tier-2 test. Owner: direct-fix queue.
+- **Resolution:** Fixed on `fix/checkpoint-followups` (2026-10-28). Migration 0193 sets the `checkpoint_manifest.chunk_encoding` default to `'tar.gz'` and rewrites no row; its down restores `'tar'`. The empty-value fallback is `tar.gz` in the manifest store's `Put` (`partialmanifeststore.normalise` and `pgstore.validatePut`) and in the three readers (`resumechunks.Resolver.Resolve`, the derive chunk copy in `sessionserver/derive.go`, and `streamChunkedWorkspace`). Tests: tier-2 `tests/tier2_component/migrations/checkpoint_chunk_encoding_default_test.go` (the forward default, a row omitting the column reads back `tar.gz`, and the rollback restores `'tar'` without rewriting the row) and a `TestCheckpointManifestStoreContract` subtest for an empty encoding through the Postgres store; tier-1 `TestPutDefaultsEncodingAndReason` and `TestResolveDefaultsChunkEncodingWhenColumnEmpty` now assert `tar.gz`. The prod-schema test does not list the column, so it needed no change. Filed from this fix: F-4.4.37 (`checkpoint_manifest.chunk_encoding` has no CHECK constraint).
 
 ### - [ ] F-4.4.35 — The adapter ignores the declared `chunk_encoding` on `CheckpointStart` [Low] — OPEN
 - **Spec:** §4.4 "MinIO object key logging for manual recovery" ("The decompression step MUST be selected from the logged chunk_encoding field").
@@ -1166,6 +1163,16 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Evidence:** `FirstCheckpointDelay` (`pkg/gateway/checkpoint/checkpointer/checkpointer.go`) derives the offset from an FNV hash of the session id, so a resumed session gets the same offset each time. The spread across sessions is uniform. Filed from the F-4.4.4 re-closure (2026-10-28).
 - **Gap:** The code reads `random` as a stable per-session draw; the spec does not say whether the draw is per session or per scheduling.
 - **Suggested resolution:** Decide in the next proposal that edits §4.4 whether the jitter is stable per session (which keeps handoffs from re-randomizing) and state it, or switch to a fresh draw. Owner: the text-corrections proposal.
+
+### - [ ] F-4.4.37 — `checkpoint_manifest.chunk_encoding` carries no CHECK constraint on the closed enum [Low] — OPEN
+- **Spec:** §10.1 "Chunked-object storage model" and the partial-manifest column list (`chunk_encoding` is `tar` or `tar.gz`).
+- **Evidence:** Migration 0062 declared `session_partial_checkpoint_manifest_chunk_encoding_check CHECK (chunk_encoding IN ('tar', 'tar.gz'))`. Migration 0178 replaced that table with `checkpoint_manifest` and dropped the constraint, and no later migration restores it, so an `UPDATE ... SET chunk_encoding = 'zip'` succeeds against the head schema. The Go stores validate the enum on `Put`, so no row written through them holds another value. Found while writing the F-4.4.34 tier-2 migration test (2026-10-28).
+- **Gap:** The schema admits a `chunk_encoding` value from which neither the chunk object key nor the decoder can be derived.
+- **Suggested resolution:** Direct fix: a migration that adds `CHECK (chunk_encoding IN ('tar', 'tar.gz'))` to `checkpoint_manifest` (as `NOT VALID` then `VALIDATE`, per the §10.5 expand-contract rules), with a tier-2 test that an out-of-enum write is rejected. Owner: direct-fix queue.
+
+## §4.5 Artifact Store <a id="4.5"></a>
+**Spec file:** `spec/04_system-components.md`
+**Reviewed:** 2026-05-22
 
 ### Summary
 

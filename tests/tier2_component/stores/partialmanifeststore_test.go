@@ -104,6 +104,26 @@ func TestCheckpointManifestStoreContract(t *testing.T) {
 		}
 	})
 
+	// spec: §10.1 (Chunked-object storage model) — an empty encoding takes
+	// tar.gz, the encoding the only producer writes, so the recorded value
+	// matches the chunk bytes (F-4.4.34).
+	t.Run("put with an empty chunk_encoding records tar.gz", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		checkpointID := newUUID(t)
+		row := manifestRow(time.Now().UTC(), tenant, checkpointID, newUUID(t), 1)
+		row.ChunkEncoding = ""
+		if err := store.Put(ctx, row); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, checkpointID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.ChunkEncoding != partialmanifeststore.ChunkEncodingTarGz {
+			t.Errorf("chunk_encoding = %q, want tar.gz", got.ChunkEncoding)
+		}
+	})
+
 	t.Run("get missing returns ErrNotFound", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		if _, err := store.Get(ctx, tenant, newUUID(t)); !errors.Is(err, partialmanifeststore.ErrNotFound) {
