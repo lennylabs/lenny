@@ -375,6 +375,7 @@
         "pkg/checkpoint/checkpoint_test.go::TestAllOutcomesIsExhaustive",
         "pkg/checkpoint/checkpoint_test.go::TestAllResumeModesIsExhaustive",
         "pkg/checkpoint/checkpoint_test.go::TestResumeModeWorkspaceLost",
+        "tests/tier3_contract/checkpoint_stream/checkpoint_stream_wire_test.go::TestCheckpointStreamGrantCarriesCapabilityExpiry",
         "tests/tier2_component/stores/evictionfallback_test.go",
         "tests/tier2_component/stores/evictionstatestore_test.go",
         "tests/tier4_integration/eviction_fallback_outage_test.go::TestEvictionFallbackMinIOOutageWritesPostgresMinimalState",
