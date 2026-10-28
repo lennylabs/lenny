@@ -3134,7 +3134,19 @@ Proposals, second wave:
 
 Proposals, third wave:
 
-- [ ] **P4. Delegation tree and budget lifecycle** (not yet written), after P2.
+- [ ] **P4. Delegation tree and budget lifecycle** (split; P4a done as a proposal, P4b drafting), after P2.
+  - **Outcome (P4a).** Proposal 0106
+    (`proposals/0106_fix_the-delegation-tree-s-membership-and-lifecycle-are-under/`) was approved 2026-10-27
+    (merge `d52dc1834`). Derive and replay create independent roots registered for lease extension, tree
+    recovery fails only `resume_pending` nodes level by level and leaves an elapsed resume window to the §6.2
+    cap, the orphan-cleanup sweeper selects by direct parent and becomes the retry owner for interrupted
+    cascades, and the deadlock, orphan-cap fallback, and rollback paths conform. Its implementation closes
+    F-8.2.30, F-8.8.18, F-8.8.19, F-8.9.13, F-8.10.19 to F-8.10.23, F-8.10.25, and F-8.10.26 as its REC-1
+    states. Its REC-1 also re-owns F-8.10.17 to approved proposal 0104 (D6, CODE-2, and SPEC-3 Edit (a)), with
+    0106's orphan sweeper as a one-interval backstop, and closes F-8.10.24 citing `3f943f56f`; both records
+    are applied. Its implementation runs after 0104 and 0105 are implemented, because its staged edits anchor
+    on their text. Its unstaged defects are filed below. P4b (tree budget keys, the §8.6 lease extension, and
+    the per-session enforcer) remains and is being drafted as proposal 0107.
   - **Scope.** Tree membership and lifecycle: which sessions belong to a delegation tree, tree recovery
     after a resume, the cancellation cascade and `cancelSubtree`, orphan cleanup, the deadlock detector's
     local decisions, the delegated child's materializer, tree budget keys and their returns, the §8.6 lease
@@ -3143,7 +3155,8 @@ Proposals, third wave:
   - **Members.** F-8.2.30 (TT-32), F-8.3.2 to F-8.3.5 (TT-50, TT-58, TT-59, and TT-65), F-8.6.24 to
     F-8.6.27 (TT-52, TT-63, TT-64, and TT-67), F-8.8.18 (TT-62), F-8.8.19 (TT-66), F-8.9.13 (TT-47),
     F-8.10.17 (TT-31), F-8.10.19 to F-8.10.26 (TT-49, TT-53 to TT-57, TT-60, and TT-61), and F-11.2.31
-    (TT-68). Four are High.
+    (TT-68). Four are High. F-8.10.17 (TT-31) is re-owned to proposal 0104 and F-8.10.24 (TT-57) is closed,
+    both by 0106's REC-1 (2026-10-27).
   - **Split seam.** If the opening defect list exceeds the bound, split into P4a (tree membership,
     recovery, cascade, cancel, orphan cleanup, deadlock, and the materializer) and P4b (tree budget keys,
     the §8.6 lease extension, and the per-session enforcer: TT-50, TT-52, TT-57 to TT-59, TT-63 to TT-65,
@@ -3652,10 +3665,13 @@ keep their routing. F-7.2.43 named P3 as its owner, and 0105 does not stage it, 
     gateway generates it. Drop the argument and always generate the value. It lands after 0105 and 0101,
     which both edit the handler.
 - Proposal routing.
-  - [ ] With P4: **F-8.2.32** (Medium, a delegated child that omits `perChildMaxAge` is unbounded by it,
-    because no `DelegationPolicy` default exists to store) and **F-7.2.45** (Low, the delegated child commit
-    writes `created → running`, an edge §7.2 and `state.ValidTransitions` do not list, through the `/start`
-    transition helper). P4 owns the materializer and the lease budget.
+  - [ ] With P4b (proposal 0107, drafting): **F-8.2.32** (Medium, a delegated child that omits
+    `perChildMaxAge` is unbounded by it, because no `DelegationPolicy` default exists to store) and
+    **F-7.2.45** (Low, the delegated child commit writes `created → running`, an edge §7.2 and
+    `state.ValidTransitions` do not list, through the `/start` transition helper). Both were routed to P4.
+    P4a (proposal 0106) stages neither, so both move to P4b, the remaining part of P4. F-8.2.32 is a lease
+    budget default and belongs to P4b's scope. F-7.2.45 is a materializer state edge, and 0107 takes it or
+    names another owner when it is drafted.
   - [ ] **F-9.1.12** (Medium): the gateway-edge `/mcp` endpoint serves `lenny/request_input`, a platform MCP
     server tool, so an edge caller can open a wait on a session. Which tools the edge serves needs spec text.
     It can ride with the forwarded-call session binding proposal (F-10.2.29).
@@ -3672,6 +3688,34 @@ keep their routing. F-7.2.43 named P3 as its owner, and 0105 does not stage it, 
     `starting_timeout` row links §6.3 where §6.2 defines `STARTING_TIMEOUT`) and **F-15.1.62** (Low, the
     Open Responses status mapping disagrees with `docs/api/open-responses.md`, and the specification states
     no mapping).
+
+**Defects filed from proposal 0106's unstaged-defect list (2026-10-27).** Proposal 0106 (P4a, approved
+2026-10-27, implementation pending) lists defects in the shipped tree that it does not stage, and its REC-1
+files them once confirmed. They are filed now, ahead of REC-1, because no defect is dropped. Each was
+re-confirmed against the tree at `d52dc1834`, and each new BUILD-GAPS entry says it was filed ahead of REC-1,
+so 0106's implementor updates the entry rather than filing a duplicate. Item (b), the cascaded descendant's
+`archiveSettledChild` signal tail, and the `lenny/cancel_session` and `cancelSubtree` half of item (a) were
+already tracked by F-7.2.35 and keep its routing to P2b; F-7.2.35 carries a note naming them. None of the
+items is budget-related, so none goes to P4b.
+
+- With P2b, together with F-7.2.35, after 0106's implementation.
+  - [ ] **F-8.10.28** (Medium): tree recovery's `failSession` and `expireSession` run `settledChildSignals`
+    as their signal tail, so a session tree recovery ends skips the `cascadeOnFailure` evaluation and the
+    `maxOrphanTasksPerTenant` fallback. The specification already requires the evaluation on every terminal
+    write, and the fix is F-7.2.35's single terminal-signal set, so it rides with that finding.
+- Direct-fix queue, after 0106's implementation, which edits the same Manager.
+  - [ ] **F-8.8.22** (Low): the deadlock Manager records `resolution="resolved"`, which §16.1 does not list,
+    and the detection, resolution, and duration metrics are labelled by tenant or resolution rather than by
+    `pool`. Classify the cleared deadlock as `client_input` or `child_cancel` and add the `pool` label. A
+    clearing cause outside the listed values goes through the proposal pipeline.
+- Proposal routing.
+  - [ ] **F-4.2.17** (Low): `ResumeEligibleUntil` is stamped as `CreatedAt` plus the resume window, returned
+    to clients as `resumeEligibleUntil`, and enforced by nothing, and once 0106 CODE-B deletes
+    `remainingResumeWindow` nothing reads it. Deleting or defining the field is a specification choice. It
+    rides with the next proposal that edits the §4.2 session record or the §7.3 resume window.
+  - [ ] Text corrections, with any text-corrections proposal: **F-4.5.21** (Low, §4.5 **Workspace lineage:**
+    names uploads and derive as the sources of `parent_workspace_ref` and omits replay, which also writes
+    it).
 
 **Test-harness direct fixes (2026-10-27).** The unit tier reported a package timeout for
 `pkg/gateway/podlifecycle/podsession` whenever the host was loaded, which hid the results of every
