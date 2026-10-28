@@ -9,6 +9,7 @@
 
 ## Edge cases and accepted failure modes
 
+- When the seal step and the steps before the release outlast the usage quiescence timeout, the return runs on the timeout before the release's adapter `Shutdown` sends `FINAL_USAGE_REPORT`, so the tokens the child spends after the return are credited back as unused (SPEC-2).
 - A tree whose keys are gone is detected only at its next reservation (SPEC-3 Edit (b), Edit (c)).
 - A reservation detection leaves the state of a root that has no `BUDGET_KEYS_EXPIRED` transition to `failed` unchanged (SPEC-3 Edit (d)).
 - Two replicas can each present an elicitation for one tree (SPEC-4 Edit (c)).
@@ -29,7 +30,7 @@ the seal-and-export step (**Seal-and-export invariant:** above), the inbox drain
 with
 
 ```markdown
-the seal-and-export step (**Seal-and-export invariant:** above), the inbox drain, the terminal events and signals, the delegation budget return of a delegated child ([Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)), the pod or slot release, and the close of the session log.
+the seal-and-export step (**Seal-and-export invariant:** above), the inbox drain, the terminal events and signals, the pod or slot release together with, for a delegated child, the delegation budget return that runs concurrently with it ([Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)), and the close of the session log.
 ```
 
 ### SPEC-2 · spec/08_recursive-delegation.md § 8.3 Delegation Policy and Lease
@@ -37,7 +38,7 @@ the seal-and-export step (**Seal-and-export invariant:** above), the inbox drain
 Append to numbered item 3 **Return on completion:**, after the sentence ending "returns only restore up to the original allocation.", in the same paragraph:
 
 ```markdown
-The return is a step of the child's terminal pipeline ([Section 7.1](07_session-lifecycle.md#71-normal-flow) **Terminal pipeline context:**), so it runs once for the child's terminal transition, after whichever writer committed it. A relabel of an already-terminal child runs no second return. The return addresses the budget keys of the child's recorded `root_session_id`. It precedes the pod or slot release, and the usage quiescence timeout of **Usage quiescence before budget return** below is counted from the child's terminal transition. The gateway refuses to start, and pool admission refuses a pool, when a pool's `maxWorkspaceSealDurationSeconds` is not greater than `delegation.usageQuiescenceTimeoutSeconds`, so the quiescence wait ends before the release allowance of the terminal pipeline budget begins.
+The return is a step of the child's terminal pipeline ([Section 7.1](07_session-lifecycle.md#71-normal-flow) **Terminal pipeline context:**), so it runs once for the child's terminal transition, after whichever writer committed it. A relabel of an already-terminal child runs no second return. The return addresses the budget keys of the child's recorded `root_session_id`. The quiescence wait of **Usage quiescence before budget return** below starts at the child's terminal transition and runs concurrently with the pod or slot release: it does not wait for the release to complete, and it does not precede the release. The return runs when the child's adapter's `FINAL_USAGE_REPORT` arrives or its stream closes (step 1), which in the normal case happens during the adapter `Shutdown` that the release issues, or when the usage quiescence timeout, counted from the child's terminal transition, elapses (step 2), whichever comes first. An adapter `Shutdown` that does not return therefore delays the return by no more than the timeout. The gateway refuses to start, and pool admission refuses a pool, when a pool's `maxWorkspaceSealDurationSeconds` is not greater than `delegation.usageQuiescenceTimeoutSeconds`, so the quiescence wait ends before the release allowance of the terminal pipeline budget begins.
 ```
 
 ### SPEC-3 · spec/08_recursive-delegation.md § 8.3 Delegation Policy and Lease
