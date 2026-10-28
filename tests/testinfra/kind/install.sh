@@ -31,8 +31,9 @@
 #      Available. The tier-5 gateway-ingress NetworkPolicy test needs
 #      a real Ingress controller namespace on the cluster.
 #   8. Deploy the in-cluster data stores (Postgres, Redis, MinIO),
-#      wait for them to become Available, apply the schema-migration
-#      Job, and create the MinIO artifact bucket.
+#      wait for them to become Available, check the database's migration
+#      state against this branch, apply the schema-migration Job, and
+#      create the MinIO artifact bucket.
 #   9. Apply the lenny.dev CRDs and install the Lenny Helm chart with
 #      the e2e values overlay.
 #  10. Apply the agent-pod workload and wait for its pods to become
@@ -84,6 +85,11 @@
 #   LENNY_KEEP_CONTENT_TAGS
 #                        How many content tags per image the host keeps
 #                        besides the current one. Default: 3.
+#   LENNY_SKIP_MIGRATION_GUARD
+#                        When "1", run the step-8 migration even when the
+#                        shared database is dirty or ahead of this branch's
+#                        highest migration. Default: the install stops
+#                        before migrating in either case.
 
 set -euo pipefail
 
@@ -842,6 +848,81 @@ log "waiting for the data-store deployments to become Available"
 for deploy in lenny-postgres lenny-redis lenny-minio; do
   kc -n lenny-system wait --for=condition=Available "deploy/${deploy}" --timeout=240s
 done
+
+# Guard the shared database before migrating (T-17.4.29). Parallel
+# worktrees install onto the same cluster and migrate the same Postgres,
+# so the database can carry a migration this branch does not have, or a
+# dirty row from an interrupted migrate. Either one fails the Job below
+# or leaves the schema half applied. migration_guard reads the
+# schema_migrations row in a read-only transaction and stops the install
+# without migrating when the row is dirty or its version is ahead of the
+# branch's highest migration. A version behind the branch is a normal
+# upgrade and proceeds. LENNY_SKIP_MIGRATION_GUARD=1 skips the refusal.
+# The recovery procedures are in tests/testinfra/README.md under "Shared
+# Kind cluster database".
+migration_guard() {
+  local procedure='tests/testinfra/README.md, section "Shared Kind cluster database"'
+  local highest
+  highest="$(find "${REPO_ROOT}/migrations" -maxdepth 1 -name '[0-9]*.up.sql' -printf '%f\n' \
+    | sed -E 's/^0*([0-9]+)_.*/\1/' | sort -n | tail -n 1)"
+  if [[ -z "${highest}" ]]; then
+    echo "error: migration guard: no migrations found under ${REPO_ROOT}/migrations" >&2
+    return 1
+  fi
+
+  # The pod's psql runs every statement in a read-only transaction.
+  local psql_ro='PGOPTIONS="-c default_transaction_read_only=on" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc'
+  local exists row version dirty reason=""
+  if ! exists="$(kc -n lenny-system exec deploy/lenny-postgres -- \
+    sh -c "${psql_ro} \"SELECT to_regclass('public.schema_migrations') IS NOT NULL\"")"; then
+    reason="cannot read schema_migrations from deploy/lenny-postgres."
+  elif [[ "$(printf '%s' "${exists}" | tr -d '[:space:]')" != "t" ]]; then
+    log "migration guard: no schema_migrations table, so the database is fresh (branch highest ${highest})"
+    return 0
+  elif ! row="$(kc -n lenny-system exec deploy/lenny-postgres -- \
+    sh -c "${psql_ro} \"SELECT version, dirty FROM schema_migrations\"")"; then
+    reason="cannot read the schema_migrations row from deploy/lenny-postgres."
+  else
+    row="$(printf '%s' "${row}" | tr -d '[:space:]')"
+    if [[ -z "${row}" ]]; then
+      log "migration guard: schema_migrations is empty (branch highest ${highest})"
+      return 0
+    fi
+    version="${row%%|*}"
+    dirty="${row#*|}"
+    if [[ ! "${version}" =~ ^[0-9]+$ || ( "${dirty}" != "t" && "${dirty}" != "f" ) ]]; then
+      reason="unexpected schema_migrations row '${row}'."
+    fi
+  fi
+
+  if [[ -n "${reason}" ]]; then
+    :
+  elif [[ "${dirty}" == "t" ]]; then
+    reason="the shared database is dirty at migration ${version} because an earlier migrate stopped part-way."
+    reason+=" Do not edit schema_migrations by hand. Follow the reset procedure in ${procedure}."
+  elif (( 10#${version} > 10#${highest} )); then
+    reason="the shared database is at migration ${version}, ahead of this branch's highest migration ${highest}."
+    reason+=" Another worktree installed a newer migration. Either merge the integration branch into this"
+    reason+=" branch so it carries migration ${version}, or step the database back to ${highest} with"
+    reason+=" 'lenny-migrate --break-glass --confirm goto ${highest}' as the step-back procedure in ${procedure} describes."
+  fi
+  if [[ -z "${reason}" ]]; then
+    log "migration guard: database at migration ${version}, branch highest ${highest}; migrating"
+    return 0
+  fi
+  if [[ "${LENNY_SKIP_MIGRATION_GUARD:-}" == "1" ]]; then
+    log "migration guard: ${reason}"
+    log "migration guard: proceeding because LENNY_SKIP_MIGRATION_GUARD=1"
+    return 0
+  fi
+  echo "error: migration guard: ${reason}" >&2
+  echo "error: migration guard: the install stopped before migrating; LENNY_SKIP_MIGRATION_GUARD=1 overrides the check" >&2
+  return 1
+}
+# end migration_guard
+
+log "checking the shared database's migration state"
+migration_guard
 
 # Run the schema-migration Job. lenny-migrate up applies the embedded
 # migrations against the in-cluster Postgres. The Job is deleted first
