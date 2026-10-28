@@ -19,6 +19,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/common/seqname"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
@@ -254,5 +255,74 @@ func TestGracefulShutdownDrainsInputWaits_spec_7_2(t *testing.T) {
 			t.Fatalf("after the drain and a new replica's recovery the row is %s/%q, want running", row.State, row.InputWaitID)
 		}
 		t.Errorf("the drain left the row input_required for the recovery; the exit write must run before the postgres step closes the pool")
+	}
+}
+
+// expireByMaxSessionAge runs one watchdog pass over the shared
+// Postgres store at a time past a one-minute maxSessionAge cap, with every
+// other clock out of reach.
+func (e *iwChaosEnv) expireByMaxSessionAge(t *testing.T) {
+	t.Helper()
+	const far = 100 * 24 * 3600
+	now := time.Now().UTC().Add(2 * time.Minute)
+	w := watchdog.New(e.store, watchdog.StaticTenants{iwChaosTenant}, watchdog.Config{
+		MaxSessionAgeSeconds:           60,
+		MaxIdleSeconds:                 far,
+		MaxAwaitingClientActionSeconds: far,
+		MaxSuspendedPodHoldSeconds:     far,
+		MaxResumePendingSeconds:        far,
+		MaxResumingSeconds:             far,
+	}, func() time.Time { return now })
+	if _, err := w.Tick(context.Background(), now); err != nil {
+		t.Fatalf("watchdog pass: %v", err)
+	}
+}
+
+// spec: 6.2 (maxSessionAge timer behavior across states), 7.2 (Session state
+// machine), 28.3 (Link register)
+// diagnosis: a row left input_required on a wait no registry holds, by a
+// SIGKILLed waiter or by an exit write lost to a Postgres outage, with no
+// later call of its pod to run the recovery, was not expired by the
+// maxSessionAge sweep. Either the sweep does not count active age in
+// input_required, does not list the row, or does not stamp expired:deadline,
+// so the stale row has no owner that ends it.
+func TestStaleInputWaitRowEndsAtMaxSessionAge_spec_6_2(t *testing.T) {
+	t.Run("waiter killed", func(t *testing.T) {
+		e := newIWChaosEnv(t, false)
+		a := e.start(t)
+		e.park(t, e.dial(t, a))
+		a.proc.Kill(t)
+		e.assertStaleThenExpired(t)
+	})
+	t.Run("exit write lost to a Postgres outage", func(t *testing.T) {
+		e := newIWChaosEnv(t, true)
+		a := e.start(t)
+		done, cancel := e.park(t, e.dial(t, a))
+		e.proxy.Cut()
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(30 * time.Second):
+			t.Fatal("the cancelled lenny/request_input did not return")
+		}
+		time.Sleep(sessionstore.DefaultPrimaryReadTimeout + time.Second)
+		e.proxy.Restore(t)
+		e.assertStaleThenExpired(t)
+	})
+}
+
+// assertStaleThenExpired asserts the row stays input_required while no call
+// of the pod arrives, then that the maxSessionAge sweep expires it with
+// expired:deadline.
+func (e *iwChaosEnv) assertStaleThenExpired(t *testing.T) {
+	t.Helper()
+	time.Sleep(time.Second)
+	if row := e.row(t); row.State != session.StateInputRequired {
+		t.Fatalf("with no later call the row is %s/%q, want input_required", row.State, row.InputWaitID)
+	}
+	e.expireByMaxSessionAge(t)
+	row := e.row(t)
+	if row.State != session.StateExpired || row.FailureReason != string(session.FailureExpiredDeadline) {
+		t.Errorf("after the maxSessionAge sweep the row is %s/%q, want expired/%q", row.State, row.FailureReason, session.FailureExpiredDeadline)
 	}
 }

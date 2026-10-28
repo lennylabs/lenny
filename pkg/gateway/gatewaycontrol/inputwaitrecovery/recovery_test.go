@@ -12,6 +12,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/inputwaitrecovery"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -36,6 +37,9 @@ type hookStore struct {
 	failUpdate func(id string) (before, after bool)
 	// afterList runs after each GetActiveSlotsByPod listing.
 	afterList func()
+	// afterUpdate runs after each Update that reached the wrapped store,
+	// with the session ID and the Update's error.
+	afterUpdate func(id string, err error)
 }
 
 var errInjected = errors.New("injected store failure")
@@ -56,7 +60,14 @@ func (h *hookStore) Update(ctx context.Context, tenantID, id string, mutate func
 			return sessionstore.Session{}, errInjected
 		}
 	}
-	return h.Store.Update(ctx, tenantID, id, mutate)
+	row, err := h.Store.Update(ctx, tenantID, id, mutate)
+	h.mu.Lock()
+	hook := h.afterUpdate
+	h.mu.Unlock()
+	if hook != nil {
+		hook(id, err)
+	}
+	return row, err
 }
 
 func (h *hookStore) GetActiveSlotsByPod(ctx context.Context, podID string) ([]string, error) {
@@ -74,6 +85,18 @@ func (h *hookStore) setFail(f func(id string) (before, after bool)) {
 	h.mu.Lock()
 	h.failUpdate = f
 	h.mu.Unlock()
+}
+
+func (h *hookStore) setAfterUpdate(f func(id string, err error)) {
+	h.mu.Lock()
+	h.afterUpdate = f
+	h.mu.Unlock()
+}
+
+// failNextUpdateBeforeCommit makes the next Update fail before the store
+// commits it.
+func (h *hookStore) failNextUpdateBeforeCommit() {
+	h.setFail(func(string) (bool, bool) { h.setFail(nil); return true, false })
 }
 
 func newStore(t *testing.T) *hookStore {
@@ -386,6 +409,80 @@ func TestRecoveryKeepsAWaitPendingHere_spec_28_3(t *testing.T) {
 	})
 }
 
+// parkOnEarlierConnection recovers a first connection of pod-a, parks
+// req-1 on it, and returns the call's result channel. The row is then
+// input_required naming req-1's wait, which stays pending on srv.
+func parkOnEarlierConnection(t *testing.T, srv *inputwaitrig.Server, store sessionstore.Store) <-chan inputwaitrig.Result {
+	t.Helper()
+	old := srv.Dial(t, inputwaitrig.AgentURI("pod-a"))
+	ping(t, old, sessA)
+	done := inputwaitrig.RequestInput(context.Background(), old, sessA, "req-1")
+	srv.WaitPending(t, sessA, "req-1")
+	wantRow(t, store, sessA, session.StateInputRequired, "*")
+	return done
+}
+
+// TestRearmDuringRecoveryLeavesConnectionUnrecovered_spec_28_3 pins the
+// generation a recovery run marks. A run reads the replica generation when it
+// starts and marks the connection recovered at that value only, so a failed
+// exit write that re-arms the replica while the run is in flight leaves the
+// connection not recovered. In the held-run case the run processes a session
+// whose wait is still pending here and leaves its row; that wait's exit write
+// then fails, leaving the row input_required naming a wait no registry
+// holds, and the run completes. In the sequential case a new connection is
+// recovered while the earlier connection's wait stays registered, and that
+// wait's exit write then fails. In both, the connection's next call runs the
+// recovery and restores running.
+//
+// spec: §7.2 (Session state machine), §28.3 (Link register)
+func TestRearmDuringRecoveryLeavesConnectionUnrecovered_spec_28_3(t *testing.T) {
+	t.Run("exit write fails while the run is held", func(t *testing.T) {
+		store := newStore(t)
+		seed(t, store, sessA, "pod-a", session.StateRunning, "")
+		srv := start(t, store)
+		done := parkOnEarlierConnection(t, srv, store)
+		c := srv.Dial(t, inputwaitrig.AgentURI("pod-a"))
+		var held atomic.Bool
+		store.setAfterUpdate(func(id string, err error) {
+			// The run's write on the session found its wait pending and was
+			// superseded; fail that wait's exit write before the run returns.
+			if id != sessA || !errors.Is(err, sessionstore.ErrSuperseded) || !held.CompareAndSwap(false, true) {
+				return
+			}
+			store.failNextUpdateBeforeCommit()
+			_ = srv.Waits.Resolve(sessA, "req-1", "yes")
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Error("req-1 did not return while the run was held")
+			}
+		})
+		ping(t, c, sessA)
+		store.setAfterUpdate(nil)
+		if !held.Load() {
+			t.Fatal("the recovery run never processed the session with its wait pending")
+		}
+		wantRow(t, store, sessA, session.StateInputRequired, "*")
+		ping(t, c, sessA)
+		wantRow(t, store, sessA, session.StateRunning, "*")
+	})
+	t.Run("exit write fails after the new connection is recovered", func(t *testing.T) {
+		store := newStore(t)
+		seed(t, store, sessA, "pod-a", session.StateRunning, "")
+		srv := start(t, store)
+		done := parkOnEarlierConnection(t, srv, store)
+		c := srv.Dial(t, inputwaitrig.AgentURI("pod-a"))
+		ping(t, c, sessA)
+		wantRow(t, store, sessA, session.StateInputRequired, "*")
+		store.failNextUpdateBeforeCommit()
+		_ = srv.Waits.Resolve(sessA, "req-1", "yes")
+		inputwaitrig.Await(t, done)
+		wantRow(t, store, sessA, session.StateInputRequired, "*")
+		ping(t, c, sessA)
+		wantRow(t, store, sessA, session.StateRunning, "*")
+	})
+}
+
 // TestIncompleteRecoveryRunsAgain_spec_28_3 pins that a recovery whose write
 // fails, or whose call names a session of another pod, leaves the connection
 // not recovered, so the next session-scoped call runs the recovery again.
@@ -441,21 +538,65 @@ func TestCloseEndsWaitsAndRestoresRows_spec_28_3(t *testing.T) {
 	}
 }
 
-// TestStaleRowWithNoLaterCallStays_spec_28_3 pins the accepted residue: a
-// row left input_required by a lost wait stays input_required while no later
-// call of its pod runs the recovery.
+// TestStaleRowWithNoLaterCallEndsAtMaxSessionAge_spec_6_2 pins the owner of
+// the accepted residue. A row left input_required naming a wait no registry
+// holds, by a lost wait or by a failed exit write, stays input_required while
+// no later call of its pod runs the recovery; the maxSessionAge sweep, whose
+// timer runs in input_required, then expires it with expired:deadline.
 //
-// spec: §7.2 (Session state machine), §28.3 (Link register)
-func TestStaleRowWithNoLaterCallStays_spec_28_3(t *testing.T) {
-	store := newStore(t)
-	seed(t, store, sessA, "pod-a", session.StateRunning, "")
-	srv := start(t, store)
-	c := srv.Dial(t, inputwaitrig.AgentURI("pod-a"))
-	_ = inputwaitrig.RequestInput(context.Background(), c, sessA, "req-1")
-	srv.WaitPending(t, sessA, "req-1")
-	srv.Kill()
-	start(t, store)
-	wantRow(t, store, sessA, session.StateInputRequired, "*")
+// spec: §6.2 (maxSessionAge timer behavior across states), §7.2 (Session
+// state machine), §28.3 (Link register)
+func TestStaleRowWithNoLaterCallEndsAtMaxSessionAge_spec_6_2(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		leave func(t *testing.T, store *hookStore, srv *inputwaitrig.Server, done <-chan inputwaitrig.Result)
+	}{
+		{name: "lost wait", leave: func(t *testing.T, store *hookStore, srv *inputwaitrig.Server, _ <-chan inputwaitrig.Result) {
+			srv.Kill()
+			start(t, store)
+		}},
+		{name: "failed exit write", leave: func(t *testing.T, store *hookStore, srv *inputwaitrig.Server, done <-chan inputwaitrig.Result) {
+			store.failNextUpdateBeforeCommit()
+			_ = srv.Waits.Resolve(sessA, "req-1", "yes")
+			inputwaitrig.Await(t, done)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newStore(t)
+			seed(t, store, sessA, "pod-a", session.StateRunning, "")
+			srv := start(t, store)
+			c := srv.Dial(t, inputwaitrig.AgentURI("pod-a"))
+			ping(t, c, sessA)
+			done := inputwaitrig.RequestInput(context.Background(), c, sessA, "req-1")
+			srv.WaitPending(t, sessA, "req-1")
+			tc.leave(t, store, srv, done)
+			wantRow(t, store, sessA, session.StateInputRequired, "*")
+			expireByMaxSessionAge(t, store)
+			row := rowOf(t, store, sessA)
+			if row.State != session.StateExpired || row.FailureReason != string(session.FailureExpiredDeadline) {
+				t.Errorf("after the maxSessionAge sweep the row is %s/%q, want expired/%q", row.State, row.FailureReason, session.FailureExpiredDeadline)
+			}
+		})
+	}
+}
+
+// expireByMaxSessionAge runs one watchdog pass over store at a time past a
+// one-minute maxSessionAge cap, with every other clock out of reach.
+func expireByMaxSessionAge(t *testing.T, store sessionstore.Store) {
+	t.Helper()
+	const far = 100 * 24 * 3600
+	now := time.Now().UTC().Add(2 * time.Minute)
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{
+		MaxSessionAgeSeconds:           60,
+		MaxIdleSeconds:                 far,
+		MaxAwaitingClientActionSeconds: far,
+		MaxSuspendedPodHoldSeconds:     far,
+		MaxResumePendingSeconds:        far,
+		MaxResumingSeconds:             far,
+	}, func() time.Time { return now })
+	if _, err := w.Tick(context.Background(), now); err != nil {
+		t.Fatalf("watchdog pass: %v", err)
+	}
 }
 
 // TestNewContextRecordIsNotRecovered_spec_28_3 pins the record's generation

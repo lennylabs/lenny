@@ -2103,7 +2103,9 @@
         "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartWriteStoreErrorAnswersInternal_spec_15_1",
         "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartFindsAnotherWritersTerminalState_spec_7_2",
         "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartFailedWriteStoreErrorLeavesStartingForTheWatchdog_spec_6_2",
-        "tests/tier11_docs/build_gaps_session_timers_records_currency_test.go::TestSessionTimersRecordsResolveTheirMembers_spec_6_2"
+        "tests/tier11_docs/build_gaps_session_timers_records_currency_test.go::TestSessionTimersRecordsResolveTheirMembers_spec_6_2",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestStaleRowWithNoLaterCallEndsAtMaxSessionAge_spec_6_2",
+        "tests/tier8_chaos/input_wait_recovery_chaos_test.go::TestStaleInputWaitRowEndsAtMaxSessionAge_spec_6_2"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -2468,7 +2470,7 @@
         "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestRecoveryKeepsAWaitPendingHere_spec_28_3",
         "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestIncompleteRecoveryRunsAgain_spec_28_3",
         "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestCloseEndsWaitsAndRestoresRows_spec_28_3",
-        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestStaleRowWithNoLaterCallStays_spec_28_3",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestStaleRowWithNoLaterCallEndsAtMaxSessionAge_spec_6_2",
         "pkg/gateway/mcpfabric/delegation/service_test.go::TestDelegateAdmitsInputRequiredParent_spec_7_2",
         "pkg/gateway/mcpfabric/mcptools/request_input_row_writes_test.go::TestRequestInputEntryWriteOnRunningRow_spec_7_2",
         "pkg/gateway/mcpfabric/mcptools/request_input_row_writes_test.go::TestRequestInputEntryWriteOnInputRequiredRow_spec_7_2",
@@ -2502,7 +2504,10 @@
         "sdks/client/go/lenny/start_single_attempt_test.go::TestStartSendsOneRequestOnStartingFailed_spec_15_6",
         "cmd/lenny-gateway/any_state_terminal_writers_test.go::TestForceTerminateFromRecoveryAndPreRunningStatesWritesFailed_spec_7_2",
         "cmd/lenny-gateway/any_state_terminal_writers_test.go::TestBudgetTerminatorFromRecoveryAndPausedStatesWritesExpired_spec_7_2",
-        "tests/tier11_docs/build_gaps_session_timers_records_currency_test.go::TestSessionTimersFiledDefectsAreConfirmed_spec_7_2"
+        "tests/tier11_docs/build_gaps_session_timers_records_currency_test.go::TestSessionTimersFiledDefectsAreConfirmed_spec_7_2",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestRearmDuringRecoveryLeavesConnectionUnrecovered_spec_28_3",
+        "tests/tier7a_load_local/input_wait_recovery_invariant_test.go::TestInputWaitRecoveryKeepsRowsOnLiveWaits_spec_28_3",
+        "tests/tier8_chaos/input_wait_recovery_chaos_test.go::TestStaleInputWaitRowEndsAtMaxSessionAge_spec_6_2"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -7831,10 +7836,13 @@
         "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestRecoveryKeepsAWaitPendingHere_spec_28_3",
         "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestIncompleteRecoveryRunsAgain_spec_28_3",
         "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestCloseEndsWaitsAndRestoresRows_spec_28_3",
-        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestStaleRowWithNoLaterCallStays_spec_28_3",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestStaleRowWithNoLaterCallEndsAtMaxSessionAge_spec_6_2",
         "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestNewContextRecordIsNotRecovered_spec_28_3",
         "pkg/gateway/mcpfabric/mcptools/request_input_row_writes_test.go::TestRequestInputExitWriteFailureRearmsReplica_spec_7_2",
-        "pkg/gateway/session/inputwait/inputwait_test.go::TestCloseCancelsEveryWaitAndRefusesRegistration_spec_7_2"
+        "pkg/gateway/session/inputwait/inputwait_test.go::TestCloseCancelsEveryWaitAndRefusesRegistration_spec_7_2",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestRearmDuringRecoveryLeavesConnectionUnrecovered_spec_28_3",
+        "tests/tier7a_load_local/input_wait_recovery_invariant_test.go::TestInputWaitRecoveryKeepsRowsOnLiveWaits_spec_28_3",
+        "tests/tier8_chaos/input_wait_recovery_chaos_test.go::TestStaleInputWaitRowEndsAtMaxSessionAge_spec_6_2"
       ],
       "packages": [],
       "blocked_until_phase": "0",
