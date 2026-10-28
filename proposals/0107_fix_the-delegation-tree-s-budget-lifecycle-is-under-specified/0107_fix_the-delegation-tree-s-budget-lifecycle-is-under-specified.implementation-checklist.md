@@ -23,16 +23,18 @@
 - [ ] **S10 · code** — CODE-2. The `BUDGET_KEYS_EXPIRED` cleanup handler and the extracted cancel helper.
       Tiers 0, 1, 7a. Depends on: S3, S4
 - [ ] **S11 · code** — CODE-6. The store-backed budget source, with registration deleted.
-      Tiers 0, 1, 3, 4, 7a, 9. Depends on: S5
+      Tiers 0, 1, 2, 3, 4, 7a, 9. Depends on: S5
 - [ ] **S12 · code** — CODE-1, CODE-4. The script changes and the `delegate_task` side, bundled because the sentinel check without the first-reservation create fails every new tree, and the mirror deletion breaks the build without the row-raised cap.
       Tiers 0, 1, 2, 4, 7a. Depends on: S3, S5, S10, S11
 - [ ] **S13 · code** — CODE-3. The return in `afterTerminalWrite`.
       Tiers 0, 1, 4, 7a. Depends on: S1, S2, S3, S10, S12
 - [ ] **S14 · code** — CODE-5. The forget move and the `terminating` flag.
       Tiers 0, 1, 7a. Depends on: S5, S11, S13
-- [ ] **S15 · code** — CODE-7. The elicitor requester check, the redrive, and coordinator reclamation.
+- [ ] **S15 · code** — CODE-7.
       Tiers 0, 1, 7a. Depends on: S5, S6, S7, S8, S11
 - [ ] **S16 · code** — CODE-8. The per-replica sweep and `ListAbsentSessions`.
       Tiers 0, 1, 4, 7a. Depends on: S5, S11, S14
 - [ ] **S17 · code** — CODE-9. `DeleteByRoot` and the eraser call.
       Tiers 0, 1, 4, 9. Depends on: S9
+- [ ] **S18 · docs** — DOC-1.
+      Tiers 0, 1, 2, 11. Depends on: S4

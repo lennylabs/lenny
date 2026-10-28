@@ -15,9 +15,9 @@
 - D1. The design fixes everything at the post-terminal hook, adds no idempotency marker, reads extension state per request, caps grants on the tree row, keeps consent state replica-local, threads the tenant from callers, and handles driver end in the elicitor. A lease elicitation carries no `originPod`, so `ExpireRaisedBy` never ends it, and only an elicitor-side check notices the driver ending; only this design also closes the F-8.6.25 deny-clear race.
 - D2. Return ownership reuses the single-winner terminal write plus one `AfterTerminalWrite` run per applied write. Every writer, and the funnel through `recordSessionCompleted`, reaches the same body, so no guard key, column, or ledger is added, and §7.1 already says a cut pipeline is not resumed.
 - D3. The return runs after `releaseAfterTerminal` and before `expireRaisedElicitations`, because the stream close the release performs satisfies the §8.3 usage-quiescence step.
-- D4. Token credit follows the literal §8.3 step 3 formula. On the code's tree-wide additive counter it under-credits once per ancestor level and never over-credits, and rewriting the token-axis model is outside the validated problem.
+- D4. Token credit follows the literal §8.3 step 3 formula. On the code's tree-wide additive counter it under-credits once per ancestor level, and rewriting the token-axis model is outside the validated problem.
 - D5. The first reservation is recognized only on the absent-sentinel path: `ListByRoot` showing no delegated row is the witness, because the reserve precedes the child-row insert and only erasure deletes session rows. The `ListByRoot` call is paid only when the sentinel is absent.
-- D6. Redis loss is not a new case. §11.2 and §12.4 reconciliation already rejects `delegate_task` during recovery, `Restore` rewrites the sentinel, and a return that meets the absent sentinel before `Restore` is not a detection (D7).
+- D6. Rebuilding the sentinel after Redis data loss belongs to §11.2 and §12.4 reconciliation, so the reserve path never reconstructs a tree, and a return that meets the absent sentinel is not a detection (D7). The shipped reconciler does not meet that contract; see **Redis recovery misses trees** under the defects below.
 - D7. The `BUDGET_KEYS_EXPIRED` cleanup adds no state. The single-winner root write decides who emits the event, and only a reservation detects (SPEC-3 Edit (b)), so §8.3 cleanup step 2 needs no skip marker and the cleanup's own returns start no further cleanup.
 - D8. The `delegation_tree_budget` row's cumulative `ext_*` columns are the single record of grants, and the Redis counters record consumption only. The Redis `token_grant` mirror is deleted because `Restore` never rebuilds it, at the cost of one primary-key read per `delegate_task` with a finite base cap.
 - D9. Registration is deleted. One store-backed `BudgetSource` reads the requesting, root, and parent rows per request, with denial and grants from a `DenialStore` that has a Postgres and an in-memory backing.
@@ -31,7 +31,7 @@
 **Watch out for.**
 - Do not route the `BUDGET_KEYS_EXPIRED` root write through `transitionToFailed`; see CODE-2.
 - A return that meets an absent sentinel is not a detection, under a terminal root after cleanup or a live root before Redis recovery restores the tree. Treating it as one fires the `DelegationBudgetKeysExpired` alert on healthy trees; see CODE-3.
-- `ParentSessionID` does not mark a delegated child, because derive sets it before 0106 lands; see CODE-6.
+- `ParentSessionID` and `RootSessionID` do not classify a delegated child; see CODE-6 item 3.
 - `subtreeSessionIDs` lists every session in the tenant. The return must not reuse it; see CODE-3.
 - CODE-1 and CODE-4 land in one commit. The sentinel check without the first-reservation create fails every new tree.
 - The sweep reclaims memory only and does not refuse late requests on a terminal session.
@@ -72,7 +72,7 @@
 - A recorder forget on a terminal read in `RecordUsage`, or keying the enforcer on a session generation (D12).
 - Subtree-scoped denial. It is outside the validated problem.
 - The §8.10 tree-settle purge of keys and rows, and growth of `delegation_tree_budget` rows beyond erasure.
-- Gateway-side `FINAL_USAGE_REPORT` quiescence and the `delegation.budget_return_usage_lag` event. The return reads the last-known billing totals after the release (D3), and the missing event is listed under the defects below.
+- Gateway-side `FINAL_USAGE_REPORT` quiescence and the `delegation.budget_return_usage_lag` event. The return reads the last-recorded `sessionusage` totals after the release (D3), and the missing event is listed under the defects below.
 - Retrying, re-driving, or reclaiming a return that process exit cut. Without the marker rejected above, no reclaimer can tell a cut return from one that ran, or from a reservation whose child row is not yet inserted (D5), and the loss fails closed (non-spec Edge cases).
 - Restoring per-parent `parallel_children` and `children_total` during reconstruction.
 - Seeding the per-session enforcer from durable `sessionusage`.
@@ -81,8 +81,6 @@
 - Deleting `MemoryBudgetSource`'s grant-math tests wholesale. They migrate to store-backed source fixtures.
 
 ## Open decisions for human to make
-
-- **Extension headroom: one tree pool or per-session amounts.** When a delegated session exhausts its budget, §8.6 lets the gateway grant it a lease extension up to an effective max. Should extension grants for a delegation tree draw from one shared pool recorded on the tree's `delegation_tree_budget` row, or should each session keep its own extension headroom? Under the pool, the first session that exhausts its budget can take the tree's whole remaining headroom (the gateway requests the full effective max), and later sibling sessions receive `CEILING_REACHED`. Per-session headroom keeps siblings independent, but it requires a new durable per-session grant store (new `sessions` columns, an object on the `delegation_lease` JSON, or a table keyed by tenant, root, and session) and a cross-table transaction, and the reservation token ceiling it raises is still tree-wide. The spec loop's design is the tree pool (D11): the row is the only cross-replica record of grants that exists, per-replica amounts would let one session reach the effective max once per replica, and §8.6 step 3 already adds grants "to the tree budget (capped at the effective max)". The loop routed the per-session alternative to the owner without ruling it out.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -94,12 +92,13 @@
 - **Per-parent counters are not restored.** §11.2 reconstruction restores the tree-wide keys and not `parallel_children` or `children_total`.
 - **The §11.4 full revoke cancel writes run no terminal pipeline.** `AfterRevokeWrite` drains the inbox and DLQ and runs no budget return, so a child the revoke cancels leaves its reservation counted, against §7.1 **Terminal pipeline context:**. The return cannot go in `AfterRevokeWrite`, which runs before the fan-out's binding release (D3).
 - **The §8.10 tree-settle purge is absent.** Tree-wide keys and `delegation_tree_budget` rows are not cleaned up when the last session in the tree settles, so keys live until their TTL and rows until erasure.
+- **Redis recovery misses trees.** §11.2 **Crash Recovery for Delegation Budget Counters:** rebuilds every active tree before `delegate_task` resumes for it, and §12.4 rejects `delegate_task` during the reconciliation window. The shipped `delegationbudget.Reconciler` rebuilds only trees that have a `delegation_tree_budget` checkpoint row, runs only on a down-to-up edge its probe observes, and gates no `delegate_task`. After CODE-1 and CODE-4, a tree it misses fails at its next reservation with `BUDGET_KEYS_EXPIRED`, where today its counters restart at zero. The fix needs a restart detector and a reconciliation gate, which the other §12.4 recovery reconcilers also lack, so it is filed as its own proposal.
 
 ## Impacts on other proposals
 
 | Proposal | Status | What this change does to it | What it must do |
 |:--|:--|:--|:--|
-| 0106 | Approved | CODE-6 deletes `registerLeaseTree` and `LeaseTreeRegistrar`, which 0106 CODE-A calls after the derive and replay inserts, and CODE-6's delegated-child test relies on 0106 CODE-A removing the derive and replay parent writes. 0106's registrar assertion in its derive and replay tests stops having a subject. | Nothing. 0106 lands first, and 0107 CODE-6 deletes the calls and replaces the registrar assertion. |
+| 0106 | Approved (2026-10-27) | CODE-6 deletes `registerLeaseTree` and `LeaseTreeRegistrar`, so the `registerLeaseTree` calls 0106 CODE-A adds after the derive insert (derive item 4) and the replay insert (replay item 3) are removed, and the recording-registrar assertion in 0106 TEST item 1 (`derive_test.go`, `replay_test.go`) loses its subject. 0106 CODE-A's removal of the derive and replay parent writes stands. 0106's other deliverables are unaffected. | Nothing. 0106 lands first (D15), and 0107 CODE-6 deletes the calls and replaces the registrar assertion. |
 | 0104 | Approved | File-level overlap only: CODE-6 edits `cmd/lenny-gateway/gwcontrol_server.go` and the `leasecontrol` package, which 0104 CODE-1 also edits for service-account tokens. No statement of 0104 changes. | Nothing. |
 
 ## Deliverable index
@@ -119,6 +118,7 @@
 - CODE-4 — pkg/gateway/mcpfabric/delegation/service.go — first-reservation retry, row-raised token cap, reserve-side expiry, and the `token_grant` mirror deletion.
 - CODE-5 — pkg/gateway/session/sessionbudget/sessionbudget.go — forget in the hook body, and `RaiseBudget` cannot clear deny during a terminate.
 - CODE-6 — pkg/gateway/mcpfabric/delegationtree/leasecontrol/storebudget.go — store-backed §8.6 budget source; registration and `TenantResolver` deleted.
-- CODE-7 — cmd/lenny-gateway/lease_elicit.go — terminal requester, driver-end redrive, and coordinator reclamation.
+- CODE-7 — cmd/lenny-gateway/lease_elicit.go — terminal requester, driver-end redrive, denial write, and coordinator reclamation.
 - CODE-8 — cmd/lenny-gateway/budget_state_sweep.go — per-session state sweep on every replica.
 - CODE-9 — pkg/gateway/mcpfabric/delegationbudget/pgstore/pgstore.go — user erasure deletes `delegation_tree_budget` rows.
+- DOC-1 — pkg/alerting/rules/rules.go — `BUDGET_KEYS_EXPIRED` detection and budget key TTL wording in the alert catalog, metrics reference, runbook, and configuration reference.

@@ -29,7 +29,7 @@ the seal-and-export step (**Seal-and-export invariant:** above), the inbox drain
 with
 
 ```markdown
-the seal-and-export step (**Seal-and-export invariant:** above), the inbox drain, the terminal events and signals, the pod or slot release, the delegation budget return of a delegated child ([Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)), and the close of the session log.
+the seal-and-export step (**Seal-and-export invariant:** above), the inbox drain, the terminal events and signals, the pod or slot release, the delegation budget return of a delegated child ([Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)), which the budget does not bound, and the close of the session log.
 ```
 
 ### SPEC-2 · spec/08_recursive-delegation.md § 8.3 Delegation Policy and Lease
