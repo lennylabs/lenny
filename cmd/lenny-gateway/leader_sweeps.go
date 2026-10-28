@@ -475,6 +475,7 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 
 	w.addSuspendedBacklogRecheck(func(name string, run func(context.Context)) { leaderGate.Add(name, run) })
 	w.addStaleSlotReaper(func(name string, run func(context.Context)) { leaderGate.Add(name, run) })
+	w.addOrphanSessionReconciler(func(name string, run func(context.Context)) { leaderGate.Add(name, run) })
 
 	// spec: §12.5 — drive the lenny-gateway-leader election
 	// and run every registered gateway-singleton sweep only while this
@@ -614,6 +615,38 @@ func (w *gatewayWiring) addStaleSlotReaper(add func(name string, run func(contex
 	log.Printf("lenny-gateway: §5.2 stale-slot reaper cadence %s, rate %d/s, terminal age %s",
 		*f.slotReaperInterval, *f.slotReaperRate, *f.slotReaperTerminalAge)
 	add("stale-slot-reaper", reaper.Run)
+}
+
+// addOrphanSessionReconciler registers the §10.1.4 orphan-session
+// reconciler on the gateway-leader gate. It registers only when
+// startReconcilerWorkers built the reconciler, which it does when the
+// Postgres agent_pod_state mirror is wired. When the leader context ends
+// the run clears every lenny_agent_pod_state_mirror_lag_seconds series
+// this replica published, so a former leader stops exporting a lag value
+// the new leader now owns.
+// spec: §10.1.4, §12.5
+func (w *gatewayWiring) addOrphanSessionReconciler(add func(name string, run func(context.Context))) {
+	r := w.orphanSessionReconciler
+	if r == nil {
+		return
+	}
+	add("orphan-session-reconciler", func(ctx context.Context) {
+		defer w.gwMetrics.ClearAgentPodStateMirrorLag()
+		r.Run(ctx, logOrphanSessionPass)
+	})
+}
+
+// logOrphanSessionPass logs one orphan-session reconcile pass. A pass
+// continues past a failed tenant or row, so its count is reported with
+// its error.
+// spec: §10.1.1 (Primary:), §10.1.4
+func logOrphanSessionPass(failed int, err error) {
+	if err != nil {
+		log.Printf("lenny-gateway: §10.1 orphan-session reconcile error: %v", err)
+	}
+	if failed > 0 {
+		log.Printf("lenny-gateway: §10.1 reconciler failed %d orphaned sessions (orphan_pod_terminated)", failed)
+	}
 }
 
 // retentionGCOptions returns the §7.1 retention collector options: the

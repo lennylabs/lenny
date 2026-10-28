@@ -1491,6 +1491,19 @@ func (m *Metrics) SetAgentPodStateMirrorLag(poolID string, seconds float64) {
 	m.agentPodStateMirrorLag.WithLabelValues(poolID).Set(seconds)
 }
 
+// ClearAgentPodStateMirrorLag deletes every per-pool
+// `lenny_agent_pod_state_mirror_lag_seconds` series this replica
+// published. The §10.1.4 reconciler runs on the gateway leader only, so a
+// replica that loses the §12.5 lease clears its series; otherwise its last
+// value stays in the `max by (pool)` PodStateMirrorStale alert after
+// another replica takes over. spec: §10.1.4, §12.5.
+func (m *Metrics) ClearAgentPodStateMirrorLag() {
+	if m == nil {
+		return
+	}
+	m.agentPodStateMirrorLag.Reset()
+}
+
 // AddOrphanTasksTerminated bumps the §8.10 / §16.1
 // `lenny_orphan_tasks_terminated` counter by the per-sweep terminated
 // count (the cleanup tick's return value). A zero-count sweep is a no-op.

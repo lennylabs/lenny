@@ -79,10 +79,12 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 	// replica was lost) is forced to `failed`/orphan_pod_terminated so it
 	// stops holding quota. When a pool's mirror is stale (lag > 60s) or
 	// carries no row for the bound pod, the reconciler falls back to a
-	// direct Sandbox read. Active only when the Postgres mirror is wired;
-	// the transition is idempotent across replicas (the Update no-ops on a
-	// concurrent terminal write), matching the orphan-cleanup precedent.
-	// spec: §10.1. F-10.1.5.
+	// direct Sandbox read. Active only when the Postgres mirror is wired.
+	// §10.1.4 runs the reconciler on the gateway leader only, so it is
+	// built here and stored on the wiring; startLeaderElectedSweeps
+	// registers it on the §12.5 gateway-leader gate, which starts it on
+	// lease acquisition and stops it on lease loss.
+	// spec: §10.1.4, §12.5. F-10.1.5.
 	if w.pgPool != nil {
 		orphanSessionOpts := orphansession.Options{
 			Terminal: w.sessionSrv,
@@ -100,20 +102,9 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 				ns: *agentNamespace,
 			}
 		}
-		orphanSessionReconciler := orphansession.New(w.sessions, tenantsLister{w.tenants},
+		w.orphanSessionReconciler = orphansession.New(w.sessions, tenantsLister{w.tenants},
 			agentPodStateMirror{store: agentpodstatepg.New(w.pgPool)}, orphanSessionOpts)
-		go orphanSessionReconciler.Run(w.watchdogCtx, func(failed int, err error) {
-			if err != nil {
-				// spec: §10.1.1 (Primary:) — the pass continued past the
-				// error, so its counts below are still reported.
-				log.Printf("lenny-gateway: §10.1 orphan-session reconcile error: %v", err)
-			}
-			if failed > 0 {
-				log.Printf("lenny-gateway: §10.1 reconciler failed %d orphaned sessions (orphan_pod_terminated)",
-					failed)
-			}
-		})
-		log.Printf("lenny-gateway: §10.1 orphan-session reconciler enabled (fallback=%t)",
+		log.Printf("lenny-gateway: §10.1 orphan-session reconciler built for the gateway leader (fallback=%t)",
 			orphanSessionOpts.Fallback != nil)
 	}
 

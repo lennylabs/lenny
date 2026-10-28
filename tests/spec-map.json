@@ -3232,7 +3232,11 @@
         "tests/tier9_security/adapter_hold_termination_surface_test.go::TestSharedPlatformMCPRefusesBetweenHoldTerminatedMembers_spec_10_1",
         "pkg/adapter/holdstate_test.go",
         "tests/tier9_security/adapter_hold_termination_surface_test.go::TestCoordinatorLostTerminationEndsTheKeptRuntime_spec_10_1_4",
-        "pkg/gateway/session/orphansession/pass_continuation_test.go::TestReconcilerTenantListingFailure_spec_10_1_4"
+        "pkg/gateway/session/orphansession/pass_continuation_test.go::TestReconcilerTenantListingFailure_spec_10_1_4",
+        "cmd/lenny-gateway/orphan_session_leader_test.go::TestOrphanSessionReconcilerRegistersOnTheLeaderGate_spec_10_1_4",
+        "cmd/lenny-gateway/orphan_session_leader_test.go::TestOrphanSessionReconcilerRunsOnlyWhileLeaderAndClearsLagOnLoss_spec_10_1_4",
+        "pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_orphan_test.go::TestClearAgentPodStateMirrorLagDeletesEveryPoolSeries_spec_10_1_4",
+        "tests/tier8_chaos/orphan_session_leader_handoff_test.go::TestOrphanSessionReconcilerHandsOffFaultedRowsToTheNextLeader_spec_10_1_4"
       ],
       "packages": [
         "pkg/gateway"
