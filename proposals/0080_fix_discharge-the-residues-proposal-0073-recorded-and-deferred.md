@@ -1,6 +1,15 @@
 # Proposal: Discharge the residues proposal 0073 recorded and deferred
 
-- **Status:** EARLY DRAFT, NOT CONVERGED. This document is an inventory rather than a design. It states
+- **Status:** **Withdrawn (2026-10-28), recorded by jaf. Do not implement.** The audit of unfinished
+  proposals on 2026-10-28 triaged every entry against the tree and filed the unowned ones as separate
+  records: §1.5 is BUILD-GAPS F-4.7.31, §1.6 is F-4.7.32, §1.7 is F-5.2.60, §1.16 is F-10.1.42, §1.19 is
+  F-10.1.43, §1.20 is F-10.1.44, and §1.21 is F-10.5.17. §1.11b is already tracked as TEST-GAPS T-6.4.8.
+  §1.8 was not filed, because §4.7.2 **Queue depth:** now states that session-identifier order "carries no
+  ordinal, arrival-order, or fairness meaning, and it states no liveness property", so the unbounded
+  overtake in `opLock.release` conforms to the specification. §1.1, §1.2, §1.9, §1.11a, §1.14, and §1.17
+  are resolved. §1.3 and §1.4 are owned by proposal 0084, §1.10 by T-4.4.21 and plan step R22, §1.12 and
+  §1.18 by their claim-register rows, §1.13 by the plan R-steps, and §1.15 by F-4.7.23. The routing is in
+  `gateway-runtime-comms-remediation.md` §10.2. Formerly: EARLY DRAFT, NOT CONVERGED. This document is an inventory rather than a design. It states
   each gap and the evidence it was found from, and derives no remedy of its own. §1.16 is the one entry
   that states one, because another proposal's review derived it and left it without a home; it is
   reproduced here rather than invented here. The document is expected to be split into per-concern

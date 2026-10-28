@@ -2432,8 +2432,9 @@ eviction proposal (before R16), both listed in section 10.2.
 
 The order below is the hybrid ordering the owner adopted on 2026-10-01 after a sequencing analysis of the
 supervised runtime process (`scratchpad/sequencing/supervisor-sequencing.md` on the machine that ran it).
-Proposal 0087 builds on proposal 0079, so it follows 0079. It precedes proposals 0084 and 0071 and the
-pinned-idle proposal, so each of those is converged once against the final set of runtime lifetimes.
+Proposal 0087 builds on proposal 0079, so it follows 0079. It precedes proposal 0084 and the pinned-idle
+proposal, so each of those is converged once against the final set of runtime lifetimes. Proposal 0071 was
+also in that set until it was retired on 2026-10-28.
 
 **Phase 0: proposals settled and pod identity hardened**
 
@@ -3079,8 +3080,9 @@ Proposals, second wave:
   - **Outcome (P2a).** Proposal 0100 (`proposals/0100_fix_the-terminal-pipeline-what-happens-between-a-session-s/`)
     was implemented 2026-10-27 and merged into this branch (`8d0f2c7ea`). It lands the bounded terminal pipeline
     context, the seal and release ordering, the post-terminal window, and the release marker. Its unstaged defects
-    are filed below. P2b (held messages, emission, and translators) remains, drafted after proposal 0071 is
-    re-derived per the split seam below.
+    are filed below. P2b (held messages, emission, and translators) remains. It is queued after proposal 0085
+    (section "Queue after P4b" below) and is no longer gated on proposal 0071, which was retired on
+    2026-10-28.
   - **Scope.** What happens between a terminal write and the end of its hook: the context the pipeline
     runs on, the seal and its relabel, the held-message drain and the lifetime of DLQ and inbox keys, the
     ordering of session-stream events after a terminal, the row returned to the caller, one terminal-signal
@@ -3099,8 +3101,9 @@ Proposals, second wave:
     emission, and translators: TT-81 to TT-86, TT-88, TT-91, TT-92, and TT-94). P2b depends on P2a's
     writer-context rule.
   - **Dependencies.** After 0092's D7 hook lands and after P1, because TT-3, TT-5, and TT-6 need P1's
-    release owner. Draft P2b after proposal 0071 is re-derived, because 0071 touches the event path behind
-    TT-85.
+    release owner. P2b was gated on the re-derivation of proposal 0071, because 0071 touched the event path
+    behind TT-85. 0071 was retired on 2026-10-28, so that gate is removed and P2b is drafted after proposal
+    0085.
   - **Overlapping plan steps.** R10 (the REST terminate route, beside TT-1, TT-29, and TT-34), R19 (the DLQ
     custody rule for an unreachable coordinator, beside TT-81), R20 (the durable-inbox trimmer and
     `delivered_message_ids`, beside TT-81 and TT-82), and R16 and R4 (adapter-side shutdown, beside the
@@ -3167,6 +3170,21 @@ Proposals, third wave:
   - **Overlapping plan steps.** R20 (cross-replica input wait, for TT-62; TT-51 itself is R20's).
   - **Drafting.** Under the drafting rules and the test instruction above.
 
+**Queue after P4b (set 2026-10-28 by the audit of unfinished proposals 0060 and above).** The next
+change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
+
+- [ ] **Proposal 0086, widened** (Draft): the finalize-time `WorkspacePlan` bind, widened on 2026-10-28 to
+  take BUILD-GAPS F-5.1.23 (§5.1 places setup at pod warm-up, once per pod, against every other site and the
+  code) and reopened F-7.5.3 (runtime `workspaceDefaults` reach no session; F-5.1.6 carries a note). Both
+  turn on the same rule for when a session's plan binds and is pinned, so the defaults composition belongs in
+  the same proposal. The note at the top of its summary file states the widened scope. It is the next
+  change-proposal after 0107, and its implementation follows the implementations of 0105 and 0106.
+- [ ] **Proposal 0085** (Draft): the §6.2 pre-attached retry scope. It follows 0086, because both edit the
+  §6.2 setup-failure wording. Its RECORDS-1 files a finding as F-6.2.27, which collides with the existing
+  OPEN F-6.2.27 (the `idle → draining` trigger list); a note in its summary file requires renumbering to the
+  next free identifier at filing.
+- [ ] **P2b** (section P2 above): after 0085.
+
 Proposals the R-steps need (added 2026-10-21 by the R7 to R25 re-derivation):
 
 - [x] **Inter-replica carrier proposal** (done as a proposal; implementation pending). §29.3 names no inter-replica conversation for
@@ -3222,8 +3240,25 @@ Proposals the R-steps need (added 2026-10-21 by the R7 to R25 re-derivation):
   attestation and before the next LAUNCH, their nonce rotates per runtime generation, and each server sends
   a challenge before reading a request, so a connection queued by an ended generation cannot act in the
   next one.
-- [ ] Proposal 0071 (route a runtime frame to one consumer) re-derived once against the kept connection and
-  the supervisor, then implemented.
+- [x] Proposal 0071 (route a runtime frame to one consumer) retired on 2026-10-28 rather than re-derived.
+  §28.5.3 **Inbound: `heartbeat`** now requires one heartbeat per session, which contradicts its decision 5,
+  and proposals 0073 and 0075 give every session-scoped frame a `sessionId` address, so per-stream
+  demultiplexing (`deliverToSession` in `pkg/adapter/attach.go`) is already correct. The claim-register row
+  "Single-consumer enforcement on `Attach` at the pod" in `tests/claim-map.json` carries deferral R20. This
+  plan had associated that property with 0071; it stays on R20, and R20 owns it.
+- [ ] §5.2 single-session leaked-drain proposal (not yet written), queued with the recycling follow-up
+  proposal above because both edit §5.2 and the scrub ledger: BUILD-GAPS F-5.2.60 (`drainLedger.RecordLeak`
+  drains a single-session pod on its first leaked scrub, while §5.2 says such a pod has no `leaked`
+  sub-state). The audit of 2026-10-28 planned this as a §5.2 and §4.7.2 drain and op-lock proposal. The
+  op-lock half, withdrawn proposal 0080 §1.8, was not filed, because §4.7.2 **Queue depth:** states that
+  session-identifier order carries no fairness meaning and no liveness property, so the overtake in
+  `opLock.release` conforms.
+- Unscheduled, owner-gated exploration. Neither proposal is scheduled, and each stays `Draft` until the owner
+  decides to pursue it.
+  - [ ] Proposal 0061 (single-shot adapter pod hold and idle TTL). Whether it becomes a §21 post-v1 item is
+    an open owner decision (section 10.5).
+  - [ ] Proposal 0077 (pre-materialize a workspace on a warm pod). It relates to F-5.1.23 and F-7.5.3: the
+    widened 0086 states per-session setup as the default, so that 0077 can add an opt-in warm-time mode.
 - [ ] Proposal 0087 part 2: cross-tenant reuse on `in-place` pools by resetting the tenant pin after a
   proven runtime restart, which gives `recycle.allowCrossTenantReuse` effect again. Kata first, after the
   four supervisor properties pass on a KVM-capable host. Hard gate: security review findings 1, 3, 4, and 5
@@ -3782,6 +3817,54 @@ proposal-b tip `fb88c8c2e`.
   `TestPoolEditOutsideRuleNeverDispatchesIntoKeptRuntime/hold_ended_by_the_acquisition` rerun needs a
   reinstall of the shared cluster from a tree carrying the fix.
 
+**Audit of unfinished proposals 0060 and above (2026-10-28).** Each proposal numbered 0060 or above that
+was neither implemented nor retired was checked against the tree. Proposals 0067 and 0070 had fully landed
+and are recorded `Implemented`. Proposal 0071 is retired (Phase 3 above). Proposals 0072 and 0080 are retired
+after their open items were filed in BUILD-GAPS, so each item is routed on its own. Proposals 0086 and 0085
+are requeued after P4b, and 0061 and 0077 are unscheduled owner-gated exploration (Phase 3 above). The four
+legacy single-file proposals carry their status in the prose status bullet, which
+`.claude/tools/proposal-status.mjs` reads and does not write.
+
+- Direct-fix lane.
+  - [x] **F-4.4.32** (Medium, from 0072 §1.8): the gateway declares `chunk_encoding: tar` for chunks
+    `ArchiveTree` gzips. Declare `tar.gz`, which §4.4 already permits.
+  - [x] **F-4.4.4**, reopened (Medium, from 0072 §1.9): `FirstCheckpointDelay` has no production caller, so
+    the configured jitter is never applied. It was closed wrongly.
+- With the queued text-corrections proposal, together with F-7.1.32.
+  - [x] F-4.4.4 and F-4.4.32 fixed 2026-10-28 (`df5af6cdd`, `0d2645dce`). Filed from those fixes, direct-fix queue: **F-4.4.33** (Low, the download labels a legacy gzip `tar` manifest `application/x-tar`), **F-4.4.34** (Low, the `chunk_encoding` column default and empty-value readers still say `tar`), **F-4.4.35** (Low, the adapter ignores the declared encoding), and **T-4.4.22** (Low, `TestRunUsesTenMinuteDefaultIntervalWhenUnset` never runs `Run`). **F-4.4.36** (Low, whether the first-checkpoint jitter is a stable per-session draw) rides with the text-corrections proposal.
+  - [ ] **F-4.4.30** (Low, from 0072 §1.1): the 60-second checkpoint timeout has no start instant on the
+    best-effort path (§4.4.3, §28.5.1 **Timing.**, and the `CheckpointTimeout` comment).
+  - [ ] **F-4.4.31** (Low, from 0072 §1.4): §4.4.5 cites the gateway pod's 240 s and 300 s grace periods as
+    headroom for the agent pod's budgets.
+  - [ ] **F-15.4.6** (Low, from 0072 §1.2): the §15.4.3 matrix says Basic has no checkpoint support, while
+    §4.4 gives Basic a best-effort snapshot.
+  - [ ] **F-16.1.7** (Low, from 0072 §1.7): the §16.1 row for `lenny_checkpoint_storage_failure_total`
+    omits `reason`.
+  - [ ] **F-15.4.7** (Low, from 0072 §1.10), the prose half: §15.4 and `docs/reference/adapter-contract.md`
+    name a nonexistent `AdapterInit` and `AdapterInitAck`, where the proto has `NegotiateVersion`. The half
+    that extends the naming matcher to the "stream" head noun rides with R2b.
+- Already handled, from 0072: its item 1.5 is fixed (§7.3 no longer gives a closed count of entry paths),
+  and its item 1.6 is F-15.1.57.
+- With proposal 0084's re-convergence (Phase 3 above).
+  - [ ] **F-4.7.31** (Medium, from 0080 §1.5): the Full-level rotation in-flight gate is keyed by provider
+    only.
+  - [ ] **F-4.7.32** (Low, from 0080 §1.6): the adapter cannot enforce pod idleness; likely accepted, with
+    the gateway's slot claim as the sole enforcement point.
+- With the §5.2 single-session leaked-drain proposal (Phase 3 above): **F-5.2.60** (Low, from 0080 §1.7).
+- [ ] **Coordination fence-refusal proposal** (not yet written), after proposal 0101 and ahead of R12 and
+  R13: **F-10.1.42** (Medium, from 0080 §1.16, the pod refuses the same-generation fence retry that §10.1.2
+  and §29.8 order; relates to F-10.1.24), **F-10.1.43** (Medium, from 0080 §1.19, one status code carries
+  three fence-refusal classes, and the §16.1 `handoff_stale_total` row describes one), and **F-10.1.44**
+  (Low, from 0080 §1.20, the `gen <= 0` floor in `coordfence.go`, which needs an owner decision recorded in
+  section 10.5).
+- [ ] Small proposal: **F-10.5.17** (Low, from 0080 §1.21): `migrate-job.yaml` sets no
+  `activeDeadlineSeconds`, and §10.5 states no budget.
+- TEST-GAPS: item 1.11b of 0080 (`TestConcurrentWorkspaceSlots` is still skipped) is already T-6.4.8,
+  which now carries a note.
+- Already handled, from 0080: its items 1.1, 1.2, 1.9, 1.11a, 1.14, and 1.17 are resolved. Items 1.3 and
+  1.4 are owned by 0084, item 1.10 by T-4.4.21 and R22, items 1.12 and 1.18 by their claim-register rows,
+  item 1.13 by the R-steps, and item 1.15 by F-4.7.23. Item 1.8 was not filed (Phase 3 above).
+
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 
 - [ ] **`type: mcp` supervision.** 0087 supervises only `type: agent` sidecar runtimes (D-SCOPE). A
@@ -3923,9 +4006,12 @@ Answered on 2026-10-01 for the later phases:
 
 ### 10.4 Related work outside this track
 
-These items are independent of the order above and can run whenever capacity allows: BUILD-GAPS F-10.3.26
-(admission webhooks never reload a renewed serving certificate), draft proposals 0085 and 0086, draft
-proposal 0072 split into its separate items, and draft proposal 0080 split into per-concern proposals.
+BUILD-GAPS F-10.3.26 (admission webhooks never reload a renewed serving certificate) is independent of the
+order above and can run whenever capacity allows. Draft proposals 0072 and 0080 were retired on 2026-10-28
+after their open items were filed in BUILD-GAPS and routed in section 10.2 ("Audit of unfinished proposals
+0060 and above"). Draft proposals 0086 and 0085 are no longer independent: 0086 is widened to take F-5.1.23
+and the reopened F-7.5.3 and is queued as the next change-proposal after P4b, and 0085 follows it (section
+10.2, "Queue after P4b").
 
 The final verification of proposal 0079 (2026-10-03) recorded these conditions, each of which also holds
 on the base commit and none of which is yet filed in BUILD-GAPS:
@@ -3951,8 +4037,16 @@ deviation instead of producing a new lint gate (`94b42f3bc`).
 
 ### 10.5 Decisions still open
 
-None as of 2026-10-02. Decisions answered so far are in section 10.3. New open decisions that the proposals'
-reviews raise are recorded here.
+Decisions answered so far are in section 10.3. New open decisions that the proposals' reviews raise are
+recorded here.
+
+**Owner decisions pending (recorded 2026-10-28).**
+
+- Proposal 0084's attribution option, (a) or (b). It is decided when 0084 re-converges.
+- Whether to keep the fence path's generation floor (`gen <= 0` read as 1 in `coordfence.go`) permanently or
+  tighten the `coordination_generation` constraint and retire it (F-10.1.44, item 1.20 of withdrawn proposal
+  0080). It is decided in the coordination fence-refusal proposal.
+- Whether proposal 0061 (single-shot adapter pod hold) becomes a §21 post-v1 item.
 
 ### 10.6 Context and rationale for the proposal track
 
@@ -4061,7 +4155,7 @@ right:
 
 - The supervisor removes the manifest-ordering defect and makes the per-generation nonce easy on the pods it
   runs, keeps the single-session SDKs correct on restart pools, gives the adapter a process it can end (which
-  helps proposal 0071's heartbeat escalation and 0079's hold-timeout teardown), may help R16 and R17, and is
+  helps proposal 0071's heartbeat escalation, since retired, and 0079's hold-timeout teardown), may help R16 and R17, and is
   the only route to cross-tenant reuse.
 - It does not remove the other items. Proposal 0087 restates 0079's reuse predicate, acknowledgment rule,
   liveness signal, and post-edit refusal, and it needs 0079's tenant-pin read, so placing it first would mean
