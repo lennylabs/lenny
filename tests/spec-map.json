@@ -2986,6 +2986,7 @@
       "title": "Gateway Horizontal Scaling",
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
+        "tests/tier2_component/stores/checkpoint_encoding_roundtrip_test.go",
         "tests/tier0_static/claim_register_test.go::TestClaimRegisterSaysWhatTheSpecificationRequires",
         "tests/tier0_static/claim_register_test.go::TestClaimRegisterRecordsPerSessionAddressingOfCredentialsAndRestore",
         "tests/tier0_static/claim_register_generator_test.go::TestClaimRegisterIsReproducibleFromItsGenerator",

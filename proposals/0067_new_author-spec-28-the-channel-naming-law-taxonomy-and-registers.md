@@ -1,6 +1,8 @@
 # Proposal: Author `spec/28` §28.1 through §28.4, the channel naming law, taxonomy, registers, and claim register, as a specification-only landing
 
-- **Status:** **Applied to spec (2026-08-03).** Approved (2026-08-03) by jaf sign-off. Verified (2026-08-03), converged after 7
+- **Status:** **Implemented (2026-10-28), recorded by jaf.** The audit of unfinished proposals on 2026-10-28
+  confirmed that `spec/28_communication-channels.md` carries §28.1 to §28.4 and that plan step R2a in
+  `gateway-runtime-comms-remediation.md` §10.1 is ticked. Applied to spec (2026-08-03). Approved (2026-08-03) by jaf sign-off. Verified (2026-08-03), converged after 7
   adversarial review rounds (16 findings fixed) across one full-pool sweep, the certifying sweep running
   every lens complete with zero confirmed findings.
 - **Prerequisites:** none. This proposal creates a specification file and its index rows, amends the

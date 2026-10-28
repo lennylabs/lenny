@@ -1,6 +1,14 @@
 # Proposal: Route a runtime frame to one consumer instead of broadcasting it
 
-- **Status:** Draft for review.
+- **Status:** **Superseded (2026-10-28), recorded by jaf. Do not implement.** Two later changes supersede it.
+  First, §28.5.3 **Inbound: `heartbeat`** now requires the adapter to write one `heartbeat` per interval for
+  each session, naming that session in `sessionId`, which contradicts decision 5 below (one monitor per
+  runtime process whose frame is written once per interval). Second, proposals 0073 and 0075, both
+  implemented, give every session-scoped frame a `sessionId` address. Per-stream demultiplexing is already
+  correct: `deliverToSession` (`pkg/adapter/attach.go`) keeps a frame only when `frameSessionID`
+  (`pkg/adapter/slotframe.go`) matches the stream's session. The claim-register row "Single-consumer
+  enforcement on `Attach` at the pod" in `tests/claim-map.json` stays deferred to plan step R20. The design
+  record below is retained unchanged. Formerly: Draft for review.
 - **Date:** 2026-08-13
 - **Scope:** Replaces the adapter's output fan-out with a routing table keyed on the frame's address, so a
   session-scoped frame reaches exactly one Attach stream or none. Proposal 0069 filters one frame type at
