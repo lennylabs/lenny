@@ -99,7 +99,7 @@ type Request struct {
 	// Subject is the token being exchanged.
 	Subject Token
 
-	// Actor is the parent-session token in a delegation child-minting
+	// Actor is the delegating caller's token in a delegation child-minting
 	// exchange; nil for rotation and scope-narrowing exchanges.
 	Actor *Token
 

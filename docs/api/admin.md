@@ -832,12 +832,11 @@ Canonical OAuth token endpoint (RFC 6749 + RFC 8693 token exchange). Used across
 | `platform-admin` | Rotate admin tokens; mint cluster-scoped operator tokens | admin-level `subject_token` |
 | `tenant-admin` | Rotate tenant-scoped tokens; mint scoped operator tokens for the tenant | tenant-admin `subject_token` |
 | End users | Rotate their own session token | user `subject_token` |
-| Gateway (internal) | Mint delegation child tokens with `actor_token` set to the parent session token | parent session token |
 | `lenny-ops` (internal) | Mint short-lived scoped tokens for agent-operability calls | operator `subject_token` + requested scope |
 
-For rotation, use `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` with `subject_token=<current_token>` and `requested_token_type` matching the subject. For delegation child-token minting, additionally supply `actor_token=<parent_session_token>` and a narrowed `scope` string. Scope narrowing is enforced server-side: the response token's scope is always a subset of the parent's.
+For rotation, use `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` with `subject_token=<current_token>` and `requested_token_type` matching the subject. For `a2a_delegation` child-token minting, additionally supply `actor_token=<delegating_caller_token>`, set to the delegating caller's token, and a narrowed `scope` string. Scope narrowing is enforced server-side: the response token's scope is always a subset of the parent's.
 
-The caller token (the `Authorization` bearer, which authenticates the client) must not be a web playground bearer, which carries the `origin: "playground"` claim. The Token Service refuses a playground bearer as the caller token with `401 invalid_client`; the playground obtains new bearers through `POST /v1/playground/token` instead. A playground bearer may still appear as the `subject_token`, as it does when a playground session delegates.
+The caller token (the `Authorization` bearer, which authenticates the client) must not be a web playground bearer, which carries the `origin: "playground"` claim. The Token Service refuses a playground bearer as the caller token with `401 invalid_client`; the playground obtains new bearers through `POST /v1/playground/token` instead. A playground bearer may still appear as the `subject_token`.
 
 See [Authentication](../client-guide/authentication.md#token-rotation-and-exchange-v1oauthtoken). This endpoint serves self and service-principal rotation. The bootstrap admin credential rotates through the dedicated route below rather than this endpoint.
 

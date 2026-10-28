@@ -45,7 +45,7 @@ func TestRecheckSourcesEmptyListMakesNoQuery_spec_13_3(t *testing.T) {
 	}
 }
 
-// spec: 13.3 (Credential Flow), 8.2 (Delegation Mechanism) — the typed
+// spec: 13.3 (Credential Flow) — the typed
 // error names the role and maps it to the invalid_grant reason.
 func TestSourceRevokedErrorNamesRole_spec_13_3(t *testing.T) {
 	t.Parallel()

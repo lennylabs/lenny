@@ -160,7 +160,7 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 	// request body and have no other proof of the caller's identity.
 	// F-8.6.4 / F-15.3.1.
 	//
-	// spec: §10.2 / §10.3 — the gateway validates the
+	// spec: §10.3 (Projected SA token) — the gateway validates the
 	// projected SA token on every pod→gateway request: its signature and
 	// expiry via a Kubernetes TokenReview (when saTokenVerifier is wired)
 	// and its deployment-specific audience claim, the SA-token layer of

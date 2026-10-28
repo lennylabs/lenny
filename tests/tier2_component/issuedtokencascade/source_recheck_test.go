@@ -33,7 +33,7 @@ func tenantRowCounts(t *testing.T, ctx context.Context, pg *containers.Postgres,
 	return issued, exchanged
 }
 
-// spec: 13.3 (Credential Flow), 8.2 (Delegation Mechanism)
+// spec: 13.3 (Credential Flow)
 // diagnosis: a failure means the issuance transaction did not re-read the
 // subject or actor token's issued_tokens.revoked_at under the §11.7 lock
 // before writing, so a token revoked after the Token Service's pre-check

@@ -20,7 +20,7 @@ import (
 // UploadToSessionRequest is the body of POST /v1/sessions/{id}/upload-to-session,
 // the §7.4 mid-session upload surface (`upload_to_session`). It
 // carries the files to overlay onto the running session's workspace. The
-// request uses the caller's normal session-scoped bearer credential; per
+// request uses the caller's bearer; per
 // §7.4 no uploadToken is reissued for the mid-session path. spec: §7.4 — F-7.4.6.
 type UploadToSessionRequest struct {
 	// Files are the files to write into the session's workspace root. Each entry is

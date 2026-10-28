@@ -68,7 +68,7 @@ func rotate(ctx context.Context, store *issuedtokenstore.Store, tenant, subjectJ
 	return err
 }
 
-// spec: 13.3 (Credential Flow), 8.2 (Delegation Mechanism), 11.7 (Audit Logging)
+// spec: 13.3 (Credential Flow), 11.7 (Audit Logging)
 // diagnosis: a failure means two concurrent rotations of one subject both
 // committed a replacement, or neither did, or the loser failed with
 // something other than subject_token_revoked. Two live replacements mean

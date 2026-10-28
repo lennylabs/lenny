@@ -305,9 +305,9 @@ var table = map[string]entry{
 	// false because the weakening is rejected before admission.
 	// F-8.5.10.
 	"TREE_VISIBILITY_WEAKENING": {CategoryPolicy, false},
-	// spec: §8.2 — the delegation parent has no authenticated
-	// user identity, so the §8.2 RFC 8693 child-token exchange has no
-	// `subject_token`. PERMANENT; HTTP 422; retryable=false because the
+	// spec: §8.2 (Child identity) — the delegation parent has no
+	// authenticated user identity, so the child session row has no
+	// user to inherit. PERMANENT; HTTP 422; retryable=false because the
 	// parent's identity stays empty until it is re-bound by a new
 	// session-create flow. F-8.5.10.
 	"DELEGATION_PARENT_NO_USER": {CategoryPermanent, false},
@@ -423,11 +423,10 @@ var table = map[string]entry{
 	"AUDIT_QUERY_TOO_BROAD": {CategoryPolicy, false},
 
 	// TRANSIENT — a retry is expected to clear the condition.
-	"POD_CRASH":                   {CategoryTransient, true}, // spec: 15:995
-	"DEADLOCK_TIMEOUT":            {CategoryTransient, true}, // spec: 15:1021
-	"CREDENTIAL_RENEWAL_FAILED":   {CategoryTransient, true}, // spec: 15:1025
-	"BUDGET_STATE_UNRECOVERABLE":  {CategoryTransient, true}, // spec: 15:1027
-	"DELEGATION_AUDIT_CONTENTION": {CategoryTransient, true}, // spec: 15:1037
+	"POD_CRASH":                  {CategoryTransient, true}, // spec: 15:995
+	"DEADLOCK_TIMEOUT":           {CategoryTransient, true}, // spec: 15:1021
+	"CREDENTIAL_RENEWAL_FAILED":  {CategoryTransient, true}, // spec: 15:1025
+	"BUDGET_STATE_UNRECOVERABLE": {CategoryTransient, true}, // spec: 15:1027
 	// spec: §11.7 item 3 — the audit-write advisory lock could
 	// not be acquired within audit.lock.acquireTimeoutMs. TRANSIENT and
 	// retryable: the gateway retries on the same replica up to

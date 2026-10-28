@@ -26,6 +26,8 @@ func fenceOracle(m sessionstore.CreationMarkers) string {
 		return sessionstore.RefusalTenantSuspended
 	case m.TenantFound && !(tenantstore.Tenant{State: m.TenantState}).AcceptsNewWork():
 		return sessionstore.RefusalTenantNotActive
+	case m.IsDelegatedChild && m.ParentTerminal:
+		return sessionstore.RefusalDelegationParentRevoked
 	}
 	return ""
 }
@@ -39,6 +41,8 @@ func fenceDetails(code, tenantID, userID string, m sessionstore.CreationMarkers)
 		return map[string]any{"tenantId": tenantID}
 	case sessionstore.RefusalTenantNotActive:
 		return map[string]any{"tenantId": tenantID, "state": m.TenantState}
+	case sessionstore.RefusalDelegationParentRevoked:
+		return map[string]any{"parentSessionId": m.ParentSessionID}
 	}
 	return nil
 }
@@ -47,9 +51,9 @@ func fenceDetails(code, tenantID, userID string, m sessionstore.CreationMarkers)
 // the marker fields, root and delegated-child inserts included, and asserts
 // Refusal returns the code and details of the first matching rule in the
 // order USER_INVALIDATED, ERASURE_IN_PROGRESS, TENANT_SUSPENDED,
-// TENANT_NOT_ACTIVE.
+// TENANT_NOT_ACTIVE, DELEGATION_PARENT_REVOKED.
 //
-// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 11.4 (User Invalidation)
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 11.4 (User Invalidation), 8.2 (Parent freshness)
 func TestCreationRefusalCrossProduct_spec_12_8(t *testing.T) {
 	states := []string{
 		"", tenantstore.TenantStateActive, tenantstore.TenantStateDisabling,
@@ -57,7 +61,7 @@ func TestCreationRefusalCrossProduct_spec_12_8(t *testing.T) {
 	}
 	const tenantID, userID = "acme", "alice"
 	cases := 0
-	for bits := 0; bits < 1<<7; bits++ {
+	for bits := 0; bits < 1<<8; bits++ {
 		for _, st := range states {
 			m := sessionstore.CreationMarkers{
 				TenantFound:          bits&1 != 0,
@@ -67,8 +71,10 @@ func TestCreationRefusalCrossProduct_spec_12_8(t *testing.T) {
 				UserDeleted:          bits&16 != 0,
 				ProcessingRestricted: bits&32 != 0,
 				IsDelegatedChild:     bits&64 != 0,
+				ParentTerminal:       bits&128 != 0,
 				TenantState:          st,
 				ErasureJobID:         "job-1",
+				ParentSessionID:      "parent-1",
 			}
 			cases++
 			want := fenceOracle(m)
@@ -95,8 +101,35 @@ func TestCreationRefusalCrossProduct_spec_12_8(t *testing.T) {
 			}
 		}
 	}
-	if cases != 640 {
-		t.Fatalf("walked %d cases, want the full 640-case cross-product", cases)
+	if cases != 1280 {
+		t.Fatalf("walked %d cases, want the full 1280-case cross-product", cases)
+	}
+}
+
+// TestCreationRefusalParentTerminalRefusesOnlyDelegatedChild_spec_12_8 pins
+// the parent rule: a delegated child whose parent is terminal or absent is
+// refused with DELEGATION_PARENT_REVOKED naming the parent, a row at depth
+// zero with the same marker is admitted, and a tenant or user code wins over
+// the parent rule.
+//
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 8.2 (Parent freshness)
+func TestCreationRefusalParentTerminalRefusesOnlyDelegatedChild_spec_12_8(t *testing.T) {
+	child := sessionstore.CreationMarkers{IsDelegatedChild: true, ParentTerminal: true, ParentSessionID: "p-1"}
+	r := child.Refusal("acme", "alice")
+	if r == nil || r.Code != sessionstore.RefusalDelegationParentRevoked {
+		t.Fatalf("terminal-parent child = %+v, want DELEGATION_PARENT_REVOKED", r)
+	}
+	if !reflect.DeepEqual(r.Details, map[string]any{"parentSessionId": "p-1"}) {
+		t.Fatalf("details = %v, want parentSessionId only", r.Details)
+	}
+	root := sessionstore.CreationMarkers{ParentTerminal: true, ParentSessionID: "p-1"}
+	if r := root.Refusal("acme", "alice"); r != nil {
+		t.Fatalf("depth-zero row with ParentTerminal = %+v, want admit", r)
+	}
+	suspended := child
+	suspended.TenantFound, suspended.TenantSuspended = true, true
+	if r := suspended.Refusal("acme", "alice"); r == nil || r.Code != sessionstore.RefusalTenantSuspended {
+		t.Fatalf("suspended tenant and terminal parent = %+v, want TENANT_SUSPENDED", r)
 	}
 }
 

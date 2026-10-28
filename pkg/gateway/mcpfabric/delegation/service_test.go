@@ -27,8 +27,8 @@ func seedParent(t *testing.T, store sessionstore.Store, id, parentID, runtime, p
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	row := sessionstore.Session{
 		ID: id, TenantID: "acme", State: session.StateRunning,
-		// §8.2: child-token exchange requires a parent user
-		// identity; tests seed `user_alice` so Delegate does not
+		// §8.2 (Child identity): the child inherits the parent's
+		// user identity; tests seed `user_alice` so Delegate does not
 		// reject with ErrParentNoUser.
 		UserID:     "user_alice",
 		RuntimeRef: runtime, PoolRef: pool, IsolationProfile: prof,
@@ -705,8 +705,8 @@ func (r *recorder) IncDelegationWouldHaveBlocked(pool, tenantID, layer, mode str
 	r.blocks = append(r.blocks, blockObs{pool, tenantID, layer, mode})
 }
 
-// spec: §8.2 — the child-token exchange requires the parent's
-// authenticated user JWT as `subject_token`. A userless parent must be
+// spec: §8.2 (Child identity) — the child's identity is its session row,
+// which inherits the parent's user. A userless parent must be
 // rejected at admission with ErrParentNoUser; an empty req.UserID
 // inherits-or-rejects but does NOT substitute the parent identity.
 func TestDelegateRejectsUserlessParent(t *testing.T) {
@@ -1572,7 +1572,7 @@ func TestDelegateNoCycleAuditWithoutSelfRecursion_spec_F_8_5_9(t *testing.T) {
 
 // TestDelegateRejectsDenyApprovalMode_spec_8_4_521 verifies §8.4: an `approvalMode: "deny"` lease short-circuits the delegation
 // path before pod allocation and before the §4 PreDelegation
-// interceptor. The parent lookup, child token mint, lineage walk, and
+// interceptor. The parent lookup, lineage walk, and
 // store INSERT MUST NOT run; the service returns ErrDelegationDenied.
 // F-8.4.1.
 func TestDelegateRejectsDenyApprovalMode_spec_8_4_521(t *testing.T) {

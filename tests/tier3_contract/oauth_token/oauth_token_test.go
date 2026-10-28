@@ -212,7 +212,7 @@ func TestCrossTenantExchangeRejected(t *testing.T) {
 	}
 }
 
-// spec: 13.3 + 8.2 (actor_token present → a2a_delegation, depth = actor.depth + 1)
+// spec: 13.3 (actor_token present → a2a_delegation, depth = actor.depth + 1)
 // diagnosis: The issued typ was wrong or depth did not increment.
 //
 //	Inspect the actor-token branch of tokenexchange.Validate.

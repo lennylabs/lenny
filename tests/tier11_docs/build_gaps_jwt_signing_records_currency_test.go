@@ -174,9 +174,10 @@ func TestJWTSigningRecordsNoteSupersededFindings_spec_10_2(t *testing.T) {
 // diagnosis: a test-gap record proposal 0097 moved was reopened, closed, or
 // lost its note, or names a test that no longer exists. T-10.2.9 is closed by
 // replacement, T-10.2.3 is resolved as a covered claim half and a retired
-// JWKS half, T-10.2.2 stays open for the session-creation half, and T-10.2.8
-// stays open until tier 6 runs. Restore the record, or record the later change
-// that moved it.
+// JWKS half, T-10.2.2 is resolved once proposal 0104 removed the
+// session-creation mint its open half waited on, and T-10.2.8 stays open
+// until tier 6 runs. Restore the record, or record the later change that
+// moved it.
 //
 // spec: 10.2 (Authentication)
 func TestJWTSigningTestGapRecords_spec_10_2(t *testing.T) {
@@ -188,7 +189,7 @@ func TestJWTSigningTestGapRecords_spec_10_2(t *testing.T) {
 	}{
 		{"T-10.2.9", true, []string{"Closed by replacement", "TestSigningKeyRotationUnderLocal_spec_10_2"}},
 		{"T-10.2.3", true, []string{"claim half is covered", "JWKS half is retired"}},
-		{"T-10.2.2", false, []string{"**Annotation (proposal 0097", "throttle and breaker half is covered", "`POST /v1/sessions` half stays OPEN"}},
+		{"T-10.2.2", true, []string{"**Annotation (proposal 0097", "throttle and breaker half is covered", "proposals/0104_fix_two-gaps-leave-lenny-s-session-scoped-and-delegation/"}},
 		{"T-10.2.8", false, []string{"**Annotation (proposal 0097", "stays OPEN until tier 6 runs"}},
 	} {
 		t.Run(c.id, func(t *testing.T) {

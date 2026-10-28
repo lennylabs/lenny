@@ -8,6 +8,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
@@ -15,10 +16,12 @@ import (
 // destSessionID. transcriptstore.Memory.CopySession has this signature.
 type TranscriptCopier func(ctx context.Context, tenantID, sourceSessionID, destSessionID string) error
 
-// WithCreationMarkers wires the creation fence. Create, CreateReserved,
-// CreateWithTranscript, and Reserve call read under the store's lock, before
-// the insert, and refuse with *sessionstore.CreationRefusal as
-// CreationMarkers.Refusal states. Without it the store admits every insert.
+// WithCreationMarkers wires the tenant and user rules of the creation fence.
+// Create, CreateReserved, CreateWithTranscript, and Reserve call read under
+// the store's lock, before the insert, and refuse with
+// *sessionstore.CreationRefusal as CreationMarkers.Refusal states. Without it
+// those rules admit every insert; the parent rule (fenceLocked) runs either
+// way.
 //
 // Holding the lock across the read and the insert gives the in-memory store
 // the serialization the Postgres FOR SHARE read gives: a drain lists under
@@ -56,21 +59,45 @@ type reservation struct {
 
 func reservationKey(tenantID, sessionID string) string { return tenantID + "/" + sessionID }
 
-// fenceLocked runs the creation fence. Callers hold s.mu.
-// spec: §12.8 (Lifecycle fence and drain).
-func (s *Store) fenceLocked(ctx context.Context, tenantID, ownerUserID string, delegatedChild bool) error {
-	if s.markers == nil {
-		return nil
-	}
-	m, err := s.markers(ctx, tenantID, ownerUserID)
-	if err != nil {
-		return err
+// fenceLocked runs the creation fence. Callers hold s.mu. Without a marker
+// reader the tenant and user rules admit, and the parent rule still runs
+// when checkParent is true: a delegated child is refused when its parent
+// row in this store is terminal or absent, and an empty parentSessionID
+// names no row. Reading the parent under the same lock its terminal Update
+// takes gives the serialization the Postgres FOR SHARE read gives. Reserve
+// passes checkParent false, so a reservation runs only the tenant and user
+// rules.
+// spec: §12.8 (Lifecycle fence and drain), §8.2 (Parent freshness).
+func (s *Store) fenceLocked(ctx context.Context, tenantID, ownerUserID string, delegatedChild, checkParent bool, parentSessionID string) error {
+	var m sessionstore.CreationMarkers
+	if s.markers != nil {
+		read, err := s.markers(ctx, tenantID, ownerUserID)
+		if err != nil {
+			return err
+		}
+		m = read
 	}
 	m.IsDelegatedChild = delegatedChild
+	if delegatedChild && checkParent {
+		m.ParentSessionID = parentSessionID
+		m.ParentTerminal = s.parentTerminalLocked(tenantID, parentSessionID)
+	}
 	if ref := m.Refusal(tenantID, ownerUserID); ref != nil {
 		return ref
 	}
 	return nil
+}
+
+// parentTerminalLocked reports whether the parent session row is terminal or
+// absent from tenantID. An empty parentSessionID names no row. Callers hold
+// s.mu.
+// spec: §12.8 (Lifecycle fence and drain).
+func (s *Store) parentTerminalLocked(tenantID, parentSessionID string) bool {
+	if parentSessionID == "" {
+		return true
+	}
+	parent, ok := s.sessions[parentSessionID]
+	return !ok || parent.TenantID != tenantID || session.IsTerminal(parent.State)
 }
 
 // deleteOwnReservationLocked deletes the reservation whose ID and owner match
@@ -127,7 +154,7 @@ func (s *Store) CreateWithTranscript(ctx context.Context, sess sessionstore.Sess
 func (s *Store) Reserve(ctx context.Context, tenantID, ownerUserID, sessionID string, delegatedChild bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.fenceLocked(ctx, tenantID, ownerUserID, delegatedChild); err != nil {
+	if err := s.fenceLocked(ctx, tenantID, ownerUserID, delegatedChild, false, ""); err != nil {
 		return err
 	}
 	if ownerUserID == "" {

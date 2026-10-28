@@ -64,11 +64,10 @@ type Principal struct {
 	// header path leaves Scopes zero (no scope narrowing in dev mode).
 	Scopes scopes.Set
 
-	// JTI is the JWT `jti` claim copied verbatim. The §8.2
-	// child-token exchange reads the delegating (parent) session token's
-	// jti against the §13.3 revocation cache; the §8.5 lenny/delegate_task
-	// handler forwards this onto the delegation ParentToken. Empty under
-	// the dev-headers path (no JWT). F-8.1.2 / F-8.2.7.
+	// JTI is the caller bearer's JWT `jti` claim copied verbatim; the
+	// §13.3 revocation cache and the issued-token index key on it. It is
+	// empty on the pod path over LNK-GWCONTROL, which carries no
+	// Lenny-issued JWT, and under the dev-headers path (no JWT).
 	JTI string
 
 	// Origin is the §27.3 token-origin claim copied verbatim from the

@@ -645,7 +645,7 @@ func criticalAlerts() []Rule {
 			For:         30 * time.Second,
 			Severity:    SeverityCritical,
 			Summary:     "Token store unavailable",
-			Description: "/v1/oauth/token has been returning 503 token_store_unavailable for more than 30s. Postgres primary is unreachable for token issuance; session creation, delegation minting, and credential leasing are all failing.",
+			Description: "/v1/oauth/token has been returning 503 token_store_unavailable for more than 30s. Postgres primary is unreachable for token issuance; session creation and credential leasing are both failing.",
 			RunbookURL:  runbook("token-store-unavailable"),
 			SpecRef:     "§16.5",
 		},

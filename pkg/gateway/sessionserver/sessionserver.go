@@ -33,6 +33,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
+	"github.com/lennylabs/lenny/pkg/gateway/callercheck"
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
@@ -117,6 +118,7 @@ type Server struct {
 	interactions   interactionstore.Store
 	usage          usagestore.Store
 	users          userstore.Store
+	callerCheck    callercheck.Deps
 	billing        billingstore.Store
 	tenants        tenantstore.Store
 	storageQuota   storagequota.Counter
@@ -1024,6 +1026,14 @@ type Options struct {
 	// a user registry); the gateway always wires it.
 	Users userstore.Store
 
+	// CallerCheck carries the issued-token reader and the rejection
+	// auditor of the §10.2 "Signing topology" session-creation caller
+	// check, which applies §13.3 step (1a) to the creating bearer. The
+	// gateway wires both when it has a Postgres pool; a zero value passes
+	// every caller, because without the pool no issued_tokens row exists
+	// to refuse. spec: §10.2 (Signing topology), §13.3.
+	CallerCheck callercheck.Deps
+
 	// Billing is the §11.2.1 billing event ledger. When set, the
 	// gateway appends a session.created event on every create. Nil
 	// disables billing emission.
@@ -1674,6 +1684,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		interactions:               opts.Interactions,
 		usage:                      opts.Usage,
 		users:                      opts.Users,
+		callerCheck:                opts.CallerCheck,
 		billing:                    opts.Billing,
 		tenants:                    opts.Tenants,
 		storageQuota:               opts.StorageQuota,

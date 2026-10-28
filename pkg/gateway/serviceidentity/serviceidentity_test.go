@@ -38,9 +38,9 @@ func saToken(audiences ...string) string {
 const opsSA = "system:serviceaccount:lenny-system:lenny-ops-sa"
 
 // spec: 25.4 (lenny-ops calls the gateway admin API as a dedicated service
-// account holding platform-admin, through the gateway's standard RBAC), 10.2
-// line 227 (the gateway validates the projected token on every pod→gateway
-// request)
+// account holding platform-admin, through the gateway's standard RBAC), §10.3
+// "Projected SA token" (the gateway validates the projected token on every
+// pod→gateway request)
 func TestResolverAdmitsTheGrantedServiceAccount_spec_25_4(t *testing.T) {
 	v := &fakeVerifier{username: opsSA}
 	r := serviceidentity.New(serviceidentity.Config{
@@ -82,7 +82,8 @@ func TestResolverRefusesAnUngrantedServiceAccount_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: 25.4 (all calls go through the gateway's standard RBAC), 10.2 line 227
+// spec: 25.4 (all calls go through the gateway's standard RBAC), §10.3
+// "Projected SA token"
 func TestResolverFailsClosed_spec_25_4(t *testing.T) {
 	granted := map[string][]auth.Role{opsSA: {auth.RolePlatformAdmin}}
 
@@ -123,9 +124,9 @@ func TestResolverFailsClosed_spec_25_4(t *testing.T) {
 	})
 }
 
-// spec: 10.2 line 227 (audience binding: a token minted for another deployment
-// is rejected even though the same cluster issuer signed it)
-func TestResolverScreensTheAudienceBeforeTheTokenReview_spec_10_2(t *testing.T) {
+// spec: §10.3 "Projected SA token" (audience binding: a token minted for
+// another deployment is rejected even though the same cluster issuer signed it)
+func TestResolverScreensTheAudienceBeforeTheTokenReview_spec_10_3(t *testing.T) {
 	v := &fakeVerifier{username: opsSA}
 	r := serviceidentity.New(serviceidentity.Config{
 		Verifier: v,

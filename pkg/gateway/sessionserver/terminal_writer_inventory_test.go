@@ -32,7 +32,7 @@ type terminalWriter struct {
 // terminalWriterInventory is the terminal writer inventory as the code
 // spells it. A writer whose mutator lives in a helper names the helper:
 // writeTerminal is the shared mutator of expireSession, failSession,
-// failFinalizing, and cascadeToChildren; cancelNode and cancelSession are
+// failFinalizing, and cancelCascadedChild; cancelNode and cancelSession are
 // the mutators of cancelSubtree and the lenny/cancel_session handler;
 // expireOrphan is sweepTenant's; expireIdle is sweepIdle's and
 // expireSuspendedIfDue is sweepSuspended's; transitionTerminate is applied
@@ -82,7 +82,7 @@ func storeWriteCall(n string) bool {
 
 // writeTerminalCallers are the hook-path writers that write through
 // writeTerminal, each opening its claim before the call.
-var writeTerminalCallers = []string{"cascadeToChildren", "expireSession", "failFinalizing", "failSession"}
+var writeTerminalCallers = []string{"cancelCascadedChild", "expireSession", "failFinalizing", "failSession"}
 
 var terminalStateNames = map[string]bool{
 	"StateCompleted": true, "StateFailed": true, "StateCancelled": true, "StateExpired": true,

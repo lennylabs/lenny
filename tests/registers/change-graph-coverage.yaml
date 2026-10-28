@@ -164,7 +164,6 @@ prefixes:
   - pkg/gateway/externalapi/pagination/
   - pkg/gateway/gatewaycontrol/platformtools/
   - pkg/gateway/mcpfabric/delegation/
-  - pkg/gateway/mcpfabric/delegation/childtoken/
   - pkg/gateway/mcpfabric/delegation/export/
   - pkg/gateway/mcpfabric/delegation/exportwire/
   - pkg/gateway/mcpfabric/delegation/fileexport/

@@ -45,6 +45,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/delegation/lease"
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/environment"
+	"github.com/lennylabs/lenny/pkg/gateway/callercheck"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/envaccess"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
@@ -403,6 +404,14 @@ type Deps struct {
 	// and service-token principals that were never provisioned through
 	// the admin user API. spec: §11.4; F-11.4.1.
 	Users userstore.Store
+
+	// CallerCheck carries the issued-token reader and the rejection
+	// auditor of the §10.2 "Signing topology" caller check that
+	// lenny/delegate_task applies to a client-facing caller's bearer
+	// before delegating. A zero value passes every caller, and a pod-path
+	// call carries no jti and passes without a store read.
+	// spec: §10.2 (Signing topology), §13.3.
+	CallerCheck callercheck.Deps
 
 	// Runtimes is the §5.1 runtime registry. Optional — when nil, the
 	// lenny/discover_agents tool is not registered.
@@ -1413,6 +1422,33 @@ type discoveredAgent struct {
 	Description      string `json:"description,omitempty"`
 }
 
+// requireDelegatingBearerAllowed applies the §10.2 session-creation caller
+// check to the bearer that calls lenny/delegate_task, through
+// callercheck.Check. A refusal answers the FORBIDDEN tool error once its
+// token.exchanged rejection row is durable; a failed issued_tokens read or
+// rejection write answers INTERNAL_ERROR. A pod-path call over
+// LNK-GWCONTROL carries no jti and passes. It runs before any admission,
+// reservation, export, or pod claim.
+// spec: §10.2 (Signing topology), §13.3 (Credential Flow: Write-before-issue
+// ordering, step (1a)).
+func requireDelegatingBearerAllowed(ctx context.Context, deps Deps, now time.Time) error {
+	principal, ok := authmw.FromContext(ctx)
+	if !ok {
+		return nil
+	}
+	err := callercheck.Check(ctx, deps.CallerCheck, principal, now)
+	if err == nil {
+		return nil
+	}
+	var refused *callercheck.Refused
+	if errors.As(err, &refused) {
+		return mcp.NewToolError("FORBIDDEN",
+			"the presented bearer cannot create sessions: "+refused.Reason, nil)
+	}
+	return mcp.NewToolError("INTERNAL_ERROR",
+		"session-creation caller check failed: "+err.Error(), nil)
+}
+
 // requireActiveDelegator is the early creation gate of a delegated child.
 // It reads the parent session's owning user's row and the tenant row and
 // refuses with the code CreationMarkers.Refusal answers for a delegated
@@ -1439,6 +1475,9 @@ func requireActiveDelegator(ctx context.Context, deps Deps, tenant, parentSessio
 		return mcp.NewToolError("INTERNAL_ERROR",
 			"delegation lifecycle check failed: "+err.Error(), nil)
 	}
+	// The early gate reads no parent row and leaves ParentTerminal unset, so
+	// the child's insert transaction is the only producer of
+	// DELEGATION_PARENT_REVOKED. spec: §12.8 (Lifecycle fence and drain).
 	m.IsDelegatedChild = true
 	if ref := m.Refusal(tenant, parent.UserID); ref != nil {
 		return mcp.NewToolError(ref.Code, ref.Message, ref.Details)
@@ -2263,6 +2302,12 @@ type Terminal interface {
 // running because the spec models that mode as "let children outlive
 // the terminated parent".
 //
+// The walk is breadth-first, one level at a time. After a level's cancel
+// writes return, it lists the tenant from the primary once and queues the
+// next level from that listing, so a delegated child the creation fence
+// admitted before its parent's terminal write is reached. The caller's
+// pre-write listing serves only authorization and the tree root.
+//
 // Each cancel is a hook-path terminal write: it opens the session's terminal
 // claim before its Update, writes cancelled only over a non-terminal locked
 // row, records the Terminated fact in the write, and runs the post-terminal
@@ -2277,50 +2322,67 @@ type Terminal interface {
 // actually transitioned, sorted for a deterministic result.
 //
 // spec: §8.5 (cancel_child cascades per policy); §8.10 (cascadeOnFailure
-// modes); §7.2 (Interactive Session Model). F-8.5.19.
+// modes); §7.2 (Interactive Session Model); §12.8 (Lifecycle fence and
+// drain). F-8.5.19.
 func cancelSubtree(ctx context.Context, store sessionstore.Store, tenant string,
-	child sessionstore.Session, all []sessionstore.Session, terminal Terminal,
+	child sessionstore.Session, terminal Terminal,
 	signals func(context.Context, sessionstore.Session), now func() time.Time,
 ) ([]string, error) {
-	byParent := map[string][]sessionstore.Session{}
-	for _, s := range all {
-		if s.ParentSessionID != "" {
-			byParent[s.ParentSessionID] = append(byParent[s.ParentSessionID], s)
-		}
-	}
 	var cancelled []string
 	seen := map[string]bool{child.ID: true}
-	queue := []sessionstore.Session{child}
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		if session.IsTerminal(cur.State) {
-			continue
-		}
-		applied, err := cancelNode(ctx, store, tenant, cur.ID, terminal, signals, now)
-		if err != nil {
-			sort.Strings(cancelled)
-			return cancelled, fmt.Errorf("cancel session %s: %w", cur.ID, err)
-		}
-		if !applied {
-			continue
-		}
-		cancelled = append(cancelled, cur.ID)
-		// §8.10: queue this node's children only when its cascade policy
-		// is `cancel_all`. `await_completion` and `detach` leave
-		// descendants running per the spec semantics.
-		if cur.CascadeOnFailure.Resolve() == session.CascadeCancelAll {
-			for _, c := range byParent[cur.ID] {
-				if seen[c.ID] {
-					continue
-				}
-				seen[c.ID] = true
-				queue = append(queue, c)
+	level := []sessionstore.Session{child}
+	for len(level) > 0 {
+		var parents []string
+		for _, cur := range level {
+			if session.IsTerminal(cur.State) {
+				continue
+			}
+			applied, err := cancelNode(ctx, store, tenant, cur.ID, terminal, signals, now)
+			if err != nil {
+				sort.Strings(cancelled)
+				return cancelled, fmt.Errorf("cancel session %s: %w", cur.ID, err)
+			}
+			if !applied {
+				continue
+			}
+			cancelled = append(cancelled, cur.ID)
+			// §8.10: queue this node's children only when its cascade policy
+			// is `cancel_all`. `await_completion` and `detach` leave
+			// descendants running per the spec semantics.
+			if cur.CascadeOnFailure.Resolve() == session.CascadeCancelAll {
+				parents = append(parents, cur.ID)
 			}
 		}
+		if len(parents) == 0 {
+			break
+		}
+		// spec: §12.8 (Lifecycle fence and drain), §8.10 — list after this
+		// level's terminal writes committed, from the primary.
+		byParent, err := sessionstore.ChildrenByParent(ctx, store, tenant)
+		if err != nil {
+			sort.Strings(cancelled)
+			return cancelled, err
+		}
+		level = nextCascadeLevel(parents, byParent, seen)
 	}
 	sort.Strings(cancelled)
 	return cancelled, nil
+}
+
+// nextCascadeLevel returns the children of parents in byParent that seen does
+// not hold, marking each one seen.
+func nextCascadeLevel(parents []string, byParent map[string][]sessionstore.Session, seen map[string]bool) []sessionstore.Session {
+	var next []sessionstore.Session
+	for _, p := range parents {
+		for _, c := range byParent[p] {
+			if seen[c.ID] {
+				continue
+			}
+			seen[c.ID] = true
+			next = append(next, c)
+		}
+	}
+	return next
 }
 
 // cancelNode makes one hook-path cancel write and reports whether it

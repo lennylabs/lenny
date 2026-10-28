@@ -229,7 +229,7 @@ func TestMemstoreCreateFenceFailsClosedOnReadError_spec_12_8(t *testing.T) {
 }
 
 // TestMemstoreUnfencedStoreAdmits_spec_12_8 asserts that a store built
-// without WithCreationMarkers admits every insert, which the fence's
+// without WithCreationMarkers admits a root insert, which the fence's
 // TenantFound=false case relies on in the in-memory posture.
 //
 // spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain)

@@ -28,6 +28,9 @@ type reserveStore struct {
 	createErr         error
 	createReservedErr error
 	calls             []string
+	// beforeChildInsert runs before the child row's insert reaches the
+	// wrapped store, after every admission gate passed.
+	beforeChildInsert func()
 }
 
 func (r *reserveStore) note(name string) {
@@ -58,6 +61,9 @@ func (r *reserveStore) Reserve(ctx context.Context, tenantID, owner, id string, 
 
 func (r *reserveStore) Create(ctx context.Context, s sessionstore.Session) error {
 	r.note("Create")
+	if s.ID == "sess_child" && r.beforeChildInsert != nil {
+		r.beforeChildInsert()
+	}
 	if r.createErr != nil && s.ID == "sess_child" {
 		return r.createErr
 	}
@@ -66,6 +72,9 @@ func (r *reserveStore) Create(ctx context.Context, s sessionstore.Session) error
 
 func (r *reserveStore) CreateReserved(ctx context.Context, s sessionstore.Session) error {
 	r.note("CreateReserved")
+	if r.beforeChildInsert != nil {
+		r.beforeChildInsert()
+	}
 	if r.createReservedErr != nil {
 		return r.createReservedErr
 	}
@@ -98,7 +107,10 @@ type delegationFixture struct {
 	objects *recordingObjects
 }
 
-func newDelegationFixture(t *testing.T, wireObjects bool) (*delegationFixture, *delegation.Service) {
+// newDelegationFixture builds the service over a reservation-observing store
+// with a running parent. Each mutate function adjusts the service options
+// before the service is built.
+func newDelegationFixture(t *testing.T, wireObjects bool, mutate ...func(*delegation.Options)) (*delegationFixture, *delegation.Service) {
 	t.Helper()
 	f := &delegationFixture{
 		users:   userstore.NewMemory(),
@@ -122,6 +134,9 @@ func newDelegationFixture(t *testing.T, wireObjects bool) (*delegationFixture, *
 	}
 	if wireObjects {
 		opts.SessionObjects = f.objects
+	}
+	for _, m := range mutate {
+		m(&opts)
 	}
 	return f, delegation.NewService(f.store, opts)
 }

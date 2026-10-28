@@ -271,8 +271,8 @@ A rotation or scope-narrowing request that carries no `expires_in` issues a JWT 
 
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|
-| `tokenExchange.rateLimitPerUser` | int | 60 | Maximum `/v1/oauth/token` requests per user per minute. Rotation + delegation minting share this budget. | Must be > 0. |
-| `tokenExchange.requireActorToken` | bool | `true` | Require `actor_token` on delegation child-token minting. Enforces the parent→child chain of custody. | -- |
+| `tokenExchange.rateLimitPerUser` | int | 60 | Maximum `/v1/oauth/token` requests per user per minute. Token rotation and `a2a_delegation` child-token minting share this budget. | Must be > 0. |
+| `tokenExchange.requireActorToken` | bool | `true` | Require `actor_token` on `a2a_delegation` child-token minting. Enforces the parent→child chain of custody. | -- |
 | `tokenExchange.supportedSubjectTokenTypes` | string[] | `["urn:ietf:params:oauth:token-type:access_token", "urn:ietf:params:oauth:token-type:jwt"]` | Accepted `subject_token_type` values. | Subset of IANA-registered token types. |
 
 ---

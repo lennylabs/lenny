@@ -18,7 +18,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
 	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/audit/auditscope"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/jwtaudit"
+	"github.com/lennylabs/lenny/pkg/gateway/callercheck"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/barrier"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialserver"
@@ -1029,4 +1031,26 @@ func playgroundIssuedTokens(pool *pgxpool.Pool) playground.IssuedTokenReader {
 		return nil
 	}
 	return issuedtokenstore.New(pool)
+}
+
+// sessionCallerCheck returns the collaborators of the §10.2
+// session-creation caller check, or a zero callercheck.Deps when the
+// gateway has no Postgres pool. Without the pool no issued_tokens row and
+// no impersonation route exist, so the zero value passes every caller.
+// With the pool the reader is the issued-token store, and the auditor is
+// the gateway's tenant-scope-validated durable audit chain: its Append
+// takes the §11.7 per-tenant audit advisory lock and commits the
+// token.exchanged rejection row before it returns, so a refusal reaches
+// the client only once its row is durable. Session creation and
+// lenny/delegate_task both run over the value it returns.
+// spec: §10.2 (Signing topology), §11.7, §13.3, §16.7.
+func sessionCallerCheck(pool *pgxpool.Pool, auditor *auditscope.Validator) callercheck.Deps {
+	if pool == nil {
+		return callercheck.Deps{}
+	}
+	deps := callercheck.Deps{IssuedTokens: issuedtokenstore.New(pool)}
+	if auditor != nil {
+		deps.Audit = auditor
+	}
+	return deps
 }
