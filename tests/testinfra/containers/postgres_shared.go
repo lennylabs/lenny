@@ -32,7 +32,7 @@ const sharedMaxConnections = "500"
 // SharedPostgres is one Postgres container that every test in a package
 // binary reuses. Starting a container and migrating it takes a few seconds,
 // so a package that builds a fresh Postgres for each of many tests spends
-// much of its wall time there (TEST-GAPS T-17.4.31). The first Database
+// much of its wall time there (TEST-GAPS T-17.4.32). The first Database
 // call starts the container and migrates a template database; every call
 // then clones that template into a database of the test's own, so a test
 // starts from a migrated, empty database that no other test sees. A

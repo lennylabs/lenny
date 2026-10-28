@@ -16,7 +16,7 @@ import (
 // harnessControlPlane is the envtest control plane every lifecycle harness
 // in this package runs on. Each harness serves a namespace of its own on it
 // (lifecycleharness.Options.ControlPlane), so a harness build does not boot
-// etcd and kube-apiserver (TEST-GAPS T-17.4.31).
+// etcd and kube-apiserver (TEST-GAPS T-17.4.32).
 var harnessControlPlane envtest.Shared
 
 // harnessPostgres is the Postgres container every compose-backed lifecycle

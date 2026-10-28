@@ -86,7 +86,7 @@ func TestIntegrationTimeoutExceedsObservedRuntime(t *testing.T) {
 	// Observed: 1679s for a passing tests/tier4_integration package on the
 	// 8-core developer host on 2026-10-28, after its lifecycle harnesses
 	// moved onto one shared control plane and one shared Postgres
-	// container (TEST-GAPS T-17.4.31). Before that change the package took
+	// container (TEST-GAPS T-17.4.32). Before that change the package took
 	// 2568s at impl/0101 and 1989s at the proposal-b tip, both over the
 	// budget. The earlier 768s and 280s figures predate most of the
 	// package's current tests.
