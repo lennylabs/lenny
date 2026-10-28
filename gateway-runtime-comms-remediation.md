@@ -3844,9 +3844,12 @@ other test in that binary.
     Fixed on `fix/t-17-4-29`: `install.sh` refuses a dirty or ahead database before migrating
     (`LENNY_SKIP_MIGRATION_GUARD=1` overrides), and `tests/testinfra/README.md` documents the step-back
     and reset procedures.
-  - [ ] **T-17.4.31** (Low): the T-17.4.29 migration guard compares version numbers only, so two branches
+  - [x] **T-17.4.31** (Low): the T-17.4.29 migration guard compares version numbers only, so two branches
     whose migrations share a number but differ in content (0102's and 0105's 0192) pass it on the shared
     database. Record the applied migration's name or hash and refuse a mismatch.
+    Fixed on `fix/test-infra-gaps`: `install.sh` records each applied migration's sha256 and file name in the
+    `lenny-e2e-migrations` ConfigMap after a migrate, and the guard refuses a recorded migration whose content
+    differs from the branch's file of the same number. A tier-0 test fails on duplicate migration numbers.
 
 **Direct fixes filed while verifying proposal 0102 (2026-10-27).** Both were found on the shared `lenny-e2e`
 cluster and predate 0102. They are fixed on `fix/kind-kubeconfig-and-t9-podreuse`, which branches from the

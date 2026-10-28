@@ -176,7 +176,9 @@ the references in `minioimages.go` and every carrier the test names in the same 
 another branch migrated further, or one a stopped migrate left dirty, fails or skips every kind-backed test with
 no defect in the code under test. `tests/testinfra/kind/install.sh` reads `schema_migrations` before it
 migrates and stops, naming the version and the remedy, when the row is dirty or ahead of the branch's highest
-migration; `LENNY_SKIP_MIGRATION_GUARD=1` overrides it for deliberate use. Do not edit `schema_migrations` by
+migration. It also stops when a migration recorded in the `lenny-e2e-migrations` ConfigMap at or below the
+database version differs in name or content from the branch's file of the same number.
+`LENNY_SKIP_MIGRATION_GUARD=1` overrides it for deliberate use. Do not edit `schema_migrations` by
 hand. The step-back procedure for an ahead database and the reset procedure for a dirty one are in
 `tests/testinfra/README.md` under "Shared Kind cluster database", and both run only with the owner's approval
 because every worktree tests against the same database.

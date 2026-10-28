@@ -1008,7 +1008,11 @@
       "e2e_kind": ["tests/tier5_e2e_kind/airgap_registry_mirror_test.go"]
     },
     "migrations/": {
-      "static": ["scripts/lint-schema.sh", "scripts/lint-queries.sh"],
+      "static": [
+        "scripts/lint-schema.sh",
+        "scripts/lint-queries.sh",
+        "tests/tier0_static/migration_numbers_unique_test.go"
+      ],
       "component": [
         "tests/tier2_component/migrations/...",
         "tests/tier2_component/stores/..."
