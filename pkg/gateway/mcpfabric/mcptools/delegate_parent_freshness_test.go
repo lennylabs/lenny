@@ -31,7 +31,7 @@ type parentEndingStore struct {
 }
 
 func (s *parentEndingStore) endParent(ctx context.Context) error {
-	_, err := s.Store.Update(ctx, "acme", "sess_parent", func(r *sessionstore.Session) error {
+	_, err := s.Update(ctx, "acme", "sess_parent", func(r *sessionstore.Session) error {
 		r.State = session.StateCancelled
 		return nil
 	})
