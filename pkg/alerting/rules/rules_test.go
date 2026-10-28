@@ -561,6 +561,29 @@ func TestKMSSigningUnavailableNamesBothSigners_spec_16_5(t *testing.T) {
 	}
 }
 
+// TestTokenStoreUnavailableNamesNoDelegationMint_spec_16_5 pins the
+// TokenStoreUnavailable description to the §16.5 row: an unreachable
+// Postgres primary fails session creation and credential leasing.
+// Internal delegation through lenny/delegate_task mints no token (§8.2),
+// so the description must not name a delegation mint among the failing
+// paths. The pre-fix description listed "delegation minting" and fails
+// this test.
+//
+// spec: §16.5 (TokenStoreUnavailable critical-alert row); §8.2; §13.3.
+func TestTokenStoreUnavailableNamesNoDelegationMint_spec_16_5(t *testing.T) {
+	got := catalogRule(t, "TokenStoreUnavailable")
+	const want = "session creation and credential leasing are both failing."
+	if !strings.Contains(got.Description, want) {
+		t.Errorf("description %q does not contain %q", got.Description, want)
+	}
+	if strings.Contains(strings.ToLower(got.Description), "delegation") {
+		t.Errorf("description %q still names a delegation mint", got.Description)
+	}
+	if got.Severity != SeverityCritical {
+		t.Errorf("severity = %q, want critical", got.Severity)
+	}
+}
+
 // TestRunbookSlugDropsSectionFragment pins that a RunbookURL pointing at
 // one section of a runbook page still yields the page slug for the
 // alert_fired payload's runbook field, which routes on the page name.

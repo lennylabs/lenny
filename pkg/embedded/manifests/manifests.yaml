@@ -1811,7 +1811,7 @@ data:
               labels:
                 severity: critical
               annotations:
-                description: /v1/oauth/token has been returning 503 token_store_unavailable for more than 30s. Postgres primary is unreachable for token issuance; session creation, delegation minting, and credential leasing are all failing.
+                description: /v1/oauth/token has been returning 503 token_store_unavailable for more than 30s. Postgres primary is unreachable for token issuance; session creation and credential leasing are both failing.
                 runbook_url: https://docs.lenny.dev/runbooks/token-store-unavailable
                 summary: Token store unavailable
             - alert: BackupReconcileBlocked
