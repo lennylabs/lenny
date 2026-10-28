@@ -1,4 +1,4 @@
-# Spec changes: Finalize-time WorkspacePlan bind has no specification contract
+# Spec changes — Finalize-time WorkspacePlan bind has no specification contract
 
 These edits are staged. Applying them is the implementation's work, under the
 implementation checklist.
@@ -28,6 +28,7 @@ The spec does not declare `uploadRef` a §28.5.3 `LennyBlobURI`, and it does not
 - **A delegation child plan.** The gateway writes it onto the child row with `uploadRef` values it minted under the child session (§8.7). It is not a client-submitted plan, so the `uploadRef` rejection rule does not apply to it.
 - **A derived or replayed session.** Its creating request binds no plan, so its plan binds at finalize (**Plan binding.**). How the copied snapshot composes with that plan is outside this proposal (see the summary defect **The spec does not state how a copied snapshot composes with a plan bound at finalize.**).
 - **A runtime's `workspaceDefaults` change after a session's plan binds.** **Runtime workspace defaults.** rule 2 governs it.
+- **The runtime or its base cannot be read, or the runtime is not registered, when the plan binds.** **Runtime workspace defaults.** rule 4 governs it.
 - **A resume restores a checkpoint.** §7.3 step 3e replays the checkpoint without the plan, so the runtime defaults are not re-applied.
 
 ## Staged edits
@@ -242,7 +243,7 @@ The optional request body `{"workspacePlan": <WorkspacePlan>}` binds the session
 
 **Edit (c), derive-failure reachability table.** Under **Derive-failure audit rows (`failureClass = derive_failure`).**, in the row whose Endpoint cell begins `` `POST /v1/sessions/{id}/interrupt`, `/upload`, `/finalize` ``, replace `` `/upload`, `/finalize` `` with `` `/upload`, `/upload-archive`, `/finalize` ``. Leave the Behavior cell unchanged.
 
-**Edit (d), error code catalog.** Under **Error code catalog:**, make five row edits.
+**Edit (d), error code catalog.** Under **Error code catalog:**, make the row edits below.
 
 1. `WORKSPACE_PLAN_INVALID` row. Replace
 
@@ -263,6 +264,17 @@ A request that binds a `WorkspacePlan` ([Section 14.1](14_workspace-plan-schema.
 ```
 
 3. In the `GIT_CLONE_REF_UNRESOLVABLE` row, also replace ``via `git ls-remote` at session creation`` with ``via `git ls-remote` when binding the plan``.
+4. In the `SERVICE_UNAVAILABLE` row, replace
+
+```markdown
+and by the pool-resolution path when the pool lookup is transiently unresolvable, all of which
+```
+
+with
+
+```markdown
+by the pool-resolution path when the pool lookup is transiently unresolvable, and by a request or delegation that binds a `WorkspacePlan` when a transient store error prevents reading its runtime ([Section 14.1](14_workspace-plan-schema.md#141-workspaceplan-schema-versioning) **Runtime workspace defaults.** rule 4), all of which
+```
 
 **Edit (e), §15.2 MCP tools table.** Under **MCP tools (client-facing):**, replace the `finalize_workspace` row with:
 
@@ -570,6 +582,7 @@ SPEC-8 makes three edits.
 1. When the plan binds (**Plan binding.** above), the gateway reads the effective `workspaceDefaults` of the runtime the session runs, after the [§4.8](04_system-components.md#48-gateway-policy-engine) routing interceptors and [§10.7](10_gateway-internals.md#107-experiment-primitives) experiment routing have selected it and after the §5.1 base-then-derived merge and composes them into the plan. Each default file becomes an `inlineFile` source, and each default setup command becomes a `setupCommands` entry that keeps its `timeoutSeconds`. The defaults precede the plan's own sources and setup commands in the materialization order of §5.1 **Derived Runtime Instantiation**. A delegated child's file-export sources ([§8.7](08_recursive-delegation.md#87-file-export-model)) follow the defaults.
 2. The gateway stores the composed plan, and `GET /v1/sessions/{id}` returns it. Every later materialization of the session reads the stored plan, including the rebuild in [§7.3](07_session-lifecycle.md#73-retry-and-resume) step 3e, so a change to the runtime's `workspaceDefaults` after the plan binds does not change the session's workspace.
 3. A default file and a plan source that write the same path follow the **Path collision rule** below.
+4. A session whose runtime has no registry entry binds its plan without defaults. Any other failure to read the runtime, or the base of a derived runtime, fails a client request that binds the plan before the request changes any session state and fails a delegation before its child session is created. A transient store error fails either with `SERVICE_UNAVAILABLE` ([§15.1](15_external-api-surface.md#151-rest-api) **Error code catalog:**).
 
 [§7.5](07_session-lifecycle.md#75-setup-commands) **Command policy:** states which setup commands `setupCommandPolicy` checks and counts.
 ```
@@ -610,7 +623,7 @@ with
 **Command policy:** Before forwarding to the pod, the gateway validates every setup command of a client-submitted `WorkspacePlan` against the Runtime's `setupCommandPolicy` and counts those commands toward `maxCommands`. The setup commands that the runtime's own `workspaceDefaults` contributes ([Section 5.1](05_runtime-registry-and-pool-model.md#51-runtime)) are exempt from both checks, and **Shell-free execution (`shell: false`):** below applies to every setup command. The policy modes are:
 ```
 
-Before landing, confirm that the `#51-runtime`, `#48-gateway-policy-engine`, `#107-experiment-primitives`, `#73-retry-and-resume`, `#75-setup-commands`, `#87-file-export-model`, `#14-workspace-plan-schema`, and `#141-workspaceplan-schema-versioning` anchors resolve.
+Before landing, confirm that the `#51-runtime`, `#48-gateway-policy-engine`, `#107-experiment-primitives`, `#73-retry-and-resume`, `#75-setup-commands`, `#87-file-export-model`, `#14-workspace-plan-schema`, `#141-workspaceplan-schema-versioning`, and `#151-rest-api` anchors resolve.
 
 ## Spec files touched
 

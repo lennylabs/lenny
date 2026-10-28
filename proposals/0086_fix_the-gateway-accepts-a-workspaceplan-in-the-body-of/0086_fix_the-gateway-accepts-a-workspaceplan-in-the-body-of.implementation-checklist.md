@@ -9,7 +9,7 @@
 - [ ] **S3 · spec** — SPEC-8. Lands the §14.1 **Runtime workspace defaults.** paragraph and every other SPEC-8 edit.
       Tiers 0, 11. Depends on: S2
 - [ ] **S4 · spec** — SPEC-3. Lands the staged §15.1 and §15.2 row edits.
-      Tiers 0, 11. Depends on: S1, S2
+      Tiers 0, 11. Depends on: S1, S2, S3
 - [ ] **S5 · spec** — SPEC-4. Lands the staged §7.1 and §7.4 edits.
       Tiers 0, 11. Depends on: S2
 - [ ] **S6 · spec** — SPEC-5. Lands the staged §29.2 step edits.
@@ -25,13 +25,13 @@
 - [ ] **S11 · code** — CODE-3. Lands the OpenAPI and published-schema edits.
       Tiers 0, 3. Depends on: S1, S2, S4
 - [ ] **S12 · code** — CODE-4. Lands every CODE-4 edit.
-      Tiers 0, 1. Depends on: S1, S2, S5
+      Tiers 0, 1, 2, 11. Depends on: S1, S2, S5, S8
 - [ ] **S13 · code** — CODE-5. Lands the proto and setup comment corrections and the regenerated bindings.
       Tiers 0, 1. Depends on: S8
 - [ ] **S14 · code** — CODE-6. Lands the runtime-defaults composer, its callers, and the registration check.
-      Tiers 0, 1, 3, 4. Depends on: S2, S3, S9
+      Tiers 0, 1, 3, 4. Depends on: S2, S3, S4, S9
 - [ ] **S15 · test** — TEST-1. Lands the TEST-1 tests.
-      Tiers 0, 1, 2, 3, 4, 9. Depends on: S8, S9, S10, S11
+      Tiers 0, 1, 2, 3, 4, 9. Depends on: S8, S9, S10, S11, S12
 - [ ] **S16 · docs** — DOCS-1. Lands every DOCS-1 page change.
       Tiers 0, 11. Depends on: S1, S2, S3, S4, S5, S7, S8, S11
 - [ ] **S17 · test** — TEST-2. Lands the TEST-2 tests.

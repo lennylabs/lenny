@@ -12,6 +12,7 @@ approved-by:
 implemented-date: 
 implemented-by: 
 ---
+
 ## Review history
 
 On 2026-10-28, an adversarial review run covered this proposal. The run had two review loops, a spec loop and a non-spec loop.
