@@ -20,8 +20,6 @@ Every edit locates its target by heading and quoted text.
 
 ### SPEC-1 · spec/07_session-lifecycle.md § 7.1 Normal Flow
 
-Pending redesign (D3): the return's position in the pipeline, its context, and its deadline are restated by the redesign pass under summary D3.
-
 In the paragraph **Terminal pipeline context:**, replace
 
 ```markdown
@@ -31,17 +29,15 @@ the seal-and-export step (**Seal-and-export invariant:** above), the inbox drain
 with
 
 ```markdown
-the seal-and-export step (**Seal-and-export invariant:** above), the inbox drain, the terminal events and signals, the pod or slot release, the delegation budget return of a delegated child ([Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)), and the close of the session log.
+the seal-and-export step (**Seal-and-export invariant:** above), the inbox drain, the terminal events and signals, the delegation budget return of a delegated child ([Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)), the pod or slot release, and the close of the session log.
 ```
 
 ### SPEC-2 · spec/08_recursive-delegation.md § 8.3 Delegation Policy and Lease
 
-Pending redesign (D3): the sentences on when the return runs relative to the terminal write and the release are restated by the redesign pass under summary D3.
-
 Append to numbered item 3 **Return on completion:**, after the sentence ending "returns only restore up to the original allocation.", in the same paragraph:
 
 ```markdown
-The return is a step of the child's terminal pipeline ([Section 7.1](07_session-lifecycle.md#71-normal-flow) **Terminal pipeline context:**), so it runs once for the child's terminal transition, after whichever writer committed it. A relabel of an already-terminal child runs no second return. The return addresses the budget keys of the child's recorded `root_session_id`.
+The return is a step of the child's terminal pipeline ([Section 7.1](07_session-lifecycle.md#71-normal-flow) **Terminal pipeline context:**), so it runs once for the child's terminal transition, after whichever writer committed it. A relabel of an already-terminal child runs no second return. The return addresses the budget keys of the child's recorded `root_session_id`. It precedes the pod or slot release, and the usage quiescence timeout of **Usage quiescence before budget return** below is counted from the child's terminal transition. The gateway refuses to start, and pool admission refuses a pool, when a pool's `maxWorkspaceSealDurationSeconds` is not greater than `delegation.usageQuiescenceTimeoutSeconds`, so the quiescence wait ends before the release allowance of the terminal pipeline budget begins.
 ```
 
 ### SPEC-3 · spec/08_recursive-delegation.md § 8.3 Delegation Policy and Lease
@@ -152,6 +148,8 @@ with
 ```markdown
 Any replica therefore observes the denial on the first extension request it processes, without needing to replay in-flight state from the predecessor.
 ```
+
+In the sub-bullet **Clock reference (UTC only):**, replace "regardless of which replica is elected" with "regardless of which replica serves the request".
 
 ### SPEC-5 · spec/08_recursive-delegation.md § 8.6 Lease Extension
 

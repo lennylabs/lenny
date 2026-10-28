@@ -37,4 +37,4 @@
 - [ ] **S17 · code** — CODE-9. `DeleteByRoot` and the eraser call.
       Tiers 0, 1, 4, 9. Depends on: S9
 - [ ] **S18 · docs** — DOC-1.
-      Tiers 0, 1, 2, 11. Depends on: S4
+      Tiers 0, 1, 2, 11. Depends on: S3, S4

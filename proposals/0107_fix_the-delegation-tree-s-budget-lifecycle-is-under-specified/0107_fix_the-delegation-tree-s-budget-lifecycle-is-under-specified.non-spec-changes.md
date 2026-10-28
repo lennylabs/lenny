@@ -43,10 +43,9 @@ A failed root write does not cascade by itself, because `settledChildSignals` ha
 
 ### CODE-3 · Tree-budget return in `afterTerminalWrite` with full deltas and the recorded root
 
-Targets: `pkg/gateway/sessionserver/terminal_hook.go` (`afterTerminalWrite`), `pkg/gateway/sessionserver/usage.go` (`archiveSettledChild`, `returnTreeBudget`), `pkg/gateway/mcpfabric/delegationtree/resultrollup/resultrollup.go` (`SubtreeTokens`, `TreeUsage`), `pkg/gateway/sessionserver/delegation_seams.go` (`TreeBudgetReturner`).
+Targets: `pkg/gateway/sessionserver/terminal_hook.go` (`afterTerminalWrite`), `pkg/gateway/sessionserver/usage.go` (`archiveSettledChild`, `returnTreeBudget`), `pkg/gateway/mcpfabric/delegationtree/resultrollup/resultrollup.go` (`SubtreeTokens`, `TreeUsage`), `pkg/gateway/sessionserver/delegation_seams.go` (`TreeBudgetReturner`), `pkg/gateway/sessionserver/sessionserver.go` (`Options.UsageQuiescenceTimeout`), `cmd/lenny-gateway/sessionsrv.go`, `cmd/lenny-gateway/flags.go` (help text), `cmd/lenny-gateway/startupgates.go` (the quiescence check), and `cmd/lenny-gateway/usage_quiescence_gate_test.go` (new).
 
-1. `afterTerminalWrite` calls `s.returnTreeBudget(ctx, sess)` after `releaseAfterTerminal` and before `expireRaisedElicitations`. `returnTreeBudget` runs the `SubtreeTokens` read and the `Return` each on its own `context.WithTimeout(context.WithoutCancel(ctx), treeBudgetReturnTimeout)` (a new 5 s constant), as `expireRaisedElicitations` does, so a release whose adapter `Shutdown` used up the terminal pipeline budget does not cut the return, and a read that uses up its bound does not cut the `Return`. Annotate it `// spec: §7.1 (Terminal pipeline context), §8.3`.
-   - Pending redesign (D3): the redesign pass removes the `treeBudgetReturnTimeout` constant and the `WithoutCancel` detachment in favour of the configurable `delegation.usageQuiescenceTimeoutSeconds` inside the terminal pipeline budget.
+1. `afterTerminalWrite` calls `s.returnTreeBudget(ctx, sess)` after the signal tail and before `releaseAfterTerminal`, on the hook's terminal context, and the step implements SPEC-2. After item 2's checks admit the row, the step sleeps until `sess.TerminatedAt` plus the usage quiescence timeout, measured on the server clock, or for the whole timeout when `TerminatedAt` is zero. A row that item 2 does not admit, or a nil `TreeBudgetReturner`, does not sleep. The sleep, the `SubtreeTokens` read, and the `Return` share the terminal context and have no timeout of their own. A context that ends during the sleep skips the read and the `Return`, and the hook continues. The sleep goes through a seam that a test drives without real delay. `Options.UsageQuiescenceTimeout` carries the timeout, and a non-positive value selects the §11.3 default of 5 s. `sessionsrv.go` passes `--delegation-usage-quiescence-timeout-seconds`, whose help text also names the §8.3 budget return as a consumer. `startupgates.go` refuses the usage quiescence timeout in effect, resolved as `Options.UsageQuiescenceTimeout` resolves it, when it is not less than the seal window in effect (`sealSecondsInEffect`). Pool admission gets no check, because the tree carries the seal window only as `--workspace-seal-max-duration-seconds` (see the summary defect **Pool admission has no seal window to compare**). Annotate the step and the check `// spec: §7.1 (Terminal pipeline context), §8.3 (Return on completion)`.
 2. `returnTreeBudget` runs only for a delegated child (CODE-6 item 3). When such a row has `sess.RootSessionID == sess.ID`, it logs at warn and skips, because an empty root column reads back as the row's own ID. Otherwise it calls `Return` with:
    - `RootSessionID = sess.RootSessionID` and `ParentSessionID = sess.ParentSessionID`;
    - `TreeSizeDelta = 1`, `TreeMemoryDelta = treebudget.PerNodeMemoryBytes`, and `ParallelChildrenDelta = 1`;
@@ -72,7 +71,7 @@ Targets: `pkg/gateway/mcpfabric/delegation/service.go` (`reserveTreeBudget`, a n
 
 Targets: `pkg/gateway/sessionserver/terminal_hook.go`, `pkg/gateway/sessionserver/usage.go` (`afterTerminalRelease`), `pkg/gateway/session/sessionbudget/sessionbudget.go` (`counter.terminating`, `TerminateSession`, `RaiseBudget`).
 
-1. Move `s.budgetForget(sess.ID)` from `afterTerminalRelease` into `afterTerminalWrite`, directly after the CODE-3 return step. `budgetForget` is the composed forget of the enforcer, the recorder, and the anomaly detector.
+1. Move `s.budgetForget(sess.ID)` from `afterTerminalRelease` into `afterTerminalWrite`, directly after `releaseAfterTerminal`. `budgetForget` is the composed forget of the enforcer, the recorder, and the anomaly detector.
 2. The per-session counter gains `terminating bool`, which `TerminateSession` and `Record`'s terminal branch set. `RaiseBudget` leaves `deny` set when `terminating` is true. Annotate it `// spec: §8.6, §11.2`.
 
 ### CODE-6 · Store-backed §8.6 budget source; delete registration and `TenantResolver`
@@ -184,9 +183,13 @@ Every test carries its `// spec:` annotation, and every tier-2-and-up test carri
    - `failBudgetKeysExpired` on the root issues no `Return` and exactly one forget;
    - the token credit is `max(0, slice − subtree consumption)`, with a zero slice giving zero, and a child that spent its whole slice before any billing checkpoint receives zero;
    - `SubtreeTokens` counts a descendant whose live row is gone from its archived usage;
-   - a failing or deadline-exceeded `ListByRoot`, `Replay`, or `GetMany` in `SubtreeTokens` gives a zero `TokenDelta` with the other three deltas still returned;
-   - a release whose adapter `Shutdown` blocks until the terminal pipeline budget has elapsed still issues exactly one `Return` with the four deltas, on a context that is not done;
-     - Pending redesign (D3): this hung-`Shutdown` case is restated by the redesign pass, because the return no longer waits for `releaseAfterTerminal`.
+   - a `ListByRoot`, `Replay`, or `GetMany` in `SubtreeTokens` that returns an error, `context.DeadlineExceeded` included, while the terminal context is live gives a zero `TokenDelta` with the other three deltas still returned;
+   - a release whose adapter `Shutdown` blocks until the terminal pipeline budget has elapsed finds the `Return` with the four deltas already issued (the `Return` recorded before the binder's release call is the discriminating assertion);
+   - a hook that reaches the return step before `TerminatedAt` plus the usage quiescence timeout sleeps the remainder before the `SubtreeTokens` read, one that reaches it later does not sleep, a zero `TerminatedAt` sleeps the whole timeout, and a zero `Options.UsageQuiescenceTimeout` sleeps 5 s;
+   - a `DelegationDepth` 0 session reaches the release with no sleep;
+   - a terminal context that ends during the sleep issues no `Return`, and the release and the forget still run;
+   - tier 1 in `cmd/lenny-gateway`: a usage quiescence timeout equal to the seal window in effect is refused at startup, and one a second shorter is accepted;
+   - tier 1 in `cmd/lenny-gateway`: `--delegation-usage-quiescence-timeout-seconds=0` with `--workspace-seal-max-duration-seconds=5` is refused at startup;
    - in a tree where the child's parent is not the root, with the parent row's `Get` failing, the `Return` addresses `sess.RootSessionID`'s keys and `archiveSettledChild` archives under `sess.RootSessionID` (the archive row's `RootSessionID` is the discriminating assertion);
    - a `Return` failing with `ErrBudgetUnavailable` still runs the forget and `expireRaisedElicitations`;
    - the return issues no tenant-wide `List`;
@@ -240,17 +243,18 @@ Every test carries its `// spec:` annotation, and every tier-2-and-up test carri
 
 ## Edge cases and accepted failure modes
 
-- A gateway process that exits between the terminal write and the return step leaves the child's reservation, its parent's `parallelChildren` slot included, counted until the tree's budget keys are purged or expire, because §7.1 **Terminal pipeline context:** does not resume a terminal pipeline that process exit cuts (SPEC-1).
+- A gateway process that exits before the return step's `Return` completes, the usage quiescence sleep included, or a terminal pipeline budget that the earlier steps or the `SubtreeTokens` read use up first, leaves the child's reservation, its parent's `parallelChildren` slot included, counted until the tree's budget keys are purged or expire. §7.1 **Terminal pipeline context:** bounds the pipeline by the budget and does not resume a pipeline that process exit cuts (SPEC-1).
 - The token credit deducts only the consumption that the `SubtreeTokens` read sees when the return runs, so consumption the read does not see is credited back as unused and the tree's `tokens` counter undercounts it (CODE-3). See §8.3 **Usage quiescence before budget return** and the summary defect **`delegation.budget_return_usage_lag` is never emitted**.
 - When a sweep tick and a late request race, the late request re-creates an entry that the next tick sweeps (CODE-8).
 - A `Grants` read failure rejects a delegation that would have fit, which is retryable (CODE-4).
 - A replica that loses its in-memory consent state presents a new elicitation for a tree another replica already batched (SPEC-4 Edit (c)).
+- A delegated child's pod or slot release, and the response of a writer that runs the post-terminal hook before it answers, arrive up to the usage quiescence timeout later than they would without the return, because the return step's sleep precedes the release (CODE-3 item 1).
 
 ## Files touched on application (non-spec)
 
 - `pkg/gateway/mcpfabric/delegationtree/treebudget/treebudget.go`, `treebudget_test.go`, `rearm_test.go` (CODE-1, CODE-4)
-- `pkg/gateway/sessionserver/budget_keys_expired.go`, `budget_keys_expired_test.go`, `sessionserver.go`, `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_misc.go`, `gatewaymetrics.go` (CODE-2)
-- `pkg/gateway/sessionserver/terminal_hook.go`, `usage.go`, `delegation_seams.go` (CODE-2, CODE-3, CODE-5, CODE-6)
+- `pkg/gateway/sessionserver/budget_keys_expired.go`, `budget_keys_expired_test.go`, `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_misc.go`, `gatewaymetrics.go` (CODE-2)
+- `pkg/gateway/sessionserver/terminal_hook.go`, `usage.go`, `delegation_seams.go`, `sessionserver.go` (CODE-2, CODE-3, CODE-5, CODE-6)
 - `pkg/gateway/mcpfabric/delegationtree/resultrollup/resultrollup.go`, `resultrollup_test.go` (CODE-3)
 - `pkg/gateway/mcpfabric/delegation/service.go` (CODE-4, CODE-6)
 - `pkg/gateway/mcpfabric/mcptools/mcptools_register.go` (CODE-4)
@@ -260,6 +264,6 @@ Every test carries its `// spec:` annotation, and every tier-2-and-up test carri
 - `pkg/gateway/externalapi/openapi/routestub_test.go`, `completeness_test.go`, `pkg/gateway/mcpfabric/delegation/lease_registrar_test.go` (deleted), and every other file that names a CODE-6 item 7 symbol (CODE-6)
 - `pkg/gateway/session/tokenanomaly/tokenanomaly.go`, `pkg/gateway/session/sessionstore` (interface, `memstore`, `pgstore`), `pkg/gateway/mcpfabric/delegation/service_test.go`, and `pkg/gateway/mcpfabric/mcptools/elicitation_perhop_internal_test.go` (CODE-8)
 - `pkg/gateway/mcpfabric/delegationbudget/pgstore/pgstore.go` (CODE-9)
-- `cmd/lenny-gateway/sessiondeps.go`, `mcpsurface.go`, `gwcontrol_server.go`, `controlserver.go`, `adminrouter.go`, `lease_elicit.go`, `lease_elicit_test.go`, `sessionsrv.go`, `llmproxy_usage.go`, `budget_state_sweep.go` (CODE-2, CODE-4, CODE-6, CODE-7, CODE-8, CODE-9)
+- `cmd/lenny-gateway/sessiondeps.go`, `mcpsurface.go`, `gwcontrol_server.go`, `controlserver.go`, `adminrouter.go`, `lease_elicit.go`, `lease_elicit_test.go`, `sessionsrv.go`, `llmproxy_usage.go`, `budget_state_sweep.go`, `flags.go`, `startupgates.go`, `usage_quiescence_gate_test.go` (CODE-2, CODE-3, CODE-4, CODE-6, CODE-7, CODE-8, CODE-9)
 - `tests/tier7a_load_local/scenarios/extension_episode_fanout`, `tests/tier2_component/leasedenial/leasedenialstore_test.go`, `tests/tier9_security/budget_extension_failclosed_test.go`, `tests/tier9_security/lease_extension_clear_test.go` (CODE-6)
 - `pkg/alerting/rules/rules.go`, `docs/alerting/rules.yaml`, `charts/lenny/files/alerting-rules.yaml`, `pkg/embedded/manifests/manifests.yaml`, `docs/reference/metrics.md`, `docs/runbooks/delegation-budget-recovery.md`, `docs/reference/configuration.md`, and the new tier-11 test under `tests/tier11_docs/` (DOC-1)
