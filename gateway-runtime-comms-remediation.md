@@ -3806,11 +3806,22 @@ blocks any of them.
     (2026-10-28), which adds `jwt.Claims.Act`, sets it only on an exchange with an `actor_token`, and carries
     it onto the auth middleware's `Principal.Act`, with tier-1 and tier-3 tests. It filed F-13.3.24 and
     F-15.2.26.
-  - [ ] **F-15.2.26** (Medium): `adapterregistry.SessionMetadata` carries no §15 `CallerIdentity`, no
+  - [x] **F-15.2.26** (Medium): `adapterregistry.SessionMetadata` carries no §15 `CallerIdentity`, no
     `CallerIdentity` or `ActorClaim` type exists, and the gateway never calls `DispatchSessionCreated`, so no
     adapter receives `OnSessionCreated` or the caller's `act` claim. Filed from the direct fix of F-13.3.23
-    (2026-10-28). Direct fix.
+    (2026-10-28). Closed by direct fix a4366c146 (2026-10-28), which adds the §15 types, the
+    `SessionMetadata.CallerIdentity` field, and the projection from the auth middleware's principal, with
+    tier-1 tests. The dispatch was not wired, because §15 states no hook point or failure semantics. It filed
+    F-15.2.27 and F-15.2.28.
 - Proposal routing.
+  - [ ] **F-15.2.27** (Medium): §15 names `OnSessionCreated` and its `SessionMetadata` argument but states no
+    hook point in the session-create flow, no recipient set, and no failure semantics, so
+    `DispatchSessionCreated` has no caller and no adapter receives the caller identity. The proposal settles
+    those and the code wires the dispatch with a tier-4 test. Filed from the direct fix of F-15.2.26
+    (2026-10-28). It can ride with F-15.2.28.
+  - [ ] **F-15.2.28** (Low): the code's `ExternalProtocolAdapter` method set (`Name`, `HTTPHandler`, and
+    hooks without a `sessionID` parameter) differs from the §15 interface. The proposal conforms one to the
+    other. Filed from the direct fix of F-15.2.26 (2026-10-28).
   - [ ] **F-13.3.24** (Low): an `a2a_delegation` token exchanged without an `actor_token` keeps its `typ`
     and, under the §13.3 `act` row, carries no `act` claim, while §10.2 says every `a2a_delegation` token
     carries a non-empty `act`. The proposal picks refusal, copying the subject's `act`, or relaxing §10.2.
