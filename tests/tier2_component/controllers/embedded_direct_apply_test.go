@@ -8,7 +8,6 @@ import (
 	"context"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
 	nodev1 "k8s.io/api/node/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -20,7 +19,6 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/embedded/stack"
-	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
 // TestEmbeddedEchoPoolDirectApplyWarmsPod_spec_17_4 exercises the §17.4
@@ -53,7 +51,7 @@ import (
 // Postgres), §4.6.2 (the bring-up applies the CRD pair directly), §5.2
 // (single-pod hot pool, PoolWarmingUp), §5.3 (standard→runc RuntimeClass gate).
 func TestEmbeddedEchoPoolDirectApplyWarmsPod_spec_17_4(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -65,8 +63,11 @@ func TestEmbeddedEchoPoolDirectApplyWarmsPod_spec_17_4(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	const ns = "lenny-agents"
-	mustCreate(t, ctx, c, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})
+	ns := testNamespaces.Create(t, c)
+	// The negative leg needs the `runc` RuntimeClass absent on the shared
+	// control plane, and the positive leg creates it; the claim holds it for
+	// this test and deletes it at cleanup.
+	claimRuntimeClasses(t, c, "runc")
 
 	// The §4.6.2 direct apply: with no Postgres and no PoolScalingController,
 	// the bring-up applies the echo SandboxTemplate/SandboxWarmPool pair
