@@ -3814,9 +3814,11 @@ other test in that binary.
     Runtimes carry per-test names, and the fixed-name RuntimeClasses are held by one test at a time and
     deleted at cleanup. No test keeps a private control plane, because the degraded-mode test faults only a
     second client and leaves the API server running. The package fell from 157.4 s to 17.7 s. The fix
-    filed T-17.4.31 (the citation gates miss the `N.M line L` spelling).
-  - [ ] **T-17.4.31** (Low): the line-citation gates do not recognize the bare `N.M line L` spelling; 22
+    filed T-17.4.34 (the citation gates miss the `N.M line L` spelling).
+  - [ ] **T-17.4.34** (Low): the line-citation gates do not recognize the bare `N.M line L` spelling; 22
     `// spec:` annotations in 10 Go files use it and none is in the ratchet baseline.
+  - [ ] **T-17.4.35** (Low): component-test directories may lack a `tests/change-graph.json` key, so `--since` never
+    selects them on their own changes. Survey every `tests/tier*/` directory and add a `validate-maps` check. Direct fix.
   - [ ] **T-17.4.25** (Info): `cmd/lenny-gateway` starts one in 5 tests (about 31 s of 86.4 s). It took
     109.1 s in a scoped unit-tier run on 2026-10-27, the slowest of that run.
   - [ ] **T-17.4.29** (Medium): parallel implementation worktrees share the one `lenny-e2e` kind cluster,
