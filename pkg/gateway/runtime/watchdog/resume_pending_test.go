@@ -4,6 +4,7 @@ package watchdog_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,6 +31,8 @@ import (
 //     watchdog-initiated retry.
 
 type captureLifecycleHook struct {
+	// mu guards terminalCalls, which dispatched hook goroutines append to.
+	mu            sync.Mutex
 	terminalCalls []sessionstore.Session
 	awaitingEntry []sessionstore.Session
 	retryAttempts []sessionstore.Session
@@ -39,6 +42,8 @@ type captureLifecycleHook struct {
 func (*captureLifecycleHook) BeginTerminal(string) func() { return func() {} }
 
 func (c *captureLifecycleHook) OnSessionTerminal(_ context.Context, _ session.State, sess sessionstore.Session) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.terminalCalls = append(c.terminalCalls, sess)
 }
 

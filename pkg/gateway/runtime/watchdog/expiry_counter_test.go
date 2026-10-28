@@ -76,6 +76,7 @@ func TestExpiryCounterIdleReasonMaxIdleTime_spec_16_1_1(t *testing.T) {
 	if _, err := w.Tick(context.Background(), born.Add(10*time.Minute+time.Second)); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	w.WaitDispatched()
 	if len(hook.expiries) != 1 {
 		t.Fatalf("expiry notifications: got %d, want 1", len(hook.expiries))
 	}

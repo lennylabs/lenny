@@ -56,12 +56,21 @@ func TestAwaitingExpiredAppliesCascadeViaTerminalHook_spec_7_3_11(t *testing.T) 
 		t.Fatalf("seed child: %v", err)
 	}
 
-	w := watchdog.New(store, staticTenantLister{"acme"}, watchdog.Config{}, nil).
+	// The idle bound is raised past the tick so the child's own idle firing
+	// (900s by default) does not end it: the parent's terminal hook runs on a
+	// dispatched goroutine, so the idle sweep can reach the child before the
+	// cascade does. The test isolates the cascade.
+	w := watchdog.New(store, staticTenantLister{"acme"}, watchdog.Config{MaxIdleSeconds: 7200}, nil).
 		WithTerminalHook(srv)
 
 	// Drive past the default 900s awaiting deadline.
 	if _, err := w.Tick(context.Background(), born.Add(20*time.Minute)); err != nil {
 		t.Fatalf("Tick: %v", err)
+	}
+	// The terminal hook runs on a goroutine that holds the parent's terminal
+	// claim; the cascade has run once the claims close.
+	if err := srv.WaitTerminalWork(context.Background()); err != nil {
+		t.Fatalf("WaitTerminalWork: %v", err)
 	}
 
 	parent, err := store.Get(context.Background(), "acme", "p_aw")
@@ -110,6 +119,11 @@ func TestAwaitingExpiredDetachLeavesChildrenRunning_spec_7_3_11(t *testing.T) {
 		WithTerminalHook(srv)
 	if _, err := w.Tick(context.Background(), born.Add(20*time.Minute)); err != nil {
 		t.Fatalf("Tick: %v", err)
+	}
+	// The terminal hook runs on a goroutine that holds the parent's terminal
+	// claim; the cascade has run once the claims close.
+	if err := srv.WaitTerminalWork(context.Background()); err != nil {
+		t.Fatalf("WaitTerminalWork: %v", err)
 	}
 
 	child, err := store.Get(context.Background(), "acme", "c_detach")

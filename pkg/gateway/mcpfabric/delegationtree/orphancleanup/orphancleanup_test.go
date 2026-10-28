@@ -4,6 +4,7 @@ package orphancleanup_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -159,6 +160,7 @@ func TestTickArchivesTerminatedOrphan(t *testing.T) {
 	if _, err := sw.Tick(context.Background(), base.Add(2*time.Hour)); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	sw.WaitDispatched()
 	got, err := archive.GetByNode(context.Background(), "acme", "sess_child")
 	if err != nil {
 		t.Fatalf("terminated orphan was not archived: %v", err)
@@ -172,12 +174,18 @@ func TestTickArchivesTerminatedOrphan(t *testing.T) {
 }
 
 // fakeTerminalHook captures terminal-pipeline invocations.
-type fakeTerminalHook struct{ calls []sessionstore.Session }
+type fakeTerminalHook struct {
+	// mu guards calls, which dispatched hook goroutines append to.
+	mu    sync.Mutex
+	calls []sessionstore.Session
+}
 
 // BeginTerminal opens no claim; the fake records only the terminal hook.
 func (*fakeTerminalHook) BeginTerminal(string) func() { return func() {} }
 
 func (f *fakeTerminalHook) OnSessionTerminal(_ context.Context, _ session.State, sess sessionstore.Session) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls = append(f.calls, sess)
 }
 
@@ -196,6 +204,7 @@ func TestTickInvokesTerminalHook_spec_5_2_519(t *testing.T) {
 	if _, err := sw.Tick(context.Background(), base.Add(2*time.Hour)); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	sw.WaitDispatched()
 	if len(hook.calls) != 1 || hook.calls[0].ID != "sess_child" {
 		t.Fatalf("OnSessionTerminal invocations: %+v", hook.calls)
 	}
@@ -220,6 +229,7 @@ func TestTickWithTerminalHookSkipsInPackageArchive(t *testing.T) {
 	if _, err := sw.Tick(context.Background(), base.Add(2*time.Hour)); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	sw.WaitDispatched()
 	if _, err := archive.GetByNode(context.Background(), "acme", "sess_child"); err == nil {
 		t.Fatal("in-package archive must not fire when TerminalHook is wired")
 	}

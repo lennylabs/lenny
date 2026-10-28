@@ -62,8 +62,9 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 	})
 	go orphanSweeper.Run(w.watchdogCtx, func(terminated int, err error) {
 		if err != nil {
+			// spec: §10.1.1 (Primary:) — the pass continued past the
+			// error, so its counts below are still reported.
 			log.Printf("lenny-gateway: orphan-cleanup sweep error: %v", err)
-			return
 		}
 		if terminated > 0 {
 			log.Printf("lenny-gateway: orphan-cleanup terminated %d sessions past the §8.10 cascade timeout",
@@ -103,8 +104,9 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 			agentPodStateMirror{store: agentpodstatepg.New(w.pgPool)}, orphanSessionOpts)
 		go orphanSessionReconciler.Run(w.watchdogCtx, func(failed int, err error) {
 			if err != nil {
+				// spec: §10.1.1 (Primary:) — the pass continued past the
+				// error, so its counts below are still reported.
 				log.Printf("lenny-gateway: §10.1 orphan-session reconcile error: %v", err)
-				return
 			}
 			if failed > 0 {
 				log.Printf("lenny-gateway: §10.1 reconciler failed %d orphaned sessions (orphan_pod_terminated)",

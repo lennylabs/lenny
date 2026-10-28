@@ -192,6 +192,7 @@ func TestSweepMaxAgeRechecksLockedRow_spec_6_2(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Tick: %v", err)
 			}
+			w.WaitDispatched()
 			got := mustGet(t, mem, "sess_stale")
 			if got.State != stored.State || !got.UpdatedAt.Equal(stored.UpdatedAt) {
 				t.Fatalf("superseded row was written: state %q UpdatedAt %v, want %q %v", got.State, got.UpdatedAt, stored.State, stored.UpdatedAt)

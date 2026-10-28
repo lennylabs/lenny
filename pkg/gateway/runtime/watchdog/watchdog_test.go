@@ -83,6 +83,7 @@ func TestTickEmitsSessionCompletedBillingEvent(t *testing.T) {
 	if _, err := w.Tick(context.Background(), stale.Add(310*time.Second)); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	w.WaitDispatched()
 
 	events, err := billing.Since(context.Background(), "acme", 0, 0)
 	if err != nil {
@@ -122,6 +123,7 @@ func TestForcedTerminalBillingEventStampsExperimentVariant_spec_11_2_87(t *testi
 	if _, err := w.Tick(context.Background(), stale.Add(310*time.Second)); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	w.WaitDispatched()
 
 	events, err := billing.Since(context.Background(), "acme", 0, 0)
 	if err != nil {
@@ -206,6 +208,7 @@ func TestMaxSessionAgeEmitsBillingEvent(t *testing.T) {
 	if _, err := w.Tick(context.Background(), born.Add(3*time.Hour)); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	w.WaitDispatched()
 	events, err := billing.Since(context.Background(), "acme", 0, 0)
 	if err != nil {
 		t.Fatalf("Since: %v", err)
@@ -442,6 +445,7 @@ func TestTickArchivesForcedFailedChild(t *testing.T) {
 	if _, err := w.Tick(context.Background(), stale.Add(310*time.Second)); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	w.WaitDispatched()
 	got, err := archive.GetByNode(context.Background(), "acme", "sess_child")
 	if err != nil {
 		t.Fatalf("the forced-failed child was not archived: %v", err)
@@ -466,6 +470,7 @@ func TestTickArchivesExpiredChild(t *testing.T) {
 	if _, err := w.Tick(context.Background(), stale.Add(2*time.Hour)); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	w.WaitDispatched()
 	got, err := archive.GetByNode(context.Background(), "acme", "sess_child")
 	if err != nil {
 		t.Fatalf("the expired child was not archived: %v", err)
@@ -504,6 +509,7 @@ func TestTickInvokesTerminalHook_spec_5_2_519(t *testing.T) {
 	if _, err := w.Tick(context.Background(), stale.Add(310*time.Second)); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	w.WaitDispatched()
 	if len(hook.calls) != 1 || hook.calls[0].ID != "sess_stuck" {
 		t.Fatalf("OnSessionTerminal invocations: %+v", hook.calls)
 	}
@@ -562,6 +568,7 @@ func TestTickExpiryInvokesTerminalHook_spec_5_2_519(t *testing.T) {
 	if _, err := w.Tick(context.Background(), born.Add(3*time.Hour)); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	w.WaitDispatched()
 	if len(hook.calls) != 1 || hook.calls[0].State != session.StateExpired {
 		t.Fatalf("OnSessionTerminal expiry call: %+v", hook.calls)
 	}

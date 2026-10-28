@@ -79,6 +79,7 @@ func TestSweepMaxAgeExpiresChildPastPerChildMaxAge_spec_8_2(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Tick: %v", err)
 			}
+			w.WaitDispatched()
 			row := mustGet(t, store, "child")
 			if row.State != session.StateExpired || row.FailureReason != string(session.FailureExpiredLease) {
 				t.Fatalf("child = %q reason %q, want expired with %q", row.State, row.FailureReason, session.FailureExpiredLease)
@@ -225,6 +226,7 @@ func TestSweepMaxAgeRechecksPerChildMaxAgeOnLockedRow_spec_8_2(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Tick: %v", err)
 			}
+			w.WaitDispatched()
 			got := mustGet(t, mem2, "child")
 			if got.State != stored.State || !got.UpdatedAt.Equal(stored.UpdatedAt) {
 				t.Fatalf("superseded row was written: state %q UpdatedAt %v, want %q %v", got.State, got.UpdatedAt, stored.State, stored.UpdatedAt)

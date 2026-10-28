@@ -5,6 +5,7 @@ package watchdog_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -109,6 +110,7 @@ func TestSuspendedLifetimeExpiresAtTheBound_spec_6_2(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Tick: %v", err)
 			}
+			w.WaitDispatched()
 			row, _ := store.Get(context.Background(), "acme", "s1")
 			if !tc.expired {
 				if row.State != session.StateSuspended || res.SuspendedExpirations != 0 || len(capture.terminal) != 0 {
@@ -191,6 +193,7 @@ func TestSuspendedLifetimeGuardAndStoreError_spec_6_2(t *testing.T) {
 			if _, err := w.Tick(context.Background(), due); err != nil {
 				t.Fatalf("Tick: %v", err)
 			}
+			w.WaitDispatched()
 			row, _ := base.Get(context.Background(), "acme", "s1")
 			if row.State != tc.wantState || len(capture.terminal) != 0 || len(capture.expiries) != 0 {
 				t.Fatalf("state %q terminal %d expiries %d, want %q and no hook", row.State, len(capture.terminal), len(capture.expiries), tc.wantState)
@@ -209,9 +212,12 @@ func TestSuspendedLifetimeGuardAndStoreError_spec_6_2(t *testing.T) {
 		capture := &expiryCapture{}
 		w := watchdog.New(store, watchdog.StaticTenants{"acme"}, suspendedCfg(), nil).
 			WithTerminalHook(capture).WithSuspendedPodReleaser(hooks).WithBacklogResumer(hooks)
-		if _, err := w.Tick(context.Background(), due); err != nil {
-			t.Fatalf("Tick returned the store error: %v", err)
+		// spec: §10.1.1 (Primary:) — the failed write is collected and
+		// returned in the pass's joined error rather than swallowed.
+		if _, err := w.Tick(context.Background(), due); err == nil || !strings.Contains(err.Error(), "postgres down") {
+			t.Fatalf("Tick error = %v, want the collected store error", err)
 		}
+		w.WaitDispatched()
 		if len(capture.terminal) != 0 || len(hooks.released) != 0 || len(hooks.resumed) != 0 {
 			t.Fatalf("terminal %d released %v resumed %v after a store error, want none", len(capture.terminal), hooks.released, hooks.resumed)
 		}
@@ -219,6 +225,7 @@ func TestSuspendedLifetimeGuardAndStoreError_spec_6_2(t *testing.T) {
 		if _, err := w.Tick(context.Background(), due.Add(time.Second)); err != nil {
 			t.Fatalf("Tick: %v", err)
 		}
+		w.WaitDispatched()
 		if row, _ := base.Get(context.Background(), "acme", "s1"); row.State != session.StateExpired {
 			t.Fatalf("state after the retry = %q, want expired", row.State)
 		}

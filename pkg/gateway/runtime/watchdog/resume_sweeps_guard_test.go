@@ -279,6 +279,7 @@ func TestIdleExpiryOfARowWithAnEarlierReasonRunsTheHook_spec_7_2(t *testing.T) {
 	if _, err := w.Tick(context.Background(), born.Add(time.Hour)); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	w.WaitDispatched()
 	got, _ := store.Get(context.Background(), "acme", "sess")
 	if got.State != session.StateExpired || got.TerminatedAt.IsZero() {
 		t.Errorf("row = %q (terminated %v), want expired with the Terminated fact", got.State, got.TerminatedAt)

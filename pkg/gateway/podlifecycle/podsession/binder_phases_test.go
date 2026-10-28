@@ -524,6 +524,11 @@ func (f *createdTimeoutFixture) tick(t *testing.T) watchdog.Result {
 	if err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	// The watchdog runs each terminal hook on a goroutine that holds the
+	// session's terminal claim, so the reclaim has run once the claims close.
+	if err := hook.WaitTerminalWork(context.Background()); err != nil {
+		t.Fatalf("WaitTerminalWork: %v", err)
+	}
 	return res
 }
 

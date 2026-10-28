@@ -46,6 +46,7 @@ func TestSweepAwaitingClientActionFiresExpiryHook_spec_7_3_25(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	w.WaitDispatched()
 	if res.Expirations != 1 {
 		t.Fatalf("expected 1 expiration, got %d", res.Expirations)
 	}
@@ -82,6 +83,7 @@ func TestSweepMaxAgeDoesNotFireAwaitingHook_spec_7_3_25(t *testing.T) {
 	if _, err := w.Tick(context.Background(), born.Add(3*time.Hour)); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	w.WaitDispatched()
 	if len(hook.awaitingCalls) != 0 {
 		t.Errorf("F-7.3.25: maxAge sweep must not fire awaiting hook, got %d calls", len(hook.awaitingCalls))
 	}
@@ -166,6 +168,7 @@ func TestTerminalHookWithoutAwaitingNotifierStillFiresTerminal_spec_7_3_25(t *te
 	if _, err := w.Tick(context.Background(), born.Add(20*time.Minute)); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	w.WaitDispatched()
 	if len(hook.calls) != 1 {
 		t.Errorf("F-7.3.25: terminal hook should fire once for the expired session, got %d", len(hook.calls))
 	}

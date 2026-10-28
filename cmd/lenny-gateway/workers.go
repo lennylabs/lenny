@@ -61,8 +61,9 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 
 	go w.wd.Run(w.watchdogCtx, func(res watchdog.Result, err error) {
 		if err != nil {
+			// spec: §10.1.1 (Primary:) — the pass continued past the
+			// error, so its counts below are still reported.
 			log.Printf("lenny-gateway: watchdog sweep error: %v", err)
-			return
 		}
 		if res.ForcedFailures > 0 {
 			log.Printf("lenny-gateway: watchdog forced %d sessions to failed: %v",
