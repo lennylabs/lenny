@@ -122,3 +122,49 @@ func assertStampedAfterTheEarlierHook(t *testing.T, store sessionstore.Store, pa
 		t.Errorf("second terminated_at = %s, want %s (after the first row's hook returned)", stamps[1], want)
 	}
 }
+
+// spec: §6.2 (Pod State Machine), §7.2 (Session State Machine)
+//
+// A watchdog expiry writer stamps its own reason on the row, replacing any
+// reason an earlier recovery left. A row that carries a funnel reason from
+// an earlier resume_pending or awaiting_client_action episode is expired by
+// the awaiting_client_action deadline with `expired:deadline` and by the idle
+// expiry with `expired:idle`. Before the fix each writer kept the stale
+// reason, so the client saw the recovery's cause instead of the expiry's.
+func TestWatchdogExpiryWritersStampTheirOwnReason_spec_7_2(t *testing.T) {
+	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	const funnelReason = "runtime_crash"
+	for _, tc := range []struct {
+		name  string
+		cfg   watchdog.Config
+		state session.State
+		at    time.Time
+		want  session.FailureReason
+	}{
+		{"the awaiting_client_action deadline", watchdog.Config{}, session.StateAwaitingClientAction, born.Add(20 * time.Minute), session.FailureExpiredDeadline},
+		{"the idle expiry", idleCfg(600), session.StateRunning, born.Add(601 * time.Second), session.FailureExpiredIdle},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := memstore.NewWithClock(func() time.Time { return tc.at })
+			if err := store.Create(context.Background(), sessionstore.Session{
+				ID: "sess", TenantID: "acme", State: tc.state, CreatedAt: born, UpdatedAt: born,
+				FailureReason: funnelReason,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			w := watchdog.New(store, watchdog.StaticTenants{"acme"}, tc.cfg, nil).
+				WithTerminalHook(&captureLifecycleHook{})
+			if _, err := w.Tick(context.Background(), tc.at); err != nil {
+				t.Fatalf("Tick: %v", err)
+			}
+			got, err := store.Get(context.Background(), "acme", "sess")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.State != session.StateExpired || got.FailureReason != string(tc.want) {
+				t.Errorf("row = %q reason %q, want expired with %q over the earlier %q",
+					got.State, got.FailureReason, tc.want, funnelReason)
+			}
+		})
+	}
+}

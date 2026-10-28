@@ -2088,7 +2088,9 @@
         "pkg/gateway/session/sessionstore/memstore/state_entry_test.go::TestStateEntryTracksLastStateChangeAcrossHistory_spec_6_2",
         "tests/tier1_unit/lifecycle/stepped_store_test.go::TestSteppedClockStoreCarriesSteppedStateEntry_spec_6_2",
         "tests/tier2_component/migrations/prod_columns_test.go::TestSessionStateEnteredAtMigration_spec_6_2",
-        "tests/tier2_component/stores/sessionstore_state_entry_test.go::TestSessionStoreStampsStateEntry_spec_6_2"
+        "tests/tier2_component/stores/sessionstore_state_entry_test.go::TestSessionStoreStampsStateEntry_spec_6_2",
+        "pkg/gateway/runtime/watchdog/state_entry_anchor_test.go::TestWatchdogMeasuresEachDeadlineFromStateEntry_spec_6_2",
+        "pkg/gateway/sessionserver/resume_window_anchor_internal_test.go::TestResumeWindowLeftRunsFromStateEntry_spec_6_2"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -2415,7 +2417,8 @@
         "pkg/gateway/mcpfabric/mcptools/messaging_handler_test.go::TestForwardedSendSkipsTheSenderLimitsOnTheCoordinator_spec_29_3",
         "tests/tier8_chaos/holder_forward_chaos_test.go::TestCoordinatorCrashAfterReadingAForwardIsRefusedAndNotHeld_spec_29_3",
         "pkg/gateway/sessionserver/held_undelivered_forward_internal_test.go::TestHoldUndeliveredForwardHoldsWithTheRecoveringTTL_spec_29_3",
-        "tests/tier2_component/migrations/prod_columns_test.go::TestSessionStateEnteredAtMigration_spec_6_2"
+        "tests/tier2_component/migrations/prod_columns_test.go::TestSessionStateEnteredAtMigration_spec_6_2",
+        "pkg/gateway/runtime/watchdog/terminal_stamp_test.go::TestWatchdogExpiryWritersStampTheirOwnReason_spec_7_2"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -3119,7 +3122,11 @@
         "pkg/gateway/sessionserver/holder_forward_decode_internal_test.go::TestDecodeToolForwardResponseRejectsUndecodableResponses_spec_29_3",
         "pkg/gateway/sessionserver/holder_forward_decode_internal_test.go::TestStreamBodyReportsWriteAndReadFailures_spec_29_3",
         "pkg/gateway/sessionserver/holder_forward_decode_internal_test.go::TestForwardRequestBuildFailuresAreReported_spec_29_3",
-        "pkg/gateway/sessionserver/holder_forward_decode_internal_test.go::TestHolderForwardClientDoesNotFollowRedirects_spec_29_3"
+        "pkg/gateway/sessionserver/holder_forward_decode_internal_test.go::TestHolderForwardClientDoesNotFollowRedirects_spec_29_3",
+        "pkg/gateway/runtime/watchdog/state_entry_anchor_test.go::TestPreRunningExpiryRechecksTheBudgetOnTheLockedRow_spec_10_1_1",
+        "pkg/gateway/runtime/watchdog/state_entry_anchor_test.go::TestAwaitingExpiryRechecksTheDeadlineOnTheLockedRow_spec_10_1_1",
+        "pkg/gateway/runtime/watchdog/state_entry_anchor_test.go::TestIdleExpiryRechecksTheIdleCapOnTheLockedRow_spec_10_1_1",
+        "tests/tier7a_load_local/watchdog_replica_sweep_race_test.go::TestTwoWatchdogsEndEachSessionOnce_spec_10_1_1"
       ],
       "packages": [
         "pkg/gateway"

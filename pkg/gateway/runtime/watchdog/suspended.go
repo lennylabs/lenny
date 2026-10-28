@@ -63,10 +63,11 @@ func (w *Watchdog) sweepSuspended(ctx context.Context, tenant string, now time.T
 }
 
 // suspendedSince is the instant the row entered `suspended`: SuspendedAt, or
-// UpdatedAt for a row that carries none.
+// StateEnteredAt for a row that carries none.
+// spec: §6.2 (Pod State Machine).
 func suspendedSince(row sessionstore.Session) time.Time {
 	if row.SuspendedAt.IsZero() {
-		return row.UpdatedAt
+		return row.StateEnteredAt
 	}
 	return row.SuspendedAt
 }

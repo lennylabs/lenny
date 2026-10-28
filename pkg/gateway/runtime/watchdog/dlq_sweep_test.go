@@ -86,10 +86,10 @@ func TestSweepDLQExpiryCoversTheRecoveringStates_spec_7_2(t *testing.T) {
 
 // spec: §7.2 (Interactive Session Model) — an entry expires at the later of
 // its score and the row's entry to its state plus the DLQ TTL, so a
-// resume_pending row whose UpdatedAt is inside the TTL is not swept.
+// resume_pending row whose StateEnteredAt is inside the TTL is not swept.
 //
-// Discriminates: an entry expired by its score while its row's UpdatedAt is
-// inside the TTL.
+// Discriminates: an entry expired by its score while its row's StateEnteredAt
+// is inside the TTL.
 func TestSweepDLQExpiryWaitsForTheStateEntryTTL_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	now := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)

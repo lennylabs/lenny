@@ -203,10 +203,11 @@ func (s *Server) effectiveAgeCap(ctx context.Context, row sessionstore.Session) 
 }
 
 // windowLeft is the time left in the row's resume_pending window, measured
-// from its UpdatedAt as sweepResumePending measures it.
+// from its StateEnteredAt as sweepResumePending measures it.
+// spec: §6.2 (Pod State Machine); §7.3 (Resume driver).
 func (s *Server) windowLeft(row sessionstore.Session) time.Duration {
 	window := watchdog.EffectiveMaxResumeWindow(row, s.resumePendingCap())
-	return row.UpdatedAt.Add(window).Sub(s.clock())
+	return row.StateEnteredAt.Add(window).Sub(s.clock())
 }
 
 func (s *Server) resumePendingCap() time.Duration {

@@ -86,7 +86,7 @@ func TestSweepMaxAgeUsesActiveAge_spec_6_2(t *testing.T) {
 		{"running old by wall clock, young by active time", session.StateRunning, 3 * time.Hour, 30 * time.Minute, 10 * time.Minute, false},
 		{"running over the cap by active time", session.StateRunning, 3 * time.Hour, time.Hour, 90 * time.Minute, true},
 		{"input_required over the cap by active time", session.StateInputRequired, 3 * time.Hour, 2 * time.Hour, time.Minute, true},
-		{"starting counts toward the cap", session.StateStarting, time.Hour, time.Minute, 2 * time.Hour, true},
+		{"starting counts toward the cap", session.StateStarting, time.Minute, 30 * time.Second, 2 * time.Hour, true},
 		{"running at the cap is not over it", session.StateRunning, 4 * time.Hour, time.Hour, time.Hour, false},
 		{"suspended over the cap is never expired", session.StateSuspended, 48 * time.Hour, 24 * time.Hour, 3 * time.Hour, false},
 		{"resume_pending over the cap is expired", session.StateResumePending, 4 * time.Hour, time.Minute, 3 * time.Hour, true},
