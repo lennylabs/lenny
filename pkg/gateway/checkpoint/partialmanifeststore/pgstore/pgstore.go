@@ -155,7 +155,7 @@ func validatePut(r *partialmanifeststore.Record) error {
 		return errors.New("partialmanifeststore: chunk_object_key_prefix is required")
 	}
 	if r.ChunkEncoding == "" {
-		r.ChunkEncoding = partialmanifeststore.ChunkEncodingTar
+		r.ChunkEncoding = partialmanifeststore.ChunkEncodingTarGz
 	}
 	if !r.ChunkEncoding.IsValid() {
 		return errors.New("partialmanifeststore: invalid chunk_encoding")

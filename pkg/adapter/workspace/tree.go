@@ -42,6 +42,13 @@ const (
 	SessionsPrefix  = "sessions"
 )
 
+// ArchiveTreeEncoding is the §10.1 chunk_encoding value naming the bytes
+// ArchiveTree writes: a gzip-compressed tar. The Checkpoint handler refuses
+// a CheckpointStart that declares any other encoding, because the manifest
+// the gateway writes records the declared value and an operator selects the
+// decoder from it (§4.4 "MinIO object key logging for manual recovery").
+const ArchiveTreeEncoding = "tar.gz"
+
 // ArchiveTree writes a gzip-compressed tar bundling several roots under
 // their prefixes to w and returns the number of compressed bytes
 // written. It is the multi-root counterpart of Archive: the §4.4

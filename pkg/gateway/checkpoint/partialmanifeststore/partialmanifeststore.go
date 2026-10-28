@@ -101,6 +101,9 @@ type Record struct {
 	// this manifest, captured at intent-row INSERT.
 	ChunkSizeBytes int64
 	// ChunkEncoding is the wire encoding the adapter wrote chunks with.
+	// Put maps an empty value to tar.gz, the encoding the only producer
+	// (workspace.ArchiveTree) writes, and the column default agrees
+	// (migration 0193).
 	ChunkEncoding ChunkEncoding
 	// ChunkCount is the number of chunks committed (highest {n} + 1),
 	// initialised to 0 at intent-row INSERT and updated monotonically by
@@ -354,7 +357,7 @@ func normalise(r *Record) error {
 		return fmt.Errorf("partialmanifeststore: chunk_object_key_prefix is required")
 	}
 	if r.ChunkEncoding == "" {
-		r.ChunkEncoding = ChunkEncodingTar
+		r.ChunkEncoding = ChunkEncodingTarGz
 	}
 	if !r.ChunkEncoding.IsValid() {
 		return fmt.Errorf("partialmanifeststore: invalid chunk_encoding %q", r.ChunkEncoding)

@@ -150,7 +150,7 @@ func (r *Resolver) Resolve(ctx context.Context, tenantID, sessionID, checkpointI
 	}
 	encoding := rec.ChunkEncoding
 	if encoding == "" {
-		encoding = partialmanifeststore.ChunkEncodingTar
+		encoding = partialmanifeststore.ChunkEncodingTarGz
 	}
 
 	// (1) List objects under the chunk prefix and verify contiguity of the

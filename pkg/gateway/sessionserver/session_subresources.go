@@ -390,7 +390,7 @@ func (s *Server) streamChunkedWorkspace(w http.ResponseWriter, r *http.Request, 
 	}
 	encoding := rec.ChunkEncoding
 	if encoding == "" {
-		encoding = partialmanifeststore.ChunkEncodingTar
+		encoding = partialmanifeststore.ChunkEncodingTarGz
 	}
 
 	scoped := blobstore.NewTenantScoped(tenantID, s.blobs)

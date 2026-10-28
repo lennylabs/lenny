@@ -243,6 +243,7 @@
       "title": "Event / Checkpoint Store",
       "spec_file": "spec/04_system-components.md",
       "tests": [
+        "tests/tier3_contract/adapter_chunk_encoding/chunk_encoding_wire_test.go",
         "pkg/checkpoint/checkpoint_test.go::TestAllLevelsIsExhaustive",
         "pkg/checkpoint/checkpoint_test.go::TestConsistencyForLevel",
         "pkg/checkpoint/checkpoint_test.go::TestAllTriggersIsExhaustive",
@@ -785,6 +786,7 @@
       "title": "Role and Gateway RPC Contract",
       "spec_file": "spec/04_system-components.md",
       "tests": [
+        "tests/tier3_contract/adapter_chunk_encoding/chunk_encoding_wire_test.go",
         "pkg/gateway/session/executor/pod_sealed_test.go::TestPodExecutorStreamEndWhileSealedIsARefusal_spec_4_7_1",
         "pkg/gateway/sessionserver/suspension_internal_test.go::TestSealMarksTheBindingDuringTheSealCall_spec_4_7_1",
         "pkg/gateway/sessionserver/unseal_inflight_internal_test.go::TestUnsealInFlightStreamEndIsNotARefusal_spec_4_7_1",
@@ -2973,6 +2975,7 @@
       "title": "Gateway Horizontal Scaling",
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
+        "tests/tier3_contract/adapter_chunk_encoding/chunk_encoding_wire_test.go",
         "tests/tier2_component/stores/checkpoint_encoding_roundtrip_test.go",
         "tests/tier0_static/claim_register_test.go::TestClaimRegisterSaysWhatTheSpecificationRequires",
         "tests/tier0_static/claim_register_test.go::TestClaimRegisterRecordsPerSessionAddressingOfCredentialsAndRestore",
