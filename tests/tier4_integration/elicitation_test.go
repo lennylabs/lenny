@@ -228,8 +228,9 @@ func TestMCPElicitationChain(t *testing.T) {
 	}
 }
 
-// spec: 9.2 (url-mode elicitation provenance controls), 8.5 line 559
-// (F-8.5.13 request_elicitation schema requirement)
+// spec: 9.2 (url-mode elicitation provenance controls), 8.5 (Delegation
+// Tools, lenny/request_elicitation schema: F-8.5.13 request_elicitation
+// schema requirement)
 // diagnosis: the §9.2 url-mode provenance controls did not behave as
 //
 //	specified through the real cmd/lenny-gateway binary. A

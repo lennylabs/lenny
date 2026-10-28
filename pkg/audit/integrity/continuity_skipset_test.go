@@ -115,7 +115,8 @@ func TestAuditTenantsExcludesDeletionSkipSet(t *testing.T) {
 		}
 	})
 
-	// spec: 12.3 line 103 (split billing/audit Postgres)
+	// spec: 12.3 (Postgres HA Requirements: "Separate Postgres for write-heavy
+	// paths (Tier 3)", split billing/audit Postgres)
 	// The skip-set MUST resolve from the control-plane pool, not the
 	// ledger pool. Under the §12.3 Tier-3 topology the ledger instance's
 	// tenants table carries no deletion state, so reading the skip-set

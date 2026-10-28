@@ -97,10 +97,10 @@ func durableStartupHookFixture(t *testing.T, ctx context.Context, pool *pgxpool.
 	return cfg, upgradeSvc, driftSvc, driftStore
 }
 
-// spec: 25.8 line 3508 (new pod self-advances OpsRoll->CRDUpdate), 25.8
-// line 3511 (ops_healthy heartbeat), 25.10 line 3788 (write
-// bootstrap_seed_snapshot_target on new-pod startup), 25.10 line 3789
-// (promote target -> live at Verification completion)
+// spec: 25.8 (Platform Lifecycle Management, Upgrade State Machine, Phase Details: new pod self-advances
+// OpsRoll->CRDUpdate; ops_healthy heartbeat), 25.10 (Configuration Drift Detection, Snapshot Validation: write
+// bootstrap_seed_snapshot_target on new-pod startup; promote target -> live
+// at Verification completion)
 //
 // diagnosis: a failure means the production §25.8/§25.10 OpsRoll startup
 // hook does not drive the heartbeat, the durable target-snapshot write, and

@@ -10,21 +10,29 @@ import (
 	"testing"
 )
 
-// installMigrationGuard extracts the migration_guard function of
-// install.sh, from its definition through the end marker.
+// installMigrationGuard extracts the migration guard of install.sh, its
+// globals and helpers included, from the begin marker through the end
+// marker.
 func installMigrationGuard(t *testing.T) string {
+	t.Helper()
+	return installScriptSection(t, "# begin migration_guard", "# end migration_guard")
+}
+
+// installScriptSection returns the part of install.sh from the line
+// holding the begin marker up to the end marker.
+func installScriptSection(t *testing.T, begin, end string) string {
 	t.Helper()
 	b, err := os.ReadFile("install.sh")
 	if err != nil {
 		t.Fatalf("read install.sh: %v", err)
 	}
 	s := string(b)
-	start := strings.Index(s, "migration_guard() {")
-	end := strings.Index(s, "# end migration_guard")
-	if start < 0 || end < 0 || end < start {
-		t.Fatalf("install.sh: migration_guard not found (start=%d end=%d)", start, end)
+	start := strings.Index(s, begin)
+	stop := strings.Index(s, end)
+	if start < 0 || stop < 0 || stop < start {
+		t.Fatalf("install.sh: section %q..%q not found (start=%d end=%d)", begin, end, start, stop)
 	}
-	return s[start:end]
+	return s[start:stop]
 }
 
 // TestInstallMigrationGuardCallsPrecedeTheMigrateJob pins the guard's
@@ -76,6 +84,7 @@ case "$*" in
   *"SELECT version, dirty FROM schema_migrations"*)
     [[ "${STUB_FAIL:-}" == "row" ]] && { echo "stub kubectl: exec failed" >&2; exit 1; }
     if [[ -n "${STUB_ROW}" ]]; then printf "%s\n" "${STUB_ROW}"; fi ;;
+  *"get configmap lenny-e2e-migrations --ignore-not-found"*) ;;
   *) echo "stub kubectl: unexpected $*" >&2; exit 3 ;;
 esac
 `
@@ -179,6 +188,11 @@ esac
 				t.Fatalf("the guard issued no kubectl call: %v", err)
 			}
 			for _, line := range strings.Split(strings.TrimSpace(string(log)), "\n") {
+				// The content check reads its record from a ConfigMap, a
+				// read outside the database.
+				if strings.HasPrefix(line, "--context kind-lenny-e2e -n lenny-system get configmap lenny-e2e-migrations ") {
+					continue
+				}
 				if !strings.HasPrefix(line, "--context kind-lenny-e2e -n lenny-system exec deploy/lenny-postgres -- sh -c ") {
 					t.Errorf("unexpected kubectl call %q", line)
 				}

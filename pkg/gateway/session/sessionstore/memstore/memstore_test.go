@@ -758,7 +758,8 @@ func TestDeleteByTenantIdempotent_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: 8.3 lines 472, 488 — the credential-origin session id records the
+// spec: 8.3 (Delegation Policy and Lease, Delegation Lease: "Credential pool identity in multi-hop `inherit` chains")
+// — the credential-origin session id records the
 // origin credential pool a `credentialPropagation: inherit` hop draws from.
 // The memstore is the §17.4 embedded backend, so the field must survive both
 // a Create/Get round-trip and an ExportState/ImportState snapshot cycle for a

@@ -1,0 +1,2 @@
+// spec: 25.8 line 3508 (self-advance), 25.8
+// line 3511 (heartbeat), 25.10 lines 3788-3789

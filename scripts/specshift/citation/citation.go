@@ -203,6 +203,9 @@ func (l Located) String() string {
 func parseAt(joined string, loc []int) (Citation, int, bool) {
 	var c Citation
 	c.Section = group(joined, loc, headSection)
+	if bare := group(joined, loc, headBare); bare != "" {
+		c.Section = bare
+	}
 	if path := group(joined, loc, headFile); path != "" {
 		c.File = normalizePath(path)
 	}
@@ -427,11 +430,14 @@ func nestedRef(joined string, loc []int) int {
 	if at < 0 || loc[at] < 0 {
 		return -1
 	}
-	found := refExpr.FindStringIndex(joined[loc[at]:loc[at+1]])
-	if found == nil {
-		return -1
+	run := joined[loc[at]:loc[at+1]]
+	if found := refExpr.FindStringIndex(run); found != nil {
+		return loc[at] + found[0]
 	}
-	return loc[at] + found[0]
+	if found := bareTailExpr.FindStringSubmatchIndex(run); found != nil {
+		return loc[at] + found[2]
+	}
+	return -1
 }
 
 // consumeMembers extends the member list from pos over every gloss and every
@@ -553,7 +559,7 @@ func nextMember(joined string, pos, limit int) (int, Member, bool) {
 		return pos, Member{}, false
 	}
 	text := memberExpr.FindString(joined[at:limit])
-	if text == "" {
+	if text == "" || continuesAsSection(joined, at+len(text)) {
 		return pos, Member{}, false
 	}
 	m, ok := parseMember(render(text))
@@ -561,6 +567,16 @@ func nextMember(joined string, pos, limit int) (int, Member, bool) {
 		return pos, Member{}, false
 	}
 	return at + len(text), m, true
+}
+
+// continuesAsSection reports whether the digits ending at end are followed by a
+// dot and a further digit, which makes them the first component of a dotted
+// section number rather than a line number. A spec annotation lists a cited
+// line and then a further section, as in a bare citation followed by `, 6.2`,
+// and reading the `6` as a second member would report it against the first
+// section and convert the section reference behind it into orphan digits.
+func continuesAsSection(joined string, end int) bool {
+	return end+1 < len(joined) && joined[end] == '.' && joined[end+1] >= '0' && joined[end+1] <= '9'
 }
 
 // parseMember reads a single line number or a range into its endpoints.

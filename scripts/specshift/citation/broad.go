@@ -82,11 +82,22 @@ const (
 	broadMemberList = broadMember + `(?:` + broadSeparator + `+` + broadMember + `)*`
 )
 
+// broadBare is the bare spelling's head: the form's bare section number with
+// the keyword standing directly behind it. It carries no adjacency run, because
+// a bare dotted number several words ahead of a line-number token is a version
+// or a ratio as often as it is a section, and the predicate selecting those
+// would fill the residual with prose. Every bare citation the form reads is
+// selected here, which is the superset relation the residual scan relies on.
+const broadBare = bareSection + sp + `+` + broadKeyword
+
 // broadExpr matches one occurrence of the predicate over joined text. The
 // colon branch stands directly against the reference, as the form's own colon
-// spelling does, and the keyword branch sits behind the adjacency run.
+// spelling does, and the keyword branch sits behind the adjacency run. The
+// bare branch reads the dotted section number written with no section sign.
 var broadExpr = regexp.MustCompile(
-	broadReference + `(?:` + `:` + joinClass + `?` + `|` + broadAdjacency + broadKeyword + `)` + broadMemberList,
+	`(?:` + broadBare + `|` +
+		broadReference + `(?:` + `:` + joinClass + `?` + `|` + broadAdjacency + broadKeyword + `)` +
+		`)` + broadMemberList,
 )
 
 // FindBroad returns every occurrence of the broad predicate in content, in

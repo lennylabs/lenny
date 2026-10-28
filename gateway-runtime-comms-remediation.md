@@ -3835,10 +3835,15 @@ other test in that binary.
     deleted at cleanup. No test keeps a private control plane, because the degraded-mode test faults only a
     second client and leaves the API server running. The package fell from 157.4 s to 17.7 s. The fix
     filed T-17.4.34 (the citation gates miss the `N.M line L` spelling).
-  - [ ] **T-17.4.34** (Low): the line-citation gates do not recognize the bare `N.M line L` spelling; 22
+  - [x] **T-17.4.34** (Low): the line-citation gates do not recognize the bare `N.M line L` spelling; 22
     `// spec:` annotations in 10 Go files use it and none is in the ratchet baseline.
-  - [ ] **T-17.4.35** (Low): component-test directories may lack a `tests/change-graph.json` key, so `--since` never
+    Fixed on `fix/test-infra-gaps`: the shared citation grammar and the residual predicate read the bare
+    spelling, and the 56 citations it found in 18 files were rewritten to heading citations, so the ratchet
+    baseline stays empty.
+  - [x] **T-17.4.35** (Low): component-test directories may lack a `tests/change-graph.json` key, so `--since` never
     selects them on their own changes. Survey every `tests/tier*/` directory and add a `validate-maps` check. Direct fix.
+    Fixed on `fix/test-infra-gaps`: 104 of 115 tier test directories had no key and each now has one, and
+    `validate-maps` fails on a tracked test directory under `tests/tier*/` that no glob key covers.
   - [ ] **T-17.4.25** (Info): `cmd/lenny-gateway` starts one in 5 tests (about 31 s of 86.4 s). It took
     109.1 s in a scoped unit-tier run on 2026-10-27, the slowest of that run.
   - [x] **T-17.4.29** (Medium): parallel implementation worktrees share the one `lenny-e2e` kind cluster,
@@ -3850,9 +3855,12 @@ other test in that binary.
     Fixed on `fix/t-17-4-29`: `install.sh` refuses a dirty or ahead database before migrating
     (`LENNY_SKIP_MIGRATION_GUARD=1` overrides), and `tests/testinfra/README.md` documents the step-back
     and reset procedures.
-  - [ ] **T-17.4.31** (Low): the T-17.4.29 migration guard compares version numbers only, so two branches
+  - [x] **T-17.4.31** (Low): the T-17.4.29 migration guard compares version numbers only, so two branches
     whose migrations share a number but differ in content (0102's and 0105's 0192) pass it on the shared
     database. Record the applied migration's name or hash and refuse a mismatch.
+    Fixed on `fix/test-infra-gaps`: `install.sh` records each applied migration's sha256 and file name in the
+    `lenny-e2e-migrations` ConfigMap after a migrate, and the guard refuses a recorded migration whose content
+    differs from the branch's file of the same number. A tier-0 test fails on duplicate migration numbers.
 
 **Direct fixes filed while verifying proposal 0102 (2026-10-27).** Both were found on the shared `lenny-e2e`
 cluster and predate 0102. They are fixed on `fix/kind-kubeconfig-and-t9-podreuse`, which branches from the

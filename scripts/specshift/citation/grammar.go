@@ -64,6 +64,7 @@ func render(s string) string { return strings.ReplaceAll(s, string(joinByte), " 
 // it.
 const (
 	headSection   = "section"
+	headBare      = "bare"
 	headFile      = "file"
 	headQualifier = "qualifier"
 	headMember    = "member"
@@ -121,6 +122,33 @@ var refExpr = regexp.MustCompile(
 	`§` + sp + `*\d+(?:\.\d+)*|(?:spec/)?\d{2}_[A-Za-z0-9][A-Za-z0-9._-]*\.md`,
 )
 
+// bareSection is the section number of the bare spelling: a dotted number of
+// at least two components written with no section sign, as in `N.M line L`.
+// The bare spelling carries no qualifier and no colon branch, so its keyword
+// stands directly behind the number, separated by horizontal whitespace alone.
+//
+// The spelling is read because the tree wrote it. Spec annotations of the form
+// `// spec: N.M line L` stood in Go test files for months while the gates
+// read only the section-sign and path spellings, so none of them was resolved
+// or counted, and a new one passed tier 0. The two components are required
+// because a single integer followed by the keyword is ordinary prose, as in
+// `2 lines 4 and 5`, while a dotted pair standing directly against the keyword
+// and a number is the citation in every occurrence the tree held. The adjacency
+// is required for the same reason: admitting a qualifier between a bare number
+// and the keyword would read a version or a ratio several words ahead of an
+// unrelated line count as a citation.
+const bareSection = `\d+\.\d+(?:\.\d+)*`
+
+// bareTailExpr matches a bare section number standing at the end of a head's
+// sub-element run, directly ahead of the keyword. nestedRef reads it so that a
+// section-sign reference written ahead of a bare citation, with a short
+// parenthetical and a comma between the two, does not take the bare
+// citation's line numbers as its own. Only a tail position is read, because a bare number
+// elsewhere in the run is not followed by the keyword and so heads no citation.
+var bareTailExpr = regexp.MustCompile(
+	`(?:^|[^0-9A-Za-z_.])(` + bareSection + `)` + sp + `+$`,
+)
+
 // headExpr matches the head of a citation: the reference, the optional
 // qualifier, the keyword or the colon standing in for it, and the first member.
 // Every further member is consumed by the scanner in citation.go, which orders
@@ -130,9 +158,16 @@ var refExpr = regexp.MustCompile(
 // a continuation join terminates the citation, so a citation never runs past
 // the end of the comment that carries it.
 var headExpr = regexp.MustCompile(
-	// The reference, by section number with any number of dotted components
-	// or by file path with the spec/ prefix optional.
-	`(?:§` + sp + `*(?P<` + headSection + `>\d+(?:\.\d+)*)|(?:spec/)?(?P<` + headFile + `>\d{2}_[A-Za-z0-9][A-Za-z0-9._-]*\.md))` +
+	// The bare branch first: a dotted section number with no section sign,
+	// the keyword directly behind it, and nothing between the two but
+	// whitespace (see bareSection). It is ordered first only for reading; a
+	// head is the leftmost match, and a bare number never starts at the same
+	// byte as a section sign or a path.
+	`(?:(?P<` + headBare + `>` + bareSection + `)` + sp + `+(?:lines?)` + sp + `+` +
+		`|` +
+		// The reference, by section number with any number of dotted
+		// components or by file path with the spec/ prefix optional.
+		`(?:§` + sp + `*(?P<` + headSection + `>\d+(?:\.\d+)*)|(?:spec/)?(?P<` + headFile + `>\d{2}_[A-Za-z0-9][A-Za-z0-9._-]*\.md))` +
 		// The keyword branch and the colon branch, ordered with the colon
 		// first because only the colon branch stands directly against the
 		// reference.
@@ -164,6 +199,7 @@ var headExpr = regexp.MustCompile(
 		// rather than a pass converting a span carrying an unpaired delimiter
 		// to a single anchor.
 		`(?P<` + headQualifier + `>` + qualifierBody + `)(?:lines?)` + sp + `+` +
+		`)` +
 		`)` +
 		// The first member.
 		`(?P<` + headMember + `>` + memberBody + `)`,

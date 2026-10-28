@@ -498,9 +498,9 @@ func (c *countingRunningState) RunningState(context.Context, string) (map[string
 	return c.state, nil
 }
 
-// spec: 25.10 line 3788 (write bootstrap_seed_snapshot_target early in
-// OpsRoll), 25.10 line 3789 (promote target -> live at Verification
-// completion)
+// spec: 25.10 (Configuration Drift Detection, Snapshot Validation: write
+// bootstrap_seed_snapshot_target early in OpsRoll; promote target -> live at
+// Verification completion)
 //
 // TestWriteTargetSnapshotMakesAgainstTargetResolve_spec_25_10_3788 pins
 // the §25.10 write: before the write, against=target returns

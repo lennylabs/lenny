@@ -860,6 +860,90 @@ done
 # upgrade and proceeds. LENNY_SKIP_MIGRATION_GUARD=1 skips the refusal.
 # The recovery procedures are in tests/testinfra/README.md under "Shared
 # Kind cluster database".
+#
+# golang-migrate records only the version of an applied migration, so two
+# branches whose migrations share a number but differ in content read as
+# equal to it (T-17.4.31). record_migration_manifest therefore records,
+# after each successful migrate, the sha256 and file name of every applied
+# up migration in the ConfigMap lenny-e2e-migrations, together with the
+# Postgres OID of the database it describes. The guard compares each
+# recorded entry at or below the database's version with this branch's
+# file of the same number and refuses a mismatch. The record lives in the
+# cluster rather than in the database, so neither the guard nor the
+# recorder writes to the shared Postgres. A missing record, or one whose
+# OID names a database that was since dropped and recreated, leaves the
+# content unchecked, and the guard logs that.
+# begin migration_guard
+MIGRATION_RECORD_CM=lenny-e2e-migrations
+MIGRATION_PRE_VERSION=0
+MIGRATION_RECORDED=""
+MIGRATION_GUARD_OVERRIDDEN=0
+
+# migration_manifest prints one line per up migration in the tree: the
+# version without zero padding, the sha256 of the file, and the file name.
+migration_manifest() {
+  local f base
+  for f in "${REPO_ROOT}"/migrations/[0-9]*.up.sql; do
+    [[ -e "${f}" ]] || continue
+    base="${f##*/}"
+    printf '%s %s %s\n' "$((10#${base%%_*}))" "$(sha256sum "${f}" | cut -d' ' -f1)" "${base}"
+  done
+}
+
+# migration_database_oid prints the OID of the database the pod's psql
+# connects to, read in a read-only transaction. Dropping and recreating the
+# database (the reset procedure) changes it, which retires a record.
+migration_database_oid() {
+  local psql_ro='PGOPTIONS="-c default_transaction_read_only=on" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc'
+  local out
+  out="$(kc -n lenny-system exec deploy/lenny-postgres -- \
+    sh -c "${psql_ro} \"SELECT oid FROM pg_database WHERE datname = current_database()\"")" || return 1
+  printf '%s' "${out}" | tr -d '[:space:]'
+}
+
+# migration_content_mismatch compares the recorded manifest with this
+# branch's migrations for every recorded version at or below the database
+# version given, and prints one line per version whose content differs.
+# It returns 2 when the record or the database OID cannot be read, so the
+# caller fails closed. It runs in a command substitution, so it reports
+# the entries it trusts on file descriptor 3 rather than through a
+# variable; the guard captures them for the recorder.
+migration_content_mismatch() {
+  local version="$1" record oid recorded_oid recorded branch v sum name branch_line
+  if ! record="$(kc -n lenny-system get configmap "${MIGRATION_RECORD_CM}" --ignore-not-found \
+    -o jsonpath='{.data.databaseOID}{"\n"}{.data.manifest}')"; then
+    return 2
+  fi
+  if [[ -z "${record//[[:space:]]/}" ]]; then
+    log "migration guard: no ${MIGRATION_RECORD_CM} record, so a same-number migration with different content cannot be detected" >&2
+    return 0
+  fi
+  if ! oid="$(migration_database_oid)" || [[ -z "${oid}" ]]; then
+    return 2
+  fi
+  recorded_oid="$(printf '%s\n' "${record}" | head -n 1 | tr -d '[:space:]')"
+  if [[ "${recorded_oid}" != "${oid}" ]]; then
+    log "migration guard: the ${MIGRATION_RECORD_CM} record describes database OID ${recorded_oid:-<none>}, not ${oid}; ignoring it, so migration content is unchecked" >&2
+    return 0
+  fi
+  recorded="$(printf '%s\n' "${record}" | tail -n +2)"
+  branch="$(migration_manifest)"
+  while read -r v sum name; do
+    [[ "${v}" =~ ^[0-9]+$ ]] || continue
+    (( 10#${v} <= 10#${version} )) || continue
+    branch_line="$(printf '%s\n' "${branch}" | awk -v v="$((10#${v}))" '$1 == v { print; exit }')"
+    if [[ -z "${branch_line}" ]]; then
+      printf 'migration %s was applied from %s, which this branch does not carry\n' "${v}" "${name}"
+    elif [[ "${branch_line#* }" != "${sum} ${name}" ]]; then
+      printf 'migration %s was applied from %s (sha256 %s), but this branch carries %s (sha256 %s)\n' \
+        "${v}" "${name}" "${sum:0:12}" "${branch_line##* }" "$(printf '%s' "${branch_line}" | cut -d' ' -f2 | cut -c1-12)"
+    else
+      printf '%s %s %s\n' "${v}" "${sum}" "${name}" >&3
+    fi
+  done <<<"${recorded}"
+  return 0
+}
+
 migration_guard() {
   local procedure='tests/testinfra/README.md, section "Shared Kind cluster database"'
   local highest
@@ -905,6 +989,23 @@ migration_guard() {
     reason+=" Another worktree installed a newer migration. Either merge the integration branch into this"
     reason+=" branch so it carries migration ${version}, or step the database back to ${highest} with"
     reason+=" 'lenny-migrate --break-glass --confirm goto ${highest}' as the step-back procedure in ${procedure} describes."
+  else
+    MIGRATION_PRE_VERSION="$((10#${version}))"
+    local mismatch trusted rc=0
+    trusted="$(mktemp)"
+    mismatch="$(migration_content_mismatch "${version}" 3>"${trusted}")" || rc=$?
+    MIGRATION_RECORDED="$(cat "${trusted}")"
+    rm -f "${trusted}"
+    if (( rc != 0 )); then
+      reason="cannot read the ${MIGRATION_RECORD_CM} record or the database OID to check migration content."
+    elif [[ -n "${mismatch}" ]]; then
+      reason="the shared database carries a migration whose content differs from this branch's file of the same number:"
+      reason+=" $(printf '%s' "${mismatch}" | paste -sd ';' -)."
+      reason+=" Another worktree installed a different migration under the same number. Renumber this branch's"
+      reason+=" migration above the integration branch's highest, or step the database back below the colliding"
+      reason+=" number with the lenny-migrate image of the worktree that installed it, as the step-back procedure"
+      reason+=" in ${procedure} describes."
+    fi
   fi
   if [[ -z "${reason}" ]]; then
     log "migration guard: database at migration ${version}, branch highest ${highest}; migrating"
@@ -913,6 +1014,7 @@ migration_guard() {
   if [[ "${LENNY_SKIP_MIGRATION_GUARD:-}" == "1" ]]; then
     log "migration guard: ${reason}"
     log "migration guard: proceeding because LENNY_SKIP_MIGRATION_GUARD=1"
+    MIGRATION_GUARD_OVERRIDDEN=1
     return 0
   fi
   echo "error: migration guard: ${reason}" >&2
@@ -920,6 +1022,40 @@ migration_guard() {
   return 1
 }
 # end migration_guard
+
+# record_migration_manifest records the migrations the database now
+# carries in the ConfigMap the guard reads. Entries at or below the
+# version the guard found are the recorded entries it verified; entries
+# above it are this branch's files, which the migrate Job just applied. A
+# run the guard let through by override leaves the content unverified, so
+# the record is deleted instead. A failed write also deletes the record,
+# because a stale record would make a later guard compare against content
+# the database does not carry.
+record_migration_manifest() {
+  if [[ "${MIGRATION_GUARD_OVERRIDDEN}" == "1" ]]; then
+    log "migration guard: deleting the ${MIGRATION_RECORD_CM} record because the guard was overridden"
+    kc -n lenny-system delete configmap "${MIGRATION_RECORD_CM}" --ignore-not-found || true
+    return 0
+  fi
+  local oid manifest
+  if ! oid="$(migration_database_oid)" || [[ -z "${oid}" ]]; then
+    log "migration guard: cannot read the database OID; deleting the ${MIGRATION_RECORD_CM} record"
+    kc -n lenny-system delete configmap "${MIGRATION_RECORD_CM}" --ignore-not-found || true
+    return 0
+  fi
+  manifest="$(
+    if [[ -n "${MIGRATION_RECORDED}" ]]; then printf '%s\n' "${MIGRATION_RECORDED}"; fi
+    migration_manifest | awk -v pre="${MIGRATION_PRE_VERSION}" '$1 > pre'
+  )"
+  if ! kc -n lenny-system create configmap "${MIGRATION_RECORD_CM}" \
+    --from-literal=databaseOID="${oid}" --from-literal=manifest="${manifest}" \
+    --dry-run=client -o yaml | kc apply -f -; then
+    log "migration guard: cannot write the ${MIGRATION_RECORD_CM} record; deleting it"
+    kc -n lenny-system delete configmap "${MIGRATION_RECORD_CM}" --ignore-not-found || true
+  fi
+  return 0
+}
+# end record_migration_manifest
 
 log "checking the shared database's migration state"
 migration_guard
@@ -940,6 +1076,7 @@ if ! kc -n lenny-system wait --for=condition=Complete job/lenny-e2e-migrate --ti
   exit 1
 fi
 log "schema migration completed"
+record_migration_manifest
 
 # Create the MinIO artifact bucket. The gateway's MinIO-backed artifact
 # store and its drain-readiness probe expect the bucket to exist; the

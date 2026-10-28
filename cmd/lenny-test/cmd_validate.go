@@ -59,6 +59,7 @@ func runValidateMaps(args []string) int {
 		validateChangeGraphFileExistence(changeGraphPath, root),
 		validateChangeGraphCompleteness(changeGraphPath,
 			filepath.Join(root, changeGraphCoverageBaseline), root),
+		validateTestDirsKeyed(changeGraphPath, root),
 		validateTestFilesMapped(specMapPath, root),
 		validateSpecMapCoverage(specMapPath, exceptionsPath),
 		validateSpecMapTestFiles(specMapPath, exceptionsPath,

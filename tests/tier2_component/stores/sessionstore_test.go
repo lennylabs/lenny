@@ -1116,7 +1116,8 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: 8.3 line 472, 488 — credential_origin_session_id records the
+	// spec: 8.3 (Delegation Policy and Lease, Delegation Lease: "Credential
+	// pool identity in multi-hop `inherit` chains") — credential_origin_session_id records the
 	// origin credential pool a `credentialPropagation: inherit` hop draws
 	// from. The delegation Service stamps the origin (an ancestor id) on an
 	// inherited child; the value must survive a Postgres reload so a later
@@ -1141,7 +1142,8 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: 8.3 line 472, 474 — a self-origin session (independent, deny,
+	// spec: 8.3 (Delegation Policy and Lease, Delegation Lease: "Credential
+	// pool identity in multi-hop `inherit` chains") — a self-origin session (independent, deny,
 	// root, or top-level) carries no explicit origin. The delegation Service
 	// leaves CredentialOriginSessionID empty, which persists as SQL NULL and
 	// the read path COALESCEs back to the empty string. The finalize path

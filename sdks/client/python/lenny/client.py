@@ -330,8 +330,8 @@ class Client:
         session rather than a slot: the path's session identifier names
         the slot the gateway delivers to.
 
-        spec: section 15.1; section 15.4 lines 1725-1737;
-        section 7.2 line 345.
+        spec: section 15.1; section 15.4 (Runtime Adapter Specification, "delivery_receipt acknowledgement schema");
+        section 7.2 (Interactive Session Model, "Delivery receipts").
         """
         if not messages:
             raise ValueError("lenny: send_messages requires at least one message")

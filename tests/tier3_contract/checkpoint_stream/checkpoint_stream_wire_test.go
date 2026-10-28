@@ -109,7 +109,9 @@ func assertFields(t *testing.T, md protoreflect.MessageDescriptor, want []wantFi
 // and adapter select these arms by wire number, so a renumber breaks binary
 // compatibility silently without this pin.
 //
-// spec: 10.1 lines 130-132, 11.2 line 35, 4.7, 5.2 (per-slot addressing)
+// spec: 10.1.7 (preStop Hook Drain, "Intent-row-first ordering (orphan prevention)"),
+// 11.2 (Budgets and Quotas, "Storage quota enforcement mechanism"), 4.7, 5.2 (per-slot
+// addressing)
 // diagnosis: The streaming Checkpoint wire contract diverged from the
 // gateway-driven grant/confirm protocol. An arm was renumbered, renamed, or
 // dropped, CheckpointGrant.headers stopped being a map, or CheckpointStart
@@ -181,7 +183,8 @@ func TestCheckpointStreamMessageContract(t *testing.T) {
 // dropped case) would deliver the adapter a different trigger than the
 // gateway intended.
 //
-// spec: 10.1 lines 130-132, 11.2 line 35, 4.7
+// spec: 10.1.7 (preStop Hook Drain, "Intent-row-first ordering (orphan prevention)"),
+// 11.2 (Budgets and Quotas, "Storage quota enforcement mechanism"), 4.7
 // diagnosis: The CheckpointStart.trigger enum no longer round-trips through
 // checkpoint.Trigger. The gateway's duration-histogram label and the
 // adapter's retry-budget selection would key on different triggers. Re-check
@@ -315,7 +318,8 @@ var t4SignedHeaders = map[string]string{
 // before the gateway grants, replays every signed header byte-for-byte on
 // the PUT, and closes with Summary as the terminal frame.
 //
-// spec: 10.1 lines 130-132, 11.2 line 35, 4.7
+// spec: 10.1.7 (preStop Hook Drain, "Intent-row-first ordering (orphan prevention)"),
+// 11.2 (Budgets and Quotas, "Storage quota enforcement mechanism"), 4.7
 // diagnosis: The adapter side of the Checkpoint stream broke a §10.1
 // protocol invariant: it emitted a ChunkReady before the Probe, PUT a chunk
 // before receiving its grant, dropped a signed SigV4 header on the PUT (which
@@ -422,7 +426,8 @@ loop:
 // surfaces as a terminal CheckpointFailed carrying that HTTP status and error
 // code. This is the failure a dropped SigV4 header produces on a T4 backend.
 //
-// spec: 10.1 lines 130-132, 11.2 line 35, 4.7
+// spec: 10.1.7 (preStop Hook Drain, "Intent-row-first ordering (orphan prevention)"),
+// 11.2 (Budgets and Quotas, "Storage quota enforcement mechanism"), 4.7
 // diagnosis: A checkpoint PUT missing a signed SigV4 header did not surface
 // the store's SignatureDoesNotMatch through a CheckpointFailed frame, so the
 // gateway cannot classify the rejection. Re-check pkg/adapter uploadChunk /
@@ -726,7 +731,8 @@ func newGatewayHarness(t *testing.T, sa *scriptedAdapter) *gatewayHarness {
 // gateway sent in Start aborts the attempt with stream_truncated before any
 // capability is signed and before any chunk quota is consumed.
 //
-// spec: 10.1 lines 130-132, 11.2 line 35, 4.7
+// spec: 10.1.7 (preStop Hook Drain, "Intent-row-first ordering (orphan prevention)"),
+// 11.2 (Budgets and Quotas, "Storage quota enforcement mechanism"), 4.7
 // diagnosis: The gateway upload driver signed a capability for, or ran quota
 // arithmetic against, an out-of-range chunk declaration instead of aborting
 // with stream_truncated first. A pod could then present a chunk larger than
@@ -784,7 +790,8 @@ func TestCheckpointStreamRejectsOutOfRangeChunk(t *testing.T) {
 // a larger object, and aborts the attempt rather than finalising a manifest
 // whose byte accounting the pod inflated past its signed capability.
 //
-// spec: 10.1 lines 130-132, 11.2 line 35, 4.7
+// spec: 10.1.7 (preStop Hook Drain, "Intent-row-first ordering (orphan prevention)"),
+// 11.2 (Budgets and Quotas, "Storage quota enforcement mechanism"), 4.7
 // diagnosis: The gateway upload driver accepted a committed chunk whose
 // Stat-confirmed size exceeded the Content-Length it signed, so a pod could
 // write more bytes than its capability granted without aborting. Re-check
@@ -820,7 +827,8 @@ func TestCheckpointStreamAbortsOnLengthMismatch(t *testing.T) {
 // path dead, so a slow-object-store retry hits an expired-signature 403 rather
 // than requesting a fresh grant.
 //
-// spec: 4.4 lines 261-264 (grant re-mint on expiry), 13.2 (capability expiry)
+// spec: 4.4.5 (Checkpoint Storage Failure and Eviction Fallback, "Checkpoint
+// storage failure": grant re-mint on expiry), 13.2 (capability expiry)
 // diagnosis: The gateway upload driver minted a CheckpointGrant without
 // expires_at, so the adapter cannot tell when the presigned PUT capability has
 // expired and never re-mints. A checkpoint PUT retried past the capability TTL

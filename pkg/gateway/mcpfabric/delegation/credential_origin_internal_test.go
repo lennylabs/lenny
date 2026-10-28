@@ -9,7 +9,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
-// spec: 8.3 lines 472, 488, 474 — credentialOriginID resolves the origin
+// spec: 8.3 (Delegation Policy and Lease, Delegation Lease: "Credential pool identity in multi-hop `inherit` chains")
+// — credentialOriginID resolves the origin
 // credential pool stamped on a delegated child. A `credentialPropagation:
 // inherit` hop forwards the parent's origin so contiguous inherit hops share
 // one origin pool, traced back to the last `independent` break or the root.

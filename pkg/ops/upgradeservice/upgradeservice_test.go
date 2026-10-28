@@ -419,7 +419,8 @@ func TestUpgradeProgressedCarriesPlatformScope(t *testing.T) {
 	}
 }
 
-// spec: 25.8 line 3508 (new pod self-advances OpsRoll -> CRDUpdate)
+// spec: 25.8 (Platform Lifecycle Management, Upgrade State Machine, Phase Details: new pod
+// self-advances OpsRoll -> CRDUpdate)
 //
 // TestAdvanceOpsRollSelfAdvancesFromOpsRoll_spec_25_8_3508 pins the
 // new-pod self-advance: AdvanceOpsRoll moves an upgrade at OpsRoll to
@@ -464,7 +465,8 @@ func TestAdvanceOpsRollRejectsNonOpsRoll_spec_25_8_3508(t *testing.T) {
 	}
 }
 
-// spec: 25.10 line 3789 (promote target -> live at Verification completion)
+// spec: 25.10 (Configuration Drift Detection, Snapshot Validation: promote target ->
+// live at Verification completion)
 //
 // TestProceedPromotesTargetAtVerificationCompletion_spec_25_10_3789 pins
 // that the Verification->Complete proceed promotes the target snapshot
