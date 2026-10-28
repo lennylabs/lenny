@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -54,7 +53,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 	"github.com/lennylabs/lenny/tests/testinfra/stackkey"
 	tokensvc "github.com/lennylabs/lenny/tests/testinfra/tokenservice"
 )
@@ -744,10 +742,9 @@ func nonGDPRAuditRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ten
 // deletion lifecycle), §8.10 (Delegation Tree Recovery), §10.2
 // (Authentication), §27.3.1 (OIDC cookie-to-MCP-bearer exchange).
 func TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	ts := tokensvc.StartWith(t, "--postgres-dsn="+pg.DSN)
 	args := deletionGatewayArgs(pg.DSN, rd.Addr, writeTenancyTrustKey(t), ts.BaseURL())

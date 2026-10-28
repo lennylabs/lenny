@@ -62,6 +62,7 @@ import (
 // regression the handler-tier fakes cannot catch because they never exercise
 // the live composition root against real backends failing together.
 func TestOpsDualStoreDegradedInMemoryFallback(t *testing.T) {
+	t.Parallel()
 	opsprocess.SkipUnlessAvailable(t)
 
 	pg := containers.StartPostgres(t, containers.PostgresOptions{

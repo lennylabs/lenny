@@ -23,7 +23,6 @@ package tier4_integration_test
 import (
 	"bytes"
 	"context"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -42,7 +41,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/quota/storagequota/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // releaseInfra bundles the real stores the checkpoint-release paths run against.
@@ -57,9 +55,7 @@ type releaseInfra struct {
 
 func newReleaseInfra(t *testing.T) *releaseInfra {
 	t.Helper()
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	rdb := containers.StartRedis(t, containers.RedisOptions{})
 	mio := containers.StartMinIO(t, containers.MinIOOptions{})
 
@@ -212,6 +208,7 @@ func seedTerminalSession(t *testing.T, in *releaseInfra, tenant, sessionID strin
 // confirmed-chunk bytes, reservation headroom, or the MinIO objects leak
 // after the checkpoint is released.
 func TestCheckpointReleaseArmsReturnStorageToBaseline(t *testing.T) {
+	t.Parallel()
 	in := newReleaseInfra(t)
 	ctx := context.Background()
 
@@ -327,6 +324,7 @@ func TestCheckpointReleaseArmsReturnStorageToBaseline(t *testing.T) {
 // double-decremented the reservation or the chunk bytes, driving the
 // counter below baseline.
 func TestCheckpointBackstopConcurrentSweepDecrementsOnce(t *testing.T) {
+	t.Parallel()
 	in := newReleaseInfra(t)
 	ctx := context.Background()
 

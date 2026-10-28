@@ -55,7 +55,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/opsprocess"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // scopeLiveBearerHMACKeyFile mirrors the on-disk format
@@ -149,11 +148,10 @@ func rpcCallToolsCall(t *testing.T, baseURL, bearer, toolName string, args map[s
 // none of them would catch a regression in the OIDC auth middleware ->
 // Principal.Scopes -> MCP-boundary bridge this test exercises end to end.
 func TestOpsMCPToolsCallScopeGateRejectsLiveBearerE2E(t *testing.T) {
+	t.Parallel()
 	opsprocess.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 
 	const keyID = "tier4-scope-probe-key"

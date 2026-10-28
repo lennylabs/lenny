@@ -19,7 +19,6 @@ package tier4_integration_test
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -28,8 +27,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	upgradepgstore "github.com/lennylabs/lenny/pkg/ops/upgradeservice/pgstore"
 	"github.com/lennylabs/lenny/pkg/upgrade"
-	"github.com/lennylabs/lenny/tests/testinfra/containers"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // fixedRunningState is a §25.10 running-state reader returning a static
@@ -69,10 +66,9 @@ func (f fixedRunningState) RunningState(context.Context, string) (map[string]any
 // row (against=target resolves to DRIFT_NO_TARGET_SNAPSHOT and the row is
 // gone) while leaving the live snapshot row untouched.
 func TestUpgradeRollbackDeletesTargetSnapshotDurable(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	pool := pg.Pool
 
 	// Seed the live snapshot so the drift service has a pre-upgrade

@@ -25,6 +25,7 @@ import (
 )
 
 func TestGatewayRedisBreakerE2E(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
 	rd := containers.StartRedis(t, containers.RedisOptions{})
@@ -76,6 +77,7 @@ func TestGatewayRedisBreakerE2E(t *testing.T) {
 // acquires its coordination lease in Redis within a sweep interval,
 // held by the gateway replica.
 func TestGatewayRedisCoordinationE2E(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
 	rd := containers.StartRedis(t, containers.RedisOptions{})

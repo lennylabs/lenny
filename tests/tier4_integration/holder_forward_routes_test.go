@@ -965,6 +965,7 @@ func awaitForwardListener(t *testing.T, addr string) {
 // NewHolderForwardHandler in pkg/gateway/sessionserver and the forward
 // listener wiring in cmd/lenny-gateway/holder_forward_listener.go.
 func TestForwardedCrossTenantTerminateIsNotFound_spec_29_3(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	m := gatewaypki.Mint(t)

@@ -112,6 +112,7 @@ func bootstrapEchoSession(t *testing.T, do func(method, path, roles string, body
 // dial or the flag wiring; this exercises the deployer-facing contract
 // end to end.
 func TestExternalInterceptorModifyThroughGateway_spec_4_8(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
 	const redacted = "<redacted by external interceptor>"
@@ -199,6 +200,7 @@ func bootstrapEchoTenant(t *testing.T, do func(method, path, roles string, body 
 // deployer-facing interceptor contract; a tier-1 in-process fake cannot
 // catch a regression in the subprocess dial or the wire round-trip.
 func TestExternalInterceptorModifyImmutableTenantThroughGateway_spec_4_8(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
 	// The default external-interceptor priority is 500, so the interceptor
@@ -284,6 +286,7 @@ func TestExternalInterceptorModifyImmutableTenantThroughGateway_spec_4_8(t *test
 // or an audit-fidelity defect on the deployer-facing interceptor
 // contract.
 func TestExternalInterceptorRejectThroughGateway_spec_4_8(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
 	const reason = "blocked by external interceptor"

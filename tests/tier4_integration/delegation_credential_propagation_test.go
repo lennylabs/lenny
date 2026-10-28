@@ -76,6 +76,7 @@ import (
 // was credentialed from the deny runtime's supportedProviders instead of
 // being rejected with CREDENTIAL_POOL_EXHAUSTED.
 func TestDenyChildReceivesNoCredentialAtFinalize(t *testing.T) {
+	t.Parallel()
 	envtest.SkipUnlessAvailable(t)
 	ctx := context.Background()
 

@@ -20,12 +20,10 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"path/filepath"
 	"testing"
 
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/opsprocess"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // TestOpsServiceRemediationLockPersistenceE2E boots cmd/lenny-ops against
@@ -52,11 +50,10 @@ import (
 // composition root fed the required-key posture from something other than
 // --platform-tier, such as production mode, which is off here.
 func TestOpsServiceRemediationLockPersistenceE2E(t *testing.T) {
+	t.Parallel()
 	opsprocess.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 
 	// §25.16: the deployment tier and stable installation UUID the /me

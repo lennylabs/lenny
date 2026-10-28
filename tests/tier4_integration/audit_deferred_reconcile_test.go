@@ -27,14 +27,11 @@ package tier4_integration_test
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
-	"github.com/lennylabs/lenny/tests/testinfra/containers"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // spec: §25.9 (Degraded-mode write semantics) — "Deferred writes are
@@ -60,9 +57,7 @@ func TestAuditDeferredReconcile(t *testing.T) {
 
 	// Live stack: a real Postgres container with the production
 	// migrations, including 0125_audit_log_deferred_writes.
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 
 	const tenant = "acme"
 	if _, err := pg.Pool.Exec(ctx,

@@ -22,7 +22,6 @@ package tier4_integration_test
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -31,8 +30,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	upgradepgstore "github.com/lennylabs/lenny/pkg/ops/upgradeservice/pgstore"
 	"github.com/lennylabs/lenny/pkg/upgrade"
-	"github.com/lennylabs/lenny/tests/testinfra/containers"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // spec: §25.10 ("At the end of an upgrade
@@ -65,10 +62,9 @@ import (
 // row now carries the target's desired state and provenance, and the
 // target row is gone so against=target returns DRIFT_NO_TARGET_SNAPSHOT).
 func TestUpgradePromotesTargetSnapshotToLiveDurable(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	pool := pg.Pool
 
 	// The three states under test, keyed on one pool's minWarm so each diff

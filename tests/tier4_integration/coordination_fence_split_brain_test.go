@@ -25,7 +25,6 @@ package tier4_integration_test
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -37,7 +36,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/coordfixture"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // spec: §10.1 (coordination_generation split-brain fence; coordinator handoff
@@ -54,9 +52,7 @@ func TestCoordinationSplitBrainFenceAcrossTwoReplicas_spec_10_1(t *testing.T) {
 	t.Parallel()
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	leases := leasestore.New(rd.Client)
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	sessions := sessionpg.New(pg.Pool)
 	ctx := context.Background()
 
@@ -181,9 +177,7 @@ func TestCoTenantSessionHandoffIsNotFencedByItsNeighbour_spec_10_1_2(t *testing.
 	t.Parallel()
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	leases := leasestore.New(rd.Client)
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	sessions := sessionpg.New(pg.Pool)
 	ctx := context.Background()
 

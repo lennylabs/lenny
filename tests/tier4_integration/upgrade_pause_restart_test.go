@@ -17,7 +17,6 @@ package tier4_integration_test
 
 import (
 	"context"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -25,8 +24,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	upgradepgstore "github.com/lennylabs/lenny/pkg/ops/upgradeservice/pgstore"
 	"github.com/lennylabs/lenny/pkg/upgrade"
-	"github.com/lennylabs/lenny/tests/testinfra/containers"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // mutableClock is a hand-advanced clock so the test can simulate an
@@ -76,10 +73,9 @@ func (c *mutableClock) advance(d time.Duration) {
 // pause horizon and asserts the phase does not auto-resume, then confirms
 // an explicit proceed resumes the state machine from the persisted phase.
 func TestUpgradePauseSurvivesLeaderHandoff(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	pool := pg.Pool
 
 	clock := &mutableClock{now: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)}

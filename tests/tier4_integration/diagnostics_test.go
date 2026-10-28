@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"path/filepath"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -28,7 +27,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/opsprocess"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // TestDiagnosticsDevOpsJourneyAgainstLiveStoresE2E boots cmd/lenny-ops
@@ -47,11 +45,10 @@ import (
 // connection was configured — any of which shows the diagnostic endpoints
 // diverged from §25.6 when driven against real backends rather than a stub.
 func TestDiagnosticsDevOpsJourneyAgainstLiveStoresE2E(t *testing.T) {
+	t.Parallel()
 	opsprocess.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	ctx := context.Background()
 

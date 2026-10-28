@@ -225,6 +225,7 @@ func assertSigV4HeaderBinding(t *testing.T, store sigV4Putter, tenant, keyPrefix
 // header; on GCS/Azure it is a chunk that landed under a scope the
 // bucket/container default was supposed to deny.
 func TestCheckpointCapabilityEnforcement(t *testing.T) {
+	t.Parallel()
 	// A KMS key on the container lets a valid PUT replay the signed
 	// SSE-KMS headers and land, so the stripped-header assertion contrasts
 	// against a known-good baseline rather than an always-failing one.

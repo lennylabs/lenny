@@ -22,7 +22,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -35,8 +34,6 @@ import (
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	correlationmw "github.com/lennylabs/lenny/pkg/gateway/middleware/correlation"
 	corr "github.com/lennylabs/lenny/pkg/observability/correlation"
-	"github.com/lennylabs/lenny/tests/testinfra/containers"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // spec: 25.1 (agent identity and correlation), 11.7 (audit chain / OCSF)
@@ -69,9 +66,7 @@ func TestAgentCorrelationHeadersPropagateToPersistedAuditAndOCSF(t *testing.T) {
 	// migrations. The admin mutation's audit event is committed to the
 	// platform tenant's §11.7 hash chain, so that chain's genesis row
 	// and audit sequence must exist before the first Append.
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	if _, err := pg.Pool.Exec(ctx,
 		`INSERT INTO tenants (id, genesis_nonce) VALUES ($1, '\x00')`, chainTenant); err != nil {
 		t.Fatalf("seed platform tenant: %v", err)

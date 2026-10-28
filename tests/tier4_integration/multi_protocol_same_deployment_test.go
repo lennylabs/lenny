@@ -51,6 +51,7 @@ import (
 // fidelity suites cannot see this because they wire a separate
 // httptest server per protocol rather than one running gateway.
 func TestMultiProtocolSameDeploymentSharedState(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 	base := gw.BaseURL()

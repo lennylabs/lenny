@@ -16,9 +16,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/kms"
-	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // keySetReplicaArgs returns the flags of one replica over Postgres and the
@@ -42,10 +40,9 @@ func keySetReplicaArgs(pgDSN, keyFile string) []string {
 // impersonation mint does not sign through it. An admission on replica C
 // means a gateway accepts a token signed by a key outside its key set.
 func TestGatewayMintedBearerVerifiesOnPeerReplica_spec_10_2(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	dir := t.TempDir()
 	sharedKey := filepath.Join(dir, "master.key")
 	otherKey := filepath.Join(dir, "other-master.key")

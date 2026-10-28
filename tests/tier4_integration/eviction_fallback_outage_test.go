@@ -48,7 +48,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/evictionstatestore"
 	evictionpg "github.com/lennylabs/lenny/pkg/gateway/storage/evictionstatestore/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // liveMinIOUploader is a §4.4 ContextObjectUploader backed by
@@ -126,10 +125,9 @@ func (e *recordingEvictionEvents) EmitSessionLost(_ context.Context, sessionID, 
 // MinIO object key rather than the truncated inline context — any of
 // which breaks conversation continuity on resume.
 func TestEvictionFallbackMinIOOutageWritesPostgresMinimalState(t *testing.T) {
+	t.Parallel()
 	mio := containers.StartMinIO(t, containers.MinIOOptions{})
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: schematest.RepoRoot(t) + "/migrations",
-	})
+	pg := sharedDatabase(t)
 	ctx := context.Background()
 	const tenant = "acme"
 	seedTenant(t, pg, tenant)
@@ -234,10 +232,9 @@ func TestEvictionFallbackMinIOOutageWritesPostgresMinimalState(t *testing.T) {
 // manual-recovery object-key trail), or a partial/durable row was left
 // behind after an unrecoverable eviction.
 func TestEvictionFallbackTotalLossWhenBothStoresDown(t *testing.T) {
+	t.Parallel()
 	mio := containers.StartMinIO(t, containers.MinIOOptions{})
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: schematest.RepoRoot(t) + "/migrations",
-	})
+	pg := sharedDatabase(t)
 	ctx := context.Background()
 	const tenant = "acme"
 	seedTenant(t, pg, tenant)

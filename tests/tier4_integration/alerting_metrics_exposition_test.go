@@ -31,6 +31,7 @@ import (
 // inputs did not flow through to the exposed gauge series. Operators
 // cannot verify their bundling configuration is in effect (§25.13).
 func TestAlertingMetricsExposedOnGatewayScrape(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
 	// §25.13: the chart renders the §16.5 catalog into

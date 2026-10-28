@@ -65,6 +65,7 @@ import (
 // notification during exactly the storage outage the spec promises to
 // keep delivering through.
 func TestWebhookDeliveredFromGatewayBufferDuringDualOutage(t *testing.T) {
+	t.Parallel()
 	opsprocess.SkipUnlessAvailable(t)
 
 	// Non-blocking skip tied to an open TEST-GAPS finding: lenny-ops

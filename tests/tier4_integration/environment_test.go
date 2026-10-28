@@ -82,6 +82,7 @@ func (c envClient) doIfMatch(method, path, tenant, user, roles, groups, ifMatch 
 //	OIDC-group membership resolution did not behave as §10.6
 //	specifies when driven through one process.
 func TestEnvironmentResource(t *testing.T) {
+	t.Parallel()
 	gw := gateway.StartWith(t, "--dev-mode")
 	c := envClient{t: t, base: gw.BaseURL()}
 
@@ -187,6 +188,7 @@ func TestEnvironmentResource(t *testing.T) {
 // match, or the OIDC-group membership resolution diverged from §10.6
 // transparent filtering when driven through the real gateway binary.
 func TestEnvironmentFiltering(t *testing.T) {
+	t.Parallel()
 	// deny-all is the §10.6 platform default: a caller with no
 	// environment membership sees no runtimes. The transparent filter
 	// is only observable against deny-all.

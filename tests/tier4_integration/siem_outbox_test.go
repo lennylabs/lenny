@@ -15,15 +15,12 @@ package tier4_integration_test
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit/siem"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
-	"github.com/lennylabs/lenny/tests/testinfra/containers"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 	siemstub "github.com/lennylabs/lenny/tests/testinfra/stubs/siem"
 )
 
@@ -68,9 +65,7 @@ func TestSIEMOutboxForwarder(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	stub := siemstub.New(t)
 
 	const tenant = "acme"

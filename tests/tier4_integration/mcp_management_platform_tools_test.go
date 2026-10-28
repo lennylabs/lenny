@@ -172,6 +172,7 @@ func poolWarmCount(t *testing.T, ctx context.Context, gwBase, name string) int {
 // gateway — any of which shows the §25.12 dual-routing model diverged
 // from the spec when driven end to end.
 func TestMCPManagementPlatformToolDispatchE2E(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	opsprocess.SkipUnlessAvailable(t)
 

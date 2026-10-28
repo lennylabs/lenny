@@ -108,6 +108,7 @@ func tenantQuotaWindowKey(tenant string, now time.Time) string {
 // never ran — a tenant over its §11.2 token budget could still create
 // a session, and a tenant under budget saw no difference.
 func TestPolicyGate(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
 	rd := containers.StartRedis(t, containers.RedisOptions{})
@@ -196,6 +197,7 @@ func TestPolicyGate(t *testing.T) {
 // each record's `unmapped.lenny`, and the chain verdict is the
 // envelope-level `chainIntegrityReport`.
 func TestPolicyAudit(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
 	rd := containers.StartRedis(t, containers.RedisOptions{})

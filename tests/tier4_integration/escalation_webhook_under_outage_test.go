@@ -85,6 +85,7 @@ type receivedWebhook struct {
 // naming the created escalation — any of which leaves an operator unpaged
 // during exactly the storage outage most likely to produce an escalation.
 func TestEscalationWebhookReachesReceiverWhilePostgresDown(t *testing.T) {
+	t.Parallel()
 	opsprocess.SkipUnlessAvailable(t)
 
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
