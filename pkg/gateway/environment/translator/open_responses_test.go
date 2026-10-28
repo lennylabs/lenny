@@ -567,3 +567,26 @@ func getPreviousResponseID(t *testing.T, h *translator.OpenResponsesHandler, id 
 	_ = json.Unmarshal(rr.Body.Bytes(), &got)
 	return got.PreviousResponseID
 }
+
+// TestOpenResponsesInputRequiredIsInProgress_spec_7_2 pins that a response
+// whose session waits in input_required, a §7.2 sub-state of running, reports
+// in_progress as a running one does.
+//
+// spec: §7.2 (Session state machine), §15 (Built-in adapter single-shot
+// compute model)
+func TestOpenResponsesInputRequiredIsInProgress_spec_7_2(t *testing.T) {
+	h, store := newResponsesHandler(t)
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "resp_wait", TenantID: "acme", State: session.StateInputRequired,
+		RuntimeRef: "echo", CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_wait", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	h.Handler().ServeHTTP(rr, req)
+	var resp translator.OpenResponsesResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if rr.Code != http.StatusOK || resp.Status != "in_progress" {
+		t.Errorf("status = %d %q, want 200 in_progress", rr.Code, resp.Status)
+	}
+}

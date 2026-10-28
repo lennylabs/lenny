@@ -76,7 +76,9 @@ func interruptPrimaryCases() []interruptPrimaryCase {
 				wantHTTP: http.StatusConflict, wantCode: "INVALID_STATE_TRANSITION",
 				wantAdapter: 0, wantState: st,
 			}
-			if st == session.StateRunning || st == session.StateInputRequired {
+			// spec: §15.1 — the interrupt row admits running alone; an
+			// input_required session answers 409 with no adapter call.
+			if st == session.StateRunning {
 				c.wantAdapter = 1
 				if ad == adapterv1.InterruptResponse_STATUS_BUSY {
 					c.wantCode = "INTERRUPT_BUSY"

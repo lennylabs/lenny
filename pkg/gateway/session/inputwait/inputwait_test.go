@@ -320,3 +320,73 @@ func TestPendingDetailsCarriesBlockedSince_spec_8_8_990(t *testing.T) {
 		t.Errorf("BlockedSince = %v, want %v", got[0].BlockedSince, at)
 	}
 }
+
+// TestRegisterPersistedCarriesWaitIdentity_spec_7_2 pins that a persisted
+// wait reports its gateway-assigned identity and the persisted mark through
+// PendingDetailsForSession, and an unpersisted wait reports neither, so the
+// exit write and the connection recovery can tell a live persisted wait from
+// a stale row.
+//
+// spec: §7.2 (Session state machine)
+func TestRegisterPersistedCarriesWaitIdentity_spec_7_2(t *testing.T) {
+	r := inputwait.NewRegistry()
+	if _, err := r.RegisterPersisted("s1", "req-a", "iw_a", nil); err != nil {
+		t.Fatalf("RegisterPersisted: %v", err)
+	}
+	if _, err := r.Register("s1", "req-b", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if _, err := r.RegisterPersisted("s1", "req-a", "iw_other", nil); !errors.Is(err, inputwait.ErrDuplicate) {
+		t.Errorf("duplicate RegisterPersisted = %v, want inputwait.ErrDuplicate", err)
+	}
+	got := r.PendingDetailsForSession("s1")
+	if len(got) != 2 {
+		t.Fatalf("pending = %+v, want two entries", got)
+	}
+	if got[0].RequestID != "req-a" || got[0].WaitID != "iw_a" || !got[0].Persisted {
+		t.Errorf("persisted entry = %+v, want req-a with WaitID iw_a and Persisted", got[0])
+	}
+	if got[1].RequestID != "req-b" || got[1].WaitID != "" || got[1].Persisted {
+		t.Errorf("unpersisted entry = %+v, want req-b with no WaitID and not Persisted", got[1])
+	}
+	if r.Consumed("s1") != 2 {
+		t.Errorf("Consumed = %d, want 2", r.Consumed("s1"))
+	}
+}
+
+// TestCloseCancelsEveryWaitAndRefusesRegistration_spec_7_2 pins the drain the
+// replica's shutdown runs: Close closes every pending wait's channel, empties
+// the registry, makes every later Register and RegisterPersisted return
+// inputwait.ErrClosed, and is idempotent.
+//
+// spec: §7.2 (Session state machine), §28.3 (Link register)
+func TestCloseCancelsEveryWaitAndRefusesRegistration_spec_7_2(t *testing.T) {
+	r := inputwait.NewRegistry()
+	ch1, err := r.RegisterPersisted("s1", "req-a", "iw_a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch2, err := r.Register("s2", "req-b", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Close()
+	for i, ch := range []<-chan string{ch1, ch2} {
+		if _, ok := <-ch; ok {
+			t.Errorf("wait %d channel delivered a value; want closed", i)
+		}
+	}
+	if r.Pending("s1", "req-a") || r.Pending("s2", "req-b") {
+		t.Error("a wait is still pending after Close")
+	}
+	if _, err := r.Register("s1", "req-c", nil); !errors.Is(err, inputwait.ErrClosed) {
+		t.Errorf("Register after Close = %v, want inputwait.ErrClosed", err)
+	}
+	if _, err := r.RegisterPersisted("s1", "req-d", "iw_d", nil); !errors.Is(err, inputwait.ErrClosed) {
+		t.Errorf("RegisterPersisted after Close = %v, want inputwait.ErrClosed", err)
+	}
+	r.Close()
+	if r.Consumed("s1") != 1 {
+		t.Errorf("Consumed = %d, want 1 (a refused registration consumes no round)", r.Consumed("s1"))
+	}
+}

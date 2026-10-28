@@ -24,6 +24,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/inputwaitrecovery"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
@@ -262,6 +263,13 @@ type Replica struct {
 	MCP *mcp.Server
 	// ForwardClient is the replica's CH-HOLDERFORWARD client.
 	ForwardClient *http.Client
+	// Events is the replica's session event bus, nil unless the harness
+	// was built with Options.Events.
+	Events *sessionevents.Bus
+
+	// inputWaitGen is the replica's input-wait re-arm generation, which
+	// every GatewayControlCall connection record references.
+	inputWaitGen *inputwaitrecovery.Generation
 
 	h       *Harness
 	forward *forwardListener
@@ -457,6 +465,8 @@ func (h *Harness) AddReplica(name string) *Replica {
 	if h.events {
 		bus = sessionevents.NewBus(256).WithRedisRelay(sessionevents.NewRedisRelay(h.rc))
 	}
+	r.Events = bus
+	r.inputWaitGen = inputwaitrecovery.NewGeneration()
 	r.Server = sessionserver.New(h.Store, sessionserver.Options{
 		DevTenantHeader:            true,
 		Events:                     bus,
@@ -519,15 +529,9 @@ func (h *Harness) AddReplica(name string) *Replica {
 	return r
 }
 
-// serveReplica builds the replica's MCP surface, its public path, and its
-// forward listener over one inner mux that routes /mcp to the MCP surface
-// and every other path to the session server.
-//
-// spec: §29.3 (Interactive message send) Forwarding rules 2, 3, and 4,
-// §10.3 (mTLS PKI) NET-072
-func (h *Harness) serveReplica(r *Replica) {
-	r.MCP = mcp.NewServer()
-	mcptools.Register(r.MCP, mcptools.Deps{
+// replicaMCPDeps is the dependency set of the replica's MCP surface.
+func (h *Harness) replicaMCPDeps(r *Replica) mcptools.Deps {
+	return mcptools.Deps{
 		DevTenantFallback:  true,
 		HolderForward:      r.Server,
 		Store:              h.Store,
@@ -542,7 +546,18 @@ func (h *Harness) serveReplica(r *Replica) {
 		TenantID:           Tenant,
 		MessagingRateLimit: h.msgLimit,
 		Interceptors:       h.interceptors,
-	})
+	}
+}
+
+// serveReplica builds the replica's MCP surface, its public path, and its
+// forward listener over one inner mux that routes /mcp to the MCP surface
+// and every other path to the session server.
+//
+// spec: §29.3 (Interactive message send) Forwarding rules 2, 3, and 4,
+// §10.3 (mTLS PKI) NET-072
+func (h *Harness) serveReplica(r *Replica) {
+	r.MCP = mcp.NewServer()
+	mcptools.Register(r.MCP, h.replicaMCPDeps(r))
 	inner := http.NewServeMux()
 	inner.Handle("/mcp", r.MCP.Handler())
 	inner.Handle("/", r.Server.Handler())

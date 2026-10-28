@@ -139,3 +139,54 @@ func assertStateEntryEverywhere(t *testing.T, ctx context.Context, store *pgstor
 	}
 	t.Fatalf("List did not return %s", id)
 }
+
+// spec: §7.2 (Session state machine), §28.3 (Link register)
+// diagnosis: the Postgres session store did not persist input_wait_id. An
+// InputWaitID written through Update did not read back through Get and
+// GetByID, an empty value did not persist as NULL and read back empty, or a
+// Create dropped the value. The lenny/request_input exit write and the
+// connection recovery compare the locked row's InputWaitID against the live
+// waits, so a lost value strands a row in input_required or lets an earlier
+// wait's exit return a later wait's row to running.
+func TestSessionStoreRoundTripsInputWaitID_spec_7_2(t *testing.T) {
+	t.Parallel()
+	store, pg := startStore(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+	id := newUUID(t)
+	if err := store.Create(ctx, sessionstore.Session{
+		ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo", InputWaitID: "iw_created",
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	assertInputWaitID(t, ctx, store, tenant, id, "iw_created")
+	for _, want := range []string{"iw_1", ""} {
+		if _, err := store.Update(ctx, tenant, id, func(s *sessionstore.Session) error {
+			s.State = session.StateInputRequired
+			s.InputWaitID = want
+			return nil
+		}); err != nil {
+			t.Fatalf("Update to %q: %v", want, err)
+		}
+		assertInputWaitID(t, ctx, store, tenant, id, want)
+	}
+	var isNull bool
+	if err := pg.Pool.QueryRow(ctx, `SELECT input_wait_id IS NULL FROM sessions WHERE id = $1::uuid`, id).Scan(&isNull); err != nil {
+		t.Fatalf("read column: %v", err)
+	}
+	if !isNull {
+		t.Error("an empty InputWaitID persisted as a non-NULL value")
+	}
+}
+
+func assertInputWaitID(t *testing.T, ctx context.Context, store *pgstore.Store, tenant, id, want string) {
+	t.Helper()
+	got, err := store.Get(ctx, tenant, id)
+	if err != nil || got.InputWaitID != want {
+		t.Errorf("Get InputWaitID = %q (err %v), want %q", got.InputWaitID, err, want)
+	}
+	got, err = store.GetByID(ctx, id)
+	if err != nil || got.InputWaitID != want {
+		t.Errorf("GetByID InputWaitID = %q (err %v), want %q", got.InputWaitID, err, want)
+	}
+}

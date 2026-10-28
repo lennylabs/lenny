@@ -13,7 +13,10 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/inputwaitrecovery"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/platformtools"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -153,6 +156,33 @@ func (h *Harness) MCPCall(r *Replica, tool, args string) map[string]any {
 func (h *Harness) PlatformCall(r *Replica, sessionID, tool, args string) map[string]any {
 	h.T.Helper()
 	out, _, err := platformtools.New(r.MCP, h.Inner).CallPlatformTool(context.Background(), sessionID, tool, []byte(args))
+	if err != nil {
+		return map[string]any{"_error": err.Error()}
+	}
+	res := map[string]any{}
+	_ = json.Unmarshal(out, &res)
+	return res
+}
+
+// GatewayControlCall dispatches the tool with the JSON arguments as a
+// platform tool call from the session's pod arriving over the replica's
+// LNK-GWCONTROL connection, and returns the decoded result. It builds the MCP
+// surface MCPCall serves with the replica's session event bus, and the call's
+// context carries a connection record, so a lenny/request_input wait is
+// persisted on the row and its entry and exit writes publish status_change.
+// It blocks for the length of the call, so a test runs a waiting call on its
+// own goroutine and ends it through ctx or the replica's registry.
+//
+// spec: §7.2 (Session state machine), §28.3 (Link register)
+func (h *Harness) GatewayControlCall(ctx context.Context, r *Replica, sessionID, tool, args string) map[string]any {
+	deps := h.replicaMCPDeps(r)
+	if r.Events != nil {
+		deps.Events = r.Events
+	}
+	srv := mcp.NewServer()
+	mcptools.Register(srv, deps)
+	ctx = inputwaitrecovery.NewContext(ctx, r.inputWaitGen)
+	out, _, err := platformtools.New(srv, h.Store).CallPlatformTool(ctx, sessionID, tool, []byte(args))
 	if err != nil {
 		return map[string]any{"_error": err.Error()}
 	}

@@ -16,9 +16,12 @@ import (
 )
 
 // suspendWithPendingInputWait interrupts a running session on r and leaves
-// a lenny/request_input wait registered on the replica, as an interrupt of a
-// runtime blocked in lenny/request_input does: the interrupt neither cancels
-// nor forgets the session's waits.
+// an unpersisted lenny/request_input wait registered on the replica. The wait
+// is registered with Register, as a call served without a GatewayControl
+// connection record registers it, so the row stays running and the interrupt
+// is admitted; the interrupt neither cancels nor forgets the session's waits.
+// A wait that arrives over GatewayControl is persisted, its row is
+// input_required, and the §15.1 interrupt row refuses an interrupt of it.
 func suspendWithPendingInputWait(t *testing.T, h *lifecycleharness.Harness, r *lifecycleharness.Replica) string {
 	t.Helper()
 	id := h.StartSession(r)

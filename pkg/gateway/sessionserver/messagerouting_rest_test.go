@@ -126,10 +126,14 @@ func TestMessageRouting_SuspendedResumesAndDelivers_spec_7_2_path6(t *testing.T)
 }
 
 // TestMessageRouting_SuspendedWithPendingInputWaitResumes_spec_7_2_path6
-// pins that §7.2 path 6 wins for a suspended session whose runtime was
-// interrupted while blocked in lenny/request_input: the wait stays in the
-// registry, yet a message without a matching inReplyTo resumes the
-// session and is delivered, and nothing waits in the inbox.
+// pins that §7.2 path 6 wins for a suspended session that still holds an
+// unpersisted lenny/request_input wait: the wait stays in the registry, yet a
+// message without a matching inReplyTo resumes the session and is delivered,
+// and nothing waits in the inbox. The fixture registers the wait with
+// Register, as a call served without a GatewayControl connection record
+// does, so the row was running when the interrupt suspended it; an
+// interrupt of a session whose wait is persisted in input_required is refused
+// under the §15.1 interrupt row.
 //
 // spec: 7.2 (Message delivery routing — seven paths, path 6)
 func TestMessageRouting_SuspendedWithPendingInputWaitResumes_spec_7_2_path6(t *testing.T) {

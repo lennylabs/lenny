@@ -110,10 +110,11 @@ func TestValidateStartAdmitsReadyOnly(t *testing.T) {
 	}
 }
 
-// spec: §7.2 — interrupt admits running and input_required (a
-// running sub-state) but no other state.
-func TestValidateInterruptAdmitsRunningAndInputRequired_spec_7_2(t *testing.T) {
-	for _, allowed := range []State{StateRunning, StateInputRequired} {
+// spec: §15.1 (interrupt row), §7.2 (Session state machine) — interrupt
+// admits running alone. input_required is refused, because an interrupt
+// would suspend the session while its lenny/request_input wait stays live.
+func TestValidateInterruptAdmitsRunning_spec_7_2(t *testing.T) {
+	for _, allowed := range []State{StateRunning} {
 		if err := Validate(PreconditionRequest{
 			Endpoint:     EndpointInterrupt,
 			CurrentState: allowed,
@@ -121,7 +122,7 @@ func TestValidateInterruptAdmitsRunningAndInputRequired_spec_7_2(t *testing.T) {
 			t.Errorf("interrupt from %q should be allowed, got %v", allowed, err)
 		}
 	}
-	for _, s := range []State{StateReady, StateSuspended, StateStarting, StateFinalizing, StateCompleted, StateFailed, StateCancelled, StateExpired} {
+	for _, s := range []State{StateInputRequired, StateReady, StateSuspended, StateStarting, StateFinalizing, StateCompleted, StateFailed, StateCancelled, StateExpired} {
 		err := Validate(PreconditionRequest{
 			Endpoint:     EndpointInterrupt,
 			CurrentState: s,
@@ -375,4 +376,27 @@ func nonTerminalForTest() []State {
 		}
 	}
 	return out
+}
+
+// TestUploadAndStaleDeriveKeepRefusingInputRequired_spec_15_1 pins that the
+// mid-session upload and stale-derive precondition rows stay as §15.1 lists
+// them: neither admits input_required, although each admits running.
+//
+// spec: §15.1 (REST API), §7.2 (Session state machine)
+func TestUploadAndStaleDeriveKeepRefusingInputRequired_spec_15_1(t *testing.T) {
+	for _, tc := range []struct {
+		endpoint Endpoint
+		cap      Capability
+	}{
+		{EndpointUpload, CapabilityMidSessionUpload},
+		{EndpointDerive, CapabilityAllowStaleDerive},
+	} {
+		caps := map[Capability]bool{tc.cap: true}
+		if err := Validate(PreconditionRequest{Endpoint: tc.endpoint, CurrentState: StateRunning, Capabilities: caps}); err != nil {
+			t.Errorf("%s from running = %v, want admitted", tc.endpoint, err)
+		}
+		if err := Validate(PreconditionRequest{Endpoint: tc.endpoint, CurrentState: StateInputRequired, Capabilities: caps}); err == nil {
+			t.Errorf("%s from input_required admitted, want refused", tc.endpoint)
+		}
+	}
 }

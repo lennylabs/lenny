@@ -310,3 +310,26 @@ func TestFreshnessReaperRunSweepsImmediately(t *testing.T) {
 		}
 	}
 }
+
+// TestFreshnessReaperCountsInputRequiredSessions_spec_4_4 pins that the §4.4
+// freshness gauge counts a stale session waiting in input_required, a §7.2
+// sub-state of running, as it counts a stale running session.
+//
+// spec: §4.4 (Event / Checkpoint Store), §7.2 (Session state machine)
+func TestFreshnessReaperCountsInputRequiredSessions_spec_4_4(t *testing.T) {
+	store := memstore.New()
+	now := time.Date(2026, 5, 22, 12, 0, 0, 0, time.UTC)
+	seedSession(t, store, "acme", "s-waiting", "tier-1", session.StateInputRequired, now.Add(-20*time.Minute))
+	gauge := newStubGauge()
+	r := &checkpointer.FreshnessReaper{
+		Tenants:  stubTenantLister{ids: []string{"acme"}},
+		Sessions: store,
+		Gauge:    gauge,
+		Interval: 10 * time.Minute,
+		Now:      func() time.Time { return now },
+	}
+	r.Sweep(context.Background())
+	if got := gauge.Get("tier-1", "unknown"); got != 1 {
+		t.Errorf("stale count = %d, want 1 for a stale input_required session", got)
+	}
+}

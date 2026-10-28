@@ -94,7 +94,6 @@ func TestResumeAndInterruptToolsMatchREST_spec_15_2_1(t *testing.T) {
 		{session.StateAwaitingClientAction, "resume", "lenny/resume_session", session.StateResumePending},
 		{session.StateSuspended, "resume", "lenny/resume_session", session.StateRunning},
 		{session.StateRunning, "interrupt", "lenny/interrupt_session", session.StateSuspended},
-		{session.StateInputRequired, "interrupt", "lenny/interrupt_session", session.StateSuspended},
 	} {
 		t.Run(tc.tool+" from "+string(tc.pre), func(t *testing.T) {
 			viaREST := newParitySurface(t, tc.pre)
@@ -123,6 +122,37 @@ func TestResumeAndInterruptToolsMatchREST_spec_15_2_1(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// spec: §15.2.1 (REST/MCP Consistency Contract), §15.1 (REST API), §7.2
+// (Session state machine)
+// diagnosis: POST /interrupt or lenny/interrupt_session admitted a session
+// waiting in input_required, or the two surfaces refused it with different
+// codes. The §15.1 interrupt row admits running alone, because suspending a
+// session whose lenny/request_input wait stays live strands the wait; both
+// surfaces must refuse with INVALID_STATE_TRANSITION and leave the row as it
+// was.
+func TestInterruptToolAndRESTRefuseInputRequired_spec_15_2_1(t *testing.T) {
+	viaREST := newParitySurface(t, session.StateInputRequired)
+	viaMCP := newParitySurface(t, session.StateInputRequired)
+
+	resp, raw := postJSON(t, viaREST.rest.URL+"/v1/sessions/"+paritySessionID+"/interrupt", "acme", nil)
+	if resp.StatusCode != 409 {
+		t.Fatalf("POST /interrupt = %d %s, want 409", resp.StatusCode, raw)
+	}
+	if got := decodeRESTError(t, raw); got.Code != "INVALID_STATE_TRANSITION" {
+		t.Errorf("REST code = %q, want INVALID_STATE_TRANSITION", got.Code)
+	}
+	res := mcpCall(t, viaMCP.mcp.URL+"/mcp", "lenny/interrupt_session", map[string]any{"sessionId": paritySessionID})
+	if got := decodeMCPError(t, res); got.Code != "INVALID_STATE_TRANSITION" {
+		t.Errorf("MCP code = %q, want INVALID_STATE_TRANSITION", got.Code)
+	}
+	for name, s := range map[string]*paritySurface{"REST": viaREST, "MCP": viaMCP} {
+		row, err := s.store.Get(context.Background(), "acme", paritySessionID)
+		if err != nil || row.State != session.StateInputRequired {
+			t.Errorf("%s stored state = %q (err %v), want input_required", name, row.State, err)
+		}
 	}
 }
 

@@ -634,3 +634,17 @@ func TestEvalSubmittedAfterConclusionUnresolvedIsFalse_spec_10_7_907(t *testing.
 		t.Errorf("no-store enrolled eval should leave flag false: %+v", rows)
 	}
 }
+
+// TestEvalAdmitsInputRequiredSession_spec_10_7 pins that eval submission
+// admits a session waiting in input_required, a §7.2 sub-state of running,
+// as it admits a running session. Before the gate read the sub-state, the
+// submission was refused SESSION_NOT_EVAL_ELIGIBLE.
+//
+// spec: §10.7 (Experiment Primitives), §7.2 (Session state machine)
+func TestEvalAdmitsInputRequiredSession_spec_10_7(t *testing.T) {
+	h, _ := evalServer(t, 0, evalSession("waiting", session.StateInputRequired))
+	rr := postEval(t, h, "waiting", sessionserver.EvalRequest{Scorer: "s", Score: evalScore(0.5)})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("eval against an input_required session: status %d %s, want 201", rr.Code, rr.Body.String())
+	}
+}

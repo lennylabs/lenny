@@ -404,6 +404,16 @@ type Session struct {
 	// spec: §6.2 (Pod State Machine).
 	StateEnteredAt time.Time
 
+	// InputWaitID is the input_wait_id column: the identity of the live
+	// lenny/request_input wait an input_required row stands for. The gateway
+	// assigns the identity when it registers the wait, and only the
+	// lenny/request_input entry and exit writes and the connection recovery
+	// write it. Every rule that reads it also requires the row to be
+	// input_required, so a value left on a row in another state is never
+	// read. Empty persists as NULL.
+	// spec: §7.2 (Session state machine), §28.3 (Link register).
+	InputWaitID string
+
 	// LastSuccessfulCheckpointAt is the wall-clock instant the
 	// gateway recorded its most recent successful checkpoint for
 	// this session — regardless of trigger (periodic, eviction,

@@ -574,7 +574,9 @@ func mapStateToResponsesStatus(s session.State) string {
 		return "failed"
 	case session.StateCancelled:
 		return "cancelled"
-	case session.StateRunning, session.StateStarting:
+	// spec: §7.2 (Session state machine) — input_required is a sub-state of
+	// running and maps as running does.
+	case session.StateRunning, session.StateInputRequired, session.StateStarting:
 		return "in_progress"
 	default:
 		return "queued"

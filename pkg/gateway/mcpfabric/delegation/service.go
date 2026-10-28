@@ -918,7 +918,10 @@ func (s *Service) validateDelegation(ctx context.Context, tenantID string, req R
 		}
 		return admission{}, err
 	}
-	if parent.State != session.StateRunning {
+	// spec: §7.2 (Session state machine) — input_required is a sub-state of
+	// running, so a parent waiting in lenny/request_input is admitted as a
+	// running parent is.
+	if parent.State != session.StateRunning && parent.State != session.StateInputRequired {
 		return admission{}, ErrParentNotRunning
 	}
 

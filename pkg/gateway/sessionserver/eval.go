@@ -70,9 +70,16 @@ func (s *Server) evalSubmittedAfterConclusion(ctx context.Context, tenantID, exp
 
 // evalEligible reports whether a session in state st accepts eval
 // submissions. §10.7 accepts active (running), completed, and failed
-// sessions; cancelled and expired sessions are rejected.
+// sessions; cancelled and expired sessions are rejected. input_required is a
+// §7.2 sub-state of running, so a session waiting in lenny/request_input is
+// active and accepts submissions. spec: §10.7; §7.2 (Session state machine).
 func evalEligible(st session.State) bool {
-	return st == session.StateRunning || st == session.StateCompleted || st == session.StateFailed
+	switch st {
+	case session.StateRunning, session.StateInputRequired, session.StateCompleted, session.StateFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 // checkEvalRateLimit enforces the §10.7 per-session and

@@ -13,8 +13,12 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/clockinject"
+	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/inputwaitrecovery"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
+	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/mtls/spiffe"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
@@ -62,7 +66,7 @@ import (
 // handshake with no gRPC frame and emits the spec's `pod_identity_mismatch`
 // log. trustDomain empty leaves CA-only verification in place (the
 // local-development path). F-10.3.1 / F-10.3.7 / F-10.3.13.
-func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, elicitor leasecontrol.Elicitor, autoCounter ratelimit.Counter, defaultAutoMaxPerMin int, platformTools leasecontrol.PlatformToolService, connectorTools leasecontrol.ConnectorToolService, treeGranter leasecontrol.TreeBudgetGranter, scrubReports leasecontrol.ScrubReportService, replicaID, tlsCert, tlsKey, clientCA, trustDomain, saTokenAudience string, saTokenVerifier leasecontrol.TokenVerifier, denyList spiffe.DenyChecker) (*grpc.Server, net.Listener, *leasecontrol.Service, error) {
+func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, elicitor leasecontrol.Elicitor, autoCounter ratelimit.Counter, defaultAutoMaxPerMin int, platformTools leasecontrol.PlatformToolService, connectorTools leasecontrol.ConnectorToolService, treeGranter leasecontrol.TreeBudgetGranter, scrubReports leasecontrol.ScrubReportService, replicaID, tlsCert, tlsKey, clientCA, trustDomain, saTokenAudience string, saTokenVerifier leasecontrol.TokenVerifier, denyList spiffe.DenyChecker, inputWaits inputWaitRecoveryDeps) (*grpc.Server, net.Listener, *leasecontrol.Service, error) {
 	if addr == "" {
 		return nil, nil, nil, nil
 	}
@@ -169,10 +173,24 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 	// with the mTLS gate above without disturbing dev runs. When an
 	// audience is set but no verifier is available it degrades to the
 	// audience-only decode. F-10.3.20 / F-10.2.10.
-	opts = append(opts, grpc.ChainUnaryInterceptor(
+	// spec: §7.2 (Session state machine), §28.3 (Link register) — the
+	// input-wait recovery runs after both authentication layers, so it only
+	// ever sees an authenticated call, and before the handler, so a pod's
+	// stale input_required rows converge before its first call on a
+	// connection is served.
+	interceptors := []grpc.UnaryServerInterceptor{
 		leasecontrol.RequireVerifiedPeerInterceptor(clientCA != ""),
 		leasecontrol.RequireSATokenInterceptor(saTokenAudience, saTokenVerifier),
-	))
+	}
+	recoverer := inputWaits.recoverer()
+	if recoverer != nil {
+		interceptors = append(interceptors, recoverer.UnaryInterceptor())
+		// The input-wait stats handler attaches a fresh recovery record to
+		// every accepted connection, the scope a lenny/request_input wait
+		// persists under.
+		opts = append(opts, grpc.StatsHandler(inputwaitrecovery.NewStatsHandler(inputwaitrecovery.NewGeneration())))
+	}
+	opts = append(opts, grpc.ChainUnaryInterceptor(interceptors...))
 	// spec: §16.3 ("Pod → Gateway (delegation tool calls carry
 	// parent trace context)") — extract the inbound traceparent from gRPC
 	// metadata so the gateway's GatewayControl spans continue the pod's
@@ -188,4 +206,29 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 	// in-path deadline while keeping the raise alive across the next
 	// Enforcer.Record (the recorder accumulates the granted delta). spec: §8.6; proposal 0023 S3/S4/S6.
 	return gs, lis, svc, nil
+}
+
+// inputWaitRecoveryDeps carries what the GatewayControl server's input-wait
+// recovery reads and writes: the session store, this replica's input-wait
+// registry, and the session event bus that carries the recovery's
+// status_change.
+type inputWaitRecoveryDeps struct {
+	sessions sessionstore.Store
+	waits    *inputwait.Registry
+	events   *sessionevents.Bus
+}
+
+// recoverer builds the connection recovery over the deps. It returns nil when
+// no session store or registry is wired, in which case the server attaches no
+// connection record and a lenny/request_input wait is not persisted.
+// spec: §7.2 (Session state machine), §28.3 (Link register).
+func (d inputWaitRecoveryDeps) recoverer() *inputwaitrecovery.Recoverer {
+	if d.sessions == nil || d.waits == nil {
+		return nil
+	}
+	w := inputwaitrecovery.Writer{Store: d.sessions, Waits: d.waits, Clock: clockinject.Now}
+	if d.events != nil {
+		w.Events = d.events
+	}
+	return &inputwaitrecovery.Recoverer{Sessions: d.sessions, Writer: w}
 }

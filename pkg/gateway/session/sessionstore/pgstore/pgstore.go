@@ -167,7 +167,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	credential_deny,
 	accumulated_session_age_seconds,
 	pod_released_at,
-	state_entered_at`
+	state_entered_at,
+	COALESCE(input_wait_id, '')`
 
 // Create persists a fresh session row. root_session_id defaults to the
 // session's own id when the caller did not stamp one (a standalone
@@ -291,7 +292,8 @@ func (s *Store) create(ctx context.Context, sess sessionstore.Session, before be
 		credential_deny,
 		accumulated_session_age_seconds,
 		pod_released_at,
-		state_entered_at
+		state_entered_at,
+		input_wait_id
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid,
@@ -340,7 +342,9 @@ func (s *Store) create(ctx context.Context, sess sessionstore.Session, before be
 		-- §7.1 pod_released_at; NULL until the release is recorded.
 		$60,
 		-- §6.2 state_entered_at; the creation instant.
-		$61
+		$61,
+		-- §7.2 input_wait_id; an empty string persists as NULL.
+		NULLIF($62, '')
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -461,7 +465,9 @@ func (s *Store) create(ctx context.Context, sess sessionstore.Session, before be
 			// $60 — §7.1 release marker; a zero time persists as NULL.
 			pgtenant.NullTime(sess.PodReleasedAt),
 			// $61 — §6.2 state_entered_at, set to created_at above.
-			sess.StateEnteredAt)
+			sess.StateEnteredAt,
+			// $62 — §7.2 input_wait_id; an empty string persists as NULL.
+			sess.InputWaitID)
 		if err != nil {
 			return err
 		}
@@ -620,7 +626,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		accumulated_session_age_seconds = $56,
 		last_write_id = $57::uuid,
 		pod_released_at = $58,
-		state_entered_at = $59
+		state_entered_at = $59,
+		input_wait_id = NULLIF($60, '')
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	// spec: §12.3 (Write durability categories during failover) — the
@@ -757,6 +764,9 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			pgtenant.NullTime(sess.PodReleasedAt),
 			// $59 — §6.2 state_entered_at, stamped above.
 			sess.StateEnteredAt,
+			// $60 — §7.2 input_wait_id, the live lenny/request_input wait
+			// an input_required row names; an empty string persists as NULL.
+			sess.InputWaitID,
 		); err != nil {
 			return err
 		}
@@ -1561,6 +1571,9 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §6.2 — state_entered_at from migration 0195, the instant the
 		// session entered its current state.
 		&s.StateEnteredAt,
+		// §7.2 — input_wait_id from migration 0195, COALESCEd to '' when
+		// NULL.
+		&s.InputWaitID,
 	); err != nil {
 		return sessionstore.Session{}, err
 	}
