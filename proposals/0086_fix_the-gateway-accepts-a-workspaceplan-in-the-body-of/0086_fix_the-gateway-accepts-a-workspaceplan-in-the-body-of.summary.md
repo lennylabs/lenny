@@ -4,10 +4,10 @@
 
 The audit of unfinished proposals on 2026-10-28 widens this proposal's scope to two further defects, because both turn on the same rule for when a session's workspace plan binds and is pinned.
 
-- **BUILD-GAPS F-5.1.23 (setup timing).** The §5.1 **Setup Commands and Policy** paragraph places setup before warm-pool entry, once per pod, in an `INIT` state, and the §5.1 merge table says the gateway enforces `setupCommandPolicy` at pod startup. §6.1, §7.1 steps 12 and 13, §7.5, §5.1 **Derived Runtime Instantiation**, and the shipped bind path (`RunSetup` after `FinalizeWorkspace` in `pkg/gateway/podlifecycle/podsession/bindprepare.go`) all run setup per session after the slot is materialized, and the §6.2 pod state machine defines no `INIT` state. The widened proposal rewrites §5.1 as per-session setup after slot materialization, points to §7.5, and sends a setup failure to §6.2. It states this as the default, so that proposal 0077 can later add an opt-in warm-time mode.
-- **BUILD-GAPS F-7.5.3, reopened, with F-5.1.6 (runtime `workspaceDefaults`).** The admin API validates and stores a runtime's `workspaceDefaults`, and `runtimestore.Merge` applies the §5.1 Append merge, but no bind path reads the result: `resolvePlanForCreate` stores only the client plan, and every bind converts that stored plan through `podsession.WorkspacePlanToProto`. The widened proposal states where the defaults are pinned (at create or at bind, and whether resume and derive re-read them), whether they are re-applied over a restored checkpoint or a derived snapshot, how they compose with this proposal's finalize-time plan bind, the rule for a path that both a default file and a client source write, how a `WorkspaceFile.Ref` is materialized, and whether `setupCommandPolicy` and `maxCommands` apply to default setup commands.
+- **BUILD-GAPS F-5.1.23 (setup timing).** The §5.1 **Setup Commands and Policy** paragraph places setup before warm-pool entry, once per pod, in an `INIT` state, and the §5.1 merge table says the gateway enforces `setupCommandPolicy` at pod startup. §6.1, §7.1 steps 12 and 13, §7.5, §5.1 **Derived Runtime Instantiation**, and the shipped bind path (`RunSetup` after `FinalizeWorkspace` in `pkg/gateway/podlifecycle/podsession/bindprepare.go`) all run setup per session after the slot is materialized, and the §6.2 pod state machine defines no `INIT` state. The last sentence of the §5.2 **Recycle lifecycle** paragraph, the `WorkspacePlan` and `RunSetupRequest` comments in `schemas/lenny-adapter.proto`, and the runtime author guide repeat the once-per-pod claim. The proto comments describe a gateway once-per-pod gate that neither bind path has, because `bindprepare.go` and `slotbinder.go` both call `RunSetup` unconditionally. SPEC-7 stages the spec correction, CODE-5 corrects the comments, and DOCS-1 and TEST-1 carry the docs page and the test.
+- **BUILD-GAPS F-7.5.3, reopened, with F-5.1.6 (runtime `workspaceDefaults`).** The admin API validates and stores a runtime's `workspaceDefaults`, and `runtimestore.Merge` applies the §5.1 Append merge, but no bind path reads the result: `resolvePlanForCreate` stores only the client plan, and every bind converts that stored plan through `podsession.WorkspacePlanToProto`. SPEC-8, CODE-6, and TEST-2 carry the fix, DOCS-1 carries the runtime author guide, and the decisions below give the reasons.
 
-The summary, goals, and deliverables below predate the widening and have not yet been re-derived. The next change-proposal run re-derives them. The plan in `gateway-runtime-comms-remediation.md` §10.2 queues this proposal as the next change-proposal after proposal 0107, with implementation after proposals 0105 and 0106.
+The plan in `gateway-runtime-comms-remediation.md` §10.2 queues this proposal as the next change-proposal after proposal 0107, with implementation after proposals 0105 and 0106.
 
 ## Summary
 
@@ -15,17 +15,20 @@ The summary, goals, and deliverables below predate the widening and have not yet
 
 **What changes.**
 
-- `spec/14_workspace-plan-schema.md`: a §14 `uploadRef` field note and a §14.1 **Plan binding.** paragraph become the homes of the upload contract and the finalize-time bind, and the `gitClone.ref` pin wording follows the bind (SPEC-1, SPEC-2).
+- `spec/14_workspace-plan-schema.md`: a §14 `uploadRef` field note and a §14.1 **Plan binding.** paragraph become the homes of the upload contract and the finalize-time bind, and the `gitClone.ref` pin wording follows the bind (SPEC-1, SPEC-2). The §4.9 `hostPatterns` host match and the §6.1 SDK-warm demotion follow the bind, and §4.6.1 and §12.6 drop the claim-time `requiresDemotion` option and the pod-creation `WorkspacePlan` (SPEC-2).
 - `spec/15_external-api-surface.md`: the §15.1 endpoint, precondition, derive-failure, and error-catalog rows and the §15.2 `finalize_workspace` row describe the bind and add `/upload-archive` (SPEC-3).
 - `spec/07_session-lifecycle.md`, `spec/29_communication-scenarios.md`, `spec/24_lenny-ctl-command-reference.md`, and `spec/26_reference-runtime-catalog.md`: the flow narratives and the CLI reference describe the finalize-time bind the tree runs (SPEC-4, SPEC-5, SPEC-6).
 - `pkg/gateway/sessionserver`: the `uploadRef` scope check moves into the shared plan resolver, so it applies at every bind point (CODE-1).
 - MCP tool schema, OpenAPI document, `schemas/workspaceplan-v1.json`, and SDK and gateway comments: the published surfaces declare the finalize body and the opaque `uploadRef` (CODE-2, CODE-3, CODE-4).
 - `docs/` and the test suites: reader-facing pages and tests at tiers 1, 2, 3, and 9 follow the amended contract (DOCS-1, TEST-1).
+- `spec/07_session-lifecycle.md`, `spec/05_runtime-registry-and-pool-model.md`, and `spec/16_observability.md`: §7.5 becomes the home of setup timing, and §5.1, §5.2, and §16.1 cite it (SPEC-7). `schemas/lenny-adapter.proto` and `pkg/adapter/workspace/setup.go` comments follow (CODE-5).
+- `spec/14_workspace-plan-schema.md`, `spec/05_runtime-registry-and-pool-model.md`, and `spec/07_session-lifecycle.md`: a §14.1 **Runtime workspace defaults.** paragraph and edits to §5.1 **Derived Runtime Instantiation** and §7.5 **Command policy:** (SPEC-8).
+- `pkg/gateway/runtime/runtimestore`, `pkg/gateway/sessionserver`, `pkg/gateway/mcpfabric/delegation`, and `pkg/gateway/externalapi`: binding requests compose the runtime defaults into the stored plan, and registration checks them (CODE-6). Tests at tiers 1 and 4 pin both (TEST-2).
 
 **Decisions.**
 
 - The spine is the minimal design: specify the finalize-time bind the tree runs and every shipped consumer uses, and change code only where the problem requires it.
-- A session binds at most one plan, at creation or, when creation carried none, in the finalize body. `plan_already_set` stays.
+- A session binds at most one plan, at creation or, when creation carried none, at finalize. `plan_already_set` stays.
 - `uploadRef` is opaque and scoped to the session for which its content was stored. The spec does not declare it a §28.5.3 `LennyBlobURI`, because the emitted URI has four segments and §28.5.3 states three.
 - The scope check lives once, in the shared resolver, and runs right after `workspaceplan.Parse`. Create-time callers pass an empty binding session ID, so every create-time upload source is rejected without a separate rule.
 - No new error code or reason. Both `invalid_upload_ref` and `upload_ref_foreign_session` stay under `400 VALIDATION_ERROR`, because both are already emitted and tested. `WORKSPACE_PLAN_INVALID` stays reserved for inner-plan schema failures.
@@ -36,18 +39,28 @@ The summary, goals, and deliverables below predate the widening and have not yet
 - `/upload-archive` shares the `/upload` precondition row, matching the shared `session.EndpointUpload` rule.
 - MCP parity uses the existing argument forwarding plus a hand-written finalize input schema. `mcpschemagen` would emit a required `id` where the tool takes `sessionId`.
 - The OpenAPI document stays the authoritative list of `UploadResponse` fields, and the spec restates only `uploadRef`.
+- Setup timing is stated once, as the per-session default at the opening of §7.5, with no pod-level prohibition, so an opt-in warm-time mode such as proposal 0077's adds a clause rather than reversing one. No production code changes, because both bind paths already run setup per session.
+- Runtime `workspaceDefaults` are composed into the stored plan when the plan binds. Every binding request already writes the plan, and every materialization path and the §6.1 SDK-warm demotion check already read the stored plan, so the defaults are pinned with no new column and no reader change. Composing at each materialization would read live runtime configuration at resume, and a separate defaults snapshot would need a migration and a composition step in every reader.
+- The defaults precede the plan's own entries inside one `sources` array, so the existing §14.1 **Path collision rule** settles a default-versus-client path conflict and its warning.
+- `workspaceDefaults.files` entries carry inline content only. §12.8 states that v1 has no cross-session MinIO references, no API stores a runtime-scoped blob, and the §14 upload sources accept only an `uploadRef` scoped to the binding session. Larger runtime files belong in the image or in `sharedAssets`.
+- `setupCommandPolicy` and `maxCommands` bound client-submitted commands only. The runtime author registers the policy and the defaults through the same admin API, so checking the defaults would fail every session of a runtime whose allowlist omits its own defaults, and counting them would shrink the client's budget by a deployer-set amount.
+- A runtime-resolution error other than not-found fails the binding request, because a plan bound without its defaults stays without them for the session's life. A not-found runtime composes nothing, because the creation path validates the runtime's existence, as `enforceSetupCommandPolicy` already assumes.
 
 **Watch out for.**
 
 - Do not retire the finalize body to match the current spec text. The Go SDK, `lenny session new --workspace/--file`, and the playground all depend on it.
 - The create and create-and-start callers of `resolveSubmittedPlan` must pass an empty binding session ID. The session ID does not exist yet when the plan is validated, and CODE-1's empty-ID guard is the fail-closed predicate.
 - The `uploadRef` check must run before `checkGitCloneAuthBindings` and `PinCommitSHAs`, so a foreign ref fails before any `ls-remote`.
+- Each binding request composes the defaults after `enforceSetupCommandPolicy`, so the policy sees only the client's commands, and after routing has fixed the session's runtime (see CODE-6 step 2 and step 3).
+- `POST /v1/sessions` composes only when its request carries a plan. A defaults-only plan stored at create would make a later finalize body fail `plan_already_set`.
+- Finalize composes only for a row without a plan, so a create-bound plan is never composed twice.
+- Tier 1 cases that assert an empty `row.WorkspacePlan` after finalize must run against a runtime without `workspaceDefaults`.
 - The definitional sentence in **Plan binding.** covers only the `WorkspacePlan`'s own fields. The `env` blocklist, `runtimeOptions`, and callback validation stay at session creation, which is where the code runs them.
 - Every edited or added §15.1, §15.2, and §24.17 table row stays one physical line.
 - The OpenAPI component is `FinalizeRequest`. `FinalizeWorkspaceRequest` is the adapter proto message, and reusing the name makes a search for one return the other.
 - `pkg/gateway/podlifecycle/podsession/binder_test.go` is envtest-backed, so the unreferenced-upload test is tier 2 and needs a `// diagnosis:` comment.
 - The tier 4 assertion on the `lenny-blob://` prefix in `eager_claim_lifecycle_test.go` is an implementation test and stays.
-- §15.2.1 still calls the `GIT_CLONE_*` codes a "session-creation rejection family". It stays true and is not edited.
+- §15.2.1 still calls the `GIT_CLONE_*` codes a "session-creation rejection family". They stay in that list, and SPEC-2 edit (e) item 7 removes only `SDK_DEMOTION_NOT_SUPPORTED`.
 - SPEC-6 keeps the §26.2 attach clause "via the MCP WebSocket" verbatim. Correcting the attach transport is a separate defect listed below.
 
 ## Goals
@@ -57,6 +70,9 @@ The summary, goals, and deliverables below predate the widening and have not yet
 - The `uploadRef` scope check applies to every client-submitted plan at every bind point.
 - The OpenAPI document, the published plan schema, the MCP tool schema, and the reader-facing documentation describe the finalize body and the opaque `uploadRef`.
 - Tests pin the create-time rejection, the finalize-time pin, the rejection-leaves-`created` outcome, the unreferenced-upload rule, and REST/MCP parity for the new rejections.
+- Every spec site that states when setup commands run cites §7.5 (SPEC-7).
+- A runtime's `workspaceDefaults` reach every session's workspace through the plan the session binds (SPEC-8, CODE-6).
+- BUILD-GAPS F-5.1.23 and F-7.5.3 close when this proposal lands.
 
 ## Non-goals
 
@@ -78,7 +94,7 @@ The summary, goals, and deliverables below predate the widening and have not yet
 - Forbidding `gitClone` sources in a finalize-bound plan so that refs pin literally at creation. It adds a rule and code where the chosen design changes only wording.
 - Per-site "at plan binding" edits across every §14 "at session creation" clause. The definitional sentence in **Plan binding.** covers them.
 - Generating the `finalize_workspace` MCP schema through `mcpschemagen`. The generator emits the OpenAPI path parameter `id` as a required property, while the tool takes `sessionId`.
-- Editing §15.2.1. Its items 4 and 5 already require schema consistency and parity tests.
+- Adding finalize requirements to §15.2.1. Its items 4 and 5 already require schema consistency and parity tests.
 - Adding a `workspacePlan` parameter to the Python and TypeScript SDK finalize methods. Those SDKs have no upload methods, so a plan parameter alone stages nothing. SDK upload coverage belongs to TEST-GAPS T-7.4.12.
 - Replacing `finalizePlanMaxBytes` with `MaxJSONBodyBytes`, or specifying the finalize body cap and `PAYLOAD_TOO_LARGE`. The problem does not require it.
 - Rejecting unknown fields in the finalize body. The decoder ignores them, and `FinalizeRequest` leaves top-level `additionalProperties` unset.
@@ -90,12 +106,37 @@ The summary, goals, and deliverables below predate the widening and have not yet
 - Editing §19 decision 12. Its recipe names no bind point and stays true under **Plan binding.**
 - Switching `lenny session new --workspace` to an MCP-only transport. §24.17 is corrected to describe the REST flow the CLI runs.
 - Making the CLI send the `pool`, `env`, `timeouts`, and `runtimeOptions` fields the old §26.2 create envelope showed. SPEC-6 drops that envelope because the CLI does not send those fields.
-- Specifying how a derived session's copied snapshot composes with a plan bound at finalize. The §7.1 derive rules govern it.
-- Editing BUILD-GAPS.md. F-24.17.4, F-26.2.4, and F-27.4.3 are CLOSED, and this proposal records the specified contract in its own text.
+- Specifying how a derived session's copied snapshot composes with a plan bound at finalize. The spec does not state it (see the defect **The spec does not state how a copied snapshot composes with a plan bound at finalize.**).
+- Composing runtime defaults at each materialization, or storing them in a separate session column (see the decision on composing into the stored plan).
+- Re-applying runtime defaults over a restored checkpoint. §7.3 step 3e replays the checkpoint and no plan.
+- Materializing a `workspaceDefaults.files[].ref` by copying a runtime-scoped blob into the session's prefix (see the decision on inline content).
+- A separate conflict rule for a default file and a client source at one path (see the decision on one `sources` array).
+- Checking default setup commands against `setupCommandPolicy` at registration or at bind (see the decision on client-submitted commands).
+- Reporting default-versus-client path collisions in the create or finalize response. Materialization emits the §14.1 collision warning.
+- Editing BUILD-GAPS.md for F-24.17.4, F-26.2.4, and F-27.4.3. They are CLOSED, and this proposal records the specified contract in its own text.
 
 ## Open decisions for human to make
 
-None yet. The review loops write this section.
+**D1. Whether default setup commands are exempt from `setupCommandPolicy`.** SPEC-7 edit (c) keeps the merge-row clause "Derived may restrict allowlist", and SPEC-8 edit (c) exempts every `workspaceDefaults` setup command, including a derived runtime's. Only `platform-admin` creates runtime definitions, and a `tenant-admin` may update the configuration of a runtime already granted to the tenant (§10.2 **Authorization and RBAC**, **Runtime and pool scoping clarification:**; §15.1 **Runtime and pool records are platform-global**).
+
+- **Option A (default).** Exempt all default commands from the allowlist and from `maxCommands`. No check runs at registration or at bind. A principal with update rights on a granted derived runtime can add default setup commands that the base's allowlist excludes. §7.5 **Security model:** places command policy as defense in depth inside the pod sandbox, which bounds the effect.
+- **Option B.** At registration and update, check each default command against the runtime's resolved base-then-derived allowlist, and keep the defaults out of the `maxCommands` count. The restrict-only rule holds for defaults when they are written, at the cost of a resolved-policy check in `validateWorkspaceDefaults`, one more registration error case, and one more test. A later change to the base's allowlist does not re-check derived defaults already stored.
+
+The staged text and tests implement Option A. Choosing B changes SPEC-8 edits (b) and (c), CODE-6 step 5, the TEST-2 admin cases and test 9, the decision on client-submitted commands, the matching non-goal, and the DOCS-1 `concepts.md` **Setup commands** row.
+
+**D2. Whether to reword or remove the defect entry "A running-state blob upload has no consumer".** The entry, in the list of shipped-tree defects below, says that a blob uploaded while the session is `running` is never placed. The review found that the tree rejects such an upload: `admitUpload` (`pkg/gateway/sessionserver/upload.go`) checks the `/upload` precondition without the session's capabilities, so the `midSessionUpload` capability never admits `running`, and `/upload` and `/upload-archive` reject a `running` session. The §15.1 `/upload` precondition row admits `running` under `midSessionUpload`. The defect is therefore a disagreement between that spec row and the tree rather than an unconsumed blob.
+
+- **Option A.** Reword the entry to state that the §15.1 `/upload` precondition row admits `running` under `midSessionUpload` while the tree rejects a `running`-state upload.
+- **Option B.** Remove the entry.
+
+The spec loop derived no recommendation. The open-decisions-and-impact-review phase supplies one.
+
+**D3. Whether the summary's CODE-1 bullet should say the scope check applies to every client-submitted plan.** The **What changes** bullet for `pkg/gateway/sessionserver` says the `uploadRef` scope check "applies at every bind point". The staged §14.1 **Plan binding.** paragraph also names the delegated child session as a bind point, and the check does not run there, because CODE-1 applies it only to client-submitted plans and delegation child plans do not pass through the shared resolver. The **Goals** entry and the non-spec design already say "every client-submitted plan at every bind point".
+
+- **Option A.** Qualify the bullet to read that the check applies to every client-submitted plan at every bind point.
+- **Option B.** Leave the bullet as written.
+
+The spec loop derived no recommendation. The open-decisions-and-impact-review phase supplies one.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -105,29 +146,41 @@ None yet. The review loops write this section.
 - **The emitted `lenny-blob://` URI diverges from §28.5.3.** The code emits `lenny-blob://{tenant}/{object_type}/{session}/{part}`, while §28.5.3 states `lenny-blob://{tenant_id}/{session_id}/{part_id}`. The opaque `uploadRef` contract does not depend on it.
 - **The CLI attaches over SSE, while §26.2 and §24.17 say MCP.** `lenny session new --attach` and `lenny session attach` stream over `GET /v1/sessions/{id}/events`, while §26.2 says the CLI "attaches via the MCP WebSocket" and §24.17 maps `attach` to MCP connect. SPEC-6 keeps that clause verbatim because correcting the attach transport is a separate change.
 - **Per-session MCP tool schemas are hand-written.** §15.2.1 item 4 requires MCP tool schemas generated from the same source as the OpenAPI document, but every per-session tool schema is hand-written, and CODE-2 adds another. Generating them needs a path-parameter rename option in `mcpschemagen`.
+- **§26.3 bootstrap step 1 names an `INIT` state.** The `claude-code` bootstrap list says the warm-pool controller starts the pod "in INIT state", which the §6.2 pod state machine does not define. It concerns pod startup rather than setup timing.
+- **The setup timeout has two names and two defaults.** The §6.2 `finalizing` timer row bounds setup with `runtime.setupTimeoutSeconds` at 300s and requires `maxFinalizingTimeoutSeconds` to be at least that value, while §5.1 names `setupPolicy.timeoutSeconds` and waits indefinitely when it is absent.
+- **The spec does not state how a copied snapshot composes with a plan bound at finalize.** §7.1 **Derive session semantics** and §15.1 **Session Replay Semantics** pre-populate a derived or replayed session with the source session's workspace snapshot and state nothing about the plan that session binds at finalize. Under SPEC-8 that plan carries the runtime's `workspaceDefaults`, so a default file can write a path the snapshot holds. In the tree, `derive.go` and `replay.go` (`pkg/gateway/sessionserver`) write `ParentWorkspaceRef` on the new row, and no materialization path reads it.
+- **The gateway returns `WORKSPACE_PLAN_SCHEMA_UNSUPPORTED` at plan intake.** `writeWorkspacePlanError` (`pkg/gateway/sessionserver/workspace_plan.go`) returns `422 WORKSPACE_PLAN_SCHEMA_UNSUPPORTED` for a submitted plan at create and at finalize, as `schemas/workspaceplan-v1.json` states, while the §15.1 catalog row and §14.1 **Gateway reconciliation** place the code only on read-back of a stored plan.
+- **`ClaimOpts.RequiresDemotion` is never set.** The `RequiresDemotion` field on `ClaimOpts` in `pkg/podlifecycle/interfaces.go` and `pkg/podregistry/podregistry.go` has no non-test setter, and SPEC-2 edits (f) and (g) remove it from the spec. Removing the field, the `ClaimPod` doc-comment sentence, and the setter in `tests/tier2_component/stores/crdpodregistry_claim_test.go` is a behavior-free refactor.
+- **`PodSpec.WorkspacePlan` has no caller.** `CRDPodRegistry.CreatePod` (`pkg/podregistry/crd.go`) stamps the `WorkspacePlan` field of `PodSpec` (`pkg/podregistry/podregistry.go`) onto the Sandbox `spec.workspacePlan` field (`pkg/apis/lenny/v1alpha1/sandbox_types.go`). No non-test code calls `CreatePod`, and SPEC-2 edit (g) removes the field from the spec. Removing both fields, the generated CRD descriptions, and the plan assertion and `TestCreatePodLeavesWorkspacePlanNilWhenEmpty_spec_12_6_422` in `pkg/podregistry/crd_test.go` is a behavior-free refactor.
 
 ## Impacts on other proposals
 
 | Proposal | Status | What 0086 does to it | What it must do |
 |:--|:--|:--|:--|
-| 0085_fix_the-6-2-pre-attached-failure-retry-loop-has | Draft (drafted 2026-09-27) | Both proposals edit `spec/15_external-api-surface.md` §15.1 and `spec/29_communication-scenarios.md` §29.2. 0085 edits the `SETUP_COMMAND_FAILED` catalog row and step 23, and 0086 edits the `WORKSPACE_PLAN_INVALID` and `GIT_CLONE_*` catalog rows and steps 14 and 15. The edits are disjoint. 0085's one-attempt rule for `POST /v1/sessions/{id}/finalize` composes with 0086's rule that a finalize rejected for its plan leaves the session `created`, because the plan rejection precedes any pre-attached work. Every 0085 deliverable keeps its subject. | Nothing. Whichever proposal lands second locates its targets by quoted text. |
-| 0084_fix_on-a-pool-with-sessionpolicy-maxconcurrentsessions-1-one-run | Draft (drafted 2026-09-26) | Both proposals edit `spec/29_communication-scenarios.md` §29.2, where 0084 edits steps 24, 26a, and 26b and 0086 edits steps 14 and 15. Both edit `spec/15_external-api-surface.md`, where 0084 edits §15.4.3, §15.4.4, §15.4.6, and §15.7 and 0086 edits §15.1 and §15.2. Both edit `pkg/gateway/externalapi/openapi/openapi.json`, where 0084 edits the `acknowledgeProcessLevelIsolation` description and 0086 edits the `/v1/sessions/{id}/finalize` operation, the `UploadResponse` `uploadRef` description, and a new `FinalizeRequest` component. Both edit `docs/getting-started/concepts.md`, where 0084 edits **Execution modes** and 0086 edits **Workspace lifecycle** and **Workspace sources**. The edits are disjoint. 0084 also edits `spec/28_communication-channels.md`, including the §28.5.3 `CH-RUNTIMEOPS` `llm_request_completed` row, and 0086 edits no part of that file. Every 0084 deliverable keeps its subject. | Nothing. Whichever proposal lands second locates its targets by quoted text. |
+| 0105_fix_the-per-state-session-deadlines-and-the-watchdog-sweeps | Approved | Both proposals edit `pkg/gateway/mcpfabric/delegation/service.go`. 0105 edits the delegation admission check that returns `ErrParentNotRunning`, and CODE-6 edits the child-row plan write. The edits are disjoint. | Nothing. Whichever proposal lands second locates its targets by symbol and quoted text. |
+| 0085_fix_the-6-2-pre-attached-failure-retry-loop-has | Draft (drafted 2026-09-27) | Both proposals edit `spec/15_external-api-surface.md` §15.1 and `spec/29_communication-scenarios.md` §29.2. 0085 edits the `SETUP_COMMAND_FAILED` catalog row and step 23, and 0086 edits the `WORKSPACE_PLAN_INVALID` and `GIT_CLONE_*` catalog rows and steps 14, 15, and 17. The edits are disjoint. 0085's one-attempt rule for `POST /v1/sessions/{id}/finalize` composes with 0086's rule that a finalize rejected for its plan leaves the session `created`, because the plan rejection precedes any pre-attached work. Every 0085 deliverable keeps its subject. | Nothing. Whichever proposal lands second locates its targets by quoted text. |
+| 0084_fix_on-a-pool-with-sessionpolicy-maxconcurrentsessions-1-one-run | Draft (drafted 2026-09-26) | Both proposals edit `spec/29_communication-scenarios.md` §29.2, where 0084 edits steps 24, 26a, and 26b and 0086 edits steps 14, 15, and 17. Both edit `spec/15_external-api-surface.md`, where 0084 edits §15.4.3, §15.4.4, §15.4.6, and §15.7 and 0086 edits §15.1 and §15.2. Both edit `pkg/gateway/externalapi/openapi/openapi.json`, where 0084 edits the `acknowledgeProcessLevelIsolation` description and 0086 edits the `/v1/sessions/{id}/finalize` operation, the `UploadResponse` `uploadRef` description, a new `FinalizeRequest` component, and the `ref` property of `workspaceDefaults.files`. Both edit `docs/getting-started/concepts.md`, where 0084 edits **Execution modes** and 0086 edits **Workspace lifecycle**, **Workspace sources**, **Setup commands**, the **Pool-level configuration** setup-command-policy bullet, and the derived-runtime `workspaceDefaults` bullet. Both edit `docs/runtime-author-guide/runtime-configuration.md`, where 0084 edits the acknowledgment paragraph and 0086 edits the paragraph after the **Policy and limits** table and the `workspaceDefaults` row. Both edit `spec/05_runtime-registry-and-pool-model.md` §5.2, where 0084 edits the **Concurrent sessions** and **Deployer acknowledgment (concurrent sessions).** paragraphs and 0086 edits the last sentence of the **Recycle lifecycle** paragraph. Both edit `schemas/lenny-adapter.proto`, where 0084 edits the connector RPC comment and 0086 edits the `WorkspacePlan`, `RunSetupRequest`, and `SetupPolicy` comments. The edits are disjoint. 0084 also edits `spec/28_communication-channels.md`, including the §28.5.3 `CH-RUNTIMEOPS` `llm_request_completed` row, and 0086 edits no part of that file. Every 0084 deliverable keeps its subject. | Nothing. Whichever proposal lands second locates its targets by quoted text. |
 | 0083_fix_four-spec-sites-disagree-on-the-finalize-workspace-failure-envelope | Implemented | Resolves the observations its review log records about the undefined finalize-body plan and `WORKSPACE_PLAN_INVALID` at `/finalize`. CODE-3 lists only plan-bind responses and leaves the prepare-phase envelope 0083 settled untouched. | Nothing. It is immutable. |
 | 0082_fix_two-concurrent-post-v1-sessions-id-finalize-calls-for | Implemented | SPEC-3 inserts text into the finalize precondition Notes cell before the credential sentence, leaving 0082's terminal-state sentence unchanged. The same-write persistence SPEC-2 states is the write 0082's guarded Update performs. | Nothing. It is immutable. |
-| 0077_new_pre-materialize-a-workspace-on-a-warm-pod | Draft (dated 2026-08-19) | 0077's §1.3 rationale restates the §14 rule that the gateway resolves each `gitClone.ref` to an immutable `resolvedCommitSha` "at session creation". SPEC-1 edit (c) rewords that timing to "when the plan binds", and a plan can bind in the finalize request. SPEC-1 leaves the per-session immutability sentence that 0077's argument rests on unchanged, so the argument and the design sketch stand, and only the restated timing becomes stale. | Reword the pin-timing sentence to "when the plan binds (§14.1 **Plan binding.**)" if 0077 is revived after 0086 lands. |
+| 0077_new_pre-materialize-a-workspace-on-a-warm-pod | Draft (dated 2026-08-19) | 0077's §1.3 rationale restates the §14 rule that the gateway resolves each `gitClone.ref` to an immutable `resolvedCommitSha` "at session creation". SPEC-1 edit (c) rewords that timing to "when the plan binds", and a plan can bind in the finalize request. SPEC-1 leaves the per-session immutability sentence that 0077's argument rests on unchanged, so the argument and the design sketch stand, and only the restated timing becomes stale. SPEC-7 states per-session setup timing at the opening of §7.5 with no pod-level prohibition. | Reword the pin-timing sentence to "when the plan binds (§14.1 **Plan binding.**)" if 0077 is revived after 0086 lands, and add any warm-time setup mode as a clause of §7.5. |
 | 0007_fix_eager-pod-claim-at-create-and-finalize-materialization | Implemented | Specifies the finalize plan binding and `uploadRef` validation that 0007 kept in `handleFinalize` without staging spec text. | Nothing. It is immutable. |
 
 ## Deliverable index
 
-- SPEC-1 — `spec/14_workspace-plan-schema.md` — adds the §14 `uploadRef` field note, trims the upload sources from the canonical create example, and rewords the `gitClone.ref` pin timing and envelope.
-- SPEC-2 — `spec/14_workspace-plan-schema.md` — adds the §14.1 **Plan binding.** paragraph and aligns layer-1 validation and replay wording.
+- SPEC-1 — `spec/14_workspace-plan-schema.md` — adds the §14 `uploadRef` field note, trims the upload sources from the canonical create example, rewords the `gitClone.ref` pin timing and the schema-encoding envelope text, and deletes the per-slot scope note.
+- SPEC-2 — `spec/14_workspace-plan-schema.md`, `spec/04_system-components.md`, `spec/06_warm-pod-model.md`, `spec/12_storage-architecture.md`, `spec/15_external-api-surface.md`, `spec/16_observability.md` — adds the §14.1 **Plan binding.** paragraph, aligns layer-1 validation and replay wording, moves the §4.9 host match and the §6.1 SDK-warm demotion to the bind, and removes the claim-time demotion option and the pod-creation plan from §4.6.1 and §12.6.
 - SPEC-3 — `spec/15_external-api-surface.md` — updates the §15.1 endpoint, precondition, derive-failure, and error-catalog rows and the §15.2 `finalize_workspace` row.
 - SPEC-4 — `spec/07_session-lifecycle.md` — rewrites §7.1 steps 11 and 12 and the §7.4 pre-start upload sentence.
-- SPEC-5 — `spec/29_communication-scenarios.md` — rewrites §29.2 steps 14 and 15.
-- SPEC-6 — `spec/24_lenny-ctl-command-reference.md`, `spec/26_reference-runtime-catalog.md` — describes the CLI's REST workspace flow in §24 and §24.17 and the finalize-body reference plan in §26.2.
+- SPEC-5 — `spec/29_communication-scenarios.md` — rewrites §29.2 steps 14, 15, and 17.
+- SPEC-6 — `spec/24_lenny-ctl-command-reference.md`, `spec/26_reference-runtime-catalog.md` — describes the CLI's REST workspace flow in §24 and §24.17 and the finalize-body reference plan in §26.2, points the §26.2 and §26.3 examples at §24.17, and retimes §26.3 bootstrap step 3 to finalize and start.
+- SPEC-7 — `spec/07_session-lifecycle.md`, `spec/05_runtime-registry-and-pool-model.md`, `spec/16_observability.md` — makes §7.5 the home of setup timing and points §5.1, the `setupCommandPolicy` merge row, §5.2, the §16.1 `setup_command_failed` error type, and the §16.5 `WarmPoolReplenishmentFailing` row at it.
+- SPEC-8 — `spec/14_workspace-plan-schema.md`, `spec/05_runtime-registry-and-pool-model.md`, `spec/07_session-lifecycle.md` — adds the §14.1 **Runtime workspace defaults.** paragraph and edits §5.1 **Derived Runtime Instantiation** and §7.5 **Command policy:**.
 - CODE-1 — `pkg/gateway/sessionserver` — moves the `uploadRef` scope check into the renamed shared resolver `resolveSubmittedPlan`.
 - CODE-2 — `pkg/gateway/mcpfabric/mcptools/client_tools.go` — declares the optional `workspacePlan` in the `lenny/finalize_workspace` input schema.
 - CODE-3 — `pkg/gateway/externalapi/openapi/openapi.json`, `schemas/workspaceplan-v1.json` — adds the finalize request body and plan-bind responses, and the opaque `uploadRef` descriptions.
 - CODE-4 — `sdks/client/go/lenny/upload.go`, `pkg/gateway/sessionserver/upload.go`, `pkg/embedded/localcli/session.go` — corrects stale comments.
-- DOCS-1 — `docs/` — rewrites the reader-facing upload and finalize documentation.
+- CODE-5 — `schemas/lenny-adapter.proto`, `pkg/adapter/workspace/setup.go` — corrects the setup comments that describe pod-level setup and regenerates the bindings.
+- CODE-6 — `pkg/gateway/runtime/runtimestore`, `pkg/gateway/sessionserver`, `pkg/gateway/session/sessionstore`, `pkg/gateway/mcpfabric/delegation/service.go`, `pkg/gateway/externalapi`, `pkg/ops/mcp/generated_tools.go` — composes runtime defaults into the bound plan and checks them at registration.
+- DOCS-1 — `docs/` — rewrites the reader-facing upload, finalize, and CLI session documentation, the runtime author guide's setup-timing and `workspaceDefaults` text, and the error-catalog and metrics rows for SDK-warm demotion and `setup_command_failed`.
 - TEST-1 — `pkg/gateway/...` tests, `tests/tier3_contract`, `tests/tier9_security` — pins the amended contract across tiers 1, 2, 3, and 9.
+- TEST-2 — `pkg/gateway/...` tests, `tests/tier4_integration` — pins SPEC-8 and CODE-6.
