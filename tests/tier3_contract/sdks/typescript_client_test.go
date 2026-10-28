@@ -889,3 +889,14 @@ func TestTypeScriptClientMessageBodyOmitsSlotAddress(t *testing.T) {
 		t.Errorf("encoded message payload carries a slotId key: %s", got)
 	}
 }
+
+// spec: 15.6 (Client SDKs), 15.1 (/start), 7.2 (starting → failed)
+// diagnosis: the TypeScript SDK start retried a retryable 503
+// STARTING_FAILED under its default retry policy. A failed /start leaves the
+// session failed, so a repeated /start is refused; start must send its
+// request once.
+func TestTypeScriptClientStartMakesOneAttempt_spec_15_6(t *testing.T) {
+	ts, stub := newStartingFailedStub(t)
+	h := spawnTSHelper(t, ts.URL)
+	assertSingleAttemptStart(t, h, stub)
+}

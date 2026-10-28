@@ -274,7 +274,7 @@ func (rec *revokeRecorder) assertClaimEndsAtOnce(t *testing.T, id string) {
 // over every pre-revoke state: the listing, then the lease step over every
 // listed session, terminal ones included, then per session the claim, the cancel
 // write, and AfterRevokeWrite, then the pre-running reclaim of the sessions
-// cancelled from created, finalizing, or ready, then the end of every
+// cancelled from created, finalizing, ready, or starting, then the end of every
 // claim, then the binding release. A row another writer ends between the
 // listing and its cancel write is in the lease step, its claim ends right
 // after the superseded write, and it reaches neither the reclaim nor the
@@ -282,13 +282,15 @@ func (rec *revokeRecorder) assertClaimEndsAtOnce(t *testing.T, id string) {
 // user-row update returns before the listing, and the issued-token
 // revocation runs after it.
 //
-// spec: §11.4 (User Invalidation), §10.1.5 (Stale Replica Behavior)
+// spec: §11.4 (User Invalidation), §10.1.5 (Stale Replica Behavior), §7.2
+// (Session state machine: starting)
 func TestFullRevokeRunsItsStepsInOrder_spec_11_4(t *testing.T) {
 	rec := newRevokeRecorder(
 		t,
 		sessionstore.Session{ID: "s_created", State: session.StateCreated},
 		sessionstore.Session{ID: "s_finalizing", State: session.StateFinalizing},
 		sessionstore.Session{ID: "s_ready", State: session.StateReady},
+		sessionstore.Session{ID: "s_starting", State: session.StateStarting},
 		sessionstore.Session{ID: "s_running", State: session.StateRunning},
 		sessionstore.Session{ID: "s_suspended", State: session.StateSuspended},
 		sessionstore.Session{ID: "s_raced", State: session.StateRunning},
@@ -299,7 +301,7 @@ func TestFullRevokeRunsItsStepsInOrder_spec_11_4(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("full_revoke: status %d, body %v", code, resp)
 	}
-	cancelled := []string{"s_created", "s_finalizing", "s_ready", "s_running", "s_suspended"}
+	cancelled := []string{"s_created", "s_finalizing", "s_ready", "s_starting", "s_running", "s_suspended"}
 	listed := append(append([]string(nil), cancelled...), "s_raced", "s_done")
 	sort.Strings(listed)
 	if strings.Join(rec.leases.got, ",") != strings.Join(listed, ",") {
@@ -332,7 +334,7 @@ func TestFullRevokeRunsItsStepsInOrder_spec_11_4(t *testing.T) {
 	rec.assertClaimEndsAtOnce(t, "s_raced")
 	reclaims := rec.log.withPrefix("reclaim:")
 	sort.Strings(rec.hook.reclaimed)
-	wantReclaimed := []string{"s_created:created", "s_finalizing:finalizing", "s_ready:ready"}
+	wantReclaimed := []string{"s_created:created", "s_finalizing:finalizing", "s_ready:ready", "s_starting:starting"}
 	if strings.Join(rec.hook.reclaimed, ",") != strings.Join(wantReclaimed, ",") {
 		t.Errorf("reclaimed = %v, want %v", rec.hook.reclaimed, wantReclaimed)
 	}

@@ -124,7 +124,7 @@ func (s *Server) handleTerminalWrite(w http.ResponseWriter, r *http.Request, end
 }
 
 // transitionStart: per §15.1, /start transitions ready → starting →
-// running. Short-circuits to running.
+// running; this is the starting → running commit.
 func transitionStart(row *sessionstore.Session) { row.State = session.StateRunning }
 
 // transitionInterrupt: per §15.1, /interrupt transitions running →

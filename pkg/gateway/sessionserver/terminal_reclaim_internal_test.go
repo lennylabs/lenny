@@ -188,21 +188,52 @@ func TestTerminalReclaimPreRunningSkipsResumingSession(t *testing.T) {
 	}
 }
 
-// spec: §4.6 — a starting session is mid-launch on the launching replica, which
-// holds (or is establishing) a live BindResult, so its teardown follows the
-// §6.2 executor recycle path. terminalReclaimPreRunning excludes starting from
-// the by-name reclaim scope.
-func TestTerminalReclaimPreRunningSkipsStartingSession(t *testing.T) {
-	s, c, _ := reclaimTestServer(t, "sbx-start")
+// TestTerminalReclaimPreRunningReclaimsUnboundStartingSession_spec_7_2 pins
+// the by-name reclaim of a `starting` row failed on a replica that holds no
+// binding for it: the starting watchdog, full_revoke, or a /start launch
+// failure on a replica the binding never reached. The per-pod claim is
+// deleted and the lease revoked. Before `starting` joined the pre-running
+// claim states the reclaim returned false and the claim leaked until the
+// orphan-claim GC.
+//
+// spec: §7.2 (Session state machine: starting → failed), §4.6 (durable
+// binding)
+func TestTerminalReclaimPreRunningReclaimsUnboundStartingSession_spec_7_2(t *testing.T) {
+	s, c, assigner := reclaimTestServer(t, "sbx-start")
 
 	ran := s.terminalReclaimPreRunning(context.Background(), session.StateStarting, sessionstore.Session{
 		ID: "sess-start", TenantID: "acme", PodAssignment: "sbx-start", PoolRef: "pool-a",
 	})
-	if ran {
-		t.Fatalf("terminalReclaimPreRunning = true for a starting session, want false")
+	if !ran {
+		t.Fatalf("terminalReclaimPreRunning = false for an unbound starting session, want true")
 	}
-	if !claimExists(t, c, "sbx-start") {
-		t.Errorf("per-pod claim deleted for a starting session, want untouched")
+	if claimExists(t, c, "sbx-start") {
+		t.Errorf("per-pod claim still present for an unbound starting session, want deleted")
+	}
+	if len(assigner.released) != 1 || assigner.released[0] != "sess-start" {
+		t.Errorf("ReleaseSession calls = %v, want [sess-start]", assigner.released)
+	}
+}
+
+// TestTerminalReclaimPreRunningLeavesBoundStartingSessionToExecutor_spec_7_2
+// pins the other half: the replica that published the starting session's
+// binding releases it through the executor path, so the by-name reclaim does
+// not run.
+//
+// spec: §7.2 (Session state machine: starting → failed), §4.6 (durable
+// binding)
+func TestTerminalReclaimPreRunningLeavesBoundStartingSessionToExecutor_spec_7_2(t *testing.T) {
+	s, c, _ := reclaimTestServer(t, "sbx-start-bound")
+	s.podRegistry.Put(&podsession.BindResult{SessionID: "sess-start-bound", TenantID: "acme", SandboxName: "sbx-start-bound"})
+
+	ran := s.terminalReclaimPreRunning(context.Background(), session.StateStarting, sessionstore.Session{
+		ID: "sess-start-bound", TenantID: "acme", PodAssignment: "sbx-start-bound", PoolRef: "pool-a",
+	})
+	if ran {
+		t.Fatalf("terminalReclaimPreRunning = true for a locally bound starting session, want false")
+	}
+	if !claimExists(t, c, "sbx-start-bound") {
+		t.Errorf("per-pod claim deleted for a locally bound starting session, want untouched")
 	}
 }
 

@@ -799,3 +799,64 @@ func TestGoClientMessageBodyOmitsSlotAddress(t *testing.T) {
 		t.Errorf("encoded message payload carries a slotId key: %s", got)
 	}
 }
+
+// startingFailedStub is a stub gateway that answers every POST
+// /v1/sessions/{id}/start with 503 STARTING_FAILED and Retry-After, and
+// counts the /start requests it receives.
+type startingFailedStub struct {
+	mu     sync.Mutex
+	starts int
+}
+
+func newStartingFailedStub(t *testing.T) (*httptest.Server, *startingFailedStub) {
+	t.Helper()
+	stub := &startingFailedStub{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/start") {
+			stub.mu.Lock()
+			stub.starts++
+			stub.mu.Unlock()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
+			"code": "STARTING_FAILED", "category": "TRANSIENT",
+			"message": "could not place the session on a warm pod", "retryable": true,
+		}})
+	}))
+	t.Cleanup(ts.Close)
+	return ts, stub
+}
+
+func (s *startingFailedStub) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.starts
+}
+
+// assertSingleAttemptStart sends the start op through the helper and
+// asserts the SDK surfaced STARTING_FAILED after exactly one /start request.
+func assertSingleAttemptStart(t *testing.T, h *harness.Helper, stub *startingFailedStub) {
+	t.Helper()
+	resp := send(t, h, harness.Command{Op: "start", Args: map[string]any{"id": "sess_start_once"}})
+	if resp.OK {
+		t.Fatal("start against a 503 STARTING_FAILED stub succeeded")
+	}
+	if resp.Code != "STARTING_FAILED" {
+		t.Errorf("error code = %q (message %q), want STARTING_FAILED", resp.Code, resp.Error)
+	}
+	if n := stub.count(); n != 1 {
+		t.Errorf("/start requests = %d, want 1: the SDK start retried a failed start", n)
+	}
+}
+
+// spec: 15.6 (Client SDKs), 15.1 (/start), 7.2 (starting → failed)
+// diagnosis: the Go SDK Start retried a retryable 503 STARTING_FAILED
+// under its default retry policy. A failed /start leaves the session failed,
+// so a repeated /start is refused; Start must send its request once.
+func TestGoClientStartMakesOneAttempt_spec_15_6(t *testing.T) {
+	ts, stub := newStartingFailedStub(t)
+	h := spawnHelper(t, ts.URL)
+	assertSingleAttemptStart(t, h, stub)
+}

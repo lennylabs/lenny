@@ -90,6 +90,8 @@ type RecordingRuntime struct {
 	// delay is how long the runtime keeps each message in hand before it
 	// answers.
 	delay time.Duration
+	// failStart, when set, is the error the next Start returns.
+	failStart error
 }
 
 // NewRecordingRuntime returns a runtime whose output reader is running.
@@ -113,12 +115,25 @@ func NewRecordingRuntime() *RecordingRuntime {
 // TapOutput records fn as the adapter's activity tap.
 func (r *RecordingRuntime) TapOutput(fn func(line []byte)) { r.tap.Store(&fn) }
 
-// Start records the session start.
+// Start records the session start, or returns the error FailNextStart
+// armed, once, without recording it.
 func (r *RecordingRuntime) Start(_ context.Context, sessionID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if err := r.failStart; err != nil {
+		r.failStart = nil
+		return err
+	}
 	r.started = append(r.started, sessionID)
 	return nil
+}
+
+// FailNextStart makes the next Start return err, so the launch a gateway
+// runs on the pod fails inside the binder.
+func (r *RecordingRuntime) FailNextStart(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.failStart = err
 }
 
 // bindingKey names one binding of a session.

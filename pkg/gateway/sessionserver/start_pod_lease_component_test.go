@@ -37,6 +37,9 @@ type componentLeaseStore struct {
 	// which reproduces a transient Redis blip between the hoisted acquire
 	// and the binding publish on the early-commit paths.
 	failAcquireAfter int
+	// onAcquire, when set, runs at the start of every Acquire, so a test can
+	// act at the moment the bind funnel reaches the lease store.
+	onAcquire func()
 }
 
 func newComponentLeaseStore() *componentLeaseStore {
@@ -46,6 +49,9 @@ func newComponentLeaseStore() *componentLeaseStore {
 func clk(tenantID, sessionID string) string { return tenantID + "/" + sessionID }
 
 func (f *componentLeaseStore) Acquire(_ context.Context, tenantID, sessionID, holder string, _ time.Duration) (leasestore.Lease, error) {
+	if f.onAcquire != nil {
+		f.onAcquire()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.acquires++

@@ -208,9 +208,10 @@ func TestIsValidIllegalTransitionsRejected(t *testing.T) {
 // appears here once.
 var sessionStateMachineEdges = []state.Transition{
 	{From: state.Created, To: state.Failed},
+	{From: state.Ready, To: state.Starting},
 	{From: state.Starting, To: state.Running},
-	{From: state.Starting, To: state.ResumePending},
 	{From: state.Starting, To: state.Failed},
+	{From: state.Starting, To: state.Expired},
 	{From: state.Running, To: state.Suspended},
 	{From: state.Running, To: state.InputRequired},
 	{From: state.Running, To: state.Completed},
@@ -220,6 +221,7 @@ var sessionStateMachineEdges = []state.Transition{
 	{From: state.Running, To: state.Cancelled},
 	{From: state.Running, To: state.Expired},
 	{From: state.InputRequired, To: state.Running},
+	{From: state.InputRequired, To: state.Completed},
 	{From: state.InputRequired, To: state.Cancelled},
 	{From: state.InputRequired, To: state.Expired},
 	{From: state.InputRequired, To: state.ResumePending},
@@ -236,11 +238,13 @@ var sessionStateMachineEdges = []state.Transition{
 	{From: state.ResumePending, To: state.AwaitingClientAction},
 	{From: state.ResumePending, To: state.Cancelled},
 	{From: state.ResumePending, To: state.Completed},
+	{From: state.ResumePending, To: state.Expired},
 	{From: state.Resuming, To: state.Running},
 	{From: state.Resuming, To: state.ResumePending},
 	{From: state.Resuming, To: state.AwaitingClientAction},
 	{From: state.Resuming, To: state.Cancelled},
 	{From: state.Resuming, To: state.Completed},
+	{From: state.Resuming, To: state.Expired},
 	{From: state.AwaitingClientAction, To: state.ResumePending},
 	{From: state.AwaitingClientAction, To: state.Completed},
 	{From: state.AwaitingClientAction, To: state.Cancelled},
@@ -290,5 +294,71 @@ func TestValidTransitionsHasNoDuplicateEdge_spec_7_2(t *testing.T) {
 			t.Errorf("ValidTransitions() lists %q → %q twice", tr.From, tr.To)
 		}
 		seen[tr] = true
+	}
+}
+
+// TestValidTransitionsOmitTheRemovedStartingResumePendingEdge_spec_7_2 pins
+// the removal of starting → resume_pending: a /start failure after the
+// ready → starting write takes starting → failed, and no writer produces a
+// starting → resume_pending edge. The table listed it before the /start path
+// moved through starting.
+//
+// spec: §7.2 (Session state machine: starting → failed)
+func TestValidTransitionsOmitTheRemovedStartingResumePendingEdge_spec_7_2(t *testing.T) {
+	t.Parallel()
+	if err := state.IsValid(state.Starting, state.ResumePending); err == nil {
+		t.Fatal("IsValid(starting, resume_pending) = nil, want an error: the §7.2 block no longer lists the edge")
+	}
+}
+
+// anyStateWriters are the existing terminal writers the §7.2 "Terminal
+// writes from any non-terminal state." paragraph legalizes, each with a
+// source state the per-state block lists no edge to its target from.
+var anyStateWriters = []struct {
+	writer string
+	from   state.State
+	to     state.State
+}{
+	{"operator force-terminate", state.ResumePending, state.Failed},
+	{"operator force-terminate", state.AwaitingClientAction, state.Failed},
+	{"operator force-terminate", state.Resuming, state.Failed},
+	{"operator force-terminate", state.Finalizing, state.Failed},
+	{"operator force-terminate", state.Ready, state.Failed},
+	{"budget terminator", state.Resuming, state.Expired},
+	{"budget terminator", state.Suspended, state.Expired},
+	{"budget terminator", state.Ready, state.Expired},
+	{"orphan cleanup", state.Created, state.Expired},
+	{"orphan cleanup", state.Finalizing, state.Expired},
+	{"perChildMaxAge expiry", state.ResumePending, state.Expired},
+	{"perChildMaxAge expiry", state.AwaitingClientAction, state.Expired},
+}
+
+// TestValidTransitionsAdmitEveryAnyStateTerminalWriter_spec_7_2 asserts that
+// each existing any-state terminal writer's edge is in ValidTransitions, and
+// that every non-terminal state has a → failed and a → expired edge. Before
+// the table carried the any-state paragraph, ForceTerminate from
+// resume_pending and the budget terminator from resuming were off-table.
+//
+// spec: §7.2 (Terminal writes from any non-terminal state)
+func TestValidTransitionsAdmitEveryAnyStateTerminalWriter_spec_7_2(t *testing.T) {
+	t.Parallel()
+	for _, c := range anyStateWriters {
+		c := c
+		t.Run(c.writer+"_"+string(c.from)+"_to_"+string(c.to), func(t *testing.T) {
+			t.Parallel()
+			if err := state.IsValid(c.from, c.to); err != nil {
+				t.Errorf("IsValid(%q, %q) = %v, want nil: the %s writes this edge", c.from, c.to, err, c.writer)
+			}
+		})
+	}
+	for _, from := range state.All() {
+		if state.IsTerminal(from) {
+			continue
+		}
+		for _, to := range []state.State{state.Failed, state.Expired} {
+			if err := state.IsValid(from, to); err != nil {
+				t.Errorf("IsValid(%q, %q) = %v, want nil for an any-state terminal write", from, to, err)
+			}
+		}
 	}
 }
