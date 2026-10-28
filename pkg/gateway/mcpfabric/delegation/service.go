@@ -779,8 +779,8 @@ func (e *ContentPolicyInterceptorSubstitutionError) Error() string {
 func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (result Result, retErr error) {
 	// spec: §16.3 — the gateway spawn-child path runs under a
 	// `delegation.spawn_child` span so a distributed trace shows the
-	// admission gate (isolation, cycle, depth, budget, token mint, child
-	// INSERT) as one unit. The tracer resolves the process-global provider
+	// admission gate (isolation, cycle, depth, budget, child INSERT) as
+	// one unit. The tracer resolves the process-global provider
 	// tracing.InitProvider installs; tenant_id/session_id ride from the
 	// correlation context Start projects. The deferred RecordError stamps
 	// any error path (every gate rejection returns through retErr).
@@ -922,9 +922,9 @@ func (s *Service) validateDelegation(ctx context.Context, tenantID string, req R
 		return admission{}, ErrParentNotRunning
 	}
 
-	// §8.2: the gateway mints the child session's token via
-	// the canonical token-exchange endpoint with `subject_token` set
-	// to the parent's authenticated user JWT. A parent without a
+	// §8.2: the gateway mints no token for a delegated child; the
+	// child session row carries the parent's user and tenant as the
+	// child's identity. A parent without a
 	// user identity has no subject to bind the child to, so the
 	// subtree is rejected at admission rather than spawning a child
 	// whose §11.2 quotas, §10.6 environment scope, §11.7 audit
