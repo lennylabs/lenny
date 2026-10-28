@@ -1141,6 +1141,13 @@ sites:
       reason: |-
         precondition not met: gateway pod %s did not terminate within the timeout: %v
         %s
+    - path: tests/tier5_e2e_kind/gateway_replica_continuity_test.go
+      function: waitGatewayRollout
+      site: 1
+      call: Skipf
+      reason: |-
+        precondition not met: the replacement gateway replica did not become Ready: %v
+        %s
     - path: tests/tier5_e2e_kind/gvisor_isolation_test.go
       function: requireGvisorPoolPod
       site: 1
@@ -1958,6 +1965,11 @@ sites:
       site: 1
       call: Skipf
       reason: 'precondition not met: warm pool not ready, no session to guard: %v'
+    - path: tests/tier9_security/network_policy_test.go
+      function: TestPublicListenerDoesNotRunARequestAsTheCallingSession_spec_29_3
+      site: 1
+      call: Skipf
+      reason: 'precondition not met: warm pool not ready, no session to name: %v'
     - path: tests/tier9_security/ops_network_policy_test.go
       function: TestOpsAdminAPITLSHandshakeCompletes_spec_25_4
       site: 1
