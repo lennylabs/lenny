@@ -26,7 +26,7 @@ const deletionHoldFinalizer = "lenny.dev/test-deletion-hold"
 func (e *terminatedAdapterEnv) enablePreConnect() {
 	e.t.Helper()
 	var rt lennyv1.Runtime
-	if err := e.c.Get(e.ctx, client.ObjectKey{Name: "claude-code"}, &rt); err != nil {
+	if err := e.c.Get(e.ctx, client.ObjectKey{Name: e.runtime}, &rt); err != nil {
 		e.t.Fatalf("get runtime: %v", err)
 	}
 	rt.Spec.Capabilities = &lennyv1.RuntimeCapabilitiesCRD{PreConnect: true}
@@ -42,7 +42,7 @@ func (e *terminatedAdapterEnv) enablePreConnect() {
 func (e *terminatedAdapterEnv) startPodDeletion(name string) {
 	e.t.Helper()
 	var p corev1.Pod
-	if err := e.c.Get(e.ctx, client.ObjectKey{Namespace: taNS, Name: name}, &p); err != nil {
+	if err := e.c.Get(e.ctx, client.ObjectKey{Namespace: e.ns, Name: name}, &p); err != nil {
 		e.t.Fatalf("get pod %s: %v", name, err)
 	}
 	p.Finalizers = append(p.Finalizers, deletionHoldFinalizer)
@@ -52,7 +52,7 @@ func (e *terminatedAdapterEnv) startPodDeletion(name string) {
 	if err := e.c.Delete(e.ctx, &p); err != nil {
 		e.t.Fatalf("delete pod %s: %v", name, err)
 	}
-	if err := e.c.Get(e.ctx, client.ObjectKey{Namespace: taNS, Name: name}, &p); err != nil {
+	if err := e.c.Get(e.ctx, client.ObjectKey{Namespace: e.ns, Name: name}, &p); err != nil {
 		e.t.Fatalf("get deleted pod %s: %v", name, err)
 	}
 	if p.DeletionTimestamp.IsZero() {
@@ -66,7 +66,7 @@ func (e *terminatedAdapterEnv) startPodDeletion(name string) {
 func (e *terminatedAdapterEnv) finishPodDeletion(name string) {
 	e.t.Helper()
 	var p corev1.Pod
-	if err := e.c.Get(e.ctx, client.ObjectKey{Namespace: taNS, Name: name}, &p); err != nil {
+	if err := e.c.Get(e.ctx, client.ObjectKey{Namespace: e.ns, Name: name}, &p); err != nil {
 		e.t.Fatalf("get pod %s: %v", name, err)
 	}
 	p.Finalizers = nil
@@ -151,7 +151,7 @@ func TestWarmingPodDeletedHoldsThenRecreatesWithoutFailing(t *testing.T) {
 		}
 	}
 	var p corev1.Pod
-	if err := e.c.Get(e.ctx, client.ObjectKey{Namespace: taNS, Name: name}, &p); err != nil {
+	if err := e.c.Get(e.ctx, client.ObjectKey{Namespace: e.ns, Name: name}, &p); err != nil {
 		t.Fatalf("get terminating pod: %v", err)
 	}
 	if p.DeletionTimestamp.IsZero() {
@@ -165,7 +165,7 @@ func TestWarmingPodDeletedHoldsThenRecreatesWithoutFailing(t *testing.T) {
 	if !e.podExists(name) {
 		t.Fatalf("warming sandbox %s did not create a fresh pod after the old one was removed", name)
 	}
-	if err := e.c.Get(e.ctx, client.ObjectKey{Namespace: taNS, Name: name}, &p); err != nil {
+	if err := e.c.Get(e.ctx, client.ObjectKey{Namespace: e.ns, Name: name}, &p); err != nil {
 		t.Fatalf("get fresh pod: %v", err)
 	}
 	if !p.DeletionTimestamp.IsZero() {

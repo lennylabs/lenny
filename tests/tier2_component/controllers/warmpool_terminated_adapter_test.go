@@ -24,28 +24,30 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
-	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
-const (
-	taNS   = "lenny-agents"
-	taPool = "ta-pool"
-)
+const taPool = "ta-pool"
 
-// terminatedAdapterEnv is one envtest API server seeded with a warm pool
-// (minWarm 1) and the two WarmPoolController arms the test drives by
-// hand: the pool sizing reconciler and the Sandbox-to-Pod reconciler.
+// terminatedAdapterEnv is a test's namespace on the shared envtest API
+// server, seeded with a warm pool (minWarm 1) and the two
+// WarmPoolController arms the test drives by hand: the pool sizing
+// reconciler and the Sandbox-to-Pod reconciler.
 type terminatedAdapterEnv struct {
 	t    *testing.T
 	ctx  context.Context
 	c    client.Client
 	pool *warmpool.Reconciler
 	sb   *sandbox.Reconciler
+	// ns is the test's namespace, which holds every namespaced fixture.
+	ns string
+	// runtime names the test's cluster-scoped Runtime, unique to the test
+	// because the control plane is shared.
+	runtime string
 }
 
 func newTerminatedAdapterEnv(t *testing.T) *terminatedAdapterEnv {
 	t.Helper()
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(lennyv1.AddToScheme(scheme))
@@ -54,14 +56,19 @@ func newTerminatedAdapterEnv(t *testing.T) *terminatedAdapterEnv {
 		t.Fatalf("client.New: %v", err)
 	}
 	ctx := context.Background()
-	mustCreate(t, ctx, c, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: taNS}})
-	for _, rc := range []string{"runc", "gvisor", "kata"} {
-		if err := c.Create(ctx, &nodev1.RuntimeClass{ObjectMeta: metav1.ObjectMeta{Name: rc}, Handler: rc}); err != nil && !apierrors.IsAlreadyExists(err) {
-			t.Fatalf("create RuntimeClass %s: %v", rc, err)
-		}
+	ns := testNamespaces.Create(t, c)
+	// The pod spec names the RuntimeClass the isolation profile resolves
+	// to, and the API server refuses a pod whose RuntimeClass is absent.
+	// RuntimeClasses are cluster-scoped with fixed names, so the test holds
+	// them exclusively and they are deleted at cleanup.
+	rcs := []string{"runc", "gvisor", "kata"}
+	claimRuntimeClasses(t, c, rcs...)
+	for _, rc := range rcs {
+		mustCreate(t, ctx, c, &nodev1.RuntimeClass{ObjectMeta: metav1.ObjectMeta{Name: rc}, Handler: rc})
 	}
+	rtName := clusterName(t, "Runtime", "claude-code")
 	mustCreate(t, ctx, c, &lennyv1.Runtime{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-code"},
+		ObjectMeta: metav1.ObjectMeta{Name: rtName},
 		Spec: lennyv1.RuntimeSpec{
 			Type:             "agent",
 			Image:            "ghcr.io/acme/claude-code@sha256:" + "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
@@ -70,15 +77,15 @@ func newTerminatedAdapterEnv(t *testing.T) *terminatedAdapterEnv {
 		},
 	})
 	mustCreate(t, ctx, c, &lennyv1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: taPool, Namespace: taNS},
-		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: "claude-code", IsolationProfile: "standard"},
+		ObjectMeta: metav1.ObjectMeta{Name: taPool, Namespace: ns},
+		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: rtName, IsolationProfile: "standard"},
 	})
 	mustCreate(t, ctx, c, &lennyv1.SandboxWarmPool{
-		ObjectMeta: metav1.ObjectMeta{Name: taPool, Namespace: taNS},
+		ObjectMeta: metav1.ObjectMeta{Name: taPool, Namespace: ns},
 		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: taPool, MinWarm: 1, MaxWarm: 3},
 	})
 	return &terminatedAdapterEnv{
-		t: t, ctx: ctx, c: c,
+		t: t, ctx: ctx, c: c, ns: ns, runtime: rtName,
 		pool: &warmpool.Reconciler{Client: c, Scheme: scheme},
 		sb:   &sandbox.Reconciler{Client: c, Scheme: scheme, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1", SupervisorImage: "ghcr.io/lennylabs/lenny-supervisor:v1"},
 	}
@@ -86,14 +93,14 @@ func newTerminatedAdapterEnv(t *testing.T) *terminatedAdapterEnv {
 
 func (e *terminatedAdapterEnv) reconcilePool() {
 	e.t.Helper()
-	if _, err := e.pool.Reconcile(e.ctx, ctrl.Request{NamespacedName: client.ObjectKey{Namespace: taNS, Name: taPool}}); err != nil {
+	if _, err := e.pool.Reconcile(e.ctx, ctrl.Request{NamespacedName: client.ObjectKey{Namespace: e.ns, Name: taPool}}); err != nil {
 		e.t.Fatalf("pool Reconcile: %v", err)
 	}
 }
 
 func (e *terminatedAdapterEnv) reconcileSandbox(name string) {
 	e.t.Helper()
-	if _, err := e.sb.Reconcile(e.ctx, ctrl.Request{NamespacedName: client.ObjectKey{Namespace: taNS, Name: name}}); err != nil {
+	if _, err := e.sb.Reconcile(e.ctx, ctrl.Request{NamespacedName: client.ObjectKey{Namespace: e.ns, Name: name}}); err != nil {
 		e.t.Fatalf("sandbox Reconcile %s: %v", name, err)
 	}
 }
@@ -101,7 +108,7 @@ func (e *terminatedAdapterEnv) reconcileSandbox(name string) {
 func (e *terminatedAdapterEnv) sandboxes() []lennyv1.Sandbox {
 	e.t.Helper()
 	var l lennyv1.SandboxList
-	if err := e.c.List(e.ctx, &l, client.InNamespace(taNS), client.MatchingLabels{warmpool.LabelPool: taPool}); err != nil {
+	if err := e.c.List(e.ctx, &l, client.InNamespace(e.ns), client.MatchingLabels{warmpool.LabelPool: taPool}); err != nil {
 		e.t.Fatalf("list sandboxes: %v", err)
 	}
 	return l.Items
@@ -110,7 +117,7 @@ func (e *terminatedAdapterEnv) sandboxes() []lennyv1.Sandbox {
 func (e *terminatedAdapterEnv) phase(name string) state.State {
 	e.t.Helper()
 	var sb lennyv1.Sandbox
-	if err := e.c.Get(e.ctx, client.ObjectKey{Namespace: taNS, Name: name}, &sb); err != nil {
+	if err := e.c.Get(e.ctx, client.ObjectKey{Namespace: e.ns, Name: name}, &sb); err != nil {
 		e.t.Fatalf("get sandbox %s: %v", name, err)
 	}
 	return state.State(sb.Status.Phase)
@@ -132,7 +139,7 @@ func (e *terminatedAdapterEnv) warmCount() int {
 func (e *terminatedAdapterEnv) podExists(name string) bool {
 	e.t.Helper()
 	var p corev1.Pod
-	err := e.c.Get(e.ctx, client.ObjectKey{Namespace: taNS, Name: name}, &p)
+	err := e.c.Get(e.ctx, client.ObjectKey{Namespace: e.ns, Name: name}, &p)
 	if err != nil && !apierrors.IsNotFound(err) {
 		e.t.Fatalf("get pod %s: %v", name, err)
 	}
@@ -144,7 +151,7 @@ func (e *terminatedAdapterEnv) podExists(name string) bool {
 func (e *terminatedAdapterEnv) setPodStatus(name string, adapterExited, ready bool) {
 	e.t.Helper()
 	var p corev1.Pod
-	if err := e.c.Get(e.ctx, client.ObjectKey{Namespace: taNS, Name: name}, &p); err != nil {
+	if err := e.c.Get(e.ctx, client.ObjectKey{Namespace: e.ns, Name: name}, &p); err != nil {
 		e.t.Fatalf("get pod %s: %v", name, err)
 	}
 	adapter := corev1.ContainerStatus{
@@ -184,7 +191,7 @@ func (e *terminatedAdapterEnv) applySandboxPhase(name string, phase state.State)
 	e.t.Helper()
 	patch := &lennyv1.Sandbox{
 		TypeMeta:   metav1.TypeMeta{APIVersion: lennyv1.GroupVersion.String(), Kind: "Sandbox"},
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: taNS},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: e.ns},
 	}
 	patch.Status.Phase = string(phase)
 	patch.Status.PodName = name
@@ -302,7 +309,7 @@ func TestClaimedPodWithTerminatedAdapterGoesThroughReleasePath(t *testing.T) {
 	name := e.fillOne()
 
 	claim := &lennyv1.SandboxClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: "claim-" + name, Namespace: taNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "claim-" + name, Namespace: e.ns},
 		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: name, TenantID: "acme"},
 	}
 	mustCreate(t, e.ctx, e.c, claim)

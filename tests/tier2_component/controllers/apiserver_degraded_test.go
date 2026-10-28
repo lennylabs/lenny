@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -23,7 +22,6 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/podregistry"
-	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
 // unreachableConfig returns a *rest.Config that is a copy of base but
@@ -74,6 +72,10 @@ func unreachableConfig(t *testing.T, base *rest.Config) *rest.Config {
 // gateway↔pod live-serving leg of that clause is covered end to end only by
 // the Kind chaos variant.
 //
+// Because only the broken client sees the outage, the test runs on the
+// package's shared control plane: every other client of that API server
+// keeps reaching it throughout.
+//
 // diagnosis: a failure means the degraded-mode reaction is broken. Either
 // the WarmPoolController swallows an API-server failure instead of returning
 // an error (so a failed reconcile would not requeue and the pool would not
@@ -87,7 +89,7 @@ func unreachableConfig(t *testing.T, base *rest.Config) *rest.Config {
 // new session creation rejected with a retryable error, pool replenishment
 // frozen, pool self-heals to minWarm on recovery), §4.6.1 (per-pod ClaimPod).
 func TestEtcdUnavailableDegradedMode_spec_4_6(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -103,10 +105,9 @@ func TestEtcdUnavailableDegradedMode_spec_4_6(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	const ns = "lenny-agents"
 	const poolName = "claude-worker-small"
 
-	mustCreate(t, ctx, live, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})
+	ns := testNamespaces.Create(t, live)
 	mustCreate(t, ctx, live, &lennyv1.SandboxTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: poolName, Namespace: ns},
 		Spec: lennyv1.SandboxTemplateSpec{
