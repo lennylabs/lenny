@@ -508,8 +508,32 @@ func (h *keptRuntimeHarness) sessionAToReserved(t *testing.T, ctx context.Contex
 	if err := h.d.Terminate(ctx, tenant, sessA.ID); err != nil {
 		t.Fatalf("terminate session A: %v", err)
 	}
+	if got, err := h.d.GetSession(ctx, tenant, sessA.ID); err == nil {
+		if msg := keptRuntimeSealDiagnosis(got.State, got.FailureClass); msg != "" {
+			t.Fatalf("session A %s on pod %s: %s", sessA.ID, sessA.PodAssignment, msg)
+		}
+	}
 	h.waitField(t, "sandboxclaim", "claim-"+sessA.PodAssignment, "{.status.phase}", "reserved", 90*time.Second)
 	return sessA.PodAssignment
+}
+
+// keptRuntimeSealDiagnosis names the precondition a terminated session A
+// breaks when its row reports a failed seal, and returns "" otherwise. A
+// seal that fails releases the pod with the failed disposition, which
+// retires it and deletes its claim, so the claim never reaches `reserved`
+// and a wait on it would report an empty phase with no cause. On Kind the
+// seal fails when the object store refuses the checkpoint chunk PUT; the
+// known case is MinIO answering 507 Insufficient Storage because the host
+// disk under the Kind nodes is full.
+//
+// spec: §7.1 (Seal-and-export invariant), §5.2 (Recycle lifecycle)
+func keptRuntimeSealDiagnosis(state, failureClass string) string {
+	if state != "failed" || failureClass != "workspace_seal_timeout" {
+		return ""
+	}
+	return "terminated failed with workspace_seal_timeout, so the pod was retired rather than held reserved " +
+		"(§7.1 Seal-and-export invariant); check that the object store accepts the seal's checkpoint chunk PUT, " +
+		"for example that MinIO is not answering 507 Insufficient Storage because the Kind host disk is full"
 }
 
 // putPool sends PUT /v1/admin/pools/{name} with the pool's current ETag.

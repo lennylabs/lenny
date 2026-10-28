@@ -183,6 +183,16 @@ hand. The step-back procedure for an ahead database and the reset procedure for 
 `tests/testinfra/README.md` under "Shared Kind cluster database", and both run only with the owner's approval
 because every worktree tests against the same database.
 
+**9. The host disk has room, so the object store accepts writes.** The Kind nodes run as containers on the
+host disk, and the in-cluster MinIO stores objects in an `emptyDir` on that disk. When the host disk is nearly
+full, MinIO answers every PUT with `507 Insufficient Storage`. The adapter retries that status silently, the
+terminal seal fails inside its short e2e window, and the gateway releases the pod with the failed
+disposition. The symptom is far from the cause: a pod that should recycle or hold `reserved` after a session
+ends is retired instead, its claim disappears, and a wait on the claim reports an empty phase. Check
+`df -h /` before a tier above 1. The usual consumer is the Docker build cache that repeated content-tagged
+image builds leave behind; `docker system df` shows it, and `docker builder prune --filter until=12h` frees
+the unused part without touching an image a cluster runs.
+
 When a check fails and fixing the environment is out of scope for the work in hand, record the precondition
 and skip the affected case with a reason, in the register at `tests/registers/skip-reasons.yaml`. A test
 skipped with a recorded reason is honest; one that fails for an environmental reason teaches everyone to
