@@ -1,5 +1,9 @@
 # Summary: The §6.2 pre-attached retry loop has no stop condition for a terminal session
 
+## Records numbering note (2026-10-28)
+
+RECORDS-1 files its new BUILD-GAPS finding as `F-6.2.27`, and that identifier is already taken by an OPEN finding about the §6.2 `idle → draining` trigger list. Renumber the new finding to the next free `F-6.2.N` identifier when RECORDS-1 is applied, and update every reference to it in this proposal's files, including the `CODE-1` comment and the TEST-GAPS T-6.2.10 retarget in the non-spec changes. The plan in `gateway-runtime-comms-remediation.md` §10.2 queues this proposal after proposal 0086, because both edit the §6.2 setup-failure wording.
+
 ## Summary
 
 **Problem statement.** The §6.2 **Pre-attached failure retry policy:** re-claims a fresh pod and replays setup after any failure before `attached`, up to 2 retries per client request. It names no seam it is confined to and no stop condition for a session that terminate, DELETE, or a pre-running watchdog ends mid-setup. The policy assumes a request with no persisted session row. That holds for the §7.1 creation of `POST /v1/sessions` and `POST /v1/sessions/start` and fails at finalize, `/{id}/start`, `/resume`, and delegated-child materialization, where a re-claim would run setup for an ended session and leak a pod to orphan GC. Other spec sites promise a fresh-pod recovery or a replacement claim at those seams while §7.1 names only the pre-attached disposition, so the spec reads both ways. The tree runs no §6.2 loop anywhere, so the defect constrains a future implementation.
