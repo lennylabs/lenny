@@ -3809,7 +3809,14 @@ other test in that binary.
     Fixed in `2a0c51c4a` with no product change: tests whose code takes the namespace, or whose manifest
     the test supplies, use per-test namespaces, and each object at a product-fixed namespace and name has
     one owning test. The package fell from 151.7 s to 25.9 s.
-  - [ ] **T-17.4.24** (Low): `tests/tier2_component/controllers` starts one in 17 tests (146.3 s).
+  - [x] **T-17.4.24** (Low): `tests/tier2_component/controllers` starts one in 17 tests (146.3 s).
+    Fixed in `7a75103f6` with no product change: every test shares one control plane in its own namespace,
+    Runtimes carry per-test names, and the fixed-name RuntimeClasses are held by one test at a time and
+    deleted at cleanup. No test keeps a private control plane, because the degraded-mode test faults only a
+    second client and leaves the API server running. The package fell from 157.4 s to 17.7 s. The fix
+    filed T-17.4.31 (the citation gates miss the `N.M line L` spelling).
+  - [ ] **T-17.4.31** (Low): the line-citation gates do not recognize the bare `N.M line L` spelling; 22
+    `// spec:` annotations in 10 Go files use it and none is in the ratchet baseline.
   - [ ] **T-17.4.25** (Info): `cmd/lenny-gateway` starts one in 5 tests (about 31 s of 86.4 s). It took
     109.1 s in a scoped unit-tier run on 2026-10-27, the slowest of that run.
   - [ ] **T-17.4.29** (Medium): parallel implementation worktrees share the one `lenny-e2e` kind cluster,
