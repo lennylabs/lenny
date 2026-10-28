@@ -3696,10 +3696,21 @@ blocks any of them.
     (48d920956), so this is the only delegation-child issuance path. Closed by direct fix 51dd597f3
     (2026-10-28), which writes both columns together or neither so that no delegation row matches the
     impersonation predicate, with tier-1, tier-2, and tier-4 tests. It filed F-13.3.23.
-  - [ ] **F-13.3.23** (Medium): the Token Service mints an `a2a_delegation` child token with no RFC 8693
+  - [x] **F-13.3.23** (Medium): the Token Service mints an `a2a_delegation` child token with no RFC 8693
     `act` claim, although §13.3 sets one whenever an `actor_token` is present, and `jwt.Claims` has no field
-    for it. Filed from the direct fix of F-13.3.22 (2026-10-28). Direct fix.
+    for it. Filed from the direct fix of F-13.3.22 (2026-10-28). Closed by direct fix 613e4b8fd
+    (2026-10-28), which adds `jwt.Claims.Act`, sets it only on an exchange with an `actor_token`, and carries
+    it onto the auth middleware's `Principal.Act`, with tier-1 and tier-3 tests. It filed F-13.3.24 and
+    F-15.2.26.
+  - [ ] **F-15.2.26** (Medium): `adapterregistry.SessionMetadata` carries no §15 `CallerIdentity`, no
+    `CallerIdentity` or `ActorClaim` type exists, and the gateway never calls `DispatchSessionCreated`, so no
+    adapter receives `OnSessionCreated` or the caller's `act` claim. Filed from the direct fix of F-13.3.23
+    (2026-10-28). Direct fix.
 - Proposal routing.
+  - [ ] **F-13.3.24** (Low): an `a2a_delegation` token exchanged without an `actor_token` keeps its `typ`
+    and, under the §13.3 `act` row, carries no `act` claim, while §10.2 says every `a2a_delegation` token
+    carries a non-empty `act`. The proposal picks refusal, copying the subject's `act`, or relaxing §10.2.
+    Filed from the direct fix of F-13.3.23 (2026-10-28). It can ride with any later §13.3 or §10.2 proposal.
   - [ ] **F-8.5.26** (Low): `lenny/delegate_task` returns admission's `ErrParentNotRunning` (and
     `ErrParentNotFound`) bare, so the caller receives `INTERNAL_ERROR`, which is `TRANSIENT` and retryable.
     No §15.1 code covers a live parent that is not `running`, so the choice of code needs the proposal

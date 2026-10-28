@@ -824,6 +824,10 @@ func (s *Server) mintToken(ctx context.Context, w http.ResponseWriter, issued to
 		// has the claim to enforce against. F-13.3.11.
 		AuthorizedTools: issued.AuthorizedTools,
 		Typ:             auth.TokenType(issued.Typ),
+		// §13.3: an exchange with an actor_token stamps the RFC 8693
+		// `act` claim naming the delegating caller; every other
+		// exchange omits it. F-13.3.23.
+		Act: actorClaim(issued.Act),
 	}
 	signed, err := s.signer.Sign(ctx, out)
 	if err != nil {
@@ -838,6 +842,23 @@ func (s *Server) mintToken(ctx context.Context, w http.ResponseWriter, issued to
 		return "", "", false
 	}
 	return jti, signed, true
+}
+
+// actorClaim maps the validated §13.3 actor identity onto the JWT `act`
+// claim. A nil actor, which every exchange without an actor_token
+// produces, yields a nil claim, so the signed payload carries no `act`.
+//
+// spec: §13.3 "Lenny JWT claim structure" (the `act` row).
+func actorClaim(a *tokenexchange.Actor) *jwt.ActorClaim {
+	if a == nil {
+		return nil
+	}
+	return &jwt.ActorClaim{
+		Subject:         a.Subject,
+		TenantID:        a.TenantID,
+		SessionID:       a.SessionID,
+		DelegationDepth: a.DelegationDepth,
+	}
 }
 
 // persistIssuedToken commits the §13.3 write-before-issue record: the

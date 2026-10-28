@@ -80,6 +80,16 @@ type Principal struct {
 	// the resolved principal. Empty under the dev-headers path (no JWT).
 	// spec: §27.3. F-27.3.3.
 	Origin string
+
+	// Act is the RFC 8693 `act` claim of the caller's bearer, copied from
+	// the verified JWT. It is non-nil on an `a2a_delegation` child token
+	// and names the delegating actor, and nil on every bearer that
+	// carries no `act` claim, on the service-identity path, and under the
+	// dev-headers path. It is the source of the §15 CallerIdentity.Act
+	// projection adapters read.
+	// spec: §13.3 "Lenny JWT claim structure" (the `act` row); §15
+	// "Shared Adapter Types" CallerIdentity.Act.
+	Act *jwt.ActorClaim
 }
 
 // HasRole reports whether p holds r. Endpoints that gate behaviour on
@@ -100,6 +110,17 @@ func (p Principal) HasRole(r auth.Role) bool {
 // returns true so the standard RBAC check still runs.
 func (p Principal) HasScope(required string) bool {
 	return p.Scopes.Matches(required)
+}
+
+// copyActor returns a copy of the `act` claim so a handler that edits the
+// principal cannot reach back into the verified claims, or nil when the
+// bearer carries no `act` claim.
+func copyActor(a *jwt.ActorClaim) *jwt.ActorClaim {
+	if a == nil {
+		return nil
+	}
+	c := *a
+	return &c
 }
 
 type principalCtxKey struct{}
@@ -571,6 +592,9 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 		// /playground/*-originated session and apply the §27.6 caps +
 		// origin=playground label. F-27.3.3.
 		Origin: claims.Origin,
+		// spec: §13.3 — carry the delegating actor of an
+		// a2a_delegation bearer onto the principal. F-13.3.23.
+		Act: copyActor(claims.Act),
 	}
 	// spec: §10.2 — the platform-managed user→role mapping
 	// takes precedence over OIDC-derived roles. When the resolver
