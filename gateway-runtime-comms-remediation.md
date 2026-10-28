@@ -3183,6 +3183,16 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   §6.2 setup-failure wording. Its RECORDS-1 files a finding as F-6.2.27, which collides with the existing
   OPEN F-6.2.27 (the `idle → draining` trigger list); a note in its summary file requires renumbering to the
   next free identifier at filing.
+- [ ] **Proposal 0061, re-derived** (Draft; owner decision 2026-10-28, part of v1): a conversation on the built-in
+  OpenAI-dialect adapters (`/v1/responses`, and `/v1/chat/completions` if a conversation identity can be defined)
+  is a session. It keeps its pod across turns and follows the same timeouts and TTLs as every other session (the
+  §6.2 idle timeout, `maxSessionAge`, and the per-state deadlines 0105 anchors), reaped by the watchdog sweeps,
+  with no separate pod-hold TTL. A continuation reaching another gateway replica forwards to the holder over
+  `CH-HOLDERFORWARD` (0101) rather than taking the cold path; the cold path with 0056 transcript rehydration stays
+  the correctness floor after the session ends. Open points for the run: the Chat Completions conversation
+  identity (or keeping that endpoint per-request in v1), concurrent turns on one conversation, warm/cold
+  equivalence, and coordination with the pinned-idle proposal. It follows 0105 and 0101, whose timers and
+  forwarding it uses.
 - [ ] **Proposal 0077, re-derived** (Draft; owner decision 2026-10-28): pre-materialize workspace content on a
   warm pod, starting with massive git repositories, and extensible to other content later. The owner wants the
   capability built. Settled direction: a pool-level template names a repository and ref; the adapter fills a
@@ -3274,8 +3284,7 @@ Proposals the R-steps need (added 2026-10-21 by the R7 to R25 re-derivation):
   `opLock.release` conforms.
 - Unscheduled, owner-gated exploration. Neither proposal is scheduled, and each stays `Draft` until the owner
   decides to pursue it.
-  - [ ] Proposal 0061 (single-shot adapter pod hold and idle TTL). Whether it becomes a §21 post-v1 item is
-    an open owner decision (section 10.5).
+  - Proposal 0061 moved to the queue after P4b on 2026-10-28 by owner decision: it is part of v1 (see "Queue after P4b").
   - Proposal 0077 moved to the queue after P4b on 2026-10-28 by owner decision (see "Queue after P4b").
 - [ ] Proposal 0087 part 2: cross-tenant reuse on `in-place` pools by resetting the tenant pin after a
   proven runtime restart, which gives `recycle.allowCrossTenantReuse` effect again. Kata first, after the
@@ -4028,6 +4037,18 @@ Answered on 2026-10-01 for the later phases:
   (tier 2). The §10.7 and §23.1 agent-runtime caller example is removed (F-10.7.21). Had it been wanted, the
   owner's direction was an adapter or gateway API rather than an MCP tool.
 
+- Owner decisions, 2026-10-28:
+  - Proposal 0084: option (a). Session-addressed MCP attribution on multi-session pools is accepted, with the
+    residual that a process in any slot holding the manifest nonce can act as a co-resident session of the same
+    tenant, disclosed in the §5.2 concurrent-sessions acknowledgment. Fallback (b) is rejected.
+  - Coordination fence generation floor (F-10.1.44): tighten `sessions.coordination_generation` to `>= 1` through
+    the §10.5 constraint-tightening procedure and retire the `gen <= 0` floor in `coordfence`, inside the
+    coordination fence-refusal proposal. If the in-memory store's snapshot restore cannot be shown never to yield a
+    non-positive generation, that proposal keeps the floor and records why.
+  - Proposal 0107 decision C: the delegated child's budget-return quiescence wait starts at the terminal
+    transition and runs concurrently with the release, firing on `FINAL_USAGE_REPORT`, stream close, or
+    `delegation.usageQuiescenceTimeoutSeconds` from the terminal transition, whichever comes first.
+
 ### 10.4 Related work outside this track
 
 BUILD-GAPS F-10.3.26 (admission webhooks never reload a renewed serving certificate) is independent of the
@@ -4066,11 +4087,8 @@ recorded here.
 
 **Owner decisions pending (recorded 2026-10-28).**
 
-- Proposal 0084's attribution option, (a) or (b). It is decided when 0084 re-converges.
-- Whether to keep the fence path's generation floor (`gen <= 0` read as 1 in `coordfence.go`) permanently or
-  tighten the `coordination_generation` constraint and retire it (F-10.1.44, item 1.20 of withdrawn proposal
-  0080). It is decided in the coordination fence-refusal proposal.
-- Whether proposal 0061 (single-shot adapter pod hold) becomes a §21 post-v1 item.
+- Proposal 0084's attribution option and the fence generation floor were decided on 2026-10-28 (section 10.3).
+- Proposal 0061 was decided on 2026-10-28: part of v1, as a session (section 10.3 and "Queue after P4b").
 
 ### 10.6 Context and rationale for the proposal track
 
