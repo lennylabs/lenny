@@ -151,3 +151,62 @@ func TestPodNoJWTFiledDefectsMatchTheTree_spec_8_5(t *testing.T) {
 		})
 	}
 }
+
+// proposalLabelRef matches a reference to one of proposal 0104's own decision
+// or record-change labels, which name parts of the proposal document rather
+// than the shipped system.
+var proposalLabelRef = regexp.MustCompile(`0104(?:'s)? (?:D\d+|REC-\d+|SPEC-\d+)\b`)
+
+// podNoJWTPlanDefects bounds the remediation-plan paragraph and queue that
+// record the findings filed from proposal 0104's unstaged-defect list.
+const podNoJWTPlanDefects = "**Defects filed from proposal 0104's unstaged-defect list"
+
+// diagnosis: a finding filed from proposal 0104's unstaged-defect list cites
+// the proposal by a decision or record-change label, or the remediation
+// plan's record of those findings still reads as waiting on 0104's
+// implementation, which landed. Describe the behavior or cite the spec
+// section, and restate the plan in the past tense.
+//
+// spec: 8.5 (Delegation Tools), 10.2 (Authentication), 13.3 (Credential Flow)
+func TestPodNoJWTFiledDefectRecordsAreCurrent_spec_10_2(t *testing.T) {
+	root := repoRoot(t)
+	findings := buildGapsFindingsByID(t, root)
+	for _, id := range []string{"F-8.5.26", "F-10.2.29", "F-13.3.22"} {
+		f := requireFinding(t, findings, id)
+		if m := proposalLabelRef.FindString(f.body); m != "" {
+			t.Errorf("BUILD-GAPS.md:%d %s\n  cites the proposal by an internal label (%q)", f.line, f.heading, m)
+		}
+	}
+	plan := readDocPage(t, filepath.Join(root, "gateway-runtime-comms-remediation.md"))
+	_, section, ok := strings.Cut(plan, podNoJWTPlanDefects)
+	if !ok {
+		t.Fatalf("gateway-runtime-comms-remediation.md no longer records %q", podNoJWTPlanDefects)
+	}
+	section, _, _ = strings.Cut(section, "\n**")
+	for _, stale := range []string{
+		"ahead of REC-1",
+		"each BUILD-GAPS entry says it was filed ahead of",
+		"0104's implementor updates the entry",
+		"After 0104 deletes the internal minter",
+		"implementation pending",
+	} {
+		if strings.Contains(strings.Join(strings.Fields(section), " "), stale) {
+			t.Errorf("gateway-runtime-comms-remediation.md: the 0104 defect record still says %q, although 0104 is implemented", stale)
+		}
+	}
+}
+
+// diagnosis: proposalLabelRef no longer tells a proposal label from a finding
+// or spec reference, so the check above passes or fails vacuously.
+func TestPodNoJWTProposalLabelProbe_spec_10_2(t *testing.T) {
+	for _, s := range []string{"consistent with 0104 D6", "per 0104 D11", "proposal 0104's REC-1"} {
+		if !proposalLabelRef.MatchString(s) {
+			t.Errorf("proposalLabelRef missed %q", s)
+		}
+	}
+	for _, s := range []string{"proposal 0104's unstaged-defect list", "F-10.2.29", "§12.8 creation-fence parent refusal"} {
+		if proposalLabelRef.MatchString(s) {
+			t.Errorf("proposalLabelRef matched %q", s)
+		}
+	}
+}

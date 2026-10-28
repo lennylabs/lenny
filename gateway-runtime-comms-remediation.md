@@ -3607,19 +3607,18 @@ endpoint, KMS error codes, or the `lenny-ops` probe.
     whether the metric and alert renames ship with aliases for the old names or without them.
 
 **Defects filed from proposal 0104's unstaged-defect list (2026-10-27).** Proposal 0104 (approved
-2026-10-27, implemented 2026-10-28) lists defects in the shipped tree that it does not stage, and its REC-1
-files them once confirmed. They are filed now, ahead of REC-1, because no defect is dropped. Each was
-re-confirmed against the tree, none was already tracked, and each BUILD-GAPS entry says it was filed ahead of
-REC-1, so 0104's implementor updates the entry rather than filing a duplicate. The §10.7 runtime eval
-credential gap surfaced during the review of 0104 and is filed with them. 0104's implementation updated
-F-10.2.29, F-8.5.26, and F-13.3.22 in place on 2026-10-28, re-confirming each against the tree, and filed no
-duplicate. Each stays open, and 0104 no longer blocks any of them.
+2026-10-27, implemented 2026-10-28) lists defects in the shipped tree that it does not stage. They were filed
+on 2026-10-27, before 0104's implementation, because no defect is dropped. Each was re-confirmed against the
+tree, and none was already tracked. The §10.7 runtime eval credential gap surfaced during the review of 0104
+and was filed with them. 0104's implementation updated F-10.2.29, F-8.5.26, and F-13.3.22 in place on
+2026-10-28, re-confirmed each against the tree, and filed no duplicate. Each stays open, and 0104 no longer
+blocks any of them.
 
 - Direct-fix queue, unblocked by 0104's implementation.
   - [ ] **F-13.3.22** (Medium): the Token Service's `issuedRecord` sets neither `ParentJTI` nor `ActSubject`
     on an external `a2a_delegation` child, so `RevokeCascade` cannot reach the child from its parent. Record
-    the `actor_token`'s `jti` and `sub` on an actor-bearing exchange. After 0104 deletes the internal minter,
-    this is the only delegation-child issuance path.
+    the `actor_token`'s `jti` and `sub` on an actor-bearing exchange. Proposal 0104 deleted the internal minter
+    (48d920956), so this is the only delegation-child issuance path.
 - Proposal routing.
   - [ ] **F-8.5.26** (Low): `lenny/delegate_task` returns admission's `ErrParentNotRunning` (and
     `ErrParentNotFound`) bare, so the caller receives `INTERNAL_ERROR`, which is `TRANSIENT` and retryable.
