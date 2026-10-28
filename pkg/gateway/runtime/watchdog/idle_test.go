@@ -35,7 +35,7 @@ func idleCfg(capSeconds int) watchdog.Config {
 	}
 }
 
-// spec: 11.3 line 199 (max client idle row), 6.2 (maxClientIdleSeconds
+// spec: 11.3 (Timeouts and Cancellation: "Max client idle time" row), 6.2 (maxClientIdleSeconds
 // clock) — a running session with no qualifying activity for longer than the
 // platform default maxClientIdleSeconds is expired with reason
 // expired:idle. F-11.3.7.
@@ -137,7 +137,7 @@ func TestIdleSweepRespectsActivityAnchor_spec_6_2(t *testing.T) {
 	}
 }
 
-// spec: 11.3 line 199 (max client idle row) — the resolver's
+// spec: 11.3 (Timeouts and Cancellation: "Max client idle time" row) — the resolver's
 // per-runtime / per-pool maxClientIdleSeconds tightens the platform default;
 // a tighter cap expires earlier. F-11.3.7.
 //

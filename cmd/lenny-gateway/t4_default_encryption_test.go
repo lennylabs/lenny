@@ -9,9 +9,9 @@ import (
 	blobproviderflags "github.com/lennylabs/lenny/pkg/blobstore/providerflags"
 )
 
-// spec: 12.5 line 315 (fail-closed T4), 12.5 line 321-325 (per-provider
-// T4 mint invariants), 17.9.7 (object-store backend-invariant
-// requirements).
+// spec: 12.5 (Artifact Store, "Encryption at rest": fail-closed T4),
+// 12.5 (Artifact Store, "T4 per-tenant KMS key lifecycle": per-provider T4
+// mint invariants), 17.9.7 (object-store backend-invariant requirements).
 //
 // TestT4DefaultEncryptionAssertionFailsClosed pins the gateway-startup
 // fail-closed replacement for the SigV4 signature binding that the GCS V4

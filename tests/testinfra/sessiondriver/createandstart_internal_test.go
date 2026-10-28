@@ -68,8 +68,9 @@ func TestCreateAndStartWrapsPoolNotReadyAfterRetries(t *testing.T) {
 	}
 }
 
-// spec: 7.1 line 28 (SESSION_CREATION_FAILED atomic-unit fallback), 15.1
-// line 1138 (Retry-After)
+// spec: 7.1 (Normal Flow, "Atomicity of session creation (steps 2-8)":
+// SESSION_CREATION_FAILED atomic-unit fallback), 15.1 (REST API,
+// Retry-After response header)
 //
 // A freshly-claimed pod whose adapter the gateway cannot yet dial on :50051
 // (the pod's network still settling on a loaded cluster) surfaces as a
@@ -116,7 +117,8 @@ func TestCreateAndStartRetriesTransientSessionCreationFailed(t *testing.T) {
 	}
 }
 
-// spec: 7.1 line 28 (SESSION_CREATION_FAILED), 5.2 (pool-not-ready
+// spec: 7.1 (Normal Flow, "Atomicity of session creation (steps 2-8)":
+// SESSION_CREATION_FAILED), 5.2 (pool-not-ready
 // classification)
 //
 // A SESSION_CREATION_FAILED that never clears within the retry window is not a
@@ -153,7 +155,7 @@ func TestCreateAndStartDoesNotWrapPoolNotReadyOnPersistentSessionCreationFailed(
 	}
 }
 
-// spec: 15.1 line 1138 (Retry-After) — retryAfterBackoff parses the
+// spec: 15.1 (REST API, Retry-After response header) — retryAfterBackoff parses the
 // delta-seconds Retry-After form, caps a large hint at 10s so a server value
 // cannot stall the window past the caller's context, and yields zero for the
 // absent or non-numeric (HTTP-date) forms so the caller keeps its linear

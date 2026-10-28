@@ -132,3 +132,22 @@ func TestNewRatchetCarriesTheSharedDomain(t *testing.T) {
 		t.Errorf("the gate reads %q, want %q", g.Baseline, RatchetBaselinePath)
 	}
 }
+
+// spec: §28.1 (N8, the citation rule: a citation names a heading rather
+// than a line in any spelling, so a bare section number written ahead of
+// the line keyword is counted, and a file carrying one with no count in
+// the baseline fails)
+//
+// T-17.4.34 found annotations in this spelling that no gate counted.
+func TestRatchetCountsABareSectionCitation(t *testing.T) {
+	t.Parallel()
+	root := ratchetRoot(t, "bare.txt")
+	seedCounts(t, root, nil)
+	rep := runRatchet(t, root)
+	if rep.Citations != 1 {
+		t.Fatalf("the run read %d citation(s) in the bare-spelling fixture, want 1", rep.Citations)
+	}
+	if len(rep.Failures) != 1 || !rep.Failures[0].Absent || rep.Failures[0].Path != "pkg/carrier/carrier.go" {
+		t.Errorf("the run reported %v, want the carrier's first citation as a failure", rep.Failures)
+	}
+}

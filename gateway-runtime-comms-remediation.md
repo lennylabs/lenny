@@ -3824,8 +3824,11 @@ other test in that binary.
     deleted at cleanup. No test keeps a private control plane, because the degraded-mode test faults only a
     second client and leaves the API server running. The package fell from 157.4 s to 17.7 s. The fix
     filed T-17.4.34 (the citation gates miss the `N.M line L` spelling).
-  - [ ] **T-17.4.34** (Low): the line-citation gates do not recognize the bare `N.M line L` spelling; 22
+  - [x] **T-17.4.34** (Low): the line-citation gates do not recognize the bare `N.M line L` spelling; 22
     `// spec:` annotations in 10 Go files use it and none is in the ratchet baseline.
+    Fixed on `fix/test-infra-gaps`: the shared citation grammar and the residual predicate read the bare
+    spelling, and the 56 citations it found in 18 files were rewritten to heading citations, so the ratchet
+    baseline stays empty.
   - [x] **T-17.4.35** (Low): component-test directories may lack a `tests/change-graph.json` key, so `--since` never
     selects them on their own changes. Survey every `tests/tier*/` directory and add a `validate-maps` check. Direct fix.
     Fixed on `fix/test-infra-gaps`: 104 of 115 tier test directories had no key and each now has one, and

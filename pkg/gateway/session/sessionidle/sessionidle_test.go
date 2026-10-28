@@ -52,7 +52,7 @@ func poolStore(t *testing.T, ref string, idleSeconds int) poolstore.Store {
 	return ps
 }
 
-// spec: 11.3 line 199 (max client idle row), 6.2 (maxClientIdleSeconds
+// spec: 11.3 (Timeouts and Cancellation: "Max client idle time" row), 6.2 (maxClientIdleSeconds
 // clock) — the runtime sessionPolicy.maxClientIdleSeconds is the effective
 // cap when no per-session override is set. F-11.3.7.
 func TestResolverReturnsRuntimePolicy_spec_11_3_199(t *testing.T) {
@@ -91,7 +91,7 @@ func TestResolverPoolPolicyTightensRuntime_spec_6_2(t *testing.T) {
 	}
 }
 
-// spec: 27.6 line 201 (playground idle override) — the playground idle
+// spec: 27.6 (Session lifecycle and cleanup: "Idle-timeout override") — the playground idle
 // override (landed on Timeouts.MaxIdleSeconds) tightens the resolved cap
 // min-wins. F-11.3.7 / F-9.2.15.
 func TestResolverPlaygroundOverrideTightensPolicy_spec_27_6_201(t *testing.T) {

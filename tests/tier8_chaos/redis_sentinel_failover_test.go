@@ -131,7 +131,8 @@ func waitMasterPromotedTo(t *testing.T, masterName, wantHost string, timeout tim
 	}
 }
 
-// spec: 12.8 / 12.4 line 197
+// spec: 12.8 (Compliance Interfaces), 12.4 (Redis HA and Failure Modes,
+// "Minimum topology")
 // diagnosis: §12.8 promises a 3-sentinel + 1-primary + 1-replica Redis
 // topology that automatically promotes the replica when the primary
 // fails, and a Sentinel-aware client (pkg/redisconn) that transparently
