@@ -24,7 +24,7 @@
       Tiers 0, 1, 3. Depends on: S2, S4
 - [ ] **S11 · code** — CODE-3. Lands the OpenAPI and published-schema edits.
       Tiers 0, 3. Depends on: S1, S2, S4
-- [ ] **S12 · code** — CODE-4. Lands the SDK and gateway comment corrections.
+- [ ] **S12 · code** — CODE-4. Lands every CODE-4 edit.
       Tiers 0, 1. Depends on: S1, S2, S5
 - [ ] **S13 · code** — CODE-5. Lands the proto and setup comment corrections and the regenerated bindings.
       Tiers 0, 1. Depends on: S8

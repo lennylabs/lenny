@@ -9,8 +9,8 @@ The finalize-time bind already runs in the tree, so most of the non-spec work al
 
 - CODE-1 moves the `uploadRef` scope check into the shared plan resolver, so it runs on every client-submitted plan at every bind point. A create-time or create-and-start plan that names an upload source is now rejected. That path is a tenant-isolation path, which is why TEST-1 reaches tier 9.
 - CODE-2 declares the `workspacePlan` argument the MCP `lenny/finalize_workspace` tool already forwards.
-- CODE-3 publishes the finalize request body and its plan-bind responses in the OpenAPI document, and replaces the `uploadRef` descriptions in the OpenAPI document and the published `WorkspacePlan` schema with the opaque contract.
-- CODE-4 corrects SDK and gateway comments that the amended spec makes false.
+- CODE-3 publishes the finalize request body and its plan-bind responses in the OpenAPI document, and corrects the `uploadRef` and plan-binding descriptions in the OpenAPI document and the published `WorkspacePlan` schema.
+- CODE-4 corrects SDK and gateway comments and metric descriptions that the amended spec makes false.
 - CODE-5 corrects the adapter proto and setup comments that describe a once-per-pod setup gate or tie setup to pod startup. Neither bind path has such a gate, so no production behavior changes.
 - CODE-6 composes the runtime `workspaceDefaults` into the plan at every binding request and checks them at registration (SPEC-8).
 - DOCS-1 rewrites the reader-facing upload and finalize documentation, the runtime author guide's setup-timing and `workspaceDefaults` text, and the metrics pages' `setup_command_failed` description.
@@ -38,7 +38,7 @@ Targets: `pkg/gateway/sessionserver/workspace_plan.go` (`resolvePlanForCreate`),
 4. Callers:
    - `validateAndBuildCreateRow` in `create.go` passes `(tenantID, "")`.
    - The create-and-start build in `create_and_start.go` passes `(tenantID, "")`.
-   - `resolveFinalizePlan` passes `(tenantID, row.ID)` and deletes its own `validateFinalizeUploadRefs` call. The `plan_already_set` guard stays before the resolver call, and the `enforceSetupCommandPolicy` call stays after it. The finalize rejection order becomes: body read, `plan_already_set`, `Parse`, `uploadRef` scope, `gitClone` auth binding, ref pinning, then setup-command policy, then the runtime-defaults composition (CODE-6).
+   - `resolveFinalizePlan` passes `(tenantID, row.ID)` and deletes its own `validateFinalizeUploadRefs` call. The `plan_already_set` guard stays before the resolver call, and the `enforceSetupCommandPolicy` call stays after it.
    - `tenantID` is already in scope at each call site.
 5. Doc comments:
    - `resolveSubmittedPlan`: state that `bindSessionID` is the ID of the session the plan binds to, and is empty for a plan bound at creation, because the session ID is minted after plan validation and no upload for the session can exist yet. Cite `// spec: §14 Workspace Plan Schema (uploadRef field note); §14.1 WorkspacePlan Schema Versioning (Plan binding)`.
@@ -54,7 +54,7 @@ Delegation child plans do not pass through the resolver, and CODE-1 does not rou
 Target: `pkg/gateway/mcpfabric/mcptools/client_tools.go`, the `postByID` closure and the `lenny/finalize_workspace` registration.
 
 1. Add an `inputSchema json.RawMessage` parameter to `postByID`, placed after `subpath`, and use it for `mcp.Tool.InputSchema`.
-2. `lenny/start_session`, `lenny/terminate_session`, and `lenny/resume_session` pass `sessionIDInputSchema`.
+2. Every other `postByID` caller passes `sessionIDInputSchema`.
 3. `lenny/finalize_workspace` passes a new package-level `finalizeWorkspaceInputSchema`:
 
    ```go
@@ -62,7 +62,7 @@ Target: `pkg/gateway/mcpfabric/mcptools/client_tools.go`, the `postByID` closure
    // lenny/finalize_workspace forwards as the REST finalize body.
    // spec: §15.2.1 REST/MCP Consistency Contract; §14.1 WorkspacePlan Schema
    // Versioning (Plan binding).
-   var finalizeWorkspaceInputSchema = json.RawMessage(`{"type":"object","required":["sessionId"],"properties":{"sessionId":{"type":"string","description":"The target session id."},"workspacePlan":{"type":"object","additionalProperties":true,"description":"Optional §14 WorkspacePlan bound at finalize when the session was created without one."}}}`)
+   var finalizeWorkspaceInputSchema = json.RawMessage(`{"type":"object","required":["sessionId"],"properties":{"sessionId":{"type":"string","description":"The target session id."},"workspacePlan":{"type":["object","null"],"additionalProperties":true,"description":"Optional §14 WorkspacePlan bound at finalize when the session was created without one."}}}`)
    ```
 
 4. Change the `lenny/finalize_workspace` description to "Seal the session workspace, binding an optional workspace plan, and run setup."
@@ -82,7 +82,7 @@ Targets: `pkg/gateway/externalapi/openapi/openapi.json` and `schemas/workspacepl
 2. Add `components.schemas.FinalizeRequest`:
 
    ```json
-   "FinalizeRequest": {"type": "object", "properties": {"workspacePlan": {"type": "object", "additionalProperties": true, "description": "WorkspacePlan bound at finalize when the session's CreateSessionRequest carried none (§14.1 Plan binding)."}}}
+   "FinalizeRequest": {"type": "object", "properties": {"workspacePlan": {"type": ["object", "null"], "additionalProperties": true, "description": "WorkspacePlan bound at finalize when the session's CreateSessionRequest carried none (§14.1 Plan binding)."}}}
    ```
 
    Name the component `FinalizeRequest`, parallel to `DeriveRequest`. `FinalizeWorkspaceRequest` is the adapter proto message in `schemas/lenny-adapter.proto` and must not be reused on this boundary. Leave the component's top-level `additionalProperties` unset.
@@ -98,16 +98,18 @@ Targets: `pkg/gateway/externalapi/openapi/openapi.json` and `schemas/workspacepl
    Do not list `SETUP_COMMAND_FAILED`, `SESSION_CREATION_FAILED`, `CREDENTIAL_POOL_EXHAUSTED`, or `UPLOAD_ARCHIVE_LIMIT_EXCEEDED`. They are prepare-phase outcomes that arise whether or not a body is sent, and the finalize prepare-phase envelope belongs to §15.1.
 
 4. `components.schemas.UploadResponse.properties.uploadRef.description` becomes "Opaque reference to the stored upload. Pass it verbatim as the uploadRef of an uploadFile or uploadArchive source in a plan bound to this session."
-5. `schemas/workspaceplan-v1.json`: replace the `uploadFile.uploadRef` description "Reference to a previously uploaded blob (lenny-blob:// URI or upload id)." with "Opaque uploadRef returned by POST /v1/sessions/{id}/upload or /upload-archive for the session the plan binds to." Add the same `description` to `uploadArchive.uploadRef`, which has none today. Change nothing else in the schema.
+5. `schemas/workspaceplan-v1.json`: replace the `uploadFile.uploadRef` description "Reference to a previously uploaded blob (lenny-blob:// URI or upload id)." with "Opaque uploadRef returned by POST /v1/sessions/{id}/upload or /upload-archive for the session the plan binds to." Add the same `description` to `uploadArchive.uploadRef`, which has none today. In the `gitClone.ref` description, replace "at session creation" with "when the plan binds". In the top-level description, replace "current at pod claim time. Nested under CreateSessionRequest.workspacePlan." with "current. Carried in CreateSessionRequest.workspacePlan or the finalize request body's workspacePlan." Change nothing else in the schema.
 
-### CODE-4 · stale SDK and gateway comments
+### CODE-4 · stale SDK and gateway comments and metric descriptions
 
-Comment-only changes. Run `gofumpt` and `goimports`.
+These edits change comments and metric description strings and no behavior. Run `gofumpt` and `goimports`.
 
 - **`sdks/client/go/lenny/upload.go`, `FinalizeWorkspace` doc comment.** Replace "binding the plan onto a created session and transitioning it to ready" and the sentence "the gateway materializes them when the session starts" so the comment reads: "...binding the plan onto a created session (§14.1 Plan binding). The gateway validates the plan and, during finalize, materializes its sources, including the uploads it names; the call returns once the session is ready." Change "(via UploadArchive)" to "(via UploadArchive or UploadFile)". The citation line becomes `spec: §14.1 WorkspacePlan Schema Versioning (Plan binding); §7.1 Normal Flow; §26.2`.
 - **`sdks/client/go/lenny/upload.go`, `UploadResult` doc comment.** Replace the `§4.5 lenny-blob:// URI` claim with: "UploadRef is the opaque reference the caller passes verbatim as sources[<n>].uploadRef in a plan bound to this same session at finalize." Cite `spec: §14 Workspace Plan Schema (uploadRef field note); §15.1`.
 - **`pkg/gateway/sessionserver/upload.go`, `UploadResponse.UploadRef` comment.** Keep the statement that the gateway emits a `lenny-blob://` URI, which is implementation detail. Drop the `§4.5` attribution. State that clients treat the value as opaque and that it is valid only in a plan bound to the uploading session, which `validatePlanUploadRefs` enforces. Replace "in a subsequent finalize call" with "in a plan bound to this session". Cite `spec: §14 Workspace Plan Schema (uploadRef field note); §14.1 WorkspacePlan Schema Versioning (Plan binding)`.
 - **`pkg/embedded/localcli/session.go`, `createSessionWithWorkspace` doc comment.** The prose is accurate. Append `§14.1 (Plan binding)` to its existing spec line and leave the prose unchanged.
+- **`pkg/gateway/runtime/sdkwarm/matcher.go`, package doc comment.** Replace the quoted sentence from `§6.1 — "if the workspace plan` through `DemoteSDK RPC".` with `§6.1 What a Pre-Warmed Pod Looks Like (Demotion on demand); §14.1 WorkspacePlan Schema Versioning (Plan binding).` Keep the sentence that begins "Patterns follow Go path.Match".
+- **`lenny_warmpool_sdk_demotions_total` description.** Delete " before session assignment" from the metric's `Help` string and from the comment above it in `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_sessionlifecycle.go`, and from its entry in `pkg/observability/metrics/catalog.go` (SPEC-2 edit (e) item 6).
 
 ### CODE-5 · adapter proto and setup comments
 
@@ -161,7 +163,7 @@ Implements SPEC-8 edit (a) and the registration check of SPEC-8 edit (b). The ru
 
 ## Staged schema, chart, and migration changes
 
-The `schemas/workspaceplan-v1.json` description edit is part of CODE-3, and the `schemas/lenny-adapter.proto` comment edits are part of CODE-5. No chart or migration changes.
+The `schemas/workspaceplan-v1.json` description edits are part of CODE-3, and the `schemas/lenny-adapter.proto` comment edits are part of CODE-5. No chart or migration changes.
 
 ## Staged docs changes
 
@@ -214,13 +216,13 @@ Every new test carries a `// spec:` annotation, and every tier-2-and-up test car
 
 **Tier 1, `pkg/gateway/sessionserver`.**
 
-1. **Create-time upload sources are rejected.** Put the cases in a new `plan_binding_internal_test.go`. For each of `POST /v1/sessions` and `POST /v1/sessions/start`: a plan with an `uploadFile` source whose `uploadRef` is a well-formed `lenny-blob://` URI returns `400 VALIDATION_ERROR` with `details.reason = "upload_ref_foreign_session"` and `details.field = "sources[0].uploadRef"`; the same with an `uploadArchive` source; a non-URI `uploadRef` returns `invalid_upload_ref`. Each case asserts that no session row was persisted. The persisted-row assertion discriminates, because it separates a rejection from an accepted create that fails later.
+1. **Create-time upload sources are rejected.** Put the cases in a new `plan_binding_internal_test.go`. For each of `POST /v1/sessions` and `POST /v1/sessions/start`: a plan with an `uploadFile` source whose `uploadRef` is a well-formed `lenny-blob://` URI returns `400 VALIDATION_ERROR` with `details.reason = "upload_ref_foreign_session"` and `details.field = "sources[0].uploadRef"`; the same with an `uploadArchive` source; a non-URI `uploadRef` returns `invalid_upload_ref`. Each case asserts that no session row was persisted. The persisted-row assertion discriminates, because it separates a rejection from an accepted create that fails later. One ordering case, on `POST /v1/sessions` and on finalize, submits a plan whose `sources[0]` is a foreign `uploadFile`, followed by a `gitClone` source with a branch `ref`, with more setup commands than the runtime's `setupCommandPolicy.maxCommands`. It asserts `upload_ref_foreign_session` and zero `Resolve` calls on a counting `workspaceplan.RefResolver` stub, and the zero-call assertion is the one that discriminates.
 2. **Finalize rejection binds nothing.** Rename `TestFinalizeRejectsForeignUploadRef_spec_12_5` to `TestFinalizeRejectsForeignUploadRef_spec_14_1` and extend it to assert that `row.WorkspacePlan` stays empty, beside its existing assertion that the row stays `created`.
 3. **A null plan binds the empty plan.** A finalize body `{"workspacePlan":null}` on a session created without a plan, against a runtime without `workspaceDefaults`, succeeds and leaves `row.WorkspacePlan` empty.
-4. **A finalize-bound `gitClone` ref pins at finalize.** In `gitclone_pin_test.go`, create a session without a plan, then finalize with a plan carrying a `gitClone` source whose `ref` is a branch name. Reuse `pinStubResolver`, and assert through `storedPlanSource` that `GET /v1/sessions/{id}` returns the stub's `resolvedCommitSha`.
+4. **A finalize-bound `gitClone` ref pins at finalize.** In `gitclone_pin_test.go`, create a session without a plan, then finalize with a plan carrying a `gitClone` source whose `ref` is a branch name. Reuse `pinStubResolver`, and assert through `storedPlanSource` that `GET /v1/sessions/{id}` returns the stub's `resolvedCommitSha`. Add a table-driven finalize case beside it that finalizes a plan-less session with a `gitClone` plan, once with `pinStubResolver` returning an unresolvable `ResolveError` (`422 GIT_CLONE_REF_UNRESOLVABLE`), once with a transient one (`503 GIT_CLONE_REF_RESOLVE_TRANSIENT`), and once against a `vcsPoolStore` matching no host (`422 GIT_CLONE_AUTH_UNSUPPORTED_HOST`), and asserts the code, that the row stays `created`, and that `row.WorkspacePlan` stays empty; the empty-plan assertion discriminates, because it catches a `resolveFinalizePlan` ordering that persists the plan before the resolver rejects it.
 5. **Re-annotate the existing plan-binding cases** in `finalize_plan_internal_test.go`: `TestFinalizeBindsUploadArchivePlan`, `TestFinalizeRejectsForeignUploadRef`, `TestFinalizeRejectsForeignTenantRef`, `TestFinalizeRejectsPlanWhenAlreadySet`, `TestFinalizeNoBodyKeepsEmptyPlan`, and `TestFinalizeBindsUploadFilePlan`. Leave `TestMapFinalizeCredentialMismatch` and `TestFinalizeCredentialMismatchSurfacesPoolExhausted` on their §4.9 and §7.3 annotations.
 
-**Tier 1, `pkg/gateway/mcpfabric/mcptools`.** In `client_tools_test.go`, assert that the registered `lenny/finalize_workspace` input schema requires `sessionId` and declares an optional object-typed `workspacePlan`. `TestPostByIDToolRouting_spec_15_2_3` already covers forwarding. Annotate `// spec: 15.2.1 (REST/MCP Consistency Contract), 14.1 (WorkspacePlan Schema Versioning)`.
+**Tier 1, `pkg/gateway/mcpfabric/mcptools`.** In `client_tools_test.go`, assert that the registered `lenny/finalize_workspace` input schema requires `sessionId` and declares an optional `workspacePlan` typed `["object", "null"]`. `TestPostByIDToolRouting_spec_15_2_3` already covers forwarding. Annotate `// spec: 15.2.1 (REST/MCP Consistency Contract), 14.1 (WorkspacePlan Schema Versioning)`.
 
 **Tier 2, `pkg/gateway/podlifecycle/podsession/binder_test.go`** (envtest-backed). Stage two blobs for one session in a `MemoryStore`, bind a plan that names one of them, and assert that `PrepareWorkspace` receives only the named one. Its `// diagnosis:` states that a second staged file means finalize materialized an upload the bound plan does not name, which the §14.1 **Plan binding.** rule forbids.
 
@@ -230,7 +232,7 @@ Every new test carries a `// spec:` annotation, and every tier-2-and-up test car
 
 **Tier 3.**
 
-- `tests/tier3_contract/rest_sessions/openapi_document_test.go`: assert that the finalize operation declares an optional `requestBody` referencing `FinalizeRequest`, that `FinalizeRequest.properties.workspacePlan` exists, and that the `400`, `422`, and `503` responses are present. Assert that both `/upload` and `/upload-archive` return `UploadResponse` on `201`.
+- `tests/tier3_contract/rest_sessions/openapi_document_test.go`: assert that the finalize operation declares an optional `requestBody` referencing `FinalizeRequest`, that `FinalizeRequest.properties.workspacePlan` is typed `["object", "null"]`, and that the `400`, `422`, and `503` responses are present. Assert that both `/upload` and `/upload-archive` return `UploadResponse` on `201`.
 - `tests/tier3_contract/rest_mcp_consistency`: add `plan_already_set` and `upload_ref_foreign_session` cases that drive REST finalize and MCP `lenny/finalize_workspace` with the same body, and assert identical `code`, `category`, and `retryable`. Annotate `// spec: 15.2.1 (REST/MCP Consistency Contract)`.
 - `tests/tier3_contract/rest_mcp_consistency/error_matrix_test.go`: delete `"SDK_DEMOTION_NOT_SUPPORTED"` from `matrixErrorClasses`, which §15.2.1 keeps in lockstep with its list.
 
@@ -259,8 +261,8 @@ Each test carries `// spec: 14.1 (WorkspacePlan Schema Versioning), 5.1 (Runtime
 6. `TestCreateWithoutPlanComposesAtFinalize_spec_14_1`: `POST /v1/sessions` without a plan stores none, and a no-body finalize stores the defaults-only plan. A second session finalized with a body plan stores the defaults followed by the body sources.
 7. `TestCreateAndStartComposesDefaults_spec_14_1`: `POST /v1/sessions/start` without a plan stores the defaults-only plan.
 8. `TestBoundDefaultsArePinned_spec_14_1`: after a create with a plan, replace the runtime's defaults in the store. A body-less finalize leaves the stored plan bytes equal to those stored at create, and `exclusiveBindRequest` built from `storedWorkspacePlan(row)` carries the original default content, once each.
-9. `TestDefaultCommandsExemptFromSetupPolicy_spec_7_5`: the runtime declares `maxCommands: 1`, allowlist `make`, and two default commands outside the allowlist. A client plan with one `make` command is accepted. A client plan with two commands returns `setup_commands_max_exceeded` with `count` 2.
-10. `TestDefaultsResolveFailureLeavesStateUnchanged_spec_14_1`: a runtime store that returns a non-not-found error makes create return `500` with no row persisted, and makes finalize return `500` with the row still `created` and without a plan.
+9. `TestDefaultCommandsExemptFromSetupPolicy_spec_7_5`: the runtime declares `maxCommands: 1`, allowlist `make`, and two default commands outside the allowlist. A table runs each case against `POST /v1/sessions`, `POST /v1/sessions/start`, and a finalize body on a session created without a plan. A client plan with one `make` command is accepted, and this assertion discriminates, because composing before the policy check counts three commands. A client plan with two commands returns `setup_commands_max_exceeded` with `count` 2, and on finalize the row stays `created` with `row.WorkspacePlan` empty.
+10. `TestDefaultsResolveFailureLeavesStateUnchanged_spec_14_1`: a runtime store that returns a non-not-found error makes create return `500` with no row persisted, makes finalize return `500` with the row still `created` and without a plan, and makes `POST /v1/sessions/start` without a plan return `500` with no row persisted and no `SandboxClaim` created (count claims as `lookupFixture.claimCount` does).
 11. `TestRuntimeWithoutDefaultsStoresSubmittedBytes_spec_14_1`: the stored plan bytes equal the submitted bytes.
 12. `TestRoutedRuntimeDefaultsAreComposed_spec_14_1`: an experiment assigns a variant whose runtime declares defaults that differ from the requested runtime's, with the harness of `TestExperimentRouterAllowsStrongerVariantPool`. For `POST /v1/sessions` with a plan and for `POST /v1/sessions/start` without one, the stored plan carries the variant runtime's defaults and none of the requested runtime's.
 13. `TestDefaultsOnlyPlanTriggersSDKWarmDemotion_spec_6_1`: against a runtime with `preConnect: true`, the default `sdkWarmBlockingPaths`, and a default `CLAUDE.md` file, a no-body finalize and a `POST /v1/sessions/start` without a plan each yield an `exclusiveBindRequest`, built from `storedWorkspacePlan(row)`, for which `podsession.RequiresDemotion` returns true.
@@ -295,6 +297,8 @@ Run tiers 0, 1, 3 (re-run), and 4.
 - `sdks/client/go/lenny/upload.go` (CODE-4)
 - `pkg/gateway/sessionserver/upload.go` (CODE-4)
 - `pkg/embedded/localcli/session.go` (CODE-4)
+- `pkg/gateway/runtime/sdkwarm/matcher.go` (CODE-4)
+- `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_sessionlifecycle.go` and `pkg/observability/metrics/catalog.go` (CODE-4)
 - `schemas/lenny-adapter.proto`, `pkg/proto/adapter/v1/lenny-adapter.pb.go` (regenerated), and `pkg/adapter/workspace/setup.go` (CODE-5)
 - `pkg/gateway/runtime/runtimestore/workspace_defaults.go` (new), `pkg/gateway/runtime/runtimestore/runtimestore.go`, `pkg/gateway/sessionserver/create.go`, `pkg/gateway/sessionserver/create_and_start.go`, `pkg/gateway/sessionserver/finalize.go`, `pkg/gateway/sessionserver/workspace_plan.go`, `pkg/gateway/session/sessionstore/sessionstore.go`, `pkg/gateway/mcpfabric/delegation/service.go`, `pkg/gateway/externalapi/admin/runtimes.go`, `pkg/gateway/externalapi/openapi/openapi.json`, and `pkg/ops/mcp/generated_tools.go` (CODE-6)
 - `docs/getting-started/concepts.md`, `docs/api/rest.md`, `docs/api/mcp.md`, `docs/client-guide/session-lifecycle.md`, `docs/client-guide/wire-format.md`, `docs/client-guide/sdk-examples/curl.md`, `docs/client-guide/sdk-examples/mcp-sdk.md`, `docs/tutorials/first-session.md`, `docs/operator-guide/lenny-ctl.md`, `docs/tutorials/session-derive-replay.md`, `docs/tutorials/multi-tenant-setup.md`, `docs/tutorials/agent-memory.md`, `docs/reference/workspace-plan.md`, `docs/reference/error-catalog.md`, `docs/reference/metrics.md`, `docs/operator-guide/observability.md`, `docs/runtime-author-guide/runtime-configuration.md`, and optionally `docs/client-guide/sdk-examples/go.md` (DOCS-1)
