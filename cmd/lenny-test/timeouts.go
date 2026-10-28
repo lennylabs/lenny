@@ -87,13 +87,17 @@ var (
 	//
 	// The earlier four-to-five-minute figure was measured while most of the
 	// suite was refused at session creation and returned in milliseconds.
-	// A passing tests/tier4_integration package took 1679 seconds on the
-	// 8-core developer host on 2026-10-28, after its lifecycle harnesses
-	// moved onto a shared control plane and a shared Postgres container
-	// (TEST-GAPS T-17.4.32); it took 2568 seconds before. The package runs
-	// most of its tests one at a time and sits about 120 seconds under the
-	// budget, so a loaded host can still push it over (TEST-GAPS
-	// T-17.4.33).
+	// A passing tests/tier4_integration package took 2568 seconds before
+	// its lifecycle harnesses moved onto a shared control plane and a
+	// shared Postgres container (TEST-GAPS T-17.4.32), and 1679 seconds
+	// after, when it still ran nearly serially. Once each subprocess
+	// command was linked once per test binary, the remaining per-test
+	// Postgres containers moved onto the shared one, and the tests that own
+	// their fixtures ran in parallel (TEST-GAPS T-17.4.33), four
+	// consecutive runs on the 8-core developer host on 2026-10-28 took 351
+	// to 365 seconds at a load average of 5 to 9, against 1773 seconds for
+	// the run before the change on the same host. The budget stays at 1800
+	// seconds, which leaves room for a loaded host and for growth.
 	// Override: LENNY_TEST_INTEGRATION_TIMEOUT.
 	tierIntegrationTimeout = tierTimeout("LENNY_TEST_INTEGRATION_TIMEOUT", 1800*time.Second)
 

@@ -4006,9 +4006,20 @@ legacy single-file proposals carry their status in the prose status bullet, whic
     branch, 2568 s with proposal 0101's tests) because every lifecycle harness started its own control plane and
     Postgres. Fixed on `impl/0101-inter-replica-carrier` (`2f85a0cc2`): one shared control plane and one shared,
     template-cloned Postgres per test binary; the package now takes 1679 s.
-  - [ ] **T-17.4.33** (Medium): the tier-4 package has about 120 s of headroom and runs nearly serially. Move the
+  - [x] **T-17.4.33** (Medium): the tier-4 package has about 120 s of headroom and runs nearly serially. Move the
     remaining per-test `containers.StartPostgres` sites to `containers.SharedPostgres`, add `t.Parallel()` where
     tests own their fixtures, and look at the slowest tests (114 s, 92 s, 54 s). Direct fix, after 0101 merges.
+    Fixed on `fix/t-17-4-33` (`deaadc8d2`) with no product change: `tests/testinfra/binbuild` links the
+    gateway, lenny-ops, and token-service binaries once per test binary instead of once per test, 55 sites
+    move onto the shared Postgres, and 170 tests run in parallel. The package fell from 1773 s to 351 to
+    365 s over four runs, one shuffled. The slowest tests wait on the fixed 30 s lenny-ops revocation read
+    and now overlap. The fix filed T-17.4.37 and T-17.4.38.
+  - [ ] **T-17.4.37** (Low): `TestFailureEdgeExpiresTheElicitationsTheSessionRaised_spec_9_2` failed once under
+    load, reading the raised elicitations as answerable after `resume_pending`. Establish whether the gateway
+    commits the state before it expires them (a product defect) or the test reads too early. Direct fix.
+  - [ ] **T-17.4.38** (Low): the gateway, lenny-ops, and token-service harnesses release a probed free port
+    before the process binds it, a race the tier-4 parallelism widens. Bind port 0 and report the address, or
+    retry on address-in-use. Direct fix.
   - [x] **F-4.4.32** (Medium, from 0072 §1.8): the gateway declares `chunk_encoding: tar` for chunks
     `ArchiveTree` gzips. Declare `tar.gz`, which §4.4 already permits.
   - [x] **F-4.4.4**, reopened (Medium, from 0072 §1.9): `FirstCheckpointDelay` has no production caller, so

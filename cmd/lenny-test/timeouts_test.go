@@ -83,14 +83,15 @@ func TestUnitTimeoutExceedsObservedRuntime(t *testing.T) {
 // observed runtime with margin so a passing suite is not reported as a
 // tier failure for a timeout alone.
 func TestIntegrationTimeoutExceedsObservedRuntime(t *testing.T) {
-	// Observed: 1679s for a passing tests/tier4_integration package on the
-	// 8-core developer host on 2026-10-28, after its lifecycle harnesses
-	// moved onto one shared control plane and one shared Postgres
-	// container (TEST-GAPS T-17.4.32). Before that change the package took
-	// 2568s at impl/0101 and 1989s at the proposal-b tip, both over the
-	// budget. The earlier 768s and 280s figures predate most of the
-	// package's current tests.
-	const observedSlowest = 1679 * time.Second
+	// Observed: 365s for the slowest of four consecutive passing runs of
+	// tests/tier4_integration on the 8-core developer host on 2026-10-28
+	// (351s to 365s, load average 5 to 9), after the package linked each
+	// subprocess command once, shared one Postgres container, and ran the
+	// tests that own their fixtures in parallel (TEST-GAPS T-17.4.33). The
+	// run before that change took 1773s on the same host, 1679s after
+	// T-17.4.32, and 2568s before T-17.4.32. The earlier 768s and 280s
+	// figures predate most of the package's current tests.
+	const observedSlowest = 365 * time.Second
 	if tierIntegrationTimeout <= observedSlowest {
 		t.Errorf("tierIntegrationTimeout %s does not exceed observed integration runtime %s; a passing suite will be aborted as a timeout",
 			tierIntegrationTimeout, observedSlowest)
