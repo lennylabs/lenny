@@ -3627,8 +3627,9 @@ blocks any of them.
     0104, which edits the same handler, is implemented, so the fix no longer waits on it.
   - [ ] **Forwarded-call session binding proposal** (not yet written), after R14: **F-10.2.29** (Medium). The
     gateway dispatches a `CH-MCP-PLATFORM` or `CH-MCP-CONNECTOR` call forwarded on `LNK-GWCONTROL` under the
-    session ID the adapter presents, with no check that the session is assigned to the calling pod
-    (0104 D11). It depends on R14, which gives the agent pod its client identity. The proposal covers:
+    session ID the adapter presents, with no check that the session is assigned to the calling pod.
+    Proposal 0104 removed the §10.2 pod-token validation paragraph without adding a session-to-pod
+    binding rule. It depends on R14, which gives the agent pod its client identity. The proposal covers:
     - the `pod_assignment` invariant at every state edge (suspend, resume, recycle, and terminal);
     - the RPCs the binding covers, and why `ListPlatformTools` and the scrub reports are excluded;
     - the posture of the dev plaintext listener, which carries no SPIFFE identity;

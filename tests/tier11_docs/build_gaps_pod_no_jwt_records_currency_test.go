@@ -161,9 +161,9 @@ var proposalLabelRef = regexp.MustCompile(`0104(?:'s)? (?:D\d+|REC-\d+|SPEC-\d+)
 // record the findings filed from proposal 0104's unstaged-defect list.
 const podNoJWTPlanDefects = "**Defects filed from proposal 0104's unstaged-defect list"
 
-// diagnosis: a finding filed from proposal 0104's unstaged-defect list cites
-// the proposal by a decision or record-change label, or the remediation
-// plan's record of those findings still reads as waiting on 0104's
+// diagnosis: a finding filed from proposal 0104's unstaged-defect list, or the
+// remediation plan's record of it, cites the proposal by a decision or
+// record-change label, or the plan's record still reads as waiting on 0104's
 // implementation, which landed. Describe the behavior or cite the spec
 // section, and restate the plan in the past tense.
 //
@@ -183,6 +183,9 @@ func TestPodNoJWTFiledDefectRecordsAreCurrent_spec_10_2(t *testing.T) {
 		t.Fatalf("gateway-runtime-comms-remediation.md no longer records %q", podNoJWTPlanDefects)
 	}
 	section, _, _ = strings.Cut(section, "\n**")
+	if m := proposalLabelRef.FindString(strings.Join(strings.Fields(section), " ")); m != "" {
+		t.Errorf("gateway-runtime-comms-remediation.md: the 0104 defect record cites the proposal by an internal label (%q)", m)
+	}
 	for _, stale := range []string{
 		"ahead of REC-1",
 		"each BUILD-GAPS entry says it was filed ahead of",
