@@ -10054,6 +10054,13 @@ default 5 s), then emit `delegation.budget_return_usage_lag` on
 timeout. None of these symbols appears in code. Downstream of
 8.3-H12.
 
+Status note (2026-10-28): owner proposal 0107 (P4b), CODE-3, which adds the
+quiescence wait to the post-terminal hook concurrently with the release
+(owner decision C). Until remediation step R12 adds the CH-ADAPTEREVENTS
+consumer (F-8.3.9), the wait always ends at the timeout, so this entry closes
+for the step itself on 0107's implementation and the `FINAL_USAGE_REPORT`
+half closes with F-8.3.9.
+
 #### 8.3-M10 — `delegation.budget_return_usage_lag` metric and audit event are absent
 
 §8.3 line 429: `«rate-limited to one per session and can be
