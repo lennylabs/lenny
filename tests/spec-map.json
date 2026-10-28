@@ -4799,6 +4799,10 @@
       "tests": [
         "tests/tier11_docs/impersonation_revocation_docs_test.go::TestReaderDocsDescribeImpersonationRevocation_spec_13_3",
         "tests/tier4_integration/token_service_revocation_publish_test.go::TestTokenServiceRotationReachesPeersOverRedis_spec_13_3",
+        "tests/tier4_integration/token_service_delegation_cascade_test.go::TestRecursiveRevocationReachesDelegationChildOnAnotherReplica_spec_13_3",
+        "tests/tier2_component/issuedtokencascade/delegation_lineage_test.go::TestRecursiveRevocationReachesExternalDelegationChildren_spec_13_3",
+        "pkg/tokenservice/delegation_lineage_test.go::TestIssuedRecordLineagePerExchangeType_spec_13_3",
+        "pkg/tokenservice/delegation_lineage_test.go::TestDelegationLineageWritesBothColumnsOrNeither_spec_13_3",
         "cmd/lenny-token-service/revocation_publish_test.go::TestTokenServiceRevocationPublisher_spec_13_3",
         "cmd/lenny-token-service/redis_topology_test.go::TestTokenServicePublishesRevocationsOnTheCachePubSubConcern_spec_13_3",
         "pkg/gateway/credentials/revocation/propagator/publish_test.go::TestPublishReachesPeerPropagator_spec_13_3",
