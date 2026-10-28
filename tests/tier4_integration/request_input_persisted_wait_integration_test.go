@@ -37,6 +37,31 @@ func statusChangeStates(items []any) []string {
 	return out
 }
 
+// awaitLastSeq waits until the session row's last_seq records the newest
+// event on the replica's stream. The gateway advances last_seq
+// asynchronously after each publish, and another replica seeds its own
+// sequence for the session from that column on its first publish, so a
+// cross-replica publish is ordered after the coordinator's events only once
+// the advance has landed.
+func awaitLastSeq(t *testing.T, h *lifecycleharness.Harness, r *lifecycleharness.Replica, id string) {
+	t.Helper()
+	_, items := h.Events(r, id)
+	var newest int64
+	for _, it := range items {
+		m, _ := it.(map[string]any)
+		if seq, _ := m["seq"].(float64); int64(seq) > newest {
+			newest = int64(seq)
+		}
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for h.Row(id).LastSeq < newest {
+		if time.Now().After(deadline) {
+			t.Fatalf("last_seq = %d, want %d: the stream's newest event was not persisted", h.Row(id).LastSeq, newest)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // spec: 7.2 (Session state machine), 6.2 (Pod State Machine), 10.1.1
 // (Stateless Replicas and Per-Session Coordination)
 // diagnosis: a lenny/request_input wait served by a replica that does not
@@ -50,6 +75,7 @@ func TestRequestInputWaitOutlastsIdleBoundOffHolder_spec_7_2(t *testing.T) {
 	h := newComposeWith(t, lifecycleharness.Options{Replicas: 2, Pods: 8, Events: true, MaxIdleSeconds: idle})
 	holder, waiter := h.Replicas[0], h.Replicas[1]
 	id := h.StartSession(holder)
+	awaitLastSeq(t, h, holder, id)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

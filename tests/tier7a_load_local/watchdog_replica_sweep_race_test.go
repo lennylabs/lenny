@@ -81,6 +81,8 @@ func sweepRaceConfig() watchdog.Config {
 	}
 }
 
+// spec: §10.1.1 (Primary:), §7.2 (Session state machine)
+//
 // diagnosis: a failure means two replicas' watchdog sweeps ended one session
 // twice or ran its terminal hook twice, or ended a row that a concurrent write
 // put back inside its deadline: the terminal mutator is not re-checking the

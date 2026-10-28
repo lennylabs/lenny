@@ -463,7 +463,16 @@ func (h *Harness) AddReplica(name string) *Replica {
 	r.Executor, r.Binder = exec, binder
 	var bus *sessionevents.Bus
 	if h.events {
-		bus = sessionevents.NewBus(256).WithRedisRelay(sessionevents.NewRedisRelay(h.rc))
+		// spec: §7.3, §4.4 — the bus carries the cross-replica relay and
+		// the durable last_seq counter as the gateway wires them, so a
+		// replica publishing for a session another replica coordinates
+		// seeds its sequence from the row rather than colliding with the
+		// coordinator's events in the merged history. The counter writes
+		// the inner store, so its asynchronous advances neither enter the
+		// trace nor consume a fault scheduled for a gateway write.
+		lastSeq := sessionstore.LastSeqCounter{Sessions: h.Inner}
+		bus = sessionevents.NewBus(256).WithRedisRelay(sessionevents.NewRedisRelay(h.rc)).
+			WithLastSeqPersister(lastSeq).WithLastSeqLoader(lastSeq)
 	}
 	r.Events = bus
 	r.inputWaitGen = inputwaitrecovery.NewGeneration()

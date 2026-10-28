@@ -3,8 +3,6 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"log"
 	"time"
 
@@ -81,7 +79,7 @@ func (w *gatewayWiring) buildSessionMessaging() {
 	// best-effort (a Postgres outage degrades to the local counter).
 	// F-7.3.3.
 	if sessions != nil {
-		lastSeq := lastSeqStore{sessions: sessions}
+		lastSeq := sessionstore.LastSeqCounter{Sessions: sessions}
 		eventBus = eventBus.WithLastSeqPersister(lastSeq).WithLastSeqLoader(lastSeq)
 	}
 	// spec: §7.2 — the session inbox + DLQ coordinator.
@@ -241,46 +239,4 @@ func (w *gatewayWiring) buildSessionMessaging() {
 	w.experiments = experiments
 	w.memories = memories
 	w.memoryBackendLabel = memoryBackendLabel
-}
-
-// lastSeqStore adapts the §4.2 session store to the §7.3
-// sessions.last_seq durability hooks on the session event bus. It
-// satisfies both sessionevents.LastSeqPersister (advance on every
-// publish) and sessionevents.LastSeqLoader (seed the in-memory
-// counter on first publish for the session). Both methods are
-// best-effort — a Postgres outage degrades to the local counter
-// without dropping events. F-7.3.3.
-type lastSeqStore struct{ sessions sessionstore.Store }
-
-// LoadLastSeq returns the persisted §7.3 sessions.last_seq
-// counter so the Bus seeds its local counter on the first publish for
-// the session (the coordinator-handoff "primed from Postgres at
-// handoff step 0" contract). A missing row reads as zero so a fresh
-// session starts at 1.
-func (l lastSeqStore) LoadLastSeq(ctx context.Context, tenantID, sessionID string) (int64, error) {
-	sess, err := l.sessions.Get(ctx, tenantID, sessionID)
-	if errors.Is(err, sessionstore.ErrNotFound) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	return sess.LastSeq, nil
-}
-
-// AdvanceLastSeq persists the new per-session SeqNum to Postgres. The
-// store's Update mutate-callback applies the new value and the
-// pgstore's GREATEST floor in updateSQL keeps the persisted value
-// monotonic against late writers from sibling replicas.
-func (l lastSeqStore) AdvanceLastSeq(ctx context.Context, tenantID, sessionID string, seq int64) error {
-	_, err := l.sessions.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
-		if seq > row.LastSeq {
-			row.LastSeq = seq
-		}
-		return nil
-	})
-	if errors.Is(err, sessionstore.ErrNotFound) {
-		return nil
-	}
-	return err
 }
