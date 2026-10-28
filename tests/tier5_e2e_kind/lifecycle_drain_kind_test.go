@@ -9,14 +9,15 @@
 // claim deleted and its Sandbox out of the occupied phases) within the
 // coordination Sweeper interval plus maxWorkspaceSealDurationSeconds, and
 // that a later create on either replica is refused with TENANT_SUSPENDED.
-// The erasure case lowers the controller's claimOrphanTimeout for its run,
-// erases a user whose session is bound on the other replica, and asserts
-// that the session's SandboxClaim is no longer bound (deleted, or in any
-// phase other than bound) after claimOrphanTimeout plus one orphan-GC pass,
-// the accepted path when the erasure deletes the row before the binding
-// replica's Sweeper lists it. The erasure case does not require the pod to
-// have returned to the pool: deleting the claim and re-warming or retiring
-// the Sandbox may finish after that bound.
+// The erasure case erases a user whose session is bound on the other
+// replica, with the controller's claimOrphanTimeout at its installed value,
+// and asserts that the session's SandboxClaim is no longer bound (deleted,
+// or in any phase other than bound) within the CH-BINDRELEASE apply window
+// plus maxWorkspaceSealDurationSeconds, which it requires to be below
+// claimOrphanTimeout: the erasure drain publishes the session on
+// CH-BINDRELEASE and the binding replica releases its binding. The erasure
+// case does not require the pod to have returned to the pool: deleting the
+// claim and re-warming or retiring the Sandbox may finish after that bound.
 //
 // Both cases bootstrap a tenant whose name carries a per-run suffix and
 // sweep, at start, every tenant an earlier killed run left under the same
@@ -49,17 +50,6 @@ const lifecycleDrainTenantPrefix = "lifecycle-drain-"
 // spec: §12.8 (Lifecycle fence and drain: Drain)
 func suspendReleaseBound(sweeperInterval, sealMax time.Duration) time.Duration {
 	return sweeperInterval + sealMax
-}
-
-// erasureReleaseBound is the bound within which the claim of a pod bound to
-// an erased user's session is no longer bound, measured from the erase request's
-// answer: claimOrphanTimeout plus one orphan-GC pass. The erasure drains
-// the session and deletes its row inside the job, after the answer, so the
-// claim is orphaned no earlier than the answer and the bound adds no slack.
-//
-// spec: §12.8 (Compliance Interfaces: Lifecycle fence and drain), §4.6.1 (Orphan claim detection)
-func erasureReleaseBound(claimOrphanTimeout, gcPass time.Duration) time.Duration {
-	return claimOrphanTimeout + gcPass
 }
 
 // adminRequest issues one platform-admin request through d's port-forward
@@ -232,10 +222,10 @@ func claimState(found bool, phase string) string {
 // bound (released and failed included), no longer binds the erased user's
 // session to the pod. Unlike podReturnedToPool it does not wait for the
 // controller to delete the claim or for the Sandbox to leave the occupied
-// phases, because the orphan GC's bound covers only the claim leaving bound.
+// phases, because the release bound covers only the binding's release.
 //
-// spec: §12.8 (Compliance Interfaces: Lifecycle fence and drain), §4.6.1
-// (Orphan claim detection), §4.6.3 (SandboxClaim binding state)
+// spec: §12.8 (Compliance Interfaces: Lifecycle fence and drain), §11.4
+// step 2 (User Invalidation), §4.6.3 (SandboxClaim binding state)
 func claimNoLongerBound(claimFound bool, claimPhase string) (bool, string) {
 	state := "claim " + claimState(claimFound, claimPhase)
 	return !claimFound || claimPhase != "bound", state
@@ -440,99 +430,94 @@ func TestTenantSuspendDrainsSessionsOnTwoReplicas_spec_12_8(t *testing.T) {
 	}
 }
 
-// loweredClaimOrphanTimeout is the claimOrphanTimeout the erasure case sets
-// on the controller for its run. The chart refuses any value at or below the
-// gateway's 600s finalizing deadline, because §5.2 requires the timeout to
-// exceed every post-terminal slot activity window, so the test lowers the
-// controller's flag directly instead of through the chart. Only the
-// controller's orphan GC reads it, and the GC reclaims only a claim with no
-// active session, so a live session elsewhere on the cluster is unaffected.
-const loweredClaimOrphanTimeout = 60 * time.Second
+// bindReleaseApplyWindow is the window within which a peer replica applies
+// a release request published on CH-BINDRELEASE. §11.4 and the
+// CH-BINDRELEASE card state that peers apply it "within seconds"; the test
+// reads that as 30 seconds.
+const bindReleaseApplyWindow = 30 * time.Second
 
-// orphanGCPass is one orphan-GC sweep. The warm-pool controller's orphan GC
-// runs once a minute and has no flag (pkg/controller/warmpool
-// defaultGCInterval).
-const orphanGCPass = 60 * time.Second
+// erasureJobSlack bounds how long the erasure job may run past the release
+// bound: once the drained session's post-terminal window ends with the
+// release, the job still deletes the user's stores before it completes.
+const erasureJobSlack = 2 * time.Minute
 
-// controllerLeaderLease is the controller manager's leader-election Lease
-// (cmd/lenny-controller LeaderElectionID), whose holder runs the orphan GC.
-const controllerLeaderLease = "lenny-warm-pool-controller"
+// controllerClaimOrphanTimeoutFlag is the warm-pool controller flag that
+// carries the §4.6.1 claimOrphanTimeout.
+const controllerClaimOrphanTimeoutFlag = "claim-orphan-timeout"
 
-// controllerLeaderWait bounds the wait for a controller pod of the current
-// rollout to hold the leader Lease after the flag override.
-const controllerLeaderWait = 3 * time.Minute
+// erasureReleaseBound is the bound within which the claim of a pod bound,
+// on another replica, to an erased user's session is no longer bound,
+// measured from the erase request's answer: the CH-BINDRELEASE apply window
+// plus maxWorkspaceSealDurationSeconds, because the release the binding
+// replica runs on the published request may seal the workspace first.
+//
+// spec: §12.8 (Compliance Interfaces: Lifecycle fence and drain), §11.4 step 2 (User Invalidation), §28.5.7 (Gateway-to-store)
+func erasureReleaseBound(applyWindow, sealMax time.Duration) time.Duration {
+	return applyWindow + sealMax
+}
 
-// waitControllerLeader waits until the controller's leader Lease is held by
-// a running controller pod that is not terminating, so the leader-election
-// handover after the flag override's rollout has finished before the test
-// starts the clock on the orphan-GC bound.
-func waitControllerLeader(t *testing.T, c *kind.Cluster) {
+// requireBoundBelowOrphanTimeout fails unless bound is strictly below the
+// controller's claimOrphanTimeout, so the orphan GC cannot be what moves the
+// claim out of bound within it. It first restores a claimOrphanTimeout
+// override a killed run of an earlier revision of this case left.
+func requireBoundBelowOrphanTimeout(t *testing.T, c *kind.Cluster, bound time.Duration) {
 	t.Helper()
-	deadline := time.Now().Add(controllerLeaderWait)
+	if err := c.RestoreDeploymentFlag(t, "lenny-system", "lenny-controller", controllerClaimOrphanTimeoutFlag); err != nil {
+		t.Fatalf("restore an earlier --%s override: %v", controllerClaimOrphanTimeoutFlag, err)
+	}
+	orphan := deploymentDurationArg(t, c, "lenny-controller", controllerClaimOrphanTimeoutFlag, 15*time.Minute)
+	if bound >= orphan {
+		t.Fatalf("the release bound %s is not below the controller's claimOrphanTimeout %s; the orphan GC "+
+			"could satisfy it, so the case cannot show the drain's release", bound, orphan)
+	}
+}
+
+// waitErasureJob polls the erasure job until it completes, failing when it
+// fails or is still running at deadline.
+func waitErasureJob(t *testing.T, d *sessiondriver.Driver, jobID string, deadline time.Time) {
+	t.Helper()
 	for {
-		holder, _ := c.KubectlOut(t, "-n", "lenny-system", "get", "lease", controllerLeaderLease,
-			"-o", "jsonpath={.spec.holderIdentity}")
-		pods, _ := c.KubectlOut(t, "-n", "lenny-system", "get", "pods", "-o",
-			`jsonpath={range .items[?(@.status.phase=="Running")]}{.metadata.name} {.metadata.deletionTimestamp}{"\n"}{end}`)
-		if leaderIsLivePod(strings.TrimSpace(holder), pods) {
+		code, raw := adminRequest(t, d, "platform", http.MethodGet, "/v1/admin/erasure-jobs/"+jobID, nil)
+		var job struct {
+			Phase string `json:"phase"`
+		}
+		_ = json.Unmarshal(raw, &job)
+		if code == http.StatusOK && job.Phase == "completed" {
 			return
 		}
-		if !time.Now().Before(deadline) {
-			t.Fatalf("no running lenny-controller pod holds lease %s after %s (holder %q)", controllerLeaderLease, controllerLeaderWait, holder)
+		if job.Phase == "failed" || !time.Now().Before(deadline) {
+			t.Fatalf("erasure job %s did not complete: %d %s", jobID, code, raw)
 		}
 		time.Sleep(2 * time.Second)
 	}
 }
 
-// leaderIsLivePod reports whether holder, a controller-runtime holder
-// identity of the form <pod>_<uuid>, names a running controller pod with no
-// deletion timestamp in pods, one "<name> <deletionTimestamp>" per line.
-func leaderIsLivePod(holder, pods string) bool {
-	pod, _, ok := strings.Cut(holder, "_")
-	if !ok || !strings.HasPrefix(pod, "lenny-controller-") {
-		return false
-	}
-	for _, line := range strings.Split(pods, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) == 1 && fields[0] == pod {
-			return true
-		}
-	}
-	return false
-}
-
-// lowerClaimOrphanTimeout sets the controller's --claim-orphan-timeout to
-// loweredClaimOrphanTimeout for the test and restores it afterwards. It also
-// restores, at start, an override an earlier killed run left. It skips only
-// when the Deployment cannot be patched.
-func lowerClaimOrphanTimeout(t *testing.T, c *kind.Cluster) {
-	t.Helper()
-	if err := c.OverrideDeploymentFlag(t, "lenny-system", "lenny-controller",
-		"claim-orphan-timeout", loweredClaimOrphanTimeout.String()); err != nil {
-		t.Skipf("blocked: cannot lower the controller's claimOrphanTimeout: %v", err)
-	}
-	if got := deploymentDurationArg(t, c, "lenny-controller", "claim-orphan-timeout", 0); got != loweredClaimOrphanTimeout {
-		t.Fatalf("controller --claim-orphan-timeout = %s after the override, want %s", got, loweredClaimOrphanTimeout)
-	}
-}
-
-// TestUserErasureReleasesClaimOnOtherReplica_spec_12_8 erases a user whose
-// session is bound on the other gateway replica, with the controller's
-// claimOrphanTimeout lowered for the run. The erasure deletes the session
-// row, so the binding replica may never list it terminal; the orphan GC then
-// moves the claim out of bound after claimOrphanTimeout. The case asserts
-// only that the claim is no longer bound by that bound plus one GC pass;
-// deleting the claim and returning the pod to the pool may finish later.
+// TestUserErasureReleasesTheRemoteBindingOnBindRelease_spec_12_8 erases a
+// user whose session is bound on the other gateway replica, with the
+// controller's claimOrphanTimeout at its installed value. The erasure's
+// drain publishes the session it moved to a terminal state on
+// CH-BINDRELEASE, and the binding replica releases the binding as §11.4
+// step 2 states. The case asserts that the erasure job completes and that
+// the session's claim is no longer bound within the CH-BINDRELEASE apply
+// window plus maxWorkspaceSealDurationSeconds, a bound it requires to be
+// below claimOrphanTimeout so the orphan GC cannot satisfy it. The binding
+// replica's coordination Sweeper also releases a terminal session's binding
+// on its next listing, so the case shows that the remote binding is
+// released after erasure; the in-process drain tests show that the publish
+// is what reaches a peer.
 //
-// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 12.8 (User-level erasure invocation), 4.6.1 (Orphan claim detection)
-// diagnosis: a failure means the claim of a pod bound to an erased user's
-// session is still bound past claimOrphanTimeout plus one orphan-GC pass, so
-// an erasure strands a pod bound to a deleted session, or the erasure job
-// never completed.
-func TestUserErasureReleasesClaimOnOtherReplica_spec_12_8(t *testing.T) {
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 12.8 (User-level erasure invocation), 28.5.7 (Gateway-to-store), 11.4 (User Invalidation)
+// diagnosis: a failure means the claim of a pod bound on another replica to
+// an erased user's session is still bound past the release bound, so the
+// erasure drain's release did not reach the binding replica (no publish on
+// CH-BINDRELEASE, no subscriber, or a subscriber that refused the terminal
+// row) and no Sweeper listing released it either, or the erasure job never completed because the drained session's
+// post-terminal window never ended.
+func TestUserErasureReleasesTheRemoteBindingOnBindRelease_spec_12_8(t *testing.T) {
 	c := kind.InstallLenny(t)
-	lowerClaimOrphanTimeout(t, c)
-	waitControllerLeader(t, c)
+	bound := erasureReleaseBound(bindReleaseApplyWindow,
+		deploymentDurationArg(t, c, "lenny-gateway", "workspace-seal-max-duration-seconds", 300*time.Second))
+	requireBoundBelowOrphanTimeout(t, c, bound)
 	a, b, tenant := twoReplicaDrivers(t, c)
 	// The erasure target must be a registered user of the tenant, and the
 	// session must be owned by it: the §12.8 drain and erasers act on the
@@ -544,12 +529,14 @@ func TestUserErasureReleasesClaimOnOtherReplica_spec_12_8(t *testing.T) {
 	}); code != http.StatusOK && code != http.StatusMultiStatus {
 		t.Fatalf("register %s: %d %s", user, code, raw)
 	}
+	// The session is bound on replica A and the erasure runs on replica B,
+	// so only the published release reaches the binding.
 	sess := startOwnedOn(t, a, tenant, user)
 
 	code, raw := adminRequest(t, b, "platform", http.MethodPost, "/v1/admin/users/"+user+"/erase", map[string]any{"tenantId": tenant})
-	// The deadline is taken when the erase answers: the drain and the
-	// row deletion that orphan the claim run inside the job after it.
-	deadline := time.Now().Add(erasureReleaseBound(loweredClaimOrphanTimeout, orphanGCPass))
+	// The deadline is taken when the erase answers: the drain and its
+	// publish run inside the job after it.
+	deadline := time.Now().Add(bound)
 	if code != http.StatusAccepted && code != http.StatusOK {
 		t.Fatalf("erase %s: %d %s", user, code, raw)
 	}
@@ -559,20 +546,9 @@ func TestUserErasureReleasesClaimOnOtherReplica_spec_12_8(t *testing.T) {
 	if err := json.Unmarshal(raw, &started); err != nil || started.JobID == "" {
 		t.Fatalf("erase body %s carries no jobId (%v)", raw, err)
 	}
-	jobDeadline := time.Now().Add(3 * time.Minute)
-	for {
-		code, raw := adminRequest(t, b, "platform", http.MethodGet, "/v1/admin/erasure-jobs/"+started.JobID, nil)
-		var job struct {
-			Phase string `json:"phase"`
-		}
-		_ = json.Unmarshal(raw, &job)
-		if code == http.StatusOK && job.Phase == "completed" {
-			break
-		}
-		if job.Phase == "failed" || !time.Now().Before(jobDeadline) {
-			t.Fatalf("erasure job %s did not complete: %d %s", started.JobID, code, raw)
-		}
-		time.Sleep(2 * time.Second)
-	}
+	// The claim is read against the deadline before the job is awaited, so
+	// a release that lands after the deadline fails the case even when the
+	// job completes later.
 	waitClaimsUnboundBy(t, c, deadline, sess.PodAssignment)
+	waitErasureJob(t, b, started.JobID, deadline.Add(erasureJobSlack))
 }

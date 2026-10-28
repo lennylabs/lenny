@@ -87,6 +87,48 @@ Helpers must not call `time.Now`, `crypto/rand`, `os/exec` against host binaries
 
 A helper that depends on an external dependency (`docker`, `kind`, `setup-envtest`, a cloud kubeconfig) calls `t.Skip` with a reason that names the missing dependency. The harness preserves the skip reason in `tests/results/latest.json` so the verdict reflects which environments ran which tiers.
 
+## Shared Kind cluster database
+
+Parallel worktrees install onto the same Kind cluster, named by `LENNY_KIND_CLUSTER` with the default `lenny-e2e`, and step 8 of `kind/install.sh` migrates the one Postgres in `lenny-system` to the installing branch's migrations. A branch with a newer migration leaves the database ahead of every branch that lacks it, and a migrate that stops part-way leaves the `schema_migrations` row dirty.
+
+Before it migrates, `kind/install.sh` reads `schema_migrations` in a read-only transaction and compares the version with the highest `migrations/NNNN_*.up.sql` in the tree. It proceeds when the table is absent or empty, or when the version is at or below the branch's highest migration. It stops before migrating when the row is dirty or when the version is ahead of the branch, and names the version, the branch's highest migration, and the procedure below. `LENNY_SKIP_MIGRATION_GUARD=1` runs the migration regardless, for deliberate use only: `lenny-migrate up` still fails on a dirty or ahead database.
+
+The database is shared state. Do not edit `schema_migrations` by hand, and run either procedure only with the owner's approval, because both change the database every other worktree tests against. Read the current row first:
+
+```
+kubectl --context kind-lenny-e2e -n lenny-system exec deploy/lenny-postgres -- \
+  sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT version, dirty FROM schema_migrations"'
+```
+
+### Step-back procedure for a database ahead of the branch
+
+The first remedy is to merge the integration branch into the installing branch, so the branch carries the newer migration, and re-run `kind/install.sh`. When the branch has to keep its migration set, step the database back to the branch's highest migration `<n>`:
+
+1. Choose a `lenny-migrate` image built from a tree that contains the down migration of every version above `<n>`. The image of the worktree that installed the newer migration qualifies. List the loaded tags with `docker exec lenny-e2e-control-plane crictl images | grep lenny-migrate`.
+2. Copy `kind/migrate-job.yaml` to a scratch file. Rename the Job, for example to `lenny-e2e-migrate-goto-<n>`, set `backoffLimit: 0`, set the image to the tag from step 1, and replace the `up` argument with `--break-glass`, `--confirm`, `goto`, and `"<n>"`.
+3. Apply the scratch file with `kubectl --context kind-lenny-e2e apply -f <file>`, and wait for it with `kubectl --context kind-lenny-e2e -n lenny-system wait --for=condition=Complete job/lenny-e2e-migrate-goto-<n> --timeout=180s`.
+4. Read the row again and confirm it is `<n>|f`.
+5. Re-run `kind/install.sh` from the branch.
+
+The Job runs each down migration from the current version to `<n>`, so it drops the schema objects the newer migrations added. The worktree that installed them re-applies them on its next install.
+
+### Reset procedure for a dirty database
+
+`lenny-migrate goto` and `lenny-migrate up` both refuse a dirty database, and clearing the flag by hand leaves a partly applied migration recorded as complete. Reset the database instead:
+
+1. Stop every test run against the cluster, in every worktree.
+2. Drop and recreate the `lenny` database, connecting to the `postgres` maintenance database:
+
+   ```
+   kubectl --context kind-lenny-e2e -n lenny-system exec deploy/lenny-postgres -- \
+     sh -c 'psql -U "$POSTGRES_USER" -d postgres -c "DROP DATABASE lenny WITH (FORCE)" -c "CREATE DATABASE lenny OWNER lenny"'
+   ```
+
+3. Re-run `kind/install.sh` from the integration branch, so the database ends at the integration branch's highest migration.
+4. Read the row again and confirm it is not dirty.
+
+The reset discards every row the tests had written. The install re-creates the data its own steps seed.
+
 ## TESTING.md cross-references
 
 | Subsystem | TESTING.md section |

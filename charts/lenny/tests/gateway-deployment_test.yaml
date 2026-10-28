@@ -1188,7 +1188,11 @@ tests:
       # + LENNY_CHECKPOINT_GRANT_WINDOW (§10.1.7 / §17.8.1 —
       #   checkpointGrantWindow defaults to 4 and renders)
       # + LENNY_CHECKPOINT_CAPABILITY_TTL_SECONDS (§13.2 / §17.8.1 —
-      #   checkpointCapabilityTTLSeconds defaults to 30 and renders).
+      #   checkpointCapabilityTTLSeconds defaults to 30 and renders)
+      # + LENNY_POD_IP, LENNY_HOLDER_FORWARD_ADVERTISE_ADDR, and
+      #   LENNY_HOLDER_FORWARD_LISTEN_ADDR (§10.1.1 Replica address,
+      #   §10.3 NET-072 — the inter-replica forward address and listener
+      #   render unconditionally from gateway.holderForwardPort).
       #
       # The stock env set is closed. The notExists allowlist fails when an
       # entry outside the named set renders, which covers any data-store
@@ -1262,9 +1266,12 @@ tests:
             @.name != "LENNY_GC_CYCLE_INTERVAL_SECONDS" &&
             @.name != "LENNY_GC_TOMBSTONE_RETENTION_SECONDS" &&
             @.name != "LENNY_HEALTH_TRACKER_USE_COMPILED_RULES" &&
+            @.name != "LENNY_HOLDER_FORWARD_ADVERTISE_ADDR" &&
+            @.name != "LENNY_HOLDER_FORWARD_LISTEN_ADDR" &&
             @.name != "LENNY_LOG_LEVEL" &&
             @.name != "LENNY_MAX_SESSIONS_PER_REPLICA" &&
             @.name != "LENNY_MIN_REPLICAS" &&
+            @.name != "LENNY_POD_IP" &&
             @.name != "LENNY_POOLER_MODE" &&
             @.name != "LENNY_POSTGRES_WRITE_CEILING_IOPS" &&
             @.name != "LENNY_QUOTA_ENFORCEMENT_MODE" &&
@@ -1349,9 +1356,12 @@ tests:
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_GC_CYCLE_INTERVAL_SECONDS}, any: true, count: 1}
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_GC_TOMBSTONE_RETENTION_SECONDS}, any: true, count: 1}
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_HEALTH_TRACKER_USE_COMPILED_RULES}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_HOLDER_FORWARD_ADVERTISE_ADDR}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_HOLDER_FORWARD_LISTEN_ADDR}, any: true, count: 1}
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_LOG_LEVEL}, any: true, count: 1}
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_MAX_SESSIONS_PER_REPLICA}, any: true, count: 1}
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_MIN_REPLICAS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_POD_IP}, any: true, count: 1}
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_POOLER_MODE}, any: true, count: 1}
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_POSTGRES_WRITE_CEILING_IOPS}, any: true, count: 1}
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_QUOTA_ENFORCEMENT_MODE}, any: true, count: 1}

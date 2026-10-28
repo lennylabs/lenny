@@ -147,9 +147,7 @@ type MessageResponse struct {
 //     response output parts.
 //
 // The minimal gateway elides:
-//   - the §7.2 inter-replica `ForwardMessage` gRPC,
-//   - the §7.2 inbox + DLQ persistence (F-7.2.4),
-//   - cross-replica coordinator routing.
+//   - the §7.2 inbox + DLQ persistence (F-7.2.4).
 //
 // A message to a `suspended` session takes §7.2 path 6
 // (deliverMessageBatch) whatever its `delivery` value: on the coordinating

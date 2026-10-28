@@ -2,15 +2,15 @@
 proposal: 0101_new_gateway-replicas-have-no-way-to-ask-the-replica
 title: Gateway replicas have no inter-replica request-forwarding carrier
 kind: new
-status: Approved
+status: Implemented
 drafted-date: 2026-10-25
 drafted-by: change-proposal
 reviewed-date: 2026-10-26
 reviewed-by: change-proposal
 approved-date: 2026-10-26
 approved-by: jaf
-implemented-date: 
-implemented-by: 
+implemented-date: 2026-10-28
+implemented-by: jaf
 ---
 
 ## Review history

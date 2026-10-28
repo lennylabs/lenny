@@ -26,10 +26,10 @@
 // `cb:`, or `{root_session_id}:dlg:`, where the wrapper additionally
 // validates the calling tenant owns the `root_session_id`). Keys that carry
 // no leading prefix the wrapper recognizes (`rl:`, `sq:`, `pg:sess-tenant:`,
-// `conn:oauth:state:`, `derive_lock:`, `lenny:events:`) are issued on
-// unscoped or platform-scoped command paths the wrapper passes through
-// unvalidated; their isolation is structural rather than leading-prefix
-// enforcement.
+// `conn:oauth:state:`, `derive_lock:`, `lenny:events:`, and
+// `lenny:session:terminate`) are issued on unscoped or platform-scoped
+// command paths the wrapper passes through unvalidated; their isolation is
+// structural rather than leading-prefix enforcement.
 //
 // Enforcement is a go-redis Hook (Guard) installed on the shared client.
 // The hook validates the key arguments of every command against the Scope

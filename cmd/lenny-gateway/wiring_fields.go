@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"net"
 	"net/http"
 	"sync/atomic"
@@ -23,6 +24,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/drainreadiness"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
@@ -105,8 +107,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore/cachingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/operability/health"
 	"github.com/lennylabs/lenny/pkg/gateway/operability/recommendations"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/bindrelease"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	podterminateprop "github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podterminate/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
@@ -161,6 +163,27 @@ type gatewayWiringFields struct {
 	gwMetrics           *gatewaymetrics.Metrics
 	opsEmitter          events.EventEmitter
 	replica             string
+	// coordHolder is the §10.1.1 Replica address holder value every
+	// REG-COORDLEASE and REG-COORDMIRROR consumer receives: the session
+	// server, the coordination Sweeper, the barrier mirror lister, the
+	// coordination seams, and the coordination fencer. Set by
+	// buildRedisAndQuota. replica stays the identity of the ops Source,
+	// billing, service.instance.id, and the nonce checkpoint.
+	coordHolder string
+	// holderForwardEnabled is true when a lease store is wired and the
+	// gateway replica certificate material is complete, so the gateway
+	// builds the CH-HOLDERFORWARD client and listener (§10.3 NET-072).
+	holderForwardEnabled bool
+	// holderForwardClient is the shared CH-HOLDERFORWARD client; nil without
+	// the material. holderForwardTLS is the listener's TLS configuration.
+	holderForwardClient *http.Client
+	holderForwardTLS    *tls.Config
+	// holderForwardSrv is the CH-HOLDERFORWARD listener, started and drained
+	// with the REST listener; nil when the forward is not enabled.
+	holderForwardSrv *http.Server
+	// restAuthOpts is the auth middleware configuration of the REST
+	// listener, which the forward listener reuses (§29.3 Forwarding rule 3).
+	restAuthOpts authmw.Options
 	// §10.6 resolved noEnvironmentPolicy, computed by buildStartupGates from
 	// the --no-environment-policy flag and dev mode; read by the session
 	// server, the MCP fabric, and the HTTP surface.
@@ -355,26 +378,26 @@ type gatewayWiringFields struct {
 	// billingStream is the billing pipeline's Tier 1 stream (the Redis
 	// stream, or the in-process MemStream without Redis), which the §12.8
 	// tenant-deletion billing_buffer entry purges.
-	billingStream        failover.StreamTier
-	connectorStateStore  *connectoroauth.MemoryStateStore
-	deadlockManager      *deadlock.Manager
-	dsMonitor            *dualstore.Monitor
-	pools                poolstore.Store
-	treeArchive          treearchive.Store
-	userPodTerminateProp *podterminateprop.Propagator
-	blobsCataloged       *cataloging.Store
-	quotaBudgetTracker   *quotabudget.Tracker
-	quotaCheckpointSvc   *quotacheckpoint.Service
-	quotaFailOpenAccum   *quotafailopen.Accumulator
-	sessionUsage         sessionusage.Store
-	treeBudgetConcrete   *treebudget.Reserver
-	artifactCatalog      artifactcatalog.Store
-	blobs                blobstore.Store
-	credRenewalWorker    *credrenewal.Worker
-	credentialPools      credentialpoolstore.Store
-	evals                evalstore.Store
-	immediateGCSweep     func(ctx context.Context, tenantID string)
-	partialManifests     partialmanifeststore.Store
+	billingStream       failover.StreamTier
+	connectorStateStore *connectoroauth.MemoryStateStore
+	deadlockManager     *deadlock.Manager
+	dsMonitor           *dualstore.Monitor
+	pools               poolstore.Store
+	treeArchive         treearchive.Store
+	bindReleaseProp     *bindrelease.Propagator
+	blobsCataloged      *cataloging.Store
+	quotaBudgetTracker  *quotabudget.Tracker
+	quotaCheckpointSvc  *quotacheckpoint.Service
+	quotaFailOpenAccum  *quotafailopen.Accumulator
+	sessionUsage        sessionusage.Store
+	treeBudgetConcrete  *treebudget.Reserver
+	artifactCatalog     artifactcatalog.Store
+	blobs               blobstore.Store
+	credRenewalWorker   *credrenewal.Worker
+	credentialPools     credentialpoolstore.Store
+	evals               evalstore.Store
+	immediateGCSweep    func(ctx context.Context, tenantID string)
+	partialManifests    partialmanifeststore.Store
 	// checkpointRetention is the §12.5 checkpoint retention catalog
 	// (session_checkpoints). The §12.8 tenant-deletion Phase 4 eraser
 	// erases the tenant's rows through it.

@@ -161,7 +161,8 @@ type Metrics interface {
 	// lenny_idempotency_cache_skipped_total when the middleware
 	// declines to persist the response by policy (5xx status from the
 	// inner handler) — the 24-hour-error-replay case F-11.5.3.
-	// reason is one of: "server_error", "no_status".
+	// reason is one of: "server_error", "streamed", or
+	// "forward_refused" (a §29.3 Forwarding rule 6 or rule 7 refusal).
 	IncIdempotencyCacheSkipped(tenantID, reason string)
 }
 
@@ -409,6 +410,10 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// finalized record. A panic inside the inner handler leaves the
 	// pending row in place; the deferred Release tears it down so a
 	// retry can re-execute. Closes F-11.5.2 (claim cleanup on panic).
+	// spec: §11.5 — install the no-store gate a handler sets when a forward
+	// to the coordinating replica is refused (§29.3 Forwarding rules 6 and
+	// 7), so maybePersist releases the claim instead of storing the refusal.
+	r = r.WithContext(WithGate(r.Context()))
 	captured := &captureWriter{header: http.Header{}, w: w}
 	finalized := false
 	defer func() {
@@ -430,6 +435,14 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // healthy backend instead of seeing IDEMPOTENCY_KEY_IN_FLIGHT.
 // spec: §11.5; F-11.5.2, F-11.5.3, F-11.5.4, F-11.5.10, F-11.5.12.
 func (m *middleware) maybePersist(ctx context.Context, idemKey idempotency.Key, hash string, captured *captureWriter) {
+	if NotStored(ctx) {
+		// spec: §11.5 — a TARGET_NOT_READY refusal that §29.3 Forwarding
+		// rule 6 or rule 7 produces is not stored, so a retry with the same
+		// key runs the operation again. The pending claim is released as it
+		// is for a 5xx.
+		m.skipAndRelease(ctx, idemKey, SkipReasonForwardRefused)
+		return
+	}
 	status := captured.status
 	if status == 0 {
 		// spec: §11.5 — captured.status==0 means the inner
@@ -499,6 +512,18 @@ func (m *middleware) maybePersist(ctx context.Context, idemKey idempotency.Key, 
 			m.opts.Metrics.IncIdempotencyCacheWriteFailure(idemKey.TenantID)
 		}
 		m.logger().Printf("idempotency: cache write failed (operation already executed; retry with same key WILL re-execute) tenant=%q key=%q err=%q", idemKey.TenantID, idemKey.Value, err.Error())
+	}
+}
+
+// skipAndRelease records a policy skip under reason and releases the
+// pending claim so a retry with the same key runs the operation again.
+func (m *middleware) skipAndRelease(ctx context.Context, idemKey idempotency.Key, reason string) {
+	if m.opts.Metrics != nil {
+		m.opts.Metrics.IncIdempotencyCacheSkipped(idemKey.TenantID, reason)
+	}
+	m.logger().Printf("idempotency: skipping cache write (%s) tenant=%q key=%q", reason, idemKey.TenantID, idemKey.Value)
+	if err := m.store.Release(ctx, idemKey.TenantID, idemKey.Value); err != nil {
+		m.logger().Printf("idempotency: failed to release pending row (%s) tenant=%q key=%q err=%q", reason, idemKey.TenantID, idemKey.Value, err.Error())
 	}
 }
 

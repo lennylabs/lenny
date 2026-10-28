@@ -181,7 +181,7 @@ func runFenceRound(t *testing.T, s fenceStores, m fenceMarker, rng *rand.Rand, c
 	}
 	// One drain, run as soon as the marker has committed, concurrently with
 	// the creates still in flight.
-	if _, err := admin.DrainSessions(ctx, s.sessions, storeTerminator{s.sessions}, tenant, m.scopeUser); err != nil {
+	if _, err := admin.DrainSessions(ctx, s.sessions, storeTerminator{s.sessions}, nil, tenant, m.scopeUser); err != nil {
 		t.Fatalf("drain after the marker commit: %v", err)
 	}
 	wg.Wait()

@@ -1,6 +1,10 @@
 # Proposal: Bind a platform-tool call to the session that made it
 
-- **Status:** **Applied to spec (2026-08-16).** Verified (2026-08-16). Converged after 3
+- **Status:** **Implemented (2026-10-28), recorded by jaf.** The audit of unfinished proposals on 2026-10-28
+  confirmed CODE-1 in `registerTracingTool` (`pkg/gateway/mcpfabric/mcptools/mcptools_register.go`), which
+  resolves the session through `callerSessionID` and declares `required: ["context"]`; the SPEC-1 sentence in
+  §8.3 on the `tracingContext` field; and the tier-9 test
+  `tests/tier9_security/tracing_context_platform_tool_isolation_test.go`. Applied to spec (2026-08-16). Verified (2026-08-16). Converged after 3
   adversarial review rounds (1 finding fixed) following the scope reduction, and after 10 rounds
   (22 findings fixed) on the text that preceded it. The proposal is reduced in scope: the resume
   correction the review reshaped CODE-2

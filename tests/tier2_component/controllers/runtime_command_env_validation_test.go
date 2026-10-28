@@ -19,7 +19,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
-	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
 // cmdEnvImage is a digest-pinned image the §5.3 Runtime CRD pattern admits,
@@ -55,7 +54,7 @@ func runtimeSpecObject(name string, spec map[string]any) *unstructured.Unstructu
 // Runtime). Check the RuntimeSpec kubebuilder markers in
 // pkg/apis/lenny/v1alpha1/runtime_types.go and regenerate the chart CRD.
 func TestRuntimeCRDCommandEnvValidation_spec_5_1(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(lennyv1.AddToScheme(scheme))
@@ -91,7 +90,7 @@ func TestRuntimeCRDCommandEnvValidation_spec_5_1(t *testing.T) {
 	}
 	for i, tc := range rejected {
 		t.Run("rejects "+tc.name, func(t *testing.T) {
-			obj := runtimeSpecObject(fmt.Sprintf("cmdenv-reject-%d", i), tc.spec)
+			obj := runtimeSpecObject(clusterName(t, "Runtime", fmt.Sprintf("cmdenv-reject-%d", i)), tc.spec)
 			err := c.Create(ctx, obj)
 			if err == nil {
 				_ = c.Delete(ctx, obj)
@@ -127,7 +126,7 @@ func TestRuntimeCRDCommandEnvValidation_spec_5_1(t *testing.T) {
 			spec := tc.spec
 			spec.Image = cmdEnvImage
 			spec.IntegrationLevel = "basic"
-			rt := &lennyv1.Runtime{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("cmdenv-admit-%d", i)}, Spec: spec}
+			rt := &lennyv1.Runtime{ObjectMeta: metav1.ObjectMeta{Name: clusterName(t, "Runtime", fmt.Sprintf("cmdenv-admit-%d", i))}, Spec: spec}
 			if err := c.Create(ctx, rt); err != nil {
 				t.Fatalf("API server rejected %s: %v", tc.name, err)
 			}

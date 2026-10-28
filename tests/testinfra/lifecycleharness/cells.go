@@ -13,8 +13,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -122,27 +121,18 @@ func mcpCall(t *testing.T, h *Harness, r *Replica, tool, args string) {
 }
 
 // MCPCall calls the MCP tool with the JSON arguments on the replica's MCP
-// surface, wired as the gateway wires it, and returns the JSON-RPC result.
+// surface, through its public path behind the auth middleware as the gateway
+// wires it, and returns the JSON-RPC result. An off-holder call is forwarded
+// to the session's coordinating replica.
 func (h *Harness) MCPCall(r *Replica, tool, args string) map[string]any {
 	h.T.Helper()
-	srv := mcp.NewServer()
-	mcptools.Register(srv, mcptools.Deps{
-		DevTenantFallback: true,
-		Store:             h.Store,
-		Terminal:          r.Server,
-		SessionService:    r.Server,
-		Delivery:          r.Server,
-		Executor:          r.Executor,
-		InputWaits:        r.InputWaits,
-		Messaging:         h.Messaging,
-		Interactions:      h.Interactions,
-		Clock:             h.Clock.Now,
-		TenantID:          Tenant,
-	})
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + tool + `","arguments":` + args + `}}`
 	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(body)))
+	req.Header.Set("X-Lenny-Tenant-ID", Tenant)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	r.public.ServeHTTP(rr, req)
 	var resp struct {
 		Result map[string]any `json:"result"`
 		Error  map[string]any `json:"error"`
@@ -152,6 +142,23 @@ func (h *Harness) MCPCall(r *Replica, tool, args string) map[string]any {
 		return map[string]any{"_error": resp.Error}
 	}
 	return resp.Result
+}
+
+// PlatformCall dispatches the tool with the JSON arguments as a platform
+// tool call from the session's pod on the replica, as a call arriving over
+// LNK-GWCONTROL is dispatched, and returns the decoded result. An off-holder
+// call is forwarded carrying the calling session.
+//
+// spec: §29.3 (Interactive message send) Forwarding rule 3
+func (h *Harness) PlatformCall(r *Replica, sessionID, tool, args string) map[string]any {
+	h.T.Helper()
+	out, _, err := platformtools.New(r.MCP, h.Inner).CallPlatformTool(context.Background(), sessionID, tool, []byte(args))
+	if err != nil {
+		return map[string]any{"_error": err.Error()}
+	}
+	res := map[string]any{}
+	_ = json.Unmarshal(out, &res)
+	return res
 }
 
 func writers() []writer {

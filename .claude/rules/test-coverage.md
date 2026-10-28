@@ -171,6 +171,16 @@ the nodes cannot pull. `LENNY_MINIO_IMAGE` points `StartMinIO` at another copy o
 repoint a fixture at a community MinIO image, because none can be pulled. To move to a new release, update
 the references in `minioimages.go` and every carrier the test names in the same change.
 
+**8. The shared database is clean and not ahead of the branch.** Parallel worktrees install onto the one
+`lenny-e2e` cluster, and each install migrates its Postgres to the installing branch's migrations. A database
+another branch migrated further, or one a stopped migrate left dirty, fails or skips every kind-backed test with
+no defect in the code under test. `tests/testinfra/kind/install.sh` reads `schema_migrations` before it
+migrates and stops, naming the version and the remedy, when the row is dirty or ahead of the branch's highest
+migration; `LENNY_SKIP_MIGRATION_GUARD=1` overrides it for deliberate use. Do not edit `schema_migrations` by
+hand. The step-back procedure for an ahead database and the reset procedure for a dirty one are in
+`tests/testinfra/README.md` under "Shared Kind cluster database", and both run only with the owner's approval
+because every worktree tests against the same database.
+
 When a check fails and fixing the environment is out of scope for the work in hand, record the precondition
 and skip the affected case with a reason, in the register at `tests/registers/skip-reasons.yaml`. A test
 skipped with a recorded reason is honest; one that fails for an environmental reason teaches everyone to

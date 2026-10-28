@@ -1,6 +1,12 @@
 # Proposal: Correct the inconsistencies the scenario authoring surfaced
 
-- **Status:** Draft for review.
+- **Status:** **Withdrawn (2026-10-28), recorded by jaf. Do not implement.** The audit of unfinished
+  proposals on 2026-10-28 revalidated each open item against the tree and filed it as a separate record, so
+  each item is routed on its own. §1.1 is BUILD-GAPS F-4.4.30, §1.2 is F-15.4.6, §1.4 is F-4.4.31, §1.7 is
+  F-16.1.7, §1.8 is F-4.4.32, §1.9 reopens F-4.4.4, and §1.10 is F-15.4.7. §1.5 is fixed: §7.3 now lists
+  the entry paths of `awaiting_client_action` without a closed count. §1.6 is tracked as F-15.1.57. §1.3
+  and §1.11 were already dropped in favour of proposal 0073. The routing is in
+  `gateway-runtime-comms-remediation.md` §10.2. Formerly: Draft for review.
 - **Date:** 2026-08-13
 - **Scope:** Twelve pre-existing inconsistencies were flagged while authoring `spec/29` and set aside
   rather than corrected, because they lay outside that section. Each has now been revalidated against the

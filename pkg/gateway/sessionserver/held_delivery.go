@@ -14,7 +14,21 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 )
+
+// ErrHeldDeliveryPreempted is the error deliverBuffered returns when a
+// readable REG-COORDLEASE shows that this replica no longer coordinates the
+// session: the lease is absent or names another holder. The entries stay in
+// place for the coordinating replica. Nothing of the caller's path-2 message
+// reached the runtime, so a REST or MCP path-2 caller applies the
+// not-delivered outcome of §29.3 Forwarding rule 6 itself, as rule 5 states
+// for a replica that does not hold the lease: a message with no inReplyTo is
+// held in the session DLQ and answered with its receipt, and any other
+// message is refused with TARGET_NOT_READY.
+// spec: §7.2 (Message delivery routing — seven paths, path 6), §29.3
+// (Interactive message send) Forwarding rules 5 and 6
+var ErrHeldDeliveryPreempted = errors.New("sessionserver: another replica coordinates the session; held messages are left to it")
 
 // heldEntry is one held message the delivery of held messages takes: the
 // decoded inbox or DLQ entry and the handle that removes exactly it.
@@ -37,7 +51,13 @@ type heldEntry struct {
 //
 // Before it takes each entry the loop reads the row from the read pool; when
 // that row is terminal it returns nil and leaves the entry in place, and a
-// read error is logged and the loop continues. A Send, audit-record, or
+// read error is logged and the loop continues. It then reads the session's
+// REG-COORDLEASE; when the lease is absent or names another holder it returns
+// ErrHeldDeliveryPreempted and leaves the entry in place, because only the
+// coordinating replica delivers held messages, and a replica whose lease was
+// handed off mid-delivery would otherwise deliver an entry the new
+// coordinator's takeover delivery also takes. A lease read error is not
+// evidence of a new holder, and the loop continues. A Send, audit-record, or
 // removal error stops the loop and returns the error with that entry at the
 // head. A Peek or PeekOldest error is logged, stops the loop, and returns
 // nil, so a following path-2 message proceeds. An entry whose payload does
@@ -59,6 +79,9 @@ func (s *Server) deliverBuffered(ctx context.Context, row sessionstore.Session) 
 		}
 		if s.heldDeliveryStopped(ctx, row) {
 			return nil
+		}
+		if s.heldDeliveryPreempted(ctx, row) {
+			return ErrHeldDeliveryPreempted
 		}
 		entry, ok, err := s.oldestHeld(ctx, row)
 		if err != nil {
@@ -85,6 +108,30 @@ func (s *Server) heldDeliveryStopped(ctx context.Context, row sessionstore.Sessi
 		return false
 	}
 	return session.IsTerminal(cur.State)
+}
+
+// heldDeliveryPreempted reports whether a readable REG-COORDLEASE shows
+// that this replica no longer coordinates row's session: the lease is absent
+// or names another holder value. The single-gateway posture, which reads no
+// lease, is never preempted, and a lease read error reports false, so a
+// lease-store fault does not stop the coordinator's delivery.
+//
+// spec: §7.2 (Message delivery routing — seven paths, path 6) Delivery of
+// held messages, §10.1.1 (Stateless Replicas and Per-Session Coordination)
+func (s *Server) heldDeliveryPreempted(ctx context.Context, row sessionstore.Session) bool {
+	if s.coordinatesEverySession() {
+		return false
+	}
+	lease, err := s.leaseStore.Get(ctx, row.TenantID, row.ID)
+	switch {
+	case errors.Is(err, leasestore.ErrNotFound):
+		return true
+	case err != nil:
+		slog.Warn("sessionserver: held-message delivery could not read the coordination lease; continuing",
+			"session_id", row.ID, "error", err)
+		return false
+	}
+	return lease.Holder != s.replicaID
 }
 
 // oldestHeld returns the held entry with the earliest EnqueuedAt across the
@@ -179,6 +226,19 @@ func (s *Server) HoldMessage(ctx context.Context, tenantID, sessionID string, ms
 		return HoldQueued, "", sessioninbox.ErrMessagingUnavailable
 	}
 	return s.holdMessage(ctx, tenantID, sessionID, []sessioninbox.Message{msg}, 0)
+}
+
+// HoldUndeliveredForward holds one inter-session message whose forward to
+// the session's coordinating replica was not delivered, for the MCP message
+// path. The entry takes the TTL of the §7.2 dead-letter table's
+// recovering-state row, and the hold answers as holdMessage does.
+// spec: §29.3 (Interactive message send) Forwarding rule 6, §7.2 (Message
+// delivery routing — seven paths, path 6)
+func (s *Server) HoldUndeliveredForward(ctx context.Context, row sessionstore.Session, msg sessioninbox.Message) (HoldOutcome, session.State, error) {
+	if s.messaging == nil {
+		return HoldQueued, "", sessioninbox.ErrMessagingUnavailable
+	}
+	return s.holdMessage(ctx, row.TenantID, row.ID, []sessioninbox.Message{msg}, s.recoveringDLQTTL(row))
 }
 
 // LockDelivery takes the session's delivery lock, honoring ctx, for the MCP

@@ -41,6 +41,7 @@ func (l *drainLister) List(_ context.Context, tenantID string, f sessionstore.Li
 // context the drain passed.
 type drainTerminator struct {
 	errs     map[string]error
+	stale    map[string]bool
 	calls    []string
 	onCall   func(ctx context.Context, id string)
 	tenantOf []string
@@ -54,6 +55,9 @@ func (d *drainTerminator) ForceTerminate(ctx context.Context, tenantID, id strin
 	}
 	if err := d.errs[id]; err != nil {
 		return sessionstore.Session{}, "", false, err
+	}
+	if d.stale[id] {
+		return sessionstore.Session{ID: id, TenantID: tenantID, State: session.StateFailed}, session.StateFailed, false, nil
 	}
 	return sessionstore.Session{ID: id, TenantID: tenantID, State: session.StateFailed}, session.StateRunning, true, nil
 }
@@ -158,7 +162,7 @@ func TestDrainSessions_Table_spec_12_8(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			l := &drainLister{answers: tc.answers, errs: tc.listErrs}
 			d := &drainTerminator{errs: tc.termErrs}
-			got, err := admin.DrainSessions(context.Background(), l, d, "acme", tc.userID)
+			got, err := admin.DrainSessions(context.Background(), l, d, nil, "acme", tc.userID)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("result = %+v, want %+v", got, tc.want)
 			}
@@ -203,7 +207,7 @@ func TestDrainSessions_DeadlineStopsBetweenSessions_spec_12_8(t *testing.T) {
 		inFlight = callCtx
 		<-ctx.Done()
 	}}
-	got, err := admin.DrainSessions(ctx, l, d, "acme", "")
+	got, err := admin.DrainSessions(ctx, l, d, nil, "acme", "")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want wrapping context.DeadlineExceeded", err)
 	}
@@ -220,6 +224,155 @@ func TestDrainSessions_DeadlineStopsBetweenSessions_spec_12_8(t *testing.T) {
 		t.Errorf("partial result Terminated = %d, want 1", got.Terminated)
 	}
 	assertPrimaryListings(t, l, "", 1)
+}
+
+// publishCall is one TerminateUserSessions call the drain made.
+type publishCall struct {
+	tenantID, userID string
+	ids              []string
+	ctxErr           error
+}
+
+// recordingPods is a fake binding-release fan-out: it records each call,
+// with the error its context carried, and answers a canned result.
+type recordingPods struct {
+	calls  []publishCall
+	answer admin.UserTerminationResult
+	// listings, when set, records how many listings preceded each call.
+	lister *drainLister
+	before []int
+}
+
+func (p *recordingPods) TerminateUserSessions(ctx context.Context, tenantID, userID string, ids []string) admin.UserTerminationResult {
+	p.calls = append(p.calls, publishCall{tenantID: tenantID, userID: userID, ids: append([]string(nil), ids...), ctxErr: ctx.Err()})
+	if p.lister != nil {
+		p.before = append(p.before, len(p.lister.filters))
+	}
+	return p.answer
+}
+
+// TestDrainSessionsPublishesTransitionedSessionsOnBindRelease_spec_12_8 pins
+// the drain's publish on the binding-release fan-out: only the sessions the
+// drain moved to a terminal state are published, once, after the
+// transitions and before the verifying listing, under the scope's tenant and
+// user. A row already terminal, a row deleted after the listing, a failed
+// transition, and a transition another writer already made are excluded,
+// and an empty set publishes nothing. The pre-fix drain published nothing,
+// so a drained session bound on another replica kept its pod until the
+// erasure deleted its row (F-12.8.43).
+//
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 11.4 (User Invalidation), 28.5.7 (Gateway-to-store)
+func TestDrainSessionsPublishesTransitionedSessionsOnBindRelease_spec_12_8(t *testing.T) {
+	running := session.StateRunning
+	cases := []struct {
+		name     string
+		userID   string
+		rows     []sessionstore.Session
+		termErrs map[string]error
+		stale    map[string]bool
+		want     []publishCall
+	}{
+		{
+			name:   "only transitioned ids are published, user scope",
+			userID: "alice",
+			rows: []sessionstore.Session{
+				row("moved", running), row("done", session.StateCompleted), row("gone", running),
+				row("broken", running), row("raced", running), row("moved2", session.StateSuspended),
+			},
+			termErrs: map[string]error{"gone": sessionstore.ErrNotFound, "broken": errors.New("update conflict")},
+			stale:    map[string]bool{"raced": true},
+			want:     []publishCall{{tenantID: "acme", userID: "alice", ids: []string{"moved", "moved2"}}},
+		},
+		{
+			name: "tenant scope publishes with an empty user",
+			rows: []sessionstore.Session{row("s1", running)},
+			want: []publishCall{{tenantID: "acme", ids: []string{"s1"}}},
+		},
+		{
+			name:  "no transition publishes nothing",
+			rows:  []sessionstore.Session{row("done", session.StateCompleted), row("raced", running)},
+			stale: map[string]bool{"raced": true},
+		},
+		{
+			name: "empty scope publishes nothing",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			l := &drainLister{answers: [][]sessionstore.Session{tc.rows}}
+			pods := &recordingPods{lister: l}
+			d := &drainTerminator{errs: tc.termErrs, stale: tc.stale}
+			_, _ = admin.DrainSessions(context.Background(), l, d, pods, "acme", tc.userID)
+			if !reflect.DeepEqual(pods.calls, tc.want) {
+				t.Fatalf("TerminateUserSessions calls = %+v, want %+v", pods.calls, tc.want)
+			}
+			for i, n := range pods.before {
+				if n != 1 {
+					t.Errorf("publish %d ran after %d listings, want after the first listing and before the verifying one", i, n)
+				}
+			}
+		})
+	}
+}
+
+// TestDrainSessionsPublishOutcomeLeavesTheResult_spec_12_8 pins that the
+// fan-out's outcome never changes the drain's result or error: the same
+// scope drained with no fan-out, with one that releases, and with one that
+// reports every release failed gives the same DrainResult and error class.
+//
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 28.5.7 (Gateway-to-store)
+func TestDrainSessionsPublishOutcomeLeavesTheResult_spec_12_8(t *testing.T) {
+	scopes := map[string][][]sessionstore.Session{
+		"clean": {{row("s1", session.StateRunning)}, {row("s1", session.StateFailed)}},
+		"incomplete": {
+			{row("s1", session.StateRunning), row("s2", session.StateRunning)},
+			{row("s1", session.StateFailed), row("s2", session.StateRunning)},
+		},
+	}
+	fanOuts := map[string]admin.UserPodTerminator{
+		"nil":      nil,
+		"released": &recordingPods{answer: admin.UserTerminationResult{PodsTerminated: 2}},
+		"failed":   &recordingPods{answer: admin.UserTerminationResult{FailedSessions: []string{"s1", "s2"}}},
+	}
+	for scope, answers := range scopes {
+		baseL := &drainLister{answers: answers}
+		baseRes, baseErr := admin.DrainSessions(context.Background(), baseL, &drainTerminator{stale: map[string]bool{"s2": scope == "incomplete"}}, nil, "acme", "")
+		for name, pods := range fanOuts {
+			t.Run(scope+"/"+name, func(t *testing.T) {
+				l := &drainLister{answers: answers}
+				d := &drainTerminator{stale: map[string]bool{"s2": scope == "incomplete"}}
+				got, err := admin.DrainSessions(context.Background(), l, d, pods, "acme", "")
+				if !reflect.DeepEqual(got, baseRes) {
+					t.Errorf("result = %+v, want %+v as without a fan-out", got, baseRes)
+				}
+				if errors.Is(err, admin.ErrDrainIncomplete) != errors.Is(baseErr, admin.ErrDrainIncomplete) || (err == nil) != (baseErr == nil) {
+					t.Errorf("err = %v, want %v as without a fan-out", err, baseErr)
+				}
+			})
+		}
+	}
+}
+
+// TestDrainSessionsPublishesAfterTheDeadlineEndsTheLoop_spec_12_8 pins that
+// a caller's deadline that ends the drain between sessions still publishes
+// the sessions already transitioned, on a context that is not cancelled,
+// and still returns the context error.
+//
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 28.5.7 (Gateway-to-store)
+func TestDrainSessionsPublishesAfterTheDeadlineEndsTheLoop_spec_12_8(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	l := &drainLister{answers: [][]sessionstore.Session{{row("s1", session.StateRunning), row("s2", session.StateRunning)}}}
+	d := &drainTerminator{onCall: func(context.Context, string) { cancel() }}
+	pods := &recordingPods{}
+	_, err := admin.DrainSessions(ctx, l, d, pods, "acme", "alice")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want wrapping context.Canceled", err)
+	}
+	want := []publishCall{{tenantID: "acme", userID: "alice", ids: []string{"s1"}}}
+	if !reflect.DeepEqual(pods.calls, want) {
+		t.Errorf("TerminateUserSessions calls = %+v, want %+v on a live context", pods.calls, want)
+	}
 }
 
 // assertPrimaryListings asserts the drain listed exactly want times, each

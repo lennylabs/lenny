@@ -128,3 +128,27 @@ func TestBridgeListCatalog_spec_9_1(t *testing.T) {
 		t.Errorf("tools = %+v, want the gateway catalog", tools)
 	}
 }
+
+// spec: 9.1 (Platform tools), 29.3 (Interactive message send) Forwarding rule 3
+func TestWithSessionPrincipalIsThePrincipalCallPlatformToolInstalls_spec_29_3(t *testing.T) {
+	sessions := fakeSessions{"sess_1": {ID: "sess_1", TenantID: "acme", UserID: "alice"}}
+	ctx, err := platformtools.WithSessionPrincipal(context.Background(), sessions, "sess_1")
+	if err != nil {
+		t.Fatalf("WithSessionPrincipal err = %v", err)
+	}
+	got, ok := authmw.FromContext(ctx)
+	want := authmw.Principal{Subject: "alice", TenantID: "acme", SessionID: "sess_1", CallerType: platformtools.AgentCallerType}
+	if !ok || got.Subject != want.Subject || got.TenantID != want.TenantID || got.SessionID != want.SessionID || got.CallerType != want.CallerType {
+		t.Fatalf("principal = %+v, want %+v", got, want)
+	}
+	disp := &fakeDispatcher{ok: true}
+	if _, _, err := platformtools.New(disp, sessions).CallPlatformTool(context.Background(), "sess_1", "lenny/x", nil); err != nil {
+		t.Fatalf("CallPlatformTool err = %v", err)
+	}
+	if disp.gotPrinc.SessionID != got.SessionID || disp.gotPrinc.CallerType != got.CallerType || disp.gotPrinc.Subject != got.Subject {
+		t.Errorf("CallPlatformTool principal = %+v, want the WithSessionPrincipal principal %+v", disp.gotPrinc, got)
+	}
+	if _, err := platformtools.WithSessionPrincipal(context.Background(), sessions, "absent"); !errors.Is(err, leasecontrol.ErrSessionNotFound) {
+		t.Errorf("unknown session err = %v, want ErrSessionNotFound", err)
+	}
+}

@@ -605,3 +605,53 @@ func TestSendMessageSealedFallbackAtCapIsHeld_spec_11_1(t *testing.T) {
 		t.Errorf("resumed %d sessions, want 1", len(del.resumed))
 	}
 }
+
+// TestSendMessageRouting_HeldDeliveryPreemptedTakesTheNotDeliveredOutcome_spec_29_3
+// pins the MCP answer to a path-2 message whose held delivery found that
+// another replica holds the target's REG-COORDLEASE. Nothing of the message
+// was sent, so the serving replica applies the not-delivered outcome of
+// Forwarding rule 6 itself: a message with no inReplyTo is held through
+// HoldUndeliveredForward and answered queued, and a message carrying
+// inReplyTo returns the TARGET_NOT_READY tool error and is not held. Before
+// the fix both returned the held-delivery error as the tool's Go error.
+//
+// spec: 29.3 (Interactive message send) Forwarding rules 5 and 6, 7.2
+// (Message delivery routing — seven paths, path 6)
+func TestSendMessageRouting_HeldDeliveryPreemptedTakesTheNotDeliveredOutcome_spec_29_3(t *testing.T) {
+	preempted := fmt.Errorf("deliver held: %w", sessionserver.ErrHeldDeliveryPreempted)
+	t.Run("no inReplyTo is held and answered queued", func(t *testing.T) {
+		exec := &countingExecutor{}
+		srv, store, _, dlq, del := newMCPRoutingDelivery(t, exec)
+		del.deliverErr = preempted
+		mkSession(t, store, "sess_moved", session.StateRunning, "")
+		got := receiptFromResult(t, call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_moved","message":"x"}`))
+		if got.Status != session.DeliveryStatusQueued {
+			t.Errorf("status = %q, want queued", got.Status)
+		}
+		if n, _ := dlq.Len(context.Background(), "acme", "sess_moved"); n != 1 {
+			t.Errorf("DLQ depth = %d, want 1", n)
+		}
+		if del.undelivered != 1 {
+			t.Errorf("HoldUndeliveredForward calls = %d, want 1", del.undelivered)
+		}
+		if exec.sends != 0 {
+			t.Errorf("sends = %d, want none from a replica that lost the lease", exec.sends)
+		}
+	})
+	t.Run("inReplyTo is refused", func(t *testing.T) {
+		exec := &countingExecutor{}
+		srv, store, _, dlq, del := newMCPRoutingDelivery(t, exec)
+		del.deliverErr = preempted
+		mkSession(t, store, "sess_moved", session.StateRunning, "")
+		resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_moved","message":"x","inReplyTo":"req_none"}`)
+		if code := toolErrorCode(t, resp); code != "TARGET_NOT_READY" {
+			t.Errorf("tool error code = %q, want TARGET_NOT_READY (response %v)", code, resp)
+		}
+		if n, _ := dlq.Len(context.Background(), "acme", "sess_moved"); n != 0 {
+			t.Errorf("DLQ depth = %d, want 0", n)
+		}
+		if exec.sends != 0 {
+			t.Errorf("sends = %d, want none", exec.sends)
+		}
+	})
+}

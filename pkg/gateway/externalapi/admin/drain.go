@@ -53,8 +53,8 @@ var ErrDrainIncomplete = errors.New("session drain incomplete")
 // runs on a context detached from ctx's cancellation, so a caller's
 // deadline stops the drain between sessions and never inside one
 // session's terminal pipeline; when ctx has ended before the next
-// session, the drain returns the partial result and ctx's error,
-// wrapped. A second primary listing then verifies the scope and records
+// session, the drain publishes what it transitioned and returns the
+// partial result and ctx's error, wrapped. A second primary listing then verifies the scope and records
 // every non-terminal id not already in Failed in Remaining. A listing
 // error returns the wrapped listing error and the partial result. When
 // Failed or Remaining is non-empty the drain returns ErrDrainIncomplete,
@@ -66,21 +66,22 @@ var ErrDrainIncomplete = errors.New("session drain incomplete")
 //     primary when the verifying listing ran.
 //   - A nil error does not mean the scope's pods are released. The
 //     transition writes the terminal state on the session row and runs
-//     this replica's terminal pipeline. The pod of a session bound on
-//     another replica is released by that replica's coordination sweeper
-//     (ReleaseTerminalBinding) once it lists the terminal row, within the
-//     sweeper interval plus maxWorkspaceSealDurationSeconds. When user
-//     erasure deletes the rows before that listing, the replica never
-//     releases the pod, and orphan GC drains it after claimOrphanTimeout,
-//     counted in lenny_orphaned_claims_total, unless another active
-//     session references the pod.
+//     this replica's terminal pipeline, whose post-terminal hook releases
+//     the bindings this replica holds. After its transitions the drain
+//     publishes the identifiers of the sessions it moved to a terminal
+//     state through pods, the binding-release fan-out (CH-BINDRELEASE),
+//     and each peer replica's subscriber releases the bindings of those
+//     sessions it holds. The publish runs on a context detached from
+//     ctx's cancellation, it is not redelivered when lost, and its
+//     outcome never changes the result or the returned error. A nil pods
+//     publishes nothing.
 //   - The verifying listing checks the creation-fence invariant. It can
 //     report, in Remaining, a session legitimately created after a
 //     concurrent tenant resume cleared the marker.
 //
 // spec: §12.8 (Lifecycle fence and drain: Drain), §12.3 (Read replicas),
-// §24.11.
-func DrainSessions(ctx context.Context, l DrainLister, t DrainTerminator, tenantID, userID string) (DrainResult, error) {
+// §24.11, §11.4 (User Invalidation), §28.5.7 (Gateway-to-store).
+func DrainSessions(ctx context.Context, l DrainLister, t DrainTerminator, pods UserPodTerminator, tenantID, userID string) (DrainResult, error) {
 	filter := sessionstore.ListFilter{UserID: userID, Primary: true}
 	var res DrainResult
 	rows, err := l.List(ctx, tenantID, filter)
@@ -88,12 +89,14 @@ func DrainSessions(ctx context.Context, l DrainLister, t DrainTerminator, tenant
 		return res, fmt.Errorf("drain sessions of tenant %s: list: %w", tenantID, err)
 	}
 	failed := make(map[string]bool)
+	var transitionedIDs []string
+	var cerr error
 	for _, row := range rows {
 		if session.IsTerminal(row.State) {
 			continue
 		}
-		if cerr := ctx.Err(); cerr != nil {
-			return res, fmt.Errorf("drain sessions of tenant %s: %w", tenantID, cerr)
+		if cerr = ctx.Err(); cerr != nil {
+			break
 		}
 		_, _, transitioned, terr := t.ForceTerminate(context.WithoutCancel(ctx), tenantID, row.ID)
 		switch {
@@ -104,7 +107,12 @@ func DrainSessions(ctx context.Context, l DrainLister, t DrainTerminator, tenant
 			failed[row.ID] = true
 		case transitioned:
 			res.Terminated++
+			transitionedIDs = append(transitionedIDs, row.ID)
 		}
+	}
+	publishBindRelease(ctx, pods, tenantID, userID, transitionedIDs)
+	if cerr != nil {
+		return res, fmt.Errorf("drain sessions of tenant %s: %w", tenantID, cerr)
 	}
 	if err := verifyDrained(ctx, l, tenantID, filter, failed, &res); err != nil {
 		return res, err
@@ -114,6 +122,20 @@ func DrainSessions(ctx context.Context, l DrainLister, t DrainTerminator, tenant
 			tenantID, ErrDrainIncomplete, len(res.Failed), len(res.Remaining))
 	}
 	return res, nil
+}
+
+// publishBindRelease hands the identifiers of the sessions the drain
+// transitioned to the binding-release fan-out, on a context detached from
+// ctx's cancellation so a caller's deadline that ended the loop still
+// publishes what was transitioned. It does nothing for a nil pods or an
+// empty ids. The fan-out's result is discarded: the drain's outcome is the
+// verifying listing's, and a lost publish is not redelivered.
+// spec: §12.8 (Lifecycle fence and drain: Drain), §28.5.7 (Gateway-to-store).
+func publishBindRelease(ctx context.Context, pods UserPodTerminator, tenantID, userID string, ids []string) {
+	if pods == nil || len(ids) == 0 {
+		return
+	}
+	pods.TerminateUserSessions(context.WithoutCancel(ctx), tenantID, userID, ids)
 }
 
 // verifyDrained runs the drain's verifying primary listing and records

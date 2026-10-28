@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package propagator
+package bindrelease
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 
 // recordingTerminator records every §11.4 pod-termination request a
 // propagator applies to it. It stands in for the gateway's
-// podTerminateFanOut over the per-replica podsession.Registry.
+// bindReleaseFanOut over the per-replica podsession.Registry.
 type recordingTerminator struct {
 	mu       sync.Mutex
 	requests []Request
@@ -152,6 +152,46 @@ func TestCrossReplicaFanOut_spec_11_4_step_2(t *testing.T) {
 	}
 	if len(last.SessionIDs) != 2 {
 		t.Errorf("replica B applied %d sessions, want 2", len(last.SessionIDs))
+	}
+}
+
+// TestSubscriberReceivesTheWholeSessionSet_spec_28_5_7 drives a
+// CH-BINDRELEASE request from replica A through replica B's subscriber
+// over a shared Redis. The request names a session whose primary row is
+// terminal and one whose primary row is still running. The propagator
+// reads no session state: it hands replica B's local releaser the whole
+// session set, in order, with the tenant and the user, and the
+// primary-row gate is left to the releaser (sessionserver's
+// ReleaseRevokedBinding, pinned at tier 1 in that package and end to end
+// by the tier-4 two-replica bind-release suite).
+//
+// spec: §28.5.7 (Gateway-to-store), §11.4 (User Invalidation)
+func TestSubscriberReceivesTheWholeSessionSet_spec_28_5_7(t *testing.T) {
+	mr := miniredis.RunT(t)
+	clientA := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	clientB := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = clientA.Close(); _ = clientB.Close() })
+
+	localB := &recordingTerminator{}
+	propA := New(&recordingTerminator{}, pubsub.New(clientA), "replica-A")
+	propB := New(localB, pubsub.New(clientB), "replica-B")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go propB.Run(ctx)
+
+	req := Request{TenantID: "acme", UserID: "alice@acme.com", SessionIDs: []string{"run_done", "run_live"}}
+	waitForCondition(t, 3*time.Second, func() bool {
+		propA.Publish(ctx, req)
+		return len(localB.applied()) > 0
+	})
+
+	got := localB.applied()[0]
+	if got.TenantID != "acme" || got.UserID != "alice@acme.com" {
+		t.Errorf("replica B's subscriber received tenant %q user %q, want acme alice@acme.com", got.TenantID, got.UserID)
+	}
+	if len(got.SessionIDs) != 2 || got.SessionIDs[0] != "run_done" || got.SessionIDs[1] != "run_live" {
+		t.Errorf("replica B's subscriber received sessions %v, want [run_done run_live] unfiltered", got.SessionIDs)
 	}
 }
 

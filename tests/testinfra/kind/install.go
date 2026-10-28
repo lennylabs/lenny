@@ -60,8 +60,9 @@ func InstallLenny(t testing.TB) *Cluster {
 	}
 	if version, dirty := dirtySchemaVersion(c); dirty {
 		t.Skipf("blocked: schema_migrations on the in-cluster lenny-postgres is dirty at version %s, so the "+
-			"deployed release runs against a partly applied schema; repair the schema, clear the dirty flag, "+
-			"delete the failed lenny-e2e-migrate Job, and re-run tests/testinfra/kind/install.sh", version)
+			"deployed release runs against a partly applied schema; the database is shared with other worktrees, "+
+			"so do not edit schema_migrations by hand: follow the reset procedure in tests/testinfra/README.md "+
+			"(section \"Shared Kind cluster database\") with the owner's approval", version)
 	}
 	return c
 }

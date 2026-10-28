@@ -104,6 +104,11 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 	// consistent across replicas (§12.4). The §10.1 session-
 	// coordination lease sweeper runs against the same Redis.
 	replica := resolveReplicaID()
+	// spec: §10.1.1 Replica address, §10.3 NET-072 — a lease store is wired
+	// whenever Redis is configured. The holder value carries this replica's
+	// forward address, and every lease and mirror consumer receives it.
+	leaseStoreWired := *redisURL != "" || *redisSentinelAddrs != "" || *redisClusterAddrs != ""
+	holder := w.resolveCoordinationHolder(replica, leaseStoreWired)
 	var (
 		breakers       breakerRegistry
 		breakerCache   *cachingstore.Store
@@ -142,7 +147,7 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 		// and the SessionStore are all wired. F-11.2.5 / F-12.4.8.
 		delegationBudgetReconciler *delegationbudget.Reconciler
 	)
-	if *redisURL != "" || *redisSentinelAddrs != "" || *redisClusterAddrs != "" {
+	if leaseStoreWired {
 		if *redisURL != "" && *redisSentinelAddrs != "" {
 			log.Fatalf("lenny-gateway: --redis-url and --redis-sentinel-addrs are mutually exclusive")
 		}
@@ -248,7 +253,7 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 		// the session server at call time the same way.
 		coordinator = coordination.NewSweeper(
 			tenantsLister{tenants}, sessions, leaseStore,
-			coordinationOptions(w, replica, *coordInterval, coordMirror),
+			coordinationOptions(w, holder, *coordInterval, coordMirror),
 		)
 		// §12.4 Quota/Rate Limiting concern: the storage-quota counter
 		// lives in Redis so the quota holds across replicas; its reserve
@@ -315,6 +320,7 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 	// quota counters on the accumulator for the router, billing,
 	// pod-lifecycle, and worker steps.
 	w.replica = replica
+	w.coordHolder = holder
 	w.redisClient = redisClient
 	w.concernRedis = concernRedis
 	w.breakers = breakers
@@ -329,6 +335,25 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 	w.rateLimiter = rateLimiter
 }
 
+// resolveCoordinationHolder validates the forward configuration and returns
+// the coordination holder value, refusing startup on an invalid one.
+//
+// spec: §10.1.1 (Stateless Replicas and Per-Session Coordination) Replica
+// address, §10.3 (mTLS PKI) NET-072
+func (w *gatewayWiring) resolveCoordinationHolder(replica string, leaseStore bool) string {
+	f := w.f
+	material := holderForwardMaterial{cert: *f.adapterTLSCert, key: *f.adapterTLSKey, ca: *f.adapterCA}
+	if err := validateHolderForwardMaterial(material, *f.devMode, leaseStore); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
+	holder, err := coordinationHolder(replica, *f.holderForwardAdvertiseAddr, leaseStore)
+	if err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
+	w.holderForwardEnabled = leaseStore && material.complete()
+	return holder
+}
+
 // coordinationOptions builds the coordination Sweeper's options. Every seam
 // reads its collaborator from the wiring accumulator at call time, because the
 // session server, the pod registry, and the binder are built after the
@@ -339,9 +364,13 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 // spec: §10.1.2 (Coordinator Handoff Protocol), §10.1.1 (Stateless Replicas
 // and Per-Session Coordination), §7.2 (Message delivery routing — seven
 // paths, path 6)
-func coordinationOptions(w *gatewayWiring, replica string, interval time.Duration, mirror coordlease.Store) coordination.Options {
+//
+// holder is the coordination holder value (§10.1.1 Replica address), which
+// the Sweeper writes as the lease holder and as the mirror's
+// CoordinatorReplica and compares as priorHolder.
+func coordinationOptions(w *gatewayWiring, holder string, interval time.Duration, mirror coordlease.Store) coordination.Options {
 	return coordination.Options{
-		ReplicaID:        replica,
+		ReplicaID:        holder,
 		Interval:         interval,
 		Mirror:           mirror,
 		Bindings:         coordinationBindings{w: w},

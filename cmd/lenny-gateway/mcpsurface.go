@@ -225,6 +225,10 @@ func (w *gatewayWiring) buildMCPSurface(
 		// lifecycle/read tools through the same shared service layer so the
 		// MCP surface runs the identical REST routes and validation. F-15.2.3.
 		SessionService: sessionSrv,
+		// spec: §29.3 Forwarding — lenny/send_message and
+		// lenny/cancel_session forward to the session's coordinating replica
+		// through the same session server's ForwardToolCall.
+		HolderForward: sessionSrv,
 		// spec: §8.3 — run the delegation-time pre-claim credential
 		// availability check through the same session server that owns the
 		// §4.9 engine, so lenny/delegate_task rejects an exhausted pool with

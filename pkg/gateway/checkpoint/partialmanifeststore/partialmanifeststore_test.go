@@ -499,8 +499,9 @@ func TestPutRejectsInvalidChunkEncoding(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — chunk_encoding defaults to `tar` and manifest_reason to
-// `in_progress` when the caller leaves them empty.
+// spec: §10.1 — chunk_encoding defaults to `tar.gz` (the encoding the
+// only producer writes) and manifest_reason to `in_progress` when the
+// caller leaves them empty.
 func TestPutDefaultsEncodingAndReason(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(nil)
 	r := intentRow(time.Now(), "acme", "cp-1", "s1", 1)
@@ -510,8 +511,8 @@ func TestPutDefaultsEncodingAndReason(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 	got, _ := store.Get(context.Background(), "acme", "cp-1")
-	if got.ChunkEncoding != partialmanifeststore.ChunkEncodingTar {
-		t.Errorf("default ChunkEncoding = %q, want tar", got.ChunkEncoding)
+	if got.ChunkEncoding != partialmanifeststore.ChunkEncodingTarGz {
+		t.Errorf("default ChunkEncoding = %q, want tar.gz", got.ChunkEncoding)
 	}
 	if got.ManifestReason != partialmanifeststore.ReasonInProgress {
 		t.Errorf("default ManifestReason = %q, want in_progress", got.ManifestReason)

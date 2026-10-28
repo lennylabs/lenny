@@ -8,7 +8,6 @@ import (
 	"context"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -18,7 +17,6 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
-	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
 // TestSSARejectsCrossControllerFieldWrite drives the §4.6.3 Server-Side
@@ -51,7 +49,7 @@ import (
 // owned SandboxWarmPool.status field is rejected with HTTP 409 without
 // mutating the field; SandboxWarmPool.status.* owned by WarmPoolController).
 func TestSSARejectsCrossControllerFieldWrite(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -63,10 +61,9 @@ func TestSSARejectsCrossControllerFieldWrite(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	const ns = "lenny-agents"
 	const poolName = "claude-worker-small"
 
-	mustCreate(t, ctx, c, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})
+	ns := testNamespaces.Create(t, c)
 	mustCreate(t, ctx, c, &lennyv1.SandboxWarmPool{
 		ObjectMeta: metav1.ObjectMeta{Name: poolName, Namespace: ns},
 		Spec: lennyv1.SandboxWarmPoolSpec{

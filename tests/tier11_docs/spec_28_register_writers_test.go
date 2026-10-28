@@ -5,17 +5,15 @@
 // §28.3 are stated against the current spec/ text rather than against
 // the channel inventory the provenance column cites, because the
 // inventory predates the specification statement it summarizes:
-// `REG-PODSTATE`'s writer set, `REG-CLAIM`'s writer set, and
-// `LNK-INTERREPLICA`'s transport, dial direction, and lifetime. Each is
-// held here against the sentence in §12.6, §4.6.3, or §28.5.4 it was read
-// from, pinned as a byte-exact literal, so an edit to either side fails
-// the case. These tests are NOT under a build tag because they exercise
+// `REG-PODSTATE`'s writer set and `REG-CLAIM`'s writer set. Each is held
+// here against the sentence in §12.6 or §4.6.3 it was read from, pinned
+// as a byte-exact literal, so an edit to either side fails the case. These tests are NOT under a build tag because they exercise
 // the repository state directly — no external infrastructure required.
 //
 // §28.4's own statement of where the claim register lives is pinned the
 // same way, as a byte-exact sentence.
 //
-// spec: §28.3, §28.4, §12.6, §4.6.3, §28.5.4
+// spec: §28.3, §28.4, §12.6, §4.6.3
 
 package tier11_docs_test
 
@@ -50,14 +48,13 @@ const noLinkCell = "None"
 // spec: §28.3
 var linkTokenExpr = regexp.MustCompile(`LNK-[A-Z0-9]+(?:-[A-Z0-9]+)*`)
 
-// The register entries and the link entry whose derived cells this check
-// reconciles with the section specifying the store or the connection.
+// The register entries whose derived cells this check reconciles with the
+// section specifying the store.
 //
 // spec: §28.3
 const (
 	podStateRegisterEntry = "REG-PODSTATE"
 	claimRegisterEntry    = "REG-CLAIM"
-	interReplicaLink      = "LNK-INTERREPLICA"
 )
 
 // linkReferenceColumns are the two channel-register columns a channel row
@@ -81,21 +78,19 @@ const minimumReferringChannelRows = 2
 // channel row refers to, each with the reason the section states for it.
 // The exemption is closed in both directions: an entry listed here that
 // gains a referring channel row is reported as stale, so the list cannot
-// outlive the gap it records.
+// outlive the gap it records. The landed register declares no such entry,
+// so the map is empty; the threshold check still reads it, so an entry
+// added here is held to the same closed rule.
 //
 // spec: §28.3
-var unreferencedLinkEntries = map[string]string{
-	interReplicaLink: "the specification states the connection and the cross-replica message routing it carries " +
-		"is not implemented, which §28.3 records as a claim-register row rather than as an absent transport",
-}
+var unreferencedLinkEntries = map[string]string{}
 
-// The sentences of §12.6, §4.6.3, and §28.5.4 the three derived cells
-// are read from, byte-exact. A specification edit that rewords one of them
-// fails the case that pins it, so the derivation is re-checked by hand
-// rather than silently outliving its source. The two §28.5.4 sentences wrap
-// across source lines, so they are compared with whitespace collapsed.
+// The sentences of §12.6 and §4.6.3 the two derived cells are read from,
+// byte-exact. A specification edit that rewords one of them fails the case
+// that pins it, so the derivation is re-checked by hand rather than
+// silently outliving its source.
 //
-// spec: §12.6, §4.6.3, §28.5.4
+// spec: §12.6, §4.6.3
 const (
 	podStateGatewayWrittenSentence = "The `sessions_served` and `scrub_failure_count` columns are the exception to " +
 		"the WarmPoolController-maintained mirror: they are gateway-written recycle counters, incremented on each " +
@@ -115,14 +110,6 @@ const (
 		"when the session failed or crashed. A slot reservation withdrawn after its claim `CREATE` fails " +
 		"([Section 4.6.1](#461-warm-pool-controller-pod-lifecycle)) ends no occupancy; deleted by the " +
 		"WarmPoolController at pod termination and orphan GC"
-
-	forwardMessageTransportSentence = "The conversation the connection carries is the internal gRPC " +
-		"`ForwardMessage` RPC used for cross-replica message routing."
-
-	forwardingReplicaSentence = "A replica that is not the session's coordinator forwards a message to the " +
-		"coordinator, which it identifies through the coordination lease, over this connection in the cases " +
-		"the off-holder matrix of [§29.3](29_communication-scenarios.md#293-interactive-message-send) states, " +
-		"with the fallback each row states when the coordinator is unreachable."
 )
 
 // The two writer-set cells of §28.3, byte-exact and whole. Each writer is
@@ -281,23 +268,6 @@ func (r registerTable) withCell(identifier, column, cell string) registerTable {
 	return copied
 }
 
-// requireCellContains holds one register cell to the substrings the
-// section it is derived from fixes.
-//
-// spec: §28.3
-func requireCellContains(t *testing.T, table registerTable, identifier, column string, want []string) {
-	t.Helper()
-	got, err := table.cell(identifier, column)
-	if err != nil {
-		t.Fatalf("read the %s cell of %s: %v", column, identifier, err)
-	}
-	for _, substring := range want {
-		if !strings.Contains(got, substring) {
-			t.Errorf("§28.3's %s cell of %s is %q and states no %q", column, identifier, got, substring)
-		}
-	}
-}
-
 // requireCellEquals holds one register cell to the whole literal the
 // section it is derived from fixes. Equality is the check a derived cell
 // carrying an attribution needs: a containment check passes on a cell that
@@ -353,16 +323,14 @@ func readChannelsRegisters(t *testing.T) (links, channels, entries registerTable
 	return links, channels, entries
 }
 
-// diagnosis: a failure means spec/28's register and the store's or the
-// connection's own section disagree on who writes it or on how it is
-// carried. §28.3 derives three of its cells from the current spec/ text
-// rather than from the channel inventory its provenance column cites: a
-// writer set that drops a writer from `REG-PODSTATE` or `REG-CLAIM`,
-// reassigns what one of them writes, or widens one writer's set of columns
-// describes a store nobody writes the way §12.6 and §4.6.3 state it is
-// written, and a
-// `LNK-INTERREPLICA` row that states another transport, dial direction,
-// or lifetime describes a connection §28.5.4 does not specify. A failure of
+// diagnosis: a failure means spec/28's register and the store's own
+// section disagree on who writes it, or the register's link references
+// break §28.3's referential rule. §28.3 derives two of its cells from the
+// current spec/ text rather than from the channel inventory its provenance
+// column cites: a writer set that drops a writer from `REG-PODSTATE` or
+// `REG-CLAIM`, reassigns what one of them writes, or widens one writer's
+// set of columns describes a store nobody writes the way §12.6 and §4.6.3
+// state it is written. A failure of
 // the link-reference case means a channel row names a connection the
 // link register does not declare, which is a reference §28.3 states as
 // resolving and the declaration index reads as a declaration of its own
@@ -371,13 +339,12 @@ func readChannelsRegisters(t *testing.T) (links, channels, entries registerTable
 // which §28.3 states must read `None` in the one row that refers to it,
 // or an entry listed as referred to by no channel row has gained one.
 //
-// spec: §28.3, §12.6, §4.6.3, §28.5.4
+// spec: §28.3, §12.6, §4.6.3
 func TestSection28RegisterWritersMatchTheSpec_spec_28_3(t *testing.T) {
 	links, channels, entries := readChannelsRegisters(t)
 
 	t.Run("pod state writer set", func(t *testing.T) { assertPodStateWriterSetMatchesStorage(t, entries) })
 	t.Run("claim writer set", func(t *testing.T) { assertClaimWriterSetMatchesOwnership(t, entries) })
-	t.Run("inter-replica link", func(t *testing.T) { assertInterReplicaLinkMatchesSessionLifecycle(t, links) })
 	t.Run("reassigned writer set", func(t *testing.T) { assertReassignedWriterSetIsRejected(t, entries) })
 	t.Run("link references resolve", func(t *testing.T) { assertChannelLinkReferencesResolve(t, links, channels) })
 	t.Run("dangling link reference", func(t *testing.T) { assertDanglingLinkReferenceIsRejected(t, links, channels) })
@@ -545,14 +512,17 @@ func referringChannelRows(links, channels registerTable) map[string]int {
 // order. An entry fewer than minimumReferringChannelRows channel rows
 // refer to is a connection §28.3 states must read `None` in the one row
 // that refers to it, and an entry listed as referred to by no channel row
-// that does gain one is a stale exemption. It is a separate function so a
-// case can assert that a mutated table is reported without failing itself.
+// that does gain one is a stale exemption. The exemption set is a
+// parameter, so a case can exempt an entry the landed register does not
+// and assert that the stale-exemption branch reports it. It is a separate
+// function so a case can assert that a mutated table is reported without
+// failing itself.
 //
 // spec: §28.3
-func underDeclaredLinkEntries(links, channels registerTable) []string {
+func underDeclaredLinkEntries(links, channels registerTable, exemptions map[string]string) []string {
 	var out []string
 	for identifier, count := range referringChannelRows(links, channels) {
-		reason, exempt := unreferencedLinkEntries[identifier]
+		reason, exempt := exemptions[identifier]
 		switch {
 		case exempt && count > 0:
 			out = append(out, fmt.Sprintf("§28.3 declares %s as referred to by no channel row because %s, and %d channel row(s) refer to it",
@@ -580,7 +550,7 @@ func underDeclaredLinkEntries(links, channels registerTable) []string {
 // spec: §28.3
 func assertLinkDeclarationThresholdHolds(t *testing.T, links, channels registerTable) {
 	t.Helper()
-	for _, divergence := range underDeclaredLinkEntries(links, channels) {
+	for _, divergence := range underDeclaredLinkEntries(links, channels, unreferencedLinkEntries) {
 		t.Error(divergence)
 	}
 }
@@ -590,8 +560,10 @@ func assertLinkDeclarationThresholdHolds(t *testing.T, links, channels registerT
 // link carries. Every remaining reference still resolves and both
 // populations of the Link column stay non-empty, so the resolution walk
 // and the non-emptiness assertions accept the mutated table; only the
-// threshold reports it. The exempt entry gaining a referring row is
-// rejected the same way, so the exemption cannot outlive its reason.
+// threshold reports it. An entry listed as referred to by no channel row
+// while channel rows do refer to it is rejected the same way, so an
+// exemption cannot outlive its reason: the case exempts the twice-referred
+// link and asserts the report names it.
 //
 // spec: §28.3
 func assertSingleReferenceLinkEntryIsRejected(t *testing.T, links, channels registerTable) {
@@ -602,14 +574,14 @@ func assertSingleReferenceLinkEntryIsRejected(t *testing.T, links, channels regi
 	if got := unresolvedLinkReferences(links, mutated); len(got) != 0 {
 		t.Fatalf("dropping the reference of %s to %s left an unresolved reference: %v", second, link, got)
 	}
-	if !reportsEntry(underDeclaredLinkEntries(links, mutated), link) {
+	if !reportsEntry(underDeclaredLinkEntries(links, mutated, unreferencedLinkEntries), link) {
 		t.Errorf("the threshold accepts %s declared while only %s refers to it", link, first)
 	}
 
-	exempted := channels.withCell(first, "Link", "`"+interReplicaLink+"`")
-	if !reportsEntry(underDeclaredLinkEntries(links, exempted), interReplicaLink) {
-		t.Errorf("the threshold accepts %s listed as referred to by no channel row while %s refers to it",
-			interReplicaLink, first)
+	stale := map[string]string{link: "a reason the reject case states for an entry channel rows do refer to"}
+	if !reportsEntry(underDeclaredLinkEntries(links, channels, stale), link) {
+		t.Errorf("the threshold accepts %s listed as referred to by no channel row while %s and %s refer to it",
+			link, first, second)
 	}
 }
 
@@ -776,29 +748,4 @@ func assertClaimWriterSetMatchesOwnership(t *testing.T, entries registerTable) {
 
 	components := specSection(t, filepath.Join(repoRoot(t), "spec", "04_system-components.md"), "#### 4.6.3 ")
 	requireAllContain(t, "§4.6.3 SandboxClaim ownership row", components, []string{claimOwnershipRowSentence})
-}
-
-// assertInterReplicaLinkMatchesSessionLifecycle holds
-// `LNK-INTERREPLICA`'s transport, dial direction, and lifetime cells to
-// the two §28.5.4 sentences they are read from: the one naming the
-// internal gRPC `ForwardMessage` RPC as the conversation the connection
-// carries, and the one stating that a replica that is not the session's
-// coordinator forwards a message to the coordinator over that connection.
-// §28.5.4 is the inter-replica contract card and owns this statement. The
-// cases in which the forward happens are the §29.3 off-holder matrix rows
-// the second sentence links to, rather than a forwarding rule in §7.2.
-//
-// spec: §28.3, §28.5.4, §29.3
-func assertInterReplicaLinkMatchesSessionLifecycle(t *testing.T, links registerTable) {
-	t.Helper()
-
-	requireCellEquals(t, links, interReplicaLink, "Transport", "gRPC")
-	requireCellContains(t, links, interReplicaLink, "Dial direction", []string{"Forwarding replica"})
-	requireCellContains(t, links, interReplicaLink, "Lifetime", []string{"coordinating replica"})
-
-	card := specSection(t, filepath.Join(repoRoot(t), "spec", "28_communication-channels.md"), "#### 28.5.4 ")
-	requireAllContain(t, "§28.5.4 inter-replica message routing", collapseWhitespace(card), []string{
-		forwardMessageTransportSentence,
-		forwardingReplicaSentence,
-	})
 }

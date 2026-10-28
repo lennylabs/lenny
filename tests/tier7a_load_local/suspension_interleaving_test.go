@@ -10,15 +10,13 @@
 // spec: §6.2 (Pod State Machine), §6.2 (maxClientIdleSeconds clock behavior
 // across states), §7.2 (Message delivery routing — seven paths, path 6), §7.3
 // (Credential leases on the replacement pod), §10.1.5 (Stale Replica
-// Behavior)
+// Behavior), §29.3 (Interactive message send) Forwarding
 package tier7a_load_local_test
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -101,9 +99,13 @@ func answered(code int, body map[string]any) bool {
 }
 
 // spec: §6.2 (Pod State Machine), §7.2 (Message delivery routing — seven
-// paths, path 6), §6.2 (maxClientIdleSeconds clock behavior across states)
+// paths, path 6), §6.2 (maxClientIdleSeconds clock behavior across states),
+// §29.3 (Interactive message send) Forwarding
 // diagnosis: a message racing an idle suspension was left held by a podless
-// suspended session, reached the runtime twice, or was lost; a message
+// suspended session, reached the runtime twice, or was lost; a message the
+// replica that does not coordinate the session served was answered
+// EXECUTOR_FAILURE rather than forwarded over CH-HOLDERFORWARD to the
+// coordinator or held in the DLQ (F-7.2.38); a message
 // racing the suspension was delivered between the seal and the release, so
 // the release reached its runtime before the runtime wrote the response;
 // or a stale coordinator's idle suspension acted on a session a peer had
@@ -114,21 +116,21 @@ func TestIdleSuspensionRequiredPairs_spec_6_2(t *testing.T) {
 			h := lifecycleharness.New(t, lifecycleharness.Options{Replicas: 2, Pods: 24, CredentialPool: true})
 			r1, r2 := h.Replicas[0], h.Replicas[1]
 
-			for _, sender := range []*lifecycleharness.Replica{r1, r2} {
-				t.Run("message on "+sender.ID+" racing the zero-hold release", func(t *testing.T) {
+			for i, sender := range []*lifecycleharness.Replica{r1, r2} {
+				// The subtest is named for the sender's position, because a
+				// replica's holder value differs on every run.
+				position := "replica " + strconv.Itoa(i+1)
+				t.Run("message on "+position+" racing the zero-hold release", func(t *testing.T) {
 					id := h.StartSession(r1)
 					idleWindowElapsed()
 					row := h.Row(id)
-					text := "race-" + sender.ID
+					text := "race-replica-" + strconv.Itoa(i+1)
 					var code int
 					var body map[string]any
 					race(first,
 						func() { r1.Server.SuspendIdle(context.Background(), row, lifecycleharness.IdleWindow) },
 						func() { code, body = h.Send(sender, id, text) })
 					h.Settle()
-					if sender != r1 && code == http.StatusInternalServerError && strings.Contains(fmt.Sprint(body), "not bound to a pod") {
-						t.Skip("blocked: F-7.2.38 (owner: R19) a message a non-coordinating replica serves for a running session answers EXECUTOR_FAILURE instead of being forwarded or held")
-					}
 					if !answered(code, body) {
 						t.Fatalf("the racing message was answered %d %v, want delivered or queued", code, body)
 					}

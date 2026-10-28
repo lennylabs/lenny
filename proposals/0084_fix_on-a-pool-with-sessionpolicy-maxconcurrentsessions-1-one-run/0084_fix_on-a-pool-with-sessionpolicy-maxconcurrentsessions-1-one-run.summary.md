@@ -90,6 +90,8 @@
 
 ## Open decisions for human to make
 
+- **Decided by the owner, 2026-10-28: option (a).** The attribution exposure is accepted as staged; fallback (b) is rejected. The re-convergence run records this as a settled decision.
+
 This section is written by the review loops. It is empty at drafting.
 
 ## Defects in the shipped tree that this proposal does not stage

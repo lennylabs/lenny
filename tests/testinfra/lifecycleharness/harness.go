@@ -24,8 +24,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
@@ -37,7 +42,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+	"github.com/lennylabs/lenny/pkg/mtls/certreload"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/tests/testinfra/envtest"
+	"github.com/lennylabs/lenny/tests/testinfra/gatewaypki"
 )
 
 // Tenant is the tenant every harness session belongs to.
@@ -102,6 +110,10 @@ type Options struct {
 	DurableInbox bool
 	// Recycling, when true, makes the warm pool a recycling pool.
 	Recycling bool
+	// ControlPlane, when set, runs the harness cluster on that shared
+	// envtest control plane in a namespace of its own
+	// (ClusterOptions.ControlPlane); nil starts a private control plane.
+	ControlPlane *envtest.Shared
 	// MaxCreatedSeconds is every replica's watchdog bound on a session
 	// that stays in created; zero keeps the watchdog default.
 	MaxCreatedSeconds int
@@ -132,6 +144,20 @@ type Options struct {
 	// session DLQ and inbox client dials, so a scenario can put a
 	// partitionable proxy on the held-message path alone.
 	QueueAddr func(addr string) string
+	// MessagingRateLimit is the lenny/send_message rate limits of every
+	// replica's MCP surface; a zero field selects the spec default.
+	MessagingRateLimit mcptools.MessagingRateLimit
+	// Interceptors, when set, is the interceptor chain of every replica's
+	// MCP surface, so its PreMessageDelivery and PreToolResult phases run.
+	Interceptors *interceptor.Chain
+	// Leases, when set, wraps the harness's Redis lease store, so a
+	// scenario can put a failover lease store in front of it.
+	Leases func(leasestore.LeaseStore) leasestore.LeaseStore
+	// MidSessionUpload, when true, registers the harness runtime with
+	// capabilities.midSessionUpload and enables the deployer's mid-session
+	// upload policy on every replica, so POST /upload-to-session admits a
+	// running session (§7.4).
+	MidSessionUpload bool
 }
 
 // Harness is the shared world the replicas run in.
@@ -197,12 +223,27 @@ type Harness struct {
 	// pool.
 	maxConcurrent int32
 	pools         *poolstore.Memory
+	// pki is the cluster CA and gateway leaf every replica presents on
+	// CH-HOLDERFORWARD, and reloader serves that leaf.
+	pki      *gatewaypki.Material
+	reloader *certreload.Reloader
+	// msgLimit and interceptors configure every replica's MCP surface.
+	msgLimit     mcptools.MessagingRateLimit
+	interceptors *interceptor.Chain
+	// runtimes is the runtime registry every replica reads when
+	// Options.MidSessionUpload is set, and nil otherwise.
+	runtimes runtimestore.Store
 }
 
 // Replica is one gateway replica: a session server with its own pod
-// registry, executor, binder, watchdog, and coordination Sweeper.
+// registry, executor, binder, watchdog, coordination Sweeper, MCP surface,
+// and CH-HOLDERFORWARD listener.
 type Replica struct {
+	// ID is the replica's REG-COORDLEASE holder value,
+	// `<name>.<process token>@<forward listener address>`, which differs on
+	// every run; Name is the bare replica name.
 	ID       string
+	Name     string
 	Server   *sessionserver.Server
 	Registry *podsession.Registry
 	Executor *executor.PodExecutor
@@ -215,6 +256,18 @@ type Replica struct {
 	// InputWaits is the replica's lenny/request_input registry, shared by
 	// its REST and MCP message paths as the gateway wires it.
 	InputWaits *inputwait.Registry
+	// MCP is the replica's one MCP server, on which mcptools.Register runs
+	// once, so the messaging lifetime counter and the result interceptor
+	// persist across calls. MCPCall and the forward listener both serve it.
+	MCP *mcp.Server
+	// ForwardClient is the replica's CH-HOLDERFORWARD client.
+	ForwardClient *http.Client
+
+	h       *Harness
+	forward *forwardListener
+	// public is the replica's public path: the session handler mux and
+	// /mcp behind the auth middleware.
+	public http.Handler
 
 	mu      sync.Mutex
 	crashed bool
@@ -246,7 +299,7 @@ func (r *Replica) Crashed() bool {
 }
 
 // New builds the harness. It needs envtest; a test that cannot start it is
-// skipped by envtest.Start.
+// skipped by envtest.Start, or by Shared.Start on a shared control plane.
 func New(t testing.TB, opts Options) *Harness {
 	t.Helper()
 	if opts.Replicas < 1 {
@@ -261,7 +314,7 @@ func New(t testing.TB, opts Options) *Harness {
 		Trace:             NewTrace(),
 		Redis:             mr,
 		Leases:            leasestore.New(rc),
-		Cluster:           NewClusterWith(t, ClusterOptions{Recycling: opts.Recycling, HeartbeatInterval: opts.HeartbeatInterval}),
+		Cluster:           NewClusterWith(t, ClusterOptions{Recycling: opts.Recycling, HeartbeatInterval: opts.HeartbeatInterval, ControlPlane: opts.ControlPlane}),
 		Checkpoints:       &Checkpointer{},
 		Interactions:      interactionstore.NewMemory(),
 		TreeMetrics:       &TreeMetrics{},
@@ -273,7 +326,21 @@ func New(t testing.TB, opts Options) *Harness {
 		idleSeconds:       opts.MaxIdleSeconds,
 		createdSeconds:    opts.MaxCreatedSeconds,
 		finalizingSeconds: opts.MaxFinalizingSeconds,
+		msgLimit:          opts.MessagingRateLimit,
+		interceptors:      opts.Interceptors,
 	}
+	if opts.Leases != nil {
+		h.Leases = opts.Leases(h.Leases)
+	}
+	if opts.MidSessionUpload {
+		h.runtimes = midSessionUploadRuntimes(t)
+	}
+	h.pki = gatewaypki.Mint(t)
+	reloader, err := certreload.New(h.pki.CertFile, h.pki.KeyFile)
+	if err != nil {
+		t.Fatalf("lifecycleharness: load gateway certificate: %v", err)
+	}
+	h.reloader = reloader
 	h.Slots = NewSlotLog()
 	h.slotClient = redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	h.slotClient.AddHook(h.Slots)
@@ -327,6 +394,21 @@ func New(t testing.TB, opts Options) *Harness {
 	return h
 }
 
+// midSessionUploadRuntimes is a runtime registry holding the harness
+// runtime with capabilities.midSessionUpload set. spec: §7.4 (Upload
+// Safety).
+func midSessionUploadRuntimes(t testing.TB) runtimestore.Store {
+	t.Helper()
+	rs := runtimestore.NewMemory()
+	if err := rs.Create(context.Background(), runtimestore.Runtime{
+		Name: RuntimeRef, Type: runtimestore.TypeAgent,
+		Capabilities: &runtimestore.RuntimeCapabilities{MidSessionUpload: true},
+	}); err != nil {
+		t.Fatalf("lifecycleharness: register the mid-session upload runtime: %v", err)
+	}
+	return rs
+}
+
 // NewMemStore returns the harness's default session store: an in-memory
 // store on now whose slot queries count a session in its post-terminal
 // window under PostTerminalCap, as the gateway's production store does.
@@ -337,14 +419,29 @@ func NewMemStore(now func() time.Time) *memstore.Store {
 	return memstore.NewWithClock(now, memstore.WithPostTerminalCap(PostTerminalCap))
 }
 
-// AddReplica starts one more replica.
-func (h *Harness) AddReplica(id string) *Replica {
+// AddReplica starts one more replica named name. It opens the replica's
+// forward listener first and builds the replica's holder value for the
+// listener's address, which the session server and the Sweeper hold the
+// coordination lease under, so every replica forwards an off-holder request
+// to the coordinator as a gateway replica does.
+//
+// spec: §10.1.1 (Stateless Replicas and Per-Session Coordination) Replica
+// address, §29.3 (Interactive message send) Forwarding
+func (h *Harness) AddReplica(name string) *Replica {
 	h.T.Helper()
 	reg := podsession.NewRegistry()
-	r := &Replica{ID: id, Registry: reg, InputWaits: inputwait.NewRegistry()}
+	fwd := newForwardListener(h.T)
+	id, err := sessionserver.HolderValue(name, fwd.Addr())
+	if err != nil {
+		h.T.Fatalf("lifecycleharness: holder value for %s: %v", name, err)
+	}
+	r := &Replica{
+		ID: id, Name: name, Registry: reg, InputWaits: inputwait.NewRegistry(), h: h, forward: fwd,
+		ForwardClient: sessionserver.NewHolderForwardClient(h.reloader, h.pki.CAPool),
+	}
 	binder := &podsession.Binder{
 		Client:           crashableClient{Client: h.Cluster.Client, crashed: &r.k8sDown, claims: h.Claims, retire: h.Cluster.retireByName, fault: &r.claimFault},
-		Namespace:        Namespace,
+		Namespace:        h.Cluster.Namespace,
 		AdapterPort:      50051,
 		AcceptedVersions: []string{adapter.ProtocolVersionV1},
 		DialAdapter:      h.Cluster.Dial,
@@ -363,15 +460,16 @@ func (h *Harness) AddReplica(id string) *Replica {
 	r.Server = sessionserver.New(h.Store, sessionserver.Options{
 		DevTenantHeader:            true,
 		Events:                     bus,
-		IDFunc:                     newIDFunc(id),
+		IDFunc:                     newIDFunc(name),
 		DefaultIsolationProfile:    isolation.ProfileSandboxed,
 		PodBinder:                  binder,
 		PodRegistry:                reg,
 		Executor:                   exec,
-		AgentNamespace:             Namespace,
+		AgentNamespace:             h.Cluster.Namespace,
 		CoordinationLeaseStore:     h.Leases,
 		CoordinationLeaseTTL:       LeaseTTL,
 		ReplicaID:                  id,
+		HolderForwardClient:        r.ForwardClient,
 		Messaging:                  h.Messaging,
 		Clock:                      h.Clock.Now,
 		MaxResumePending:           MaxResumePending,
@@ -383,6 +481,8 @@ func (h *Harness) AddReplica(id string) *Replica {
 		Pools:                      h.poolRegistry(),
 		WorkspaceSealMaxDuration:   SealWindow,
 		StreamFailureReportTimeout: ReleaseAllowance,
+		Runtimes:                   h.runtimes,
+		MidSessionUploadEnabled:    h.runtimes != nil,
 	})
 	// spec: §28.5.1 (Gateway-to-pod) — a failed CH-ATTACH stream is
 	// reported to the replica's session server, as the gateway wires it.
@@ -412,10 +512,77 @@ func (h *Harness) AddReplica(id string) *Replica {
 		Readopter:        readopter{h: h, r: r},
 		Clock:            h.Clock.Now,
 	})
+	h.serveReplica(r)
 	h.mu.Lock()
 	h.Replicas = append(h.Replicas, r)
 	h.mu.Unlock()
 	return r
+}
+
+// serveReplica builds the replica's MCP surface, its public path, and its
+// forward listener over one inner mux that routes /mcp to the MCP surface
+// and every other path to the session server.
+//
+// spec: §29.3 (Interactive message send) Forwarding rules 2, 3, and 4,
+// §10.3 (mTLS PKI) NET-072
+func (h *Harness) serveReplica(r *Replica) {
+	r.MCP = mcp.NewServer()
+	mcptools.Register(r.MCP, mcptools.Deps{
+		DevTenantFallback:  true,
+		HolderForward:      r.Server,
+		Store:              h.Store,
+		Terminal:           r.Server,
+		SessionService:     r.Server,
+		Delivery:           r.Server,
+		Executor:           r.Executor,
+		InputWaits:         r.InputWaits,
+		Messaging:          h.Messaging,
+		Interactions:       h.Interactions,
+		Clock:              h.Clock.Now,
+		TenantID:           Tenant,
+		MessagingRateLimit: h.msgLimit,
+		Interceptors:       h.interceptors,
+	})
+	inner := http.NewServeMux()
+	inner.Handle("/mcp", r.MCP.Handler())
+	inner.Handle("/", r.Server.Handler())
+	r.public = authmw.Wrap(inner, harnessAuthOptions)
+	r.forward.serve(sessionserver.HolderForwardServerTLS(h.reloader, h.pki.CAPool),
+		sessionserver.NewHolderForwardHandler(inner, harnessAuthOptions, h.Inner))
+}
+
+// SetForwardRefuse makes the replica's forward listener close each accepted
+// connection before the TLS handshake, so a forward to the replica is not
+// delivered. Arming it also closes the listener's open connections and the
+// idle connections of every replica's forward client, so the next forward
+// dials. spec: §29.3 (Interactive message send) Forwarding rule 6.
+func (r *Replica) SetForwardRefuse(on bool) {
+	r.forward.setRefuse(on)
+	if !on {
+		return
+	}
+	for _, peer := range r.h.allReplicas() {
+		peer.ForwardClient.CloseIdleConnections()
+	}
+}
+
+// SetForwardFault runs f on each forwarded request the replica's listener
+// has read, its body included, before the handler chain, and closes the
+// connection with no response when f returns true, so the forward's outcome
+// is unknown. A nil f disarms it. spec: §29.3 (Interactive message send)
+// Forwarding rule 7.
+func (r *Replica) SetForwardFault(f func(*http.Request) bool) {
+	r.forward.setFault(f)
+}
+
+// ForwardAddr is the address of the replica's forward listener.
+func (r *Replica) ForwardAddr() string { return r.forward.Addr() }
+
+// allReplicas returns every replica, crashed ones included.
+func (h *Harness) allReplicas() []*Replica {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]*Replica(nil), h.Replicas...)
 }
 
 // Crash ends the replica's server-lifetime context, drops its pod registry
@@ -430,6 +597,7 @@ func (h *Harness) Crash(r *Replica) {
 	r.crashed = true
 	r.k8sDown.Store(true)
 	r.mu.Unlock()
+	r.forward.close()
 	r.Server.Close()
 	for _, b := range r.Registry.Snapshot() {
 		r.Registry.Remove(b.SessionID)
@@ -455,7 +623,8 @@ func (h *Harness) Surviving() []*Replica {
 
 // Close closes every replica.
 func (h *Harness) Close() {
-	for _, r := range h.Replicas {
+	for _, r := range h.allReplicas() {
+		r.forward.close()
 		r.Server.Close()
 	}
 }
@@ -489,9 +658,19 @@ func (h *Harness) Row(id string) sessionstore.Session {
 	return row
 }
 
-// Do sends an HTTP request to the replica's session API and returns the
-// status and the decoded body.
+// Do sends an HTTP request to the replica's session API through its public
+// path, behind the auth middleware, and returns the status and the decoded
+// body. The X-Lenny-Tenant-ID header is the request's credential, which a
+// forward to the session's coordinating replica relays.
 func (h *Harness) Do(r *Replica, method, path string, body any) (int, map[string]any) {
+	h.T.Helper()
+	return h.DoAs(r, "", method, path, body)
+}
+
+// DoAs is Do with the X-Lenny-User-ID header naming user, so the request's
+// principal is that user, as a request resolving an interaction the user owns
+// needs. An empty user sends no header.
+func (h *Harness) DoAs(r *Replica, user, method, path string, body any) (int, map[string]any) {
 	h.T.Helper()
 	var buf bytes.Buffer
 	if body != nil {
@@ -499,8 +678,14 @@ func (h *Harness) Do(r *Replica, method, path string, body any) (int, map[string
 	}
 	req := httptest.NewRequest(method, path, &buf)
 	req.Header.Set("X-Lenny-Tenant-ID", Tenant)
+	if user != "" {
+		req.Header.Set("X-Lenny-User-ID", user)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	rr := httptest.NewRecorder()
-	r.Server.Handler().ServeHTTP(rr, req)
+	r.public.ServeHTTP(rr, req)
 	out := map[string]any{}
 	_ = json.Unmarshal(rr.Body.Bytes(), &out)
 	return rr.Code, out
@@ -514,7 +699,7 @@ func (h *Harness) Events(r *Replica, id string) (int, []any) {
 	req.Header.Set("X-Lenny-Tenant-ID", Tenant)
 	req.Header.Set("Accept", "application/json")
 	rr := httptest.NewRecorder()
-	r.Server.Handler().ServeHTTP(rr, req)
+	r.public.ServeHTTP(rr, req)
 	var out struct {
 		Items []any `json:"items"`
 	}

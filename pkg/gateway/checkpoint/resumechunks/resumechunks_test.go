@@ -284,14 +284,14 @@ func TestResolveSurfacesManifestGetError(t *testing.T) {
 	}
 }
 
-// spec: §10.1.7 — when the manifest's chunk_encoding column is empty
-// the resolver falls back to the tar encoding for the object key, so a
-// legacy manifest with no recorded encoding still resolves to the canonical
-// tar chunk keys.
+// spec: §10.1.7, §10.1 (Chunked-object storage model) — when the
+// manifest's chunk_encoding column is empty the resolver falls back to
+// tar.gz, the encoding the only producer writes and the column default
+// names, so the resolved chunk keys carry the .tar.gz suffix.
 func TestResolveDefaultsChunkEncodingWhenColumnEmpty(t *testing.T) {
 	objs := []blobstore.BlobInfo{
-		chunkObject(0, 16, partialmanifeststore.ChunkEncodingTar, false),
-		chunkObject(1, 16, partialmanifeststore.ChunkEncodingTar, false),
+		chunkObject(0, 16, partialmanifeststore.ChunkEncodingTarGz, false),
+		chunkObject(1, 16, partialmanifeststore.ChunkEncodingTarGz, false),
 	}
 	r, _ := newResolver(2, "", objs)
 
@@ -302,9 +302,9 @@ func TestResolveDefaultsChunkEncodingWhenColumnEmpty(t *testing.T) {
 	if len(res.Grants) != 2 {
 		t.Fatalf("grants = %d, want 2", len(res.Grants))
 	}
-	wantKey := fmt.Sprintf("%s/chunk-%05d.tar", rcCheckpoint, 0)
+	wantKey := fmt.Sprintf("%s/chunk-%05d.tar.gz", rcCheckpoint, 0)
 	if want := "https://obj.test/" + wantKey; res.Grants[0].URL != want {
-		t.Errorf("grant[0].URL = %q, want %q (default tar encoding)", res.Grants[0].URL, want)
+		t.Errorf("grant[0].URL = %q, want %q (default tar.gz encoding)", res.Grants[0].URL, want)
 	}
 }
 

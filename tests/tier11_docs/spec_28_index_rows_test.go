@@ -1055,7 +1055,10 @@ func stagedSectionMismatch(staged, landed []string) []string {
 // gate applies each entry to the staged block before the comparison, so
 // the landed line must carry the superseding wording exactly, and a
 // landed line that matches neither the staged nor the superseding wording
-// is still reported.
+// is still reported. An entry can also remove staged lines a later
+// proposal deleted: it then names the whole selected line as its replaced
+// text and the number of consecutive staged lines, from the selected one,
+// that the later proposal deleted.
 type stagedLineSupersession struct {
 	// proposal names the implemented proposal directory that staged the
 	// rewrite, so a reader traces the entry to its approval.
@@ -1068,6 +1071,10 @@ type stagedLineSupersession struct {
 	from string
 	// to is the text the later proposal put in its place.
 	to string
+	// removes is the number of consecutive staged lines, starting at the
+	// selected line, that the later proposal deleted. When it is above
+	// zero, from must be the whole selected line and to must be empty.
+	removes int
 }
 
 // stagedLineSupersessions is the register of staged lines that a later
@@ -1116,6 +1123,45 @@ var stagedLineSupersessions = []stagedLineSupersession{
 		from:       "The naming table below the",
 		to:         "A channel added after that",
 	},
+	{
+		// The off-holder forward is the CH-HOLDERFORWARD channel row, and
+		// the link register declares no connection only one channel row
+		// refers to, so the LNK-INTERREPLICA link row is deleted.
+		proposal:   "0101_new_gateway-replicas-have-no-way-to-ask-the-replica",
+		linePrefix: "| `LNK-INTERREPLICA` |",
+		from: "| `LNK-INTERREPLICA` | Gateway replica and gateway replica | Forwarding replica | gRPC | " +
+			"The internal gRPC `ForwardMessage` RPC, whose address the specification does not state | " +
+			"One connection per forwarding replica to a session's coordinating replica | C19 |",
+		removes: 1,
+	},
+	{
+		// The paragraph recording LNK-INTERREPLICA as carrying no channel
+		// row is deleted with the row, together with the blank line that
+		// separated it from the channel register heading.
+		proposal:   "0101_new_gateway-replicas-have-no-way-to-ask-the-replica",
+		linePrefix: "`LNK-INTERREPLICA` carries no channel row,",
+		from:       "`LNK-INTERREPLICA` carries no channel row, because the specification states the connection and the",
+		removes:    4,
+	},
+	{
+		// The REG-COORDLEASE store cell names the Postgres fallback of
+		// §10.1.1 **Fallback:**, which stores the same holder value.
+		proposal:   "0101_new_gateway-replicas-have-no-way-to-ask-the-replica",
+		linePrefix: "| `REG-COORDLEASE` |",
+		from:       "| `REG-COORDLEASE` | Redis |",
+		to: "| `REG-COORDLEASE` | Redis, and Postgres during a Redis outage " +
+			"([§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination) **Fallback:**) |",
+	},
+	{
+		// The REG-COORDLEASE semantics cell points at §10.1.1 **Replica
+		// address:**, which states the holder value the forward reads.
+		proposal:   "0101_new_gateway-replicas-have-no-way-to-ask-the-replica",
+		linePrefix: "| `REG-COORDLEASE` |",
+		from:       "on a compare-and-set with a 60 second expiry |",
+		to: "on a compare-and-set with a 60 second expiry. " +
+			"[§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination) " +
+			"**Replica address:** states the holder value |",
+	},
 }
 
 // applySupersessions returns a copy of staged with every register entry
@@ -1139,9 +1185,37 @@ func applySupersessions(staged []string, register []stagedLineSupersession) (cur
 				entry.proposal, count, entry.linePrefix, entry.from))
 			continue
 		}
+		if entry.removes > 0 {
+			if msg := removalMismatch(current, idx, entry); msg != "" {
+				stale = append(stale, msg)
+				continue
+			}
+			current = append(current[:idx:idx], current[idx+entry.removes:]...)
+			continue
+		}
 		current[idx] = strings.Replace(current[idx], entry.from, entry.to, 1)
 	}
 	return current, stale
+}
+
+// removalMismatch returns why a removal entry cannot apply at the selected
+// staged line, or the empty string when it can. A removal names the whole
+// selected line, carries no replacement text, and removes no more lines
+// than the staged block holds from the selected one, so it cannot delete a
+// line it does not name or run past the block.
+func removalMismatch(current []string, idx int, entry stagedLineSupersession) string {
+	switch {
+	case current[idx] != entry.from:
+		return fmt.Sprintf("the removal by %s selects the staged line %q, and it must name that whole line",
+			entry.proposal, current[idx])
+	case entry.to != "":
+		return fmt.Sprintf("the removal by %s carries replacement text %q, and a removal replaces nothing",
+			entry.proposal, entry.to)
+	case idx+entry.removes > len(current):
+		return fmt.Sprintf("the removal by %s removes %d lines from staged line %d, past the end of the %d-line block",
+			entry.proposal, entry.removes, idx+1, len(current))
+	}
+	return ""
 }
 
 // assertSupersessionsAreApplied pins the register's two directions: a
@@ -1154,6 +1228,9 @@ func assertSupersessionsAreApplied(t *testing.T, staged, landed []string) {
 	current, _ := applySupersessions(staged, stagedLineSupersessions)
 	reverted := append([]string(nil), landed...)
 	for _, entry := range stagedLineSupersessions {
+		if entry.removes > 0 {
+			continue
+		}
 		for i, line := range reverted {
 			if strings.HasPrefix(line, entry.linePrefix) {
 				reverted[i] = strings.Replace(line, entry.to, entry.from, 1)
@@ -1166,6 +1243,41 @@ func assertSupersessionsAreApplied(t *testing.T, staged, landed []string) {
 	unknown := []stagedLineSupersession{{proposal: "absent", linePrefix: "| `REG-NONE` |", from: "x", to: "y"}}
 	if _, stale := applySupersessions(staged, unknown); len(stale) != 1 {
 		t.Errorf("a supersession selecting no staged line was not reported as stale: %v", stale)
+	}
+	assertRemovalsAreBounded(t)
+}
+
+// assertRemovalsAreBounded pins the removal form of the register: a
+// removal drops exactly the lines it counts from the line it names, and a
+// removal that names part of a line, carries replacement text, or runs
+// past the block is reported as stale rather than applied.
+//
+// spec: §28.3 (Registers)
+func assertRemovalsAreBounded(t *testing.T) {
+	t.Helper()
+	block := []string{"| `LNK-A` | a |", "| `LNK-B` | b |", "", "trailing"}
+	removal := stagedLineSupersession{proposal: "fixture", linePrefix: "| `LNK-B` |", from: "| `LNK-B` | b |", removes: 2}
+
+	current, stale := applySupersessions(block, []stagedLineSupersession{removal})
+	if len(stale) != 0 || strings.Join(current, "\n") != "| `LNK-A` | a |\ntrailing" {
+		t.Errorf("a removal of two lines yielded %q with stale reports %v", current, stale)
+	}
+
+	partial := removal
+	partial.from = "| `LNK-B` |"
+	replacing := removal
+	replacing.to = "| `LNK-C` | c |"
+	overrun := removal
+	overrun.removes = 4
+	for name, entry := range map[string]stagedLineSupersession{
+		"names part of the line": partial,
+		"carries replacement":    replacing,
+		"runs past the block":    overrun,
+	} {
+		current, stale := applySupersessions(block, []stagedLineSupersession{entry})
+		if len(stale) != 1 || len(current) != len(block) {
+			t.Errorf("a removal that %s was applied (%q) or not reported once (%v)", name, current, stale)
+		}
 	}
 }
 

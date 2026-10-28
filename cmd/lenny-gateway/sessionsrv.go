@@ -232,10 +232,14 @@ func (w *gatewayWiring) buildSessionServer(
 		// lease store is the same §12.4 store the Sweeper renews against and is
 		// nil in the in-memory/dev posture with no Redis, which makes the
 		// at-bind Acquire a no-op. ReplicaID must match the Sweeper's holder
-		// identity so a self-bind renews rather than conflicts.
+		// identity so a self-bind renews rather than conflicts; both carry the
+		// §10.1.1 Replica address holder value.
 		CoordinationLeaseStore: w.coordLeaseStore,
-		ReplicaID:              w.replica,
-		AgentNamespace:         *agentNamespace,
+		ReplicaID:              w.coordHolder,
+		// spec: §29.3 Forwarding, §10.3 NET-072 — the shared CH-HOLDERFORWARD
+		// client; nil without the gateway replica certificate material.
+		HolderForwardClient: w.holderForwardClient,
+		AgentNamespace:      *agentNamespace,
 		// spec: §11.1 — per-runtime and per-pool admission rate
 		// limits, enforced at session creation where the runtime/pool are
 		// known. Shares the same per-minute counter the §11.1 HTTP
