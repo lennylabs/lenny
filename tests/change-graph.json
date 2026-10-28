@@ -395,6 +395,32 @@
       "chaos": ["tests/tier8_chaos/..."],
       "security": ["tests/tier9_security/..."]
     },
+    "tests/testinfra/ports/": {
+      "unit": ["tests/testinfra/ports/..."],
+      "integration": ["tests/tier4_integration/..."],
+      "chaos": ["tests/tier8_chaos/..."],
+      "security": ["tests/tier9_security/..."]
+    },
+    "tests/testinfra/gateway/": {
+      "unit": ["tests/testinfra/gateway/..."],
+      "integration": ["tests/tier4_integration/..."],
+      "chaos": ["tests/tier8_chaos/..."],
+      "security": ["tests/tier9_security/..."]
+    },
+    "tests/testinfra/opsprocess/": {
+      "unit": ["tests/testinfra/opsprocess/..."],
+      "component": ["tests/tier2_component/opsrevocation/..."],
+      "integration": ["tests/tier4_integration/..."],
+      "chaos": ["tests/tier8_chaos/..."],
+      "security": ["tests/tier9_security/..."]
+    },
+    "tests/testinfra/tokenservice/": {
+      "unit": ["tests/testinfra/tokenservice/..."],
+      "component": ["tests/tier2_component/tokensigning/..."],
+      "integration": ["tests/tier4_integration/..."],
+      "chaos": ["tests/tier8_chaos/..."],
+      "security": ["tests/tier9_security/..."]
+    },
     "tests/testinfra/commitfault/": {
       "unit": ["tests/testinfra/commitfault/..."],
       "component": ["tests/tier2_component/stores/sessionstore_commit_ack_test.go"],

@@ -352,7 +352,6 @@ prefixes:
   - tests/testinfra/fixtures/generators/
   - tests/testinfra/fixtures/seed/
   - tests/testinfra/fuzz/
-  - tests/testinfra/gateway/
   - tests/testinfra/golden/
   - tests/testinfra/goleak/
   - tests/testinfra/helm/
@@ -361,8 +360,6 @@ prefixes:
   - tests/testinfra/load/
   - tests/testinfra/loadgen/
   - tests/testinfra/matrix/
-  - tests/testinfra/opsprocess/
-  - tests/testinfra/ports/
   - tests/testinfra/proxylease/
   - tests/testinfra/randctl/
   - tests/testinfra/runtimes/conformance-fixtures/blocked-stdin/
@@ -389,6 +386,5 @@ prefixes:
   - tests/testinfra/stubs/runtime/
   - tests/testinfra/stubs/siem/
   - tests/testinfra/timectl/
-  - tests/testinfra/tokenservice/
   - tests/testinfra/wait/
   - tests/testinfra/watchlag/

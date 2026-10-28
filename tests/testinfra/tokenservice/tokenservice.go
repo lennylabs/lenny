@@ -25,13 +25,15 @@ import (
 
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 	"github.com/lennylabs/lenny/tests/testinfra/binbuild"
+	"github.com/lennylabs/lenny/tests/testinfra/ports"
 	"github.com/lennylabs/lenny/tests/testinfra/stackkey"
 )
 
 // Process represents a running lenny-token-service subprocess.
 type Process struct {
-	// done receives the result of cmd.Wait once the process exits.
-	done chan error
+	// exited is closed once cmd.Wait returns; waitErr holds its result.
+	exited  chan struct{}
+	waitErr error
 	// stopOnce makes stop signal the process at most once.
 	stopOnce   sync.Once
 	cmd        *exec.Cmd
@@ -76,6 +78,10 @@ type Options struct {
 	// builds one. A test that restarts the Token Service passes one
 	// binary to every start so it builds once.
 	Binary string
+	// Reserve chooses each loopback address the process is given. Empty
+	// uses ports.Reserve. A test of the start retry passes one that
+	// returns an address another process holds first.
+	Reserve func(testing.TB) string
 }
 
 // StartOpts builds and spawns cmd/lenny-token-service with opts and
@@ -91,18 +97,26 @@ func StartOpts(t testing.TB, opts Options) *Process {
 	if binary == "" {
 		binary = Build(t)
 	}
-	tmp := filepath.Dir(binary)
+	// cmd/lenny-token-service cannot bind port 0 and report the port it
+	// got, so the harness chooses the addresses, and starts again on fresh
+	// ones when another process takes one first (TEST-GAPS T-17.4.38).
+	return ports.StartRetrying(t, "lenny-token-service", func() (*Process, error) {
+		return startOnce(t, binary, opts)
+	})
+}
 
-	grpcPort, err := freePort()
-	if err != nil {
-		t.Fatalf("freePort (grpc): %v", err)
+// startOnce starts one Token Service process on freshly chosen addresses and
+// waits for both listeners. It returns an error wrapping ports.ErrAddrInUse
+// when the process lost an address to another process, so StartOpts retries.
+func startOnce(t testing.TB, binary string, opts Options) (*Process, error) {
+	t.Helper()
+	tmp := filepath.Dir(binary)
+	reserve := opts.Reserve
+	if reserve == nil {
+		reserve = ports.Reserve
 	}
-	httpPort, err := freePort()
-	if err != nil {
-		t.Fatalf("freePort (http): %v", err)
-	}
-	grpcAddr := fmt.Sprintf("127.0.0.1:%d", grpcPort)
-	httpAddr := fmt.Sprintf("127.0.0.1:%d", httpPort)
+	grpcAddr := reserve(t)
+	httpAddr := reserve(t)
 
 	// Each process gets its own log, because processes started from one
 	// binary share its directory.
@@ -121,9 +135,11 @@ func StartOpts(t testing.TB, opts Options) *Process {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start token-service: %v", err)
 	}
-	p := &Process{cmd: cmd, grpcAddr: grpcAddr, httpAddr: httpAddr, stderr: stderrFile, stderrPath: stderrPath, done: make(chan error, 1)}
-	// Buffered so the goroutine never blocks once nothing waits on it.
-	go func() { p.done <- cmd.Wait() }()
+	p := &Process{cmd: cmd, grpcAddr: grpcAddr, httpAddr: httpAddr, stderr: stderrFile, stderrPath: stderrPath, exited: make(chan struct{})}
+	go func() {
+		p.waitErr = cmd.Wait()
+		close(p.exited)
+	}()
 
 	t.Cleanup(func() {
 		defer func() { _ = stderrFile.Close() }()
@@ -131,10 +147,10 @@ func StartOpts(t testing.TB, opts Options) *Process {
 	})
 
 	if err := p.waitReady(5 * time.Second); err != nil {
-		b, _ := os.ReadFile(stderrPath)
-		t.Fatalf("token-service not ready: %v\nlogs:\n%s", err, b)
+		p.stop(t)
+		return nil, fmt.Errorf("token-service not ready: %w\nlogs:\n%s", err, p.Logs())
 	}
-	return p
+	return p, nil
 }
 
 // Stop ends the Token Service with SIGINT and waits for it to exit,
@@ -151,13 +167,13 @@ func (p *Process) stop(t testing.TB) {
 	p.stopOnce.Do(func() {
 		_ = p.cmd.Process.Signal(os.Interrupt)
 		select {
-		case <-p.done:
+		case <-p.exited:
 			return
 		case <-time.After(3 * time.Second):
 		}
 		_ = p.cmd.Process.Kill()
 		select {
-		case <-p.done:
+		case <-p.exited:
 		case <-time.After(p.cmd.WaitDelay + time.Second):
 			t.Logf("token-service subprocess did not exit after SIGKILL; goroutine leaked")
 		}
@@ -200,21 +216,38 @@ func (p *Process) HTTPAddr() string { return p.httpAddr }
 func (p *Process) BaseURL() string { return "http://" + p.httpAddr }
 
 // waitReady polls the gRPC and HTTP ports until a TCP dial to each
-// succeeds.
+// succeeds and this process holds both listeners. A dial alone does not
+// count, because another process that took a port would accept it while
+// this one exits on its bind refusal. A process that exits ends the wait
+// with ports.ErrAddrInUse when its log records a bind refusal.
 func (p *Process) waitReady(d time.Duration) error {
 	deadline := time.Now().Add(d)
-	for _, addr := range []string{p.grpcAddr, p.httpAddr} {
-		if err := waitDial(addr, deadline); err != nil {
+	addrs := []string{p.grpcAddr, p.httpAddr}
+	for _, addr := range addrs {
+		if err := p.waitDial(addr, deadline); err != nil {
 			return fmt.Errorf("token-service %s did not accept connections within %s: %w", addr, d, err)
 		}
+	}
+	for !ports.Ready(p.cmd.Process.Pid, addrs...) {
+		if err := p.exitErr(); err != nil {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("token-service listeners %v answered within %s, but not from this process", addrs, d)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	return nil
 }
 
-// waitDial polls addr until a TCP dial succeeds or deadline passes.
-func waitDial(addr string, deadline time.Time) error {
+// waitDial polls addr until a TCP dial succeeds or deadline passes. It
+// returns the exit error at once when the process has exited.
+func (p *Process) waitDial(addr string, deadline time.Time) error {
 	var lastErr error
 	for time.Now().Before(deadline) {
+		if err := p.exitErr(); err != nil {
+			return err
+		}
 		conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
 		if err == nil {
 			_ = conn.Close()
@@ -243,14 +276,19 @@ func (p *Process) DialGRPC(t testing.TB) tokensv1.TokenServiceClient {
 	return tokensv1.NewTokenServiceClient(conn)
 }
 
-// freePort returns an open TCP port the OS assigned on 127.0.0.1.
-func freePort() (int, error) {
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
+// exitErr returns nil while the process runs. Once it has exited, it returns
+// an error wrapping ports.ErrAddrInUse when the log records a bind refusal,
+// and the exit status otherwise.
+func (p *Process) exitErr() error {
+	select {
+	case <-p.exited:
+	default:
+		return nil
 	}
-	defer lis.Close()
-	return lis.Addr().(*net.TCPAddr).Port, nil
+	if ports.LogsAddrInUse([]byte(p.Logs())) {
+		return fmt.Errorf("token-service exited (%v): %w", p.waitErr, ports.ErrAddrInUse)
+	}
+	return fmt.Errorf("token-service exited before it served: %v", p.waitErr)
 }
 
 // Ping issues a no-op AssignCredentials with a deliberately bogus pool
