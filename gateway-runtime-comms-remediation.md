@@ -3666,12 +3666,11 @@ keep their routing. F-7.2.43 named P3 as its owner, and 0105 does not stage it, 
     which both edit the handler.
 - Proposal routing.
   - [ ] With P4b (proposal 0107, drafting): **F-8.2.32** (Medium, a delegated child that omits
-    `perChildMaxAge` is unbounded by it, because no `DelegationPolicy` default exists to store) and
-    **F-7.2.45** (Low, the delegated child commit writes `created → running`, an edge §7.2 and
-    `state.ValidTransitions` do not list, through the `/start` transition helper). Both were routed to P4.
-    P4a (proposal 0106) stages neither, so both move to P4b, the remaining part of P4. F-8.2.32 is a lease
-    budget default and belongs to P4b's scope. F-7.2.45 is a materializer state edge, and 0107 takes it or
-    names another owner when it is drafted.
+    `perChildMaxAge` is unbounded by it, because no `DelegationPolicy` default exists to store). It was routed
+    to P4; P4a (proposal 0106) does not stage it, and it is a lease budget default in P4b's scope.
+  - [ ] With the next proposal that edits the §7.2 state machine, together with F-7.2.43: **F-7.2.45** (Low,
+    the delegated child commit writes `created → running`, an edge §7.2 and `state.ValidTransitions` do not
+    list, through the `/start` transition helper). It is a state-machine edge rather than a budget item.
   - [ ] **F-9.1.12** (Medium): the gateway-edge `/mcp` endpoint serves `lenny/request_input`, a platform MCP
     server tool, so an edge caller can open a wait on a session. Which tools the edge serves needs spec text.
     It can ride with the forwarded-call session binding proposal (F-10.2.29).
