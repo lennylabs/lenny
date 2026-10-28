@@ -62,6 +62,20 @@ type Claims struct {
 	Scope           string         `json:"scope,omitempty"`
 	Typ             auth.TokenType `json:"typ,omitempty"`
 
+	// Act is the RFC 8693 `act` claim naming the delegating actor of an
+	// `a2a_delegation` child token. The Token Service sets it on an
+	// exchange that presents an `actor_token`, and only then, so the
+	// pointer is nil and the claim is omitted from the payload on every
+	// other token. The object is flat: §13.3 lists the actor's four
+	// fields and no nested prior-actor chain, so ActorClaim carries no
+	// `act` of its own.
+	//
+	// spec: §13.3 "RFC 8693 parameter mapping to Lenny claims" (the
+	// `actor_token` row) and "Lenny JWT claim structure" (the `act`
+	// row); §10.2 "JWT claims" `typ` (`a2a_delegation` carries a
+	// non-empty `act` claim, `user_bearer` carries none).
+	Act *ActorClaim `json:"act,omitempty"`
+
 	// Roles carries the §10.2 RBAC role claim. Values are the closed
 	// auth.Role enum (`platform-admin`, `tenant-admin`, `tenant-viewer`,
 	// `billing-viewer`, `user`). The role claim is admission-time only;
@@ -99,6 +113,23 @@ type Claims struct {
 	// fields above and Extras.
 	// spec: §10.2. F-10.2.9.
 	Extras map[string]json.RawMessage `json:"-"`
+}
+
+// ActorClaim is the payload of the RFC 8693 `act` claim:
+// `{sub, tenant_id, session_id, delegation_depth}` of the actor, copied
+// from the verified `actor_token` of the exchange that minted the token.
+// SessionID is omitted when the actor is not itself a Lenny session, as
+// the §15 ActorClaim projection allows. DelegationDepth is always
+// written, because a root actor's depth 0 is a value rather than an
+// absence.
+//
+// spec: §13.3 "Lenny JWT claim structure" (the `act` row); §15
+// "Shared Adapter Types" ActorClaim.
+type ActorClaim struct {
+	Subject         string `json:"sub"`
+	TenantID        string `json:"tenant_id"`
+	SessionID       string `json:"session_id,omitempty"`
+	DelegationDepth int    `json:"delegation_depth"`
 }
 
 // ClaimString returns the string value of the JWT payload claim named
