@@ -46,7 +46,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/runtimekit"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
+	"github.com/lennylabs/lenny/tests/testinfra/binbuild"
 )
 
 // spec: 15.4.3 (Runtime Integration Levels), 5.2 (Pool Configuration and Execution Modes), 4.7.10 (Runtime process lifetime), 28.5.3 (CH-MSGSOCK)
@@ -509,16 +509,10 @@ func (l *processLog) String() string {
 	return l.buf.String()
 }
 
-// buildRepoBinary compiles the repository's main package pkg into a temp
-// path and returns the binary's path.
+// buildRepoBinary returns the path of a binary of the repository's main
+// package pkg in a directory of t's own. The package is linked once per test
+// process (binbuild).
 func buildRepoBinary(t *testing.T, pkg string) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), filepath.Base(pkg))
-	cmd := exec.Command("go", "build", "-o", bin, "./"+pkg)
-	cmd.Dir = schematest.RepoRoot(t)
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("build %s: %v", pkg, err)
-	}
-	return bin
+	return binbuild.Build(t, "./"+pkg, filepath.Base(pkg))
 }

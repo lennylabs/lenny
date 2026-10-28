@@ -25,29 +25,20 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/tests/testinfra/binbuild"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
-// buildStreamingEchoBinary compiles cmd/runtimes/streaming-echo (the
-// §15.4.3 Full-level reference adapter) into a throwaway binary so the
-// gateway's --runtime-bin subprocess executor has a non-echo-builtin
-// runtime to dispatch to.
+// buildStreamingEchoBinary returns a throwaway cmd/runtimes/streaming-echo
+// binary (the §15.4.3 Full-level reference adapter) so the gateway's
+// --runtime-bin subprocess executor has a non-echo-builtin runtime to
+// dispatch to. The command is linked once per test process (binbuild).
 func buildStreamingEchoBinary(t *testing.T) string {
 	t.Helper()
-	root := schematest.RepoRoot(t)
-	out := filepath.Join(t.TempDir(), "streaming-echo")
-	cmd := exec.Command("go", "build", "-o", out, "./cmd/runtimes/streaming-echo")
-	cmd.Dir = root
-	if combined, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build streaming-echo: %v\n%s", err, combined)
-	}
-	return out
+	return binbuild.Build(t, "./cmd/runtimes/streaming-echo", "streaming-echo")
 }
 
 // spec: §17.4. The existing Source
@@ -59,6 +50,7 @@ func buildStreamingEchoBinary(t *testing.T) string {
 // at streaming-echo and drives both the MCP and the OpenAI Chat
 // Completions surfaces against it.
 func TestSourceModeProtocols_StreamingEcho_spec_17_4(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	bin := buildStreamingEchoBinary(t)
 	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--runtime-bin", bin)
