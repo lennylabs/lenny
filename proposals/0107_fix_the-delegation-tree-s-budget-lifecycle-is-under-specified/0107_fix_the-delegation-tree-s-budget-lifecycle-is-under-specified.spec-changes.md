@@ -118,7 +118,7 @@ Requests are serialized per task tree. The gateway presents at most one elicitat
 with
 
 ```markdown
-Each gateway replica serializes the requests it serves per task tree. A replica presents at most one elicitation for a tree to the user at a time, with concurrent request batching and a cool-off window after approval. **Extension state:** below states what each replica holds.
+Each gateway replica runs the flow below for the requests it serves, serialized per task tree. A replica presents at most one elicitation for a tree to the user at a time, with concurrent request batching and a cool-off window after approval. **Extension state:** below states what each replica holds.
 ```
 
 **Edit (b).** In step 4 **User rejects:**, sub-bullet **In-flight requests (atomic check):**, replace
@@ -168,7 +168,19 @@ In the sub-bullet **Clock reference (UTC only):**, replace "regardless of which 
 
 ### SPEC-5 · spec/08_recursive-delegation.md § 8.6 Lease Extension
 
-Under **Elicitation mode flow:**, append to item 2 (the item that begins "2. **Concurrent requests** arriving while the elicitation is pending are queued silently."), in the same paragraph:
+Under **Elicitation mode flow:**, in item 2, replace
+
+```markdown
+**Concurrent requests** arriving while the elicitation is pending are queued silently. No duplicate elicitation is sent.
+```
+
+with
+
+```markdown
+**Concurrent requests** arriving while the elicitation is pending are queued silently.
+```
+
+and append to the same paragraph:
 
 ```markdown
 When the session whose request opened a pending elicitation reaches a terminal state before the user decides, the gateway dismisses that elicitation with the reason `LEASE_EXTENSION_REQUESTER_TERMINAL` and applies no outcome of it to the queued requests ([Section 9.2](09_mcp-integration.md#92-elicitation-chain) **Expiry when the session leaves its pod:** does not apply to a lease-extension elicitation). Each queued request from a session that is still non-terminal re-enters step 1, so the first to re-enter opens a new elicitation and the others are queued on it. A queued request from a terminal session receives no grant.
