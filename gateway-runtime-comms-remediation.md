@@ -1433,6 +1433,8 @@ for the stream.
 
 **Re-derived 2026-10-28.** Still needed as written, with one new predecessor. The coordination fence-refusal proposal in section 10.2 (F-10.1.42, F-10.1.43, and F-10.1.44) precedes R12, because R12's reconnect and arbitration read the same `FailedPrecondition` the fence refusal overloads. Proposal 0101 changes no adapter-side surface. The claim register still defers four rows here, two of which (the deployment-time `CH-RUNTIMEOPS` row and the service-account token row) the 2026-10-21 paragraph re-owns to R17 and R14, and R25 re-points them.
 
+**Re-derived 2026-10-28 (after proposal 0107's approval).** The `FINAL_USAGE_REPORT` consumer is owed to proposal 0107's budget return (BUILD-GAPS F-8.3.9). 0107 CODE-3 waits for the report under §8.3 **Usage quiescence before budget return**, and with no consumer the wait always runs to `delegation.usageQuiescenceTimeoutSeconds`. R12's tier-4 consumer test for the delegation budget path asserts that the report ends the wait before the timeout. The `delegation.budget_return_usage_lag` emission (8.3-M10) lands with or after the consumer, because before it every return takes the timeout path.
+
 **Size.** L.
 
 ### R13. Bind-time coordinator resolution
@@ -2479,6 +2481,13 @@ eviction proposal (before R16), both listed in section 10.2.
 - [ ] **R12.** Not started. The claim register carries rows deferred to it. It also closes BUILD-GAPS
   F-10.1.20: the gateway consumes `AdapterTerminating` after a coordinator hold timeout. It follows the
   coordination fence-refusal proposal (F-10.1.42) in section 10.2.
+  Widened 2026-10-28: R12 owes the gateway's `CH-ADAPTEREVENTS` consumer for `FINAL_USAGE_REPORT`
+  (BUILD-GAPS F-8.3.9). Proposal 0107 (approved) makes the delegated child's budget return wait for that
+  report under §8.3 **Usage quiescence before budget return**, and until the consumer exists the wait always
+  runs to `delegation.usageQuiescenceTimeoutSeconds`. The consumer lands with the corrected hold entry
+  condition, because the adapter's pod-wide hold arms on any end of the stream while it holds a started
+  session. Whichever of R12 and 0107's implementation lands second connects the report to the wait. The
+  `delegation.budget_return_usage_lag` emission (BUILD-GAPS 8.3-M10) lands with or after the consumer.
 - [ ] **R13.** Not started. Narrowed to the mirror refresh that closes F-10.1.35 and the "Mirror seed at
   bind" claim row. The replica address landed in proposal 0101 (2026-10-28). It follows the coordination
   fence-refusal proposal in section 10.2.
@@ -3230,7 +3239,7 @@ Proposals, second wave:
 
 Proposals, third wave:
 
-- [ ] **P4. Delegation tree and budget lifecycle** (split; P4a done as a proposal, P4b drafting), after P2.
+- [ ] **P4. Delegation tree and budget lifecycle** (split; P4a and P4b done as proposals), after P2.
   - **Outcome (P4a).** Proposal 0106
     (`proposals/0106_fix_the-delegation-tree-s-membership-and-lifecycle-are-under/`) was approved 2026-10-27
     (merge `d52dc1834`). Derive and replay create independent roots registered for lease extension, tree
@@ -3243,6 +3252,21 @@ Proposals, third wave:
     are applied. Its implementation runs after 0104 and 0105 are implemented, because its staged edits anchor
     on their text. Its unstaged defects are filed below. P4b (tree budget keys, the §8.6 lease extension, and
     the per-session enforcer) remains and is being drafted as proposal 0107.
+  - **Outcome (P4b).** Proposal 0107
+    (`proposals/0107_fix_the-delegation-tree-s-budget-lifecycle-is-under-specified/`) was approved 2026-10-28
+    (merge `290de6e8d`). The delegated child's terminal pipeline returns the tree budget once, on the recorded
+    root, with all four deltas, and the return runs concurrently with the pod or slot release under owner
+    decision C, so its usage quiescence wait ends at the timeout until R12 adds the `CH-ADAPTEREVENTS`
+    consumer; the first reservation creates the sentinel and only a reservation detects
+    `BUDGET_KEYS_EXPIRED`; §8.6 extension state is read per request from the shared store; and user erasure
+    deletes the tree's `delegation_tree_budget` row. Its implementation closes F-8.3.2 to F-8.3.5, F-8.6.24 to
+    F-8.6.27, F-11.2.31, and F-12.8.57, the members its problem statement lists, and F-8.3.6, which duplicates
+    the `BUDGET_KEYS_EXPIRED` half of F-8.3.3. 0107 carries no REC-1 record item, so the BUILD-GAPS owner
+    lines of those findings were re-pointed to 0107 with their checklist steps on 2026-10-28. F-11.2.31's
+    crash window, which 0107 does not stage, moves to F-11.2.34. F-8.2.32 is not 0107's: its problem
+    statement removes it, and it is re-routed to its own proposal after 0105's implementation. 0107 is
+    implemented after 0105 and 0106 are implemented (its D15). Its unstaged defects are filed below, in the
+    block for proposal 0107.
   - **Scope.** Tree membership and lifecycle: which sessions belong to a delegation tree, tree recovery
     after a resume, the cancellation cascade and `cancelSubtree`, orphan cleanup, the deadlock detector's
     local decisions, the delegated child's materializer, tree budget keys and their returns, the §8.6 lease
@@ -3252,7 +3276,8 @@ Proposals, third wave:
     F-8.6.27 (TT-52, TT-63, TT-64, and TT-67), F-8.8.18 (TT-62), F-8.8.19 (TT-66), F-8.9.13 (TT-47),
     F-8.10.17 (TT-31), F-8.10.19 to F-8.10.26 (TT-49, TT-53 to TT-57, TT-60, and TT-61), and F-11.2.31
     (TT-68). Four are High. F-8.10.17 (TT-31) is re-owned to proposal 0104 and F-8.10.24 (TT-57) is closed,
-    both by 0106's REC-1 (2026-10-27).
+    both by 0106's REC-1 (2026-10-27). F-8.3.2 to F-8.3.5, F-8.6.24 to F-8.6.27, and F-11.2.31 are re-owned
+    to proposal 0107, with F-8.3.6 and F-12.8.57 (2026-10-28).
   - **Split seam.** If the opening defect list exceeds the bound, split into P4a (tree membership,
     recovery, cascade, cancel, orphan cleanup, deadlock, and the materializer) and P4b (tree budget keys,
     the §8.6 lease extension, and the per-session enforcer: TT-50, TT-52, TT-57 to TT-59, TT-63 to TT-65,
@@ -3265,6 +3290,9 @@ Proposals, third wave:
 
 **Queue after P4b (set 2026-10-28 by the audit of unfinished proposals 0060 and above).** The next
 change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
+
+- [x] **Proposal 0107** (P4b): approved 2026-10-28 (merge `290de6e8d`). The next change-proposal run is
+  the widened 0086 below.
 
 - [ ] **Proposal 0086, widened** (Draft): the finalize-time `WorkspacePlan` bind, widened on 2026-10-28 to
   take BUILD-GAPS F-5.1.23 (§5.1 places setup at pod warm-up, once per pod, against every other site and the
@@ -3536,7 +3564,8 @@ The rest are filed in BUILD-GAPS and routed below.
     record on the hook path or a second sweep after the grant TTL, after 0100's release record lands.
   - [ ] **F-5.2.57** (Low), with **P3**: §5.2 says pool admission refuses a pool that misses the
     `claimOrphanTimeout` bound, while no pool field enters the bound and no admission check exists. P3's
-    deadline edits name the field or strike the clause.
+    deadline edits name the field or strike the clause. Widened 2026-10-28 to cover proposal 0107 SPEC-2's
+    pool-admission clause for the seal window against the usage quiescence timeout.
   - [ ] **F-29.3.3** (Low), with the **upload route proposal** (not yet written, with F-15.1.57): the §29.3
     off-holder rows for terminate and DELETE omit `resuming`. Re-routed 2026-10-28: the finding named the
     inter-replica carrier proposal (proposal 0101) as its owner, and 0101 was implemented without it. The
@@ -3867,9 +3896,11 @@ keep their routing. F-7.2.43 named P3 as its owner, and 0105 does not stage it, 
     gateway generates it. Drop the argument and always generate the value. It lands after 0105 and 0101,
     which both edit the handler.
 - Proposal routing.
-  - [ ] With P4b (proposal 0107, drafting): **F-8.2.32** (Medium, a delegated child that omits
+  - [ ] Its own proposal, after 0105's implementation: **F-8.2.32** (Medium, a delegated child that omits
     `perChildMaxAge` is unbounded by it, because no `DelegationPolicy` default exists to store). It was routed
-    to P4; P4a (proposal 0106) does not stage it, and it is a lease budget default in P4b's scope.
+    to P4; P4a (proposal 0106) does not stage it. Re-routed 2026-10-28: P4b (proposal 0107, approved) removes
+    it from its problem, because it concerns a `DelegationPolicy` default rather than budget state, and lists
+    it among the defects it does not stage.
   - [ ] With the next proposal that edits the §7.2 state machine, together with F-7.2.43: **F-7.2.45** (Low,
     the delegated child commit writes `created → running`, an edge §7.2 and `state.ValidTransitions` do not
     list, through the `/start` transition helper). It is a state-machine edge rather than a budget item.
@@ -3917,6 +3948,57 @@ items is budget-related, so none goes to P4b.
   - [ ] Text corrections, with any text-corrections proposal: **F-4.5.21** (Low, §4.5 **Workspace lineage:**
     names uploads and derive as the sources of `parent_workspace_ref` and omits replay, which also writes
     it).
+
+**Defects filed from proposal 0107's unstaged-defect list (2026-10-28).** Proposal 0107 (P4b, approved
+2026-10-28, merge `290de6e8d`, implementation pending) lists defects in the shipped tree that it does not
+stage. 0107 carries no REC-1 record item, so they are filed now, ahead of its implementation, because no
+defect is dropped. Each was re-confirmed against the tree at `290de6e8d`, and each new BUILD-GAPS entry says
+it was filed ahead of 0107's REC-1, so 0107's implementor updates the entry rather than filing a duplicate.
+Three items were already tracked and are not refiled: F-8.2.32 (re-routed to its own proposal, in the 0105
+block above), `delegation.budget_return_usage_lag` (8.3-M10, which carries a 2026-10-28 status note), and the
+pool-admission seal-window clause (F-5.2.57, widened). The crash-window residue of F-11.2.31 is filed as
+F-11.2.34.
+
+- With R12.
+  - [ ] **F-8.3.9** (Medium): the gateway opens no `CH-ADAPTEREVENTS` stream, so no `FINAL_USAGE_REPORT` ends
+    the §8.3 usage quiescence wait, and every delegated child's return runs to
+    `delegation.usageQuiescenceTimeoutSeconds`. The consumer lands with R12's corrected hold entry
+    condition, because a client without it would arm the adapter's pod-wide hold whenever its replica loses
+    the stream. R12's §10.1 entry and its section 5 entry name the consumer as owed.
+  - [ ] **8.3-M10** (existing): emit `delegation.budget_return_usage_lag` and
+    `lenny_delegation_budget_return_usage_lag_total` on the timeout path, with or after the F-8.3.9 consumer.
+    Direct fix; the specification names both.
+- Direct-fix queue, after 0107's implementation, which edits the same files.
+  - [ ] **F-11.2.34** (Medium): a budget termination that a crash cuts before its terminal write is not
+    retried, because `sessionbudget.Enforcer` counts in process memory, while §11.2 enforces against Redis
+    counters and restores them after a crash. Move per-session enforcement onto the shared counters.
+  - [ ] **F-8.6.28** (Low): the extension denial is keyed by root session, while §8.6 denies the requesting
+    subtree on the row-scoped `subtree_id` key. Key the flag and cool-off by subtree.
+  - [ ] **F-8.10.29** (Low): tree-wide `{root}:dlg:*` keys are not deleted when the last session in the tree
+    settles, as §8.10 states. Delete them at tree settle. Row reclamation beyond erasure is not stated and
+    goes to a proposal only if wanted.
+  - [ ] **F-11.3.47** (Low): the chart renders no `delegation.usageQuiescenceTimeoutSeconds`, so a chart
+    deployment runs the 5 s default and, under 0107's startup check, cannot set a seal window below 6 s.
+  - [ ] Documentation: **F-8.3.10** (Low, the delegation-budget-recovery runbook names a route, Helm values, an
+    admin listing, and a Redis key that do not exist; after 0107's DOC-1, which edits the same page) and
+    **F-8.3.11** (Low, `DELEGATION_BUDGET_UNAVAILABLE` appears on no documentation page; add it to the
+    `lenny/delegate_task` error table with the §12.4 and 0107 SPEC-3 causes).
+- Proposal routing.
+  - [ ] **Redis-recovery proposal** (not yet written): **F-11.2.36** (Medium, the delegation budget reconciler
+    rebuilds only checkpointed trees, runs only on a probe-observed edge, and gates no `delegate_task`, so a
+    missed tree fails with `BUDGET_KEYS_EXPIRED` once 0107 lands) and **F-11.2.35** (Low, reconstruction
+    restores no per-parent `parallel_children` or `children_total` counter, which §11.2 does not name). The
+    restart detector and the reconciliation gate are shared with the other §12.4 recovery reconcilers.
+  - [ ] **F-8.3.8** (Low): the literal §8.3 step 3 token credit on the tree-wide additive counter
+    under-credits once per ancestor level (0107 D4). The formula needs restating; its own proposal, after
+    0107's implementation.
+  - [ ] **F-11.4.18** (Low): the §11.4 full_revoke cancel writes run no terminal pipeline, so a revoked
+    delegated child keeps its tree budget reservation. Running the post-terminal hook for those writes rides
+    with the next proposal that edits §11.4 full_revoke handling.
+  - [ ] **F-11.2.33** (Low): after the per-session forget, a late proxied request on a terminal session is
+    admitted by the budget gate with deny unset. The refusal belongs at the LLM proxy's admission check, which
+    the specification does not state for a terminal session; it rides with the next proposal that edits the
+    §4.9 proxy admission.
 
 **Test-harness direct fixes (2026-10-27).** The unit tier reported a package timeout for
 `pkg/gateway/podlifecycle/podsession` whenever the host was loaded, which hid the results of every
