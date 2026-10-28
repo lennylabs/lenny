@@ -84,7 +84,9 @@
 
 ## Open decisions for human to make
 
-None. Decision C, the order of the budget return against the pod or slot release, was decided by the owner on 2026-10-28 and is recorded as D3.
+One decision is open. Decision C, the order of the budget return against the pod or slot release, was decided by the owner on 2026-10-28 and is recorded as D3.
+
+- **`marker:0105_fix_the-per-state-session-deadlines-and-the-watchdog-sweeps:2. **hook dispatch.** the terminal claim still opens synchronously before `update`. on the applied path, hand the open `end` to a goroutine that runs the row's `** Does 0107 depend on 0105 CODE-4 item 2, the change that moves the watchdog, orphan reconciler, and orphan cleanup terminal hooks onto a detached goroutine, for keeping the usage quiescence wait that CODE-3 adds to the post-terminal hook off a sweep pass? The open-decisions phase answered yes. It wrote a 0105 row in `## Impacts on other proposals` stating that the watchdog and orphan rows of the CODE-3 item 6 writer table rely on 0105 CODE-4 item 2 for that detached dispatch, and it added a sentence to non-spec **Sequencing** stating that those rows take their detached dispatch from 0105 CODE-4 item 2. The review loop reversed that answer. It found that CODE-3 item 6 rule 1 detaches `OnSessionTerminal` for every caller, so the watchdog and orphan hooks are detached under 0107 alone and 0105 CODE-4 item 2 adds a second, outer goroutine. The proposal now carries a 0105 row that records file-level overlap only (0105 CODE-6 and CODE-7 edit `usage.go`, `session_terminal.go`, `delegation/service.go`, and `mcptools_register.go`), the **Sequencing** sentence crediting 0105 CODE-4 item 2 is deleted, and the writer table marks the watchdog and orphan rows "detached, by that row" with no change attributed to 0105. D15 still orders 0105 before 0107. The human chooses between the phase's answer, under which 0107 records a dependency on 0105 CODE-4 item 2, and the review loop's reversal, under which 0107 detaches the hook itself and depends on 0105 only for file overlap.
 
 ## Defects in the shipped tree that this proposal does not stage
 
