@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 
@@ -651,6 +652,14 @@ var prodMigrationSchema = []struct {
 	// TestCheckpointManifestChunkEncodingCheckMigration_spec_10_1.
 	// spec: §10.1, §4.4.
 	{migration: "0194", table: "checkpoint_manifest"},
+	// 0195 adds sessions.state_entered_at, the §6.2 instant the session
+	// entered its current state, with the BEFORE UPDATE trigger that stamps
+	// a state change an older binary writes without naming the column, and
+	// sessions.input_wait_id, the §7.2 identity of the live
+	// lenny/request_input wait. The trigger and its drop are asserted
+	// directly in TestSessionStateEnteredAtMigration_spec_6_2.
+	// spec: §6.2, §7.2, §10.5.
+	{migration: "0195", table: "sessions", columns: []string{"state_entered_at", "input_wait_id"}},
 }
 
 // spec: 12.2, 18.5
@@ -859,6 +868,151 @@ func TestPodReleasedAtMigration_spec_7_1(t *testing.T) {
 		t.Errorf("after rolling 0191 back the index still exists: %q", got)
 	}
 	mustNotHaveColumn(t, ctx, pg, "sessions", "pod_released_at")
+}
+
+// stateEnteredAtPriorVersion is the schema version immediately below the
+// state-entry migration.
+const stateEnteredAtPriorVersion = 194
+
+// spec: §6.2 (Pod State Machine), §7.2 (Interactive Session Model), §10.5 (Upgrade and Rollback Strategy)
+// diagnosis: migration 0195 did not add sessions.state_entered_at as a
+//
+//	timestamptz NOT NULL column with a default, did not add the nullable
+//	sessions.input_wait_id, or its sessions_stamp_state_entry trigger did not
+//	stamp a state change written without the column to the written
+//	updated_at, or it moved the instant on a same-state write or overwrote a
+//	value the writer named, or the .down.sql left the trigger, its function,
+//	or either column behind. Without the trigger an older replica's state
+//	write during the rolling window leaves the previous state's entry
+//	instant, so every per-state deadline the watchdog measures from it fires
+//	early.
+func TestSessionStateEnteredAtMigration_spec_6_2(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	assertStateEntryColumns(t, ctx, pg)
+	if _, err := pg.Pool.Exec(ctx,
+		`INSERT INTO tenants (id, genesis_nonce) VALUES ('acme', '\x00')`); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	const id = "44444444-4444-4444-8444-444444444444"
+	// An insert that does not name either column, as an older binary's
+	// insert does not, succeeds and takes the default instant.
+	if err := execTenant(ctx, pg, "acme",
+		`INSERT INTO sessions (id, tenant_id, state, runtime_ref, root_session_id)
+			VALUES ($1, 'acme', 'running', 'echo', $1)`, id); err != nil {
+		t.Fatalf("insert without state_entered_at: %v", err)
+	}
+	inserted := readStateEntry(t, ctx, pg, id)
+	if inserted.IsZero() {
+		t.Fatalf("defaulted state_entered_at is zero")
+	}
+
+	base := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	// A state change that does not name the column takes the written
+	// updated_at.
+	changedAt := base.Add(time.Minute)
+	if err := execTenant(ctx, pg, "acme",
+		`UPDATE sessions SET state = 'suspended', updated_at = $2 WHERE id = $1::uuid`, id, changedAt); err != nil {
+		t.Fatalf("state-changing update: %v", err)
+	}
+	if got := readStateEntry(t, ctx, pg, id); !got.Equal(changedAt) {
+		t.Errorf("after a state change without the column, state_entered_at = %v, want the written updated_at %v", got, changedAt)
+	}
+	// A same-state write leaves the instant where it was.
+	if err := execTenant(ctx, pg, "acme",
+		`UPDATE sessions SET state = 'suspended', updated_at = $2 WHERE id = $1::uuid`, id, base.Add(2*time.Minute)); err != nil {
+		t.Fatalf("same-state update: %v", err)
+	}
+	if got := readStateEntry(t, ctx, pg, id); !got.Equal(changedAt) {
+		t.Errorf("after a same-state update, state_entered_at = %v, want it unchanged at %v", got, changedAt)
+	}
+	// A state change that names a new value, as the session store's own
+	// write does, keeps the value it names.
+	named := base.Add(3 * time.Minute)
+	if err := execTenant(ctx, pg, "acme",
+		`UPDATE sessions SET state = 'running', updated_at = $2, state_entered_at = $3 WHERE id = $1::uuid`,
+		id, base.Add(4*time.Minute), named); err != nil {
+		t.Fatalf("state-changing update naming the column: %v", err)
+	}
+	if got := readStateEntry(t, ctx, pg, id); !got.Equal(named) {
+		t.Errorf("after a state change naming state_entered_at, it = %v, want the named %v", got, named)
+	}
+
+	pg.MigrateTo(t, dir, stateEnteredAtPriorVersion)
+	mustNotHaveColumn(t, ctx, pg, "sessions", "state_entered_at")
+	mustNotHaveColumn(t, ctx, pg, "sessions", "input_wait_id")
+	if n := catalogCount(t, ctx, pg,
+		`SELECT count(*) FROM pg_trigger WHERE tgname = 'sessions_stamp_state_entry'`); n != 0 {
+		t.Errorf("after rolling 0195 back, %d sessions_stamp_state_entry triggers remain", n)
+	}
+	if n := catalogCount(t, ctx, pg,
+		`SELECT count(*) FROM pg_proc WHERE proname = 'sessions_stamp_state_entry'`); n != 0 {
+		t.Errorf("after rolling 0195 back, %d sessions_stamp_state_entry functions remain", n)
+	}
+}
+
+// assertStateEntryColumns checks the forward schema of migration 0195: the
+// NOT NULL defaulted state_entered_at, the nullable input_wait_id, and the
+// BEFORE UPDATE trigger.
+func assertStateEntryColumns(t *testing.T, ctx context.Context, pg *containers.Postgres) {
+	t.Helper()
+	if got := columnType(t, ctx, pg, "sessions", "state_entered_at"); got != "timestamp with time zone" {
+		t.Errorf("sessions.state_entered_at type = %q, want timestamp with time zone", got)
+	}
+	if got := columnNullable(t, ctx, pg, "sessions", "state_entered_at"); got != "NO" {
+		t.Errorf("sessions.state_entered_at is_nullable = %q, want NO", got)
+	}
+	if got := columnDefault(t, ctx, pg, "sessions", "state_entered_at"); got == "" {
+		t.Errorf("sessions.state_entered_at has no default")
+	}
+	if got := columnType(t, ctx, pg, "sessions", "input_wait_id"); got != "text" {
+		t.Errorf("sessions.input_wait_id type = %q, want text", got)
+	}
+	if got := columnNullable(t, ctx, pg, "sessions", "input_wait_id"); got != "YES" {
+		t.Errorf("sessions.input_wait_id is_nullable = %q, want YES", got)
+	}
+	if n := catalogCount(t, ctx, pg,
+		`SELECT count(*) FROM pg_trigger WHERE tgname = 'sessions_stamp_state_entry'
+			AND tgrelid = 'sessions'::regclass AND NOT tgisinternal`); n != 1 {
+		t.Errorf("sessions_stamp_state_entry triggers on sessions = %d, want 1", n)
+	}
+}
+
+// readStateEntry reads one session's persisted state_entered_at.
+func readStateEntry(t *testing.T, ctx context.Context, pg *containers.Postgres, id string) time.Time {
+	t.Helper()
+	var at time.Time
+	if err := pg.Pool.QueryRow(ctx,
+		`SELECT state_entered_at FROM sessions WHERE id = $1::uuid`, id).Scan(&at); err != nil {
+		t.Fatalf("read state_entered_at of %s: %v", id, err)
+	}
+	return at.UTC()
+}
+
+// columnNullable reads information_schema's is_nullable for one column.
+func columnNullable(t *testing.T, ctx context.Context, pg *containers.Postgres, table, col string) string {
+	t.Helper()
+	var nullable string
+	if err := pg.Pool.QueryRow(ctx, `
+		SELECT is_nullable FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`,
+		table, col).Scan(&nullable); err != nil {
+		t.Fatalf("read is_nullable of %s.%s: %v", table, col, err)
+	}
+	return nullable
+}
+
+// catalogCount runs a count(*) query against the system catalogs.
+func catalogCount(t *testing.T, ctx context.Context, pg *containers.Postgres, query string) int {
+	t.Helper()
+	var n int
+	if err := pg.Pool.QueryRow(ctx, query).Scan(&n); err != nil {
+		t.Fatalf("catalog query %q: %v", query, err)
+	}
+	return n
 }
 
 // spec: 9.2 (Elicitation Chain)

@@ -158,6 +158,9 @@ func (s *Store) createLocked(ctx context.Context, sess sessionstore.Session, bef
 	if sess.UpdatedAt.IsZero() {
 		sess.UpdatedAt = sess.CreatedAt
 	}
+	// spec: §6.2 (Pod State Machine) — the store owns state_entered_at: a
+	// new row entered its state when it was created, whatever the caller set.
+	sess.StateEnteredAt = sess.CreatedAt
 	// spec: §4.2 — v1 sessions are written at schema_version=1.
 	if sess.SchemaVersion == 0 {
 		sess.SchemaVersion = 1
@@ -249,6 +252,7 @@ func (s *Store) Update(_ context.Context, tenantID, id string, mutate func(*sess
 	}
 	prevUpdatedAt := row.UpdatedAt
 	prevState := row.State
+	prevEntered := row.StateEnteredAt
 	prevAge := row.AccumulatedSessionAgeSeconds
 	prevRecoveryGen := row.RecoveryGeneration
 	prevCoordGen := row.CoordinationGeneration
@@ -289,6 +293,9 @@ func (s *Store) Update(_ context.Context, tenantID, id string, mutate func(*sess
 	// previous write, against the same instant the UpdatedAt stamp records.
 	row.AccumulatedSessionAgeSeconds = prevAge
 	sessionstore.AccrueSessionAge(prevState, prevUpdatedAt, &row, now)
+	// spec: §6.2 (Pod State Machine) — state_entered_at moves only when the
+	// write changes the state, to the instant the UpdatedAt stamp records.
+	sessionstore.StampStateEntry(prevState, prevEntered, &row, now)
 	row.UpdatedAt = now
 	s.sessions[id] = row
 	return row, nil

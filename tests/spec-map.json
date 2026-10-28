@@ -2081,7 +2081,14 @@
         "tests/tier7a_load_local/slot_release_paths_race_test.go",
         "tests/tier7a_load_local/stale_slot_reaper_race_test.go",
         "tests/tier8_chaos/slot_counter_redis_outage_test.go::TestRedisRestartLosingTheSlotSets_spec_5_2",
-        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildAdapterReadinessProbeOnEverySidecarPod_spec_4_7_9"
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildAdapterReadinessProbeOnEverySidecarPod_spec_4_7_9",
+        "pkg/gateway/session/sessionstore/state_entry_test.go::TestStampStateEntryMovesOnlyOnStateChange_spec_6_2",
+        "pkg/gateway/session/sessionstore/memstore/state_entry_test.go::TestCreateStampsStateEntryAtCreation_spec_6_2",
+        "pkg/gateway/session/sessionstore/memstore/state_entry_test.go::TestUpdateStampsStateEntryOnlyOnStateChange_spec_6_2",
+        "pkg/gateway/session/sessionstore/memstore/state_entry_test.go::TestStateEntryTracksLastStateChangeAcrossHistory_spec_6_2",
+        "tests/tier1_unit/lifecycle/stepped_store_test.go::TestSteppedClockStoreCarriesSteppedStateEntry_spec_6_2",
+        "tests/tier2_component/migrations/prod_columns_test.go::TestSessionStateEnteredAtMigration_spec_6_2",
+        "tests/tier2_component/stores/sessionstore_state_entry_test.go::TestSessionStoreStampsStateEntry_spec_6_2"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -2407,7 +2414,8 @@
         "pkg/gateway/sessionserver/holder_forward_sites_test.go::TestUndeliveredMessageHoldAnswersEachDLQOutcome_spec_29_3",
         "pkg/gateway/mcpfabric/mcptools/messaging_handler_test.go::TestForwardedSendSkipsTheSenderLimitsOnTheCoordinator_spec_29_3",
         "tests/tier8_chaos/holder_forward_chaos_test.go::TestCoordinatorCrashAfterReadingAForwardIsRefusedAndNotHeld_spec_29_3",
-        "pkg/gateway/sessionserver/held_undelivered_forward_internal_test.go::TestHoldUndeliveredForwardHoldsWithTheRecoveringTTL_spec_29_3"
+        "pkg/gateway/sessionserver/held_undelivered_forward_internal_test.go::TestHoldUndeliveredForwardHoldsWithTheRecoveringTTL_spec_29_3",
+        "tests/tier2_component/migrations/prod_columns_test.go::TestSessionStateEnteredAtMigration_spec_6_2"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -3641,7 +3649,8 @@
         "tests/tier4_integration/schema_migration_journey_test.go::TestSchemaMigrationJourney_ExpandGateContract",
         "tests/tier4_integration/schema_migration_journey_test.go::TestSchemaMigrationJourney_GatewayCoexistsAcrossExpandStepAndRestart",
         "tests/tier2_component/migrations/checkpoint_slot_id_drop_test.go",
-        "tests/tier5_e2e_kind/admission_test.go"
+        "tests/tier5_e2e_kind/admission_test.go",
+        "tests/tier2_component/migrations/prod_columns_test.go::TestSessionStateEnteredAtMigration_spec_6_2"
       ],
       "packages": [
         "pkg/runtime/upgrade/state"

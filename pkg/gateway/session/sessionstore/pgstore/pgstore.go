@@ -166,7 +166,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	COALESCE(credential_origin_session_id::text, ''),
 	credential_deny,
 	accumulated_session_age_seconds,
-	pod_released_at`
+	pod_released_at,
+	state_entered_at`
 
 // Create persists a fresh session row. root_session_id defaults to the
 // session's own id when the caller did not stamp one (a standalone
@@ -235,6 +236,9 @@ func (s *Store) create(ctx context.Context, sess sessionstore.Session, before be
 	if sess.UpdatedAt.IsZero() {
 		sess.UpdatedAt = sess.CreatedAt
 	}
+	// spec: §6.2 (Pod State Machine) — the store owns state_entered_at: a
+	// new row entered its state when it was created, whatever the caller set.
+	sess.StateEnteredAt = sess.CreatedAt
 	ref, src, at, hash := snapshotCols(sess.WorkspaceSnapshot)
 
 	// The trailing five binds ($26-$30) cover the §4.2 session-record
@@ -286,7 +290,8 @@ func (s *Store) create(ctx context.Context, sess sessionstore.Session, before be
 		credential_origin_session_id,
 		credential_deny,
 		accumulated_session_age_seconds,
-		pod_released_at
+		pod_released_at,
+		state_entered_at
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid,
@@ -333,7 +338,9 @@ func (s *Store) create(ctx context.Context, sess sessionstore.Session, before be
 		-- §6.2 accumulated_session_age_seconds; zero for a new row.
 		$59,
 		-- §7.1 pod_released_at; NULL until the release is recorded.
-		$60
+		$60,
+		-- §6.2 state_entered_at; the creation instant.
+		$61
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -452,7 +459,9 @@ func (s *Store) create(ctx context.Context, sess sessionstore.Session, before be
 			// Update accrues on every later write. Zero for a new row.
 			sess.AccumulatedSessionAgeSeconds,
 			// $60 — §7.1 release marker; a zero time persists as NULL.
-			pgtenant.NullTime(sess.PodReleasedAt))
+			pgtenant.NullTime(sess.PodReleasedAt),
+			// $61 — §6.2 state_entered_at, set to created_at above.
+			sess.StateEnteredAt)
 		if err != nil {
 			return err
 		}
@@ -610,7 +619,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		workspace_plan = $55::jsonb,
 		accumulated_session_age_seconds = $56,
 		last_write_id = $57::uuid,
-		pod_released_at = $58
+		pod_released_at = $58,
+		state_entered_at = $59
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	// spec: §12.3 (Write durability categories during failover) — the
@@ -630,6 +640,7 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		}
 		prevUpdated := sess.UpdatedAt
 		prevState := sess.State
+		prevEntered := sess.StateEnteredAt
 		prevAge := sess.AccumulatedSessionAgeSeconds
 		prevRecoveryGen := sess.RecoveryGeneration
 		prevCoordGen := sess.CoordinationGeneration
@@ -669,6 +680,9 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		// the updated_at stamp records.
 		sess.AccumulatedSessionAgeSeconds = prevAge
 		sessionstore.AccrueSessionAge(prevState, prevUpdated, &sess, now)
+		// spec: §6.2 (Pod State Machine) — state_entered_at moves only when
+		// the write changes the state, to the instant updated_at records.
+		sessionstore.StampStateEntry(prevState, prevEntered, &sess, now)
 		sess.UpdatedAt = now
 		ref, src, at, hash := snapshotCols(sess.WorkspaceSnapshot)
 		expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -741,6 +755,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			// $58 — §7.1 release marker MarkPodReleased sets; a zero
 			// time keeps SQL NULL. spec: §7.1 (Post-terminal window).
 			pgtenant.NullTime(sess.PodReleasedAt),
+			// $59 — §6.2 state_entered_at, stamped above.
+			sess.StateEnteredAt,
 		); err != nil {
 			return err
 		}
@@ -1542,6 +1558,9 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §7.1 — pod_released_at from migration 0191. NULL until the
 		// release is recorded.
 		&podReleasedAt,
+		// §6.2 — state_entered_at from migration 0195, the instant the
+		// session entered its current state.
+		&s.StateEnteredAt,
 	); err != nil {
 		return sessionstore.Session{}, err
 	}

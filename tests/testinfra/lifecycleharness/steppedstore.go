@@ -13,11 +13,13 @@ import (
 )
 
 // steppedStamp is the stepped-clock view of one stored write of a row: the
-// updated_at the write stamped on the clock the harness steps, and the
-// active session age accrued against that clock.
+// updated_at the write stamped on the clock the harness steps, the active
+// session age accrued against that clock, and the state-entry instant on
+// that clock.
 type steppedStamp struct {
-	updatedAt time.Time
-	ageSecs   float64
+	updatedAt      time.Time
+	ageSecs        float64
+	stateEnteredAt time.Time
 }
 
 // steppedRow is the stepped-clock history of one row, keyed by the
@@ -32,11 +34,13 @@ type steppedRow struct {
 // clock as though it stamped them from the harness's stepped clock. A
 // scenario on the compose Postgres steps the clock by sweep intervals while
 // little wall time passes, and the gateway's timers compare the stepped now
-// with a row's updated_at and active session age, so wall-clock stamps
-// would expire windows early. The decorator keeps the production store free
-// of a clock seam: Create stamps created_at and updated_at from the stepped
-// clock, Update records the stepped updated_at and the active age accrued
-// against it for the updated_at the store wrote, and every read, including
+// with a row's updated_at, state_entered_at, and active session age, so
+// wall-clock stamps would expire windows early. The decorator keeps the
+// production store free of a clock seam: Create stamps created_at and
+// updated_at from the stepped clock and records created_at as the stepped
+// state_entered_at, Update records the stepped updated_at, the active age
+// accrued against it, and the stepped state_entered_at for the updated_at
+// the store wrote, and every read, including
 // the row a mutator sees, carries the recorded stepped values in place of
 // the stored ones.
 //
@@ -45,8 +49,8 @@ type steppedRow struct {
 // concurrent Update has committed and not yet returned, waits briefly for
 // the record and then uses the row's latest recorded stamp.
 //
-// spec: §6.2 (maxSessionAge timer behavior across states), §7.3 (Retry and
-// Resume)
+// spec: §6.2 (maxSessionAge timer behavior across states), §6.2 (Pod State
+// Machine), §7.3 (Retry and Resume)
 type SteppedClockStore struct {
 	sessionstore.Store
 	now func() time.Time
@@ -95,8 +99,8 @@ func (s *SteppedClockStore) lookup(id string, stored time.Time, own int) (steppe
 	return r.latest, true, s.inFlight[id] <= own
 }
 
-// translate replaces row's stored updated_at and active age with their
-// stepped values. own counts the caller's own in-flight Update of the row.
+// translate replaces row's stored updated_at, active age, and state-entry
+// instant with their stepped values. own counts the caller's own in-flight Update of the row.
 func (s *SteppedClockStore) translate(row *sessionstore.Session, own int) {
 	deadline := time.Now().Add(steppedRecordWait)
 	for {
@@ -107,6 +111,7 @@ func (s *SteppedClockStore) translate(row *sessionstore.Session, own int) {
 		if settled || time.Now().After(deadline) {
 			row.UpdatedAt = st.updatedAt
 			row.AccumulatedSessionAgeSeconds = st.ageSecs
+			row.StateEnteredAt = st.stateEnteredAt
 			return
 		}
 		time.Sleep(time.Millisecond)
@@ -122,7 +127,8 @@ func (s *SteppedClockStore) translateAll(rows []sessionstore.Session) []sessions
 }
 
 // Create stamps created_at and updated_at from the stepped clock when the
-// caller left them unset, and records the row's first stepped stamp.
+// caller left them unset, and records the row's first stepped stamp, whose
+// state-entry instant is created_at as the store sets it.
 func (s *SteppedClockStore) Create(ctx context.Context, row sessionstore.Session) error {
 	if row.CreatedAt.IsZero() {
 		row.CreatedAt = s.now().UTC().Truncate(time.Microsecond)
@@ -133,13 +139,18 @@ func (s *SteppedClockStore) Create(ctx context.Context, row sessionstore.Session
 	if err := s.Store.Create(ctx, row); err != nil {
 		return err
 	}
-	s.record(row.ID, row.UpdatedAt, steppedStamp{updatedAt: row.UpdatedAt, ageSecs: row.AccumulatedSessionAgeSeconds})
+	s.record(row.ID, row.UpdatedAt, steppedStamp{
+		updatedAt:      row.UpdatedAt,
+		ageSecs:        row.AccumulatedSessionAgeSeconds,
+		stateEnteredAt: row.CreatedAt,
+	})
 	return nil
 }
 
 // Update runs mut on the row as stamped from the stepped clock, then
-// records the stepped updated_at of the write and the active age accrued
-// against it, with the store's own accrual rule.
+// records the stepped updated_at of the write, the active age accrued
+// against it, and the stepped state-entry instant, with the store's own
+// accrual and stamp rules.
 func (s *SteppedClockStore) Update(ctx context.Context, tenantID, id string, mut func(*sessionstore.Session) error) (sessionstore.Session, error) {
 	s.mu.Lock()
 	s.inFlight[id]++
@@ -162,8 +173,13 @@ func (s *SteppedClockStore) Update(ctx context.Context, tenantID, id string, mut
 	at := pgtenant.MonotonicNext(prev.UpdatedAt, s.now())
 	updated.AccumulatedSessionAgeSeconds = prev.AccumulatedSessionAgeSeconds
 	sessionstore.AccrueSessionAge(prev.State, prev.UpdatedAt, &updated, at)
+	sessionstore.StampStateEntry(prev.State, prev.StateEnteredAt, &updated, at)
 	updated.UpdatedAt = at
-	s.record(id, stored, steppedStamp{updatedAt: at, ageSecs: updated.AccumulatedSessionAgeSeconds})
+	s.record(id, stored, steppedStamp{
+		updatedAt:      at,
+		ageSecs:        updated.AccumulatedSessionAgeSeconds,
+		stateEnteredAt: updated.StateEnteredAt,
+	})
 	return updated, nil
 }
 
