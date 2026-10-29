@@ -107,9 +107,9 @@ func DefaultSetupEnv(workdir string) []string {
 // RunSetup executes the WorkspacePlan setup commands in order, each one
 // in workdir under a bounded timeout. Execution stops at the first
 // command that exits non-zero or exceeds its timeout, and that
-// command's error is returned. The §4.7 adapter calls RunSetup from
-// StartSession after the workspace is materialized and before the
-// runtime binary is launched.
+// command's error is returned. The adapter's RunSetup RPC handler
+// calls it after FinalizeWorkspace has materialized the session's slot
+// and before StartSession. spec: §7.5 Setup Commands.
 //
 // When opts.AggregateTimeout is set, the whole setup phase is bounded
 // by that §5.1 cap. Exceeding it aborts with an error under the `fail`

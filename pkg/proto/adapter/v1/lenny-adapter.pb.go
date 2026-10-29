@@ -1596,10 +1596,7 @@ func (x *SessionId) GetValue() string {
 // (the §10.7 ref-resolver, audit log, partial-replay snapshot) sees the
 // plan as a single document. The adapter MUST NOT execute setup
 // commands from this field — it runs them only on the explicit
-// RunSetup RPC, which §5.2 specifies fires once per pod at
-// start (a recycled pod skips the second RunSetup on its subsequent
-// session assignments; the gateway owns the once-per-pod gate). See
-// also F-5.2.24.
+// RunSetup RPC. spec: §7.5 Setup Commands.
 type WorkspacePlan struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SchemaVersion int32                  `protobuf:"varint,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
@@ -2521,15 +2518,8 @@ func (x *WorkspacePlanWarning) GetLosingSourceIndex() int32 {
 // authoritative execution payload — see WorkspacePlan.setup_commands
 // for why the same commands also ride on the plan document.
 //
-// Per §5.2 setup commands run once per pod at start. The gateway issues
-// RunSetup once on first pod assignment; on a recycled pod's subsequent
-// session assignments the gateway skips the RunSetup RPC entirely so the
-// adapter's pod-level setup-completion state is implicit (no second
-// RunSetup means no second execution). Per-session setup belongs in the
-// runtime's handling of the session's first message rather than in
-// setupCommands, because setup commands run once per pod while the runtime
-// process of a `keep` pod serves several sessions (§5.2, Runtime-process
-// lifetime).
+// The adapter keeps no pod-level setup-completion state: it runs the
+// commands of every RunSetup it receives. spec: §7.5 Setup Commands.
 type RunSetupRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     *SessionId             `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -2870,8 +2860,9 @@ type SetupPolicy struct {
 	// no aggregate cap.
 	TimeoutSeconds int32 `protobuf:"varint,1,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
 	// on_timeout is the §5.1 disposition when the cap is hit: "fail"
-	// aborts pod startup, "warn" proceeds to runtime start. An empty
-	// value is the conservative "fail" default.
+	// fails the session's setup (spec: §7.5 Setup Commands; §6.2 Pod
+	// State Machine), "warn" proceeds to runtime start. An empty value is
+	// the conservative "fail" default.
 	OnTimeout string `protobuf:"bytes,2,opt,name=on_timeout,json=onTimeout,proto3" json:"on_timeout,omitempty"`
 	// shell carries the §7.5 setupCommandPolicy.shell flag from the gateway
 	// to the adapter. When true the adapter runs each command via
