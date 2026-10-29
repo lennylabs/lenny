@@ -3256,7 +3256,7 @@ Proposals, second wave:
     with a 2026-10-29 note. Its unstaged defects are filed below. R20 follows it, because R20 builds the
     shared input-wait store on its `input_wait_id` (R20's 2026-10-28 re-derivation). Position: with P3 implemented, P2b is the remaining second-wave
     proposal. In the third wave, P4a (proposal 0106) was implemented on 2026-10-29, after 0104 and 0105, and
-    P4b (proposal 0107) is the next implementation.
+    P4b (proposal 0107) was implemented on 2026-10-29, after 0105 and 0106.
 
 Proposals, third wave:
 
@@ -3289,8 +3289,8 @@ Proposals, third wave:
     `maxLevelRecoverySeconds` flag help text deviation is resolved by `fee24e1bf`, and the rest are accepted),
     the findings above are closed, F-4.2.17, F-4.5.21, F-7.2.35, F-8.2.32, F-8.8.22, and F-8.10.28 stay open
     with a 2026-10-29 note, and the branch carries the integration branch at `9aa7b50c7`, merge into this
-    branch pending. Position: P4b (proposal 0107) is the next implementation of
-    the third wave; it runs after 0105 and 0106 (its D15), both now implemented.
+    branch pending. Position: P4b (proposal 0107) was implemented next in
+    the third wave, after 0105 and 0106 (its D15).
   - **Outcome (P4b).** Proposal 0107
     (`proposals/0107_fix_the-delegation-tree-s-budget-lifecycle-is-under-specified/`) was approved 2026-10-28
     (merge `290de6e8d`). The delegated child's terminal pipeline returns the tree budget once, on the recorded
