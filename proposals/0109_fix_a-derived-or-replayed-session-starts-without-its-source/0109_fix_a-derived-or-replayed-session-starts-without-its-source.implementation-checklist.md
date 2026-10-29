@@ -18,15 +18,15 @@
       Tiers 0, 11. Depends on: S1
 - [ ] **S8 · code** — CODE-1. Lands the proto field, regenerated bindings, and the adapter client carrier.
       Tiers 0, 1, 3. Depends on: S1, S2
-- [ ] **S9 · code** — CODE-2. Lands the adapter seed, pairing refusal, and error mapping.
+- [ ] **S9 · code** — CODE-2. Lands the adapter seed, pairing refusal, error mapping, and capability advertisement.
       Tiers 0, 1, 3, 10. Depends on: S1, S2, S3, S8
 - [ ] **S10 · code** — CODE-3. Lands the Binder restore call sites and the demotion clause.
-      Tiers 0, 1. Depends on: S1, S7, S8
+      Tiers 0, 1. Depends on: S1, S7, S8, S9
 - [ ] **S11 · code** — CODE-4. Lands the composer restore closure.
       Tiers 0, 1, 4. Depends on: S1, S5, S6, S10
 - [ ] **S12 · code** — CODE-5. Lands the chunked-only derive and replay copy.
       Tiers 0, 1, 4. Depends on: S1
 - [ ] **S13 · test** — TEST-1. Lands the tests under the non-spec Testing section.
       Tiers 0, 1, 3, 4, 10. Depends on: S9, S10, S11, S12
-- [ ] **S14 · docs** — REC-1. Lands the BUILD-GAPS and remediation-plan records.
-      Tiers 0. Depends on: S13
+- [ ] **S14 · docs** — REC-1, DOC-1. Lands REC-1 and DOC-1.
+      Tiers 0, 11. Depends on: S13

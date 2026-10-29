@@ -11,7 +11,7 @@
 - The adapter seeds the build tree from the restore, workspace root only, before the plan's sources (CODE-2).
 - The Binder mints grants through a lazy closure immediately before each bind-time `FinalizeWorkspace`, and the two composers set that closure from the row (CODE-3, CODE-4).
 - Derive and replay copy chunked checkpoints only; the legacy single-object branch is deleted (CODE-5).
-- Tests across tiers 1, 3, 4, and 10, and the BUILD-GAPS records (TEST-1, REC-1).
+- Tests across tiers 1, 3, 4, and 10, the BUILD-GAPS records, and the client error pages (TEST-1, REC-1, DOC-1).
 
 **Decisions.**
 
@@ -27,8 +27,8 @@
 10. A restore with a non-empty `sdkWarmBlockingPaths` list demotes a preConnect session, because restored paths cannot be enumerated before materialization and §6.1 makes SDK-warm safe only when no blocking file is injected.
 11. The `mid_session` + `restore_chunks` refusal extends §4.7.1 rule 1 rather than adding a paragraph.
 12. The legacy single-object copy is deleted because §7.1 defines only the chunked copy and no producer writes a single-object ref; its only live effect is misreporting a transient manifest `Get` error as 503. After deletion that error answers 500.
-13. Restore errors split: a fetch error is `Unavailable`/transient; a property of the stored snapshot (corruption, escaping path or symlink, unsupported entry, size cap) is `FailedPrecondition`/permanent, because it recurs with fresh grants.
-14. No new error code: restore failure surfaces through the existing failed-bind branches as `SESSION_CREATION_FAILED` and `STARTING_FAILED`.
+13. Restore errors split by whether fresh grants cure them: fetch errors are transient, and properties of the stored snapshot are permanent (CODE-2 step 4).
+14. No new error code: restore failure surfaces through `writePodClaimError`'s existing failed-bind branches.
 15. The §7.4 exemption for the restored snapshot lives in SPEC-1, and §7.4's universal "All archive extraction runs inside the gateway" sentence is scoped to client uploads and delegation file exports in the same step, so §19 carries only a pointer.
 16. F-4.5.24 is not a prerequisite: the memory and filesystem stores implement no Presigner, so no bind-time restore reads a copied chunk from them.
 
@@ -42,9 +42,7 @@
 - `extractSymlink` confines symlinks to `buildDir`, so a source session's absolute symlink into its own slot fails the restore deterministically. That is the permanent class, not a transient one.
 - On exclusive pools derive and replay never claim a pod at create, so a derived row cannot start there today. Tests that expect an exclusive-pool end-to-end restore will fail for that separate reason; the exclusive `Prepare` site is pinned at unit tier only.
 - Only `miniostore` implements `ListByPrefix`, so the resolver is nil on s3, gcs, and azure. Tier 4 must run on MinIO, and on those backends a derived bind now fails closed where it used to start empty.
-- `TestSnapshotCopyStoresRefOfCopiedObject_spec_7_1` pins the deleted legacy branch and will fail after CODE-5 until converted.
-- `RequiresDemotion` must give the same answer from `Prepare` and from `launchPrepared`'s recomputation; route `Prepare`'s inline matcher through it.
-- SPEC-3's §5.1 sentence sits in the paragraph proposal 0086 rewrites; apply it to the `Workspace materialization order:` sentence wherever it stands.
+- `RequiresDemotion` must give the same answer from `Prepare` and from `launchPrepared`'s recomputation (CODE-3 step 4).
 
 ## Goals
 
@@ -55,7 +53,7 @@
 
 ## Non-goals
 
-- Route B (a synthetic `uploadArchive` or pre-extracted source through `stageWorkspace`): it runs platform output through the §7.4 and §13.4 untrusted-upload validators and makes the gateway read the snapshot into memory; exempting it would add a trusted mode to the untrusted path.
+- Route B (a synthetic `uploadArchive` or pre-extracted source through `stageWorkspace`): see decision 1.
 - Reusing the §7.3 Resume RPC for the first bind: it starts the runtime itself, skips PrepareWorkspace, FinalizeWorkspace, RunSetup, and AssignCredentials, and restores the `/sessions` tree.
 - Streaming the snapshot over PrepareWorkspace under a reserved `upload_ref`: it needs a marker or a new source type, and the gateway would proxy every snapshot byte.
 - A new WorkspacePlan source type such as `snapshot`: the plan is a client-visible §14 schema, and presigned bearer URLs would sit in a persisted plan.
@@ -102,7 +100,8 @@ None. The spec loop routed no decision to the human. Its remaining `OPEN` entrie
 
 | Proposal | Status | What this change does to it | What it must do |
 |:--|:--|:--|:--|
-| 0086_fix_the-gateway-accepts-a-workspaceplan-in-the-body-of | Approved | Both edit the composer literals in `pkg/gateway/sessionserver/bind_request.go` and the §5.1 **Derived Runtime Instantiation** paragraph. 0086 rewrites the earlier sentences of that paragraph; 0109 rewrites only the `Workspace materialization order:` sentence. Both also edit different rows of the §15.1 **Error code catalog:**. No semantic dependency. | Whichever lands second rebases textually. |
+| 0086_fix_the-gateway-accepts-a-workspaceplan-in-the-body-of | Approved | Both edit the composer literals in `pkg/gateway/sessionserver/bind_request.go` and the §5.1 **Derived Runtime Instantiation** paragraph. 0086 rewrites the earlier sentences of that paragraph; 0109 rewrites only the `Workspace materialization order:` sentence. Both also edit different rows of the §15.1 **Error code catalog:** and of `docs/reference/error-catalog.md`, different sections of `docs/api/rest.md`, and different operations of `openapi.json`. No semantic dependency. | Whichever lands second rebases textually. SPEC-3's §5.1 edit applies to the `Workspace materialization order:` sentence wherever it stands after 0086 lands. |
+| 0094_fix_data-lifecycle-user-erasure-tenant-deletion-and-suspension-f | Implemented (2026-10-21) | CODE-5 deletes the legacy single-object branch of `copyWorkspaceSnapshot`, together with `parseDeriveURIs` and `derivedSnapshotPart`. That retires the half of the subject and key cells of 0094's Session-keyed write table row K2 that names the legacy single object `handleDerive` copies through `blobstore.Copier`. K2's chunk-object half and its `DeleteBySession(tenantID, derivedID)` undo stand, as do rows C8, C9, K1, K3, and K4. A transient manifest `Get` error now answers `500 INTERNAL_ERROR` where it answered `503 DERIVE_SNAPSHOT_UNAVAILABLE`, and C9's refusal surface already lists both codes. | Nothing. 0094 is landed and is not edited. |
 
 ## Deliverable index
 
@@ -114,9 +113,10 @@ None. The spec loop routed no decision to the human. Its remaining `OPEN` entrie
 - SPEC-6 — spec/28_communication-channels.md — §28.5.5 CH-OBJSTORE Messages, Preconditions, and failure-semantics edits, and the §28.8 CH-OBJSTORE row.
 - SPEC-7 — spec/06_warm-pod-model.md — §6.1 matching-contract sentence for a snapshot restore and `sdkWarmBlockingPaths`.
 - CODE-1 — schemas/lenny-adapter.proto, pkg/proto/adapter/v1, pkg/gateway/runtime/adapterclient/client.go — `restore_chunks = 7` and the client carrier.
-- CODE-2 — pkg/adapter/staging.go, pkg/adapter/resume.go, pkg/adapter/workspace/materialize.go — build-tree seed, pairing refusal, and error mapping.
+- CODE-2 — pkg/adapter/staging.go, pkg/adapter/resume.go, pkg/adapter/workspace/materialize.go, pkg/adapter/server.go — build-tree seed, pairing refusal, error mapping, and capability advertisement.
 - CODE-3 — pkg/gateway/podlifecycle/podsession/ — Binder restore closure call sites and demotion clause.
 - CODE-4 — pkg/gateway/sessionserver/bind_request.go, pkg/gateway/sessionserver/snapshot_restore.go — composer restore closure.
-- CODE-5 — pkg/gateway/sessionserver/snapshot_copy.go, pkg/gateway/sessionserver/derive.go — chunked-only derive and replay copy.
+- CODE-5 — pkg/gateway/sessionserver/snapshot_copy.go, pkg/gateway/sessionserver/derive.go, pkg/gateway/externalapi/openapi/openapi.json — chunked-only derive and replay copy.
 - TEST-1 — test files across pkg/adapter, pkg/gateway, and tests/tier4_integration — tests listed under the non-spec Testing section.
+- DOC-1 — docs/reference/error-catalog.md, docs/api/rest.md — `DERIVE_SNAPSHOT_UNAVAILABLE` catalog row and replay key error codes.
 - REC-1 — BUILD-GAPS.md, gateway-runtime-comms-remediation.md — close findings and file unstaged defects.
