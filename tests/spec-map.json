@@ -2946,7 +2946,12 @@
         "tests/tier4_integration/derived_session_root_test.go::TestDerivedSessionIsOutsideTheSourceTree_spec_12_6",
         "tests/tier7a_load_local/orphan_cascade_sweeper_race_test.go::TestCascadeAndTwoSweepersEndEachSessionOnce_spec_8_10",
         "tests/tier8_chaos/orphan_cascade_replica_stop_test.go::TestOrphanCleanupCompletesStoppedReplicaCascade_spec_8_10",
-        "tests/testinfra/orphanfixture/orphanfixture_test.go::TestLiveUnderTerminalCancelAllNamesOnlyCancelAllOrphans_spec_8_10"
+        "tests/testinfra/orphanfixture/orphanfixture_test.go::TestLiveUnderTerminalCancelAllNamesOnlyCancelAllOrphans_spec_8_10",
+        "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreeRecordsCloseTheirMembers_spec_8_10",
+        "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreeParentFreshnessClosesOnTheCreationFence_spec_8_10",
+        "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreeFiledDefectsAreConfirmed_spec_8_10",
+        "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreeDeletedSymbolsStayDeleted_spec_8_10",
+        "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreePlanEntryRecordsTheImplementation_spec_8_10"
       ],
       "packages": [
         "pkg/delegation/tree",
