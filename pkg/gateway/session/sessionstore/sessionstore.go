@@ -1140,8 +1140,9 @@ type Store interface {
 	ListStaleTerminalSessions(ctx context.Context, ids []string, terminatedBefore time.Time) ([]string, error)
 
 	// ListAbsentSessions returns the identifiers in ids that have no session
-	// row, across tenants. An identifier that is not a session identifier
-	// can name no row, so it is returned as absent. The per-replica budget
+	// row, across tenants. An identifier the store holds a row for is never
+	// returned, whatever its spelling, and an identifier that can name no
+	// row in the store is returned as absent. The per-replica budget
 	// state sweep resolves the session ids it tracks through it, so the
 	// per-session state of an erased session is reclaimed on every replica.
 	// spec: §11.2, §10.1.1.

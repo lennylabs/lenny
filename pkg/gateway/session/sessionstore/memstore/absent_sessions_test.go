@@ -18,8 +18,9 @@ import (
 //
 // ListAbsentSessions returns exactly the identifiers with no row, across
 // tenants: a deleted row and a never-created UUID are absent, a live or a
-// terminal row in either tenant is present, and a string that is not a UUID
-// is absent because it can name no row in the Postgres store this mirrors.
+// terminal row in either tenant is present, a string that is not a UUID and
+// has no row is absent, and a live row whose identifier is not a UUID is
+// present, because the budget state sweep forgets every id reported absent.
 func TestListAbsentSessionsReturnsMissingRows_spec_11_2(t *testing.T) {
 	ctx := context.Background()
 	s := memstore.New()
@@ -42,7 +43,12 @@ func TestListAbsentSessionsReturnsMissingRows_spec_11_2(t *testing.T) {
 	}
 	missing := uuid.NewString()
 
-	got, err := s.ListAbsentSessions(ctx, append(append([]string(nil), ids...), missing, "not-a-uuid"))
+	// A row whose identifier is not a UUID is present like any other row.
+	if err := s.Create(ctx, sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateRunning}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.ListAbsentSessions(ctx, append(append([]string(nil), ids...), missing, "not-a-uuid", "s1"))
 	if err != nil {
 		t.Fatalf("ListAbsentSessions: %v", err)
 	}

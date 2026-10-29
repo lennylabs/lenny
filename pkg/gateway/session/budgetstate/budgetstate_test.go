@@ -179,6 +179,39 @@ func TestSweepForgetsErasedSession_spec_11_2(t *testing.T) {
 	}
 }
 
+// spec: §11.2, §10.1.1 (replica-local state)
+//
+// The in-memory session store accepts identifiers that are not UUIDs. A live
+// row with such an identifier is neither terminal nor absent, so a sweep
+// pass keeps its counter. A store that reported every identifier that is not
+// a UUID as absent made each pass reset that session's budget to zero.
+func TestSweepKeepsLiveSessionWithNonUUIDIdentifier_spec_11_2(t *testing.T) {
+	store := memstore.New()
+	clock := &fakeClock{now: time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)}
+	r := newReplica(store, clock, nil)
+
+	const live = "s1"
+	if err := store.Create(context.Background(), sessionstore.Session{ID: live, TenantID: "acme", State: session.StateRunning}); err != nil {
+		t.Fatalf("create %s: %v", live, err)
+	}
+	r.record(t, live)
+	r.record(t, "no-row") // tracked, but the store holds no row for it
+
+	for pass := 0; pass < 3; pass++ {
+		clock.advance(time.Minute)
+		want := 0
+		if pass == 0 {
+			want = 1 // the identifier with no row
+		}
+		if got := r.sweep.Pass(context.Background()); got != want {
+			t.Fatalf("pass %d forgot %d sessions, want %d", pass, got, want)
+		}
+		if got := r.tracked(); len(got) != 1 || got[0] != live {
+			t.Fatalf("pass %d left tracked %v, want only the live session %s", pass, got, live)
+		}
+	}
+}
+
 // spec: §11.2, §8.6 (Extension state)
 //
 // A late request on a forgotten terminal session re-creates its counter.

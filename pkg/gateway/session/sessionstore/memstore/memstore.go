@@ -521,18 +521,16 @@ func (s *Store) ListStaleTerminalSessions(_ context.Context, ids []string, termi
 }
 
 // ListAbsentSessions implements Store: the identifiers in ids with no row,
-// across tenants. It mirrors the pgstore read, where sessions.id is a UUID
-// column, so an identifier that is not a UUID is absent.
+// across tenants. Create accepts an identifier that is not a UUID, so the
+// row map alone decides absence: an identifier the store holds a row for is
+// never reported absent, whatever its spelling, because the budget state
+// sweep forgets every identifier this returns.
 // spec: §11.2, §10.1.1.
 func (s *Store) ListAbsentSessions(_ context.Context, ids []string) ([]string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var absent []string
 	for _, id := range ids {
-		if _, err := uuid.Parse(id); err != nil {
-			absent = append(absent, id)
-			continue
-		}
 		if _, ok := s.sessions[id]; !ok {
 			absent = append(absent, id)
 		}

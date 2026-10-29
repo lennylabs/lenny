@@ -32,6 +32,10 @@ const (
 	sweepInterleavingRounds   = 40
 	sweepInterleavingSessions = 64
 	sweepInterleavingOps      = 400
+	// sweepInterleavingNonUUID is how many of the sessions carry an
+	// identifier that is not a UUID, which the in-memory store accepts.
+	// These rows stay live for the whole round, so no pass may forget them.
+	sweepInterleavingNonUUID = 8
 )
 
 type sweepNoopTerminator struct{}
@@ -68,6 +72,9 @@ func runSweepInterleavingRound(t *testing.T, rng *rand.Rand) {
 	ids := make([]string, sweepInterleavingSessions)
 	for i := range ids {
 		ids[i] = uuid.NewString()
+		if i < sweepInterleavingNonUUID {
+			ids[i] = fmt.Sprintf("live-%d", i)
+		}
 		if err := store.Create(ctx, sessionstore.Session{ID: ids[i], TenantID: "acme", State: session.StateRunning}); err != nil {
 			t.Fatalf("create: %v", err)
 		}
@@ -121,7 +128,12 @@ func runSweepInterleavingRound(t *testing.T, rng *rand.Rand) {
 			case k < 3:
 				kind = 2
 			}
-			scripts[w] = append(scripts[w], op{kind, rng.Intn(len(replicas)), rng.Intn(len(ids))})
+			target := rng.Intn(len(ids))
+			if kind == 1 {
+				// Terminal writes reach only the UUID-identified sessions.
+				target = sweepInterleavingNonUUID + rng.Intn(len(ids)-sweepInterleavingNonUUID)
+			}
+			scripts[w] = append(scripts[w], op{kind, rng.Intn(len(replicas)), target})
 		}
 	}
 
