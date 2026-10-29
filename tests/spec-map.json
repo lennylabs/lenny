@@ -5449,7 +5449,8 @@
         "tests/tier3_contract/workspaceplan/sources_test.go::TestParserSkipsUnknownSourceType",
         "pkg/adapter/staging_test.go",
         "pkg/gateway/sessionserver/create_test.go",
-        "tests/tier9_security/upload_ref_scope_test.go::TestPlanCannotFetchAnotherSessionsUpload"
+        "tests/tier9_security/upload_ref_scope_test.go::TestPlanCannotFetchAnotherSessionsUpload",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestBindStagesOnlyUploadsThePlanNames_spec_14_1"
       ],
       "packages": [
         "pkg/workspaceplan"
