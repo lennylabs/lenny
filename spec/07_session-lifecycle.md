@@ -531,7 +531,7 @@ Pre-start uploads are buffered in the Artifact Store during the `created` window
 
 ### 7.5 Setup Commands
 
-Run after workspace finalization, before session start.
+Setup commands run in the session's `/workspace/slots/{sessionId}/current`, after the session's workspace is materialized there and before the runtime starts the session. A pod that serves more than one session, concurrently or in sequence, runs each session's setup commands for that session. [Section 7.3](#73-retry-and-resume) step 3e states when a resume runs them, and [Section 6.2](06_warm-pod-model.md#62-pod-state-machine) states the outcome of a setup failure.
 
 **Constraints:**
 
