@@ -387,9 +387,10 @@ func (s *Reserver) Reserve(ctx context.Context, r Reservation) (retTotals Totals
 // Return releases a previously reserved delegation's budget. It is
 // called when a child reaches a terminal state (decrement
 // parallel_children) or on completed-subtree offload (decrement
-// tree_memory). A Redis error is returned for the caller to log; a
-// failed return leaks budget conservatively rather than over-admitting,
-// so it is not fatal to correctness. Return creates no key and keeps the
+// tree_memory). A Redis or script failure is returned wrapped in
+// ErrBudgetUnavailable for the caller to log; a failed return leaks budget
+// conservatively rather than over-admitting, so it is not fatal to
+// correctness. Return creates no key and keeps the
 // TTL of every key it writes. It returns ErrBudgetKeysExpired, with no key
 // written, when the tree-wide sentinel is absent; that result is not a
 // BUDGET_KEYS_EXPIRED detection.
@@ -427,7 +428,7 @@ func (s *Reserver) Return(ctx context.Context, r Reservation) (retErr error) {
 	status, err := returnScript.Run(ctx, s.client, r.keys(), argv...).Int64()
 	span.SetAttributes(attribute.Int64(tracing.AttrLuaQueueWaitMs, time.Since(luaStart).Milliseconds()))
 	if err != nil {
-		return fmt.Errorf("treebudget: return: %w", err)
+		return fmt.Errorf("%w: return: %v", ErrBudgetUnavailable, err)
 	}
 	if status == statusKeysExpired {
 		return ErrBudgetKeysExpired

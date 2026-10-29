@@ -660,8 +660,8 @@ func TestRedisOutageDuringABudgetReturn_spec_8_3(t *testing.T) {
 		t.Fatalf("budget returns = %d, want 1", len(calls))
 	}
 	c := calls[0]
-	if c.err == nil || errors.Is(c.err, treebudget.ErrBudgetKeysExpired) {
-		t.Errorf("return during the outage err = %v, want a Redis error", c.err)
+	if !errors.Is(c.err, treebudget.ErrBudgetUnavailable) || errors.Is(c.err, treebudget.ErrBudgetKeysExpired) {
+		t.Errorf("return during the outage err = %v, want ErrBudgetUnavailable", c.err)
 	}
 	if c.r.RootSessionID != root || c.r.ParentSessionID != child || c.r.TokenDelta != 3000 {
 		t.Errorf("return = %+v, want root %s, parent %s, token delta 3000", c.r, root, child)

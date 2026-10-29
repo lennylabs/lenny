@@ -207,6 +207,29 @@ func TestReserveFailsClosedOnRedisOutage_spec_12_4_213(t *testing.T) {
 	}
 }
 
+// spec: §8.3 (Return on completion), §12.4 — a Return that cannot consult
+// Redis fails with ErrBudgetUnavailable, the same class Reserve reports, and
+// never with ErrBudgetKeysExpired, which is reserved for an absent sentinel.
+func TestReturnDuringRedisOutageIsBudgetUnavailable_spec_8_3(t *testing.T) {
+	t.Parallel()
+	r, mr := newReserver(t)
+	res := treebudget.Reservation{
+		RootSessionID: "root7r", ParentSessionID: "root7r", CreateTree: true,
+		TreeSizeCap: 10, TreeSizeDelta: 1,
+	}
+	if _, err := r.Reserve(context.Background(), res); err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	mr.Close()
+	err := r.Return(context.Background(), res)
+	if !errors.Is(err, treebudget.ErrBudgetUnavailable) {
+		t.Fatalf("Return after outage err = %v, want ErrBudgetUnavailable", err)
+	}
+	if errors.Is(err, treebudget.ErrBudgetKeysExpired) {
+		t.Fatalf("Return after outage err = %v, must not be ErrBudgetKeysExpired", err)
+	}
+}
+
 // spec: §8.2 — an empty root session id is rejected before any
 // Redis interaction.
 func TestReserveEmptyRootRejected_spec_8_2_57(t *testing.T) {
