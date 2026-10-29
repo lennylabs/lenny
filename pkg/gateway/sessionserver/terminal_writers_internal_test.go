@@ -228,6 +228,9 @@ func TestFunnelAndHookWritersEmitTheTerminalEventsOnce_spec_7_2(t *testing.T) {
 				srv := New(store, Options{DevTenantHeader: true, Events: bus})
 				defer srv.Close()
 				tc.write(ctx, srv)
+				if err := srv.WaitTerminalWork(context.Background()); err != nil {
+					t.Fatalf("WaitTerminalWork: %v", err)
+				}
 				completes := eventCount(bus, "s", "session_complete")
 				if tc.want == "" {
 					if completes != 0 || eventCount(bus, "s", "status_change") != 0 {

@@ -55,6 +55,9 @@ func TestPostTerminalHookExpiresRaisedElicitations_spec_9_2(t *testing.T) {
 		s := New(store, Options{DevTenantHeader: true, Interactions: inter})
 		defer s.Close()
 		s.OnSessionTerminal(context.Background(), session.StateRunning, row)
+		if err := s.WaitTerminalWork(context.Background()); err != nil {
+			t.Fatalf("WaitTerminalWork: %v", err)
+		}
 		if _, err := inter.Get(context.Background(), "acme", "s1", "alice", "elic-1"); !errors.Is(err, interactionstore.ErrNotFound) {
 			t.Fatalf("Get after the terminal hook = %v, want ErrNotFound", err)
 		}
@@ -68,6 +71,9 @@ func TestPostTerminalHookExpiresRaisedElicitations_spec_9_2(t *testing.T) {
 		s := New(store, Options{DevTenantHeader: true, Interactions: inter})
 		defer s.Close()
 		s.OnSessionTerminal(context.Background(), session.StateRunning, row)
+		if err := s.WaitTerminalWork(context.Background()); err != nil {
+			t.Fatalf("WaitTerminalWork: %v", err)
+		}
 		if inter.calls != 1 {
 			t.Fatalf("ExpireRaisedBy calls = %d, want 1", inter.calls)
 		}

@@ -1139,10 +1139,13 @@ func (f *gatewayFlags) registerArtifactFlags() {
 	// spec: §11.3 — delegation.usageQuiescenceTimeoutSeconds,
 	// operator-tunable. The §8.10 tree-recovery path waits this long after
 	// the last usage report before declaring the tree quiescent and
-	// progressing to drain. F-11.3.19.
+	// progressing to drain, and the §8.3 budget return of a delegated child
+	// waits this long after the child's terminal transition. The gateway
+	// refuses to start when the value in effect is not below the seal
+	// window in effect. F-11.3.19.
 	f.delegationUsageQuiescenceTimeoutSeconds = flag.Int("delegation-usage-quiescence-timeout-seconds",
 		envInt("LENNY_DELEGATION_USAGE_QUIESCENCE_TIMEOUT_SECONDS", 5),
-		"§11.3 delegation.usageQuiescenceTimeoutSeconds: the wall-clock window the §8.10 tree-recovery path waits after the last child usage report before declaring the delegation tree quiescent. Default 5s. Override via LENNY_DELEGATION_USAGE_QUIESCENCE_TIMEOUT_SECONDS.")
+		"§11.3 delegation.usageQuiescenceTimeoutSeconds: the wall-clock window the §8.10 tree-recovery path waits after the last child usage report before declaring the delegation tree quiescent, and the wall-clock window the §8.3 budget return of a delegated child waits after the child's terminal transition before it returns the child's reservation. Must be less than the seal window in effect (--workspace-seal-max-duration-seconds). Default 5s; a non-positive value selects the default. Override via LENNY_DELEGATION_USAGE_QUIESCENCE_TIMEOUT_SECONDS.")
 	// spec: §8.10 — operator-tunable per-level and
 	// whole-tree recovery deadlines. The default (120s / 600s) matches
 	// `maxLevelRecoverySeconds` / `maxTreeRecoverySeconds`. Deployers

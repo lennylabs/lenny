@@ -192,6 +192,11 @@ func TestStreamFailureReportRacesWatchdogReleaseAndSend_spec_28_5_1(t *testing.T
 		}()
 		start.release(t)
 		wg.Wait()
+		// spec: §7.1 (Terminal pipeline context) — the watchdog-style
+		// expiry's pipeline runs detached under the server's own claim.
+		if err := srv.WaitTerminalWork(ctx); err != nil {
+			t.Fatalf("attempt %d: WaitTerminalWork: %v", attempt, err)
+		}
 
 		row := awaitReportOutcome(t, store, id)
 		outcomes[row.State]++

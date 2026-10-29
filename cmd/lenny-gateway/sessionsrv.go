@@ -308,7 +308,10 @@ func (w *gatewayWiring) buildSessionServer(
 		TreeArchive:        w.treeArchive,
 		TaskUsage:          taskUsageBuilder,
 		TreeBudgetReturner: w.treeBudgetReserver,
-		QuotaCheckpointer:  quotaCheckpointSvc,
+		// spec: §8.3 (Usage quiescence before budget return), §11.3 — the
+		// wait before a delegated child's budget return.
+		UsageQuiescenceTimeout: time.Duration(*f.delegationUsageQuiescenceTimeoutSeconds) * time.Second,
+		QuotaCheckpointer:      quotaCheckpointSvc,
 		// spec: §6.2 (Pod State Machine) — the suspension release checkpoints
 		// the workspace before it releases a suspended session's pod; with no
 		// checkpoint service the pod stays held.

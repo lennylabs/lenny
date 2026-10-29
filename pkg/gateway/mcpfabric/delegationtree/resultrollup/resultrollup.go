@@ -24,6 +24,8 @@ package resultrollup
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -127,11 +129,7 @@ func (b *Builder) TreeUsage(ctx context.Context, sess sessionstore.Session, root
 	if !session.IsTerminal(sess.State) {
 		return nil
 	}
-	rootID := sess.RootSessionID
-	if rootID == "" {
-		rootID = sess.ID
-	}
-
+	rootID := treeRootID(sess)
 	live, err := b.sessions.ListByRoot(ctx, sess.TenantID, rootID)
 	if err != nil {
 		return nil
@@ -140,51 +138,13 @@ func (b *Builder) TreeUsage(ctx context.Context, sess sessionstore.Session, root
 	if b.archive != nil {
 		archived, _ = b.archive.Replay(ctx, sess.TenantID, rootID)
 	}
+	idx := newTreeIndex(live, archived)
 
-	liveByID := make(map[string]sessionstore.Session, len(live))
-	for _, s := range live {
-		liveByID[s.ID] = s
-	}
-	archByID := make(map[string]treearchive.ArchivedNode, len(archived))
-	for _, n := range archived {
-		archByID[n.NodeSessionID] = n
-	}
-
-	// children[parentID] holds every node id whose parent is parentID,
-	// drawn from the union of live rows and archived nodes so a settled,
-	// reclaimed descendant (gone from live rows) still appears.
-	children := map[string][]string{}
-	addEdge := func(child, parent string) {
-		if parent == "" || child == "" {
-			return
-		}
-		for _, existing := range children[parent] {
-			if existing == child {
-				return
-			}
-		}
-		children[parent] = append(children[parent], child)
-	}
-	for _, s := range live {
-		addEdge(s.ID, s.ParentSessionID)
-	}
-	for _, n := range archived {
-		addEdge(n.NodeSessionID, n.ParentSessionID)
-	}
-
-	// DFS the subtree rooted at sess, accumulating each node's own usage.
 	// A non-terminal descendant collapses the whole rollup to null.
 	var sum sessionrecord.TreeUsage
-	seen := map[string]bool{}
-	var walk func(id string, isRoot bool) bool
-	walk = func(id string, isRoot bool) bool {
-		if seen[id] {
-			return true
-		}
-		seen[id] = true
-
-		u, settled := b.nodeUsage(ctx, id, isRoot, sess, rootUsage, liveByID, archByID)
-		if !settled {
+	settled := idx.walk(sess.ID, func(id string, isRoot bool) bool {
+		u, ok := b.nodeUsage(ctx, id, isRoot, sess, rootUsage, idx.live, idx.archived)
+		if !ok {
 			return false
 		}
 		sum.InputTokens += u.InputTokens
@@ -193,18 +153,142 @@ func (b *Builder) TreeUsage(ctx context.Context, sess sessionstore.Session, root
 		sum.PodMinutes += u.PodMinutes
 		sum.CredentialLeaseMinutes += u.CredentialLeaseMinutes
 		sum.TotalTasks++
+		return true
+	})
+	if !settled {
+		return nil
+	}
+	return &sum
+}
 
-		for _, child := range children[id] {
-			if !walk(child, false) {
+// errSubtreeTokensUnwired is the SubtreeTokens error for a Builder that lacks
+// a store the read needs.
+var errSubtreeTokensUnwired = errors.New("resultrollup: subtree token read needs the session, token, and archive stores")
+
+// SubtreeTokens returns the input plus output tokens the subtree rooted at
+// sess has consumed: sess and every descendant, drawn from the live rows and
+// the §8.10 tree archive of sess's recorded root. A node with a live row
+// contributes its session_usage tokens, read in one GetMany over every such
+// node; a node with only an archive record contributes the tokens its
+// archived TaskResult.usage carries, because a session_usage row is deleted
+// with its session row. It does not read the billing ledger, whose tokens
+// arrive only in periodic checkpoints, and it lists only the recorded root's
+// tree rather than the tenant.
+//
+// Any read error, or a nil Builder or a Builder without a session, token, or
+// archive store, returns an error; the caller then credits no tokens.
+//
+// spec: §8.3 (Usage quiescence before budget return), §8.3 (Return on
+// completion), §8.10
+func (b *Builder) SubtreeTokens(ctx context.Context, sess sessionstore.Session) (int64, error) {
+	if b == nil || b.sessions == nil || b.tokens == nil || b.archive == nil {
+		return 0, errSubtreeTokensUnwired
+	}
+	rootID := treeRootID(sess)
+	live, err := b.sessions.ListByRoot(ctx, sess.TenantID, rootID)
+	if err != nil {
+		return 0, fmt.Errorf("resultrollup: list the tree of root %s: %w", rootID, err)
+	}
+	archived, err := b.archive.Replay(ctx, sess.TenantID, rootID)
+	if err != nil {
+		return 0, fmt.Errorf("resultrollup: replay the archive of root %s: %w", rootID, err)
+	}
+	idx := newTreeIndex(live, archived)
+	var liveIDs []string
+	var total int64
+	idx.walk(sess.ID, func(id string, _ bool) bool {
+		if _, ok := idx.live[id]; ok || id == sess.ID {
+			liveIDs = append(liveIDs, id)
+			return true
+		}
+		if n, ok := idx.archived[id]; ok {
+			u := archivedUsage(n)
+			total += u.InputTokens + u.OutputTokens
+		}
+		return true
+	})
+	tokens, err := b.tokens.GetMany(ctx, sess.TenantID, liveIDs)
+	if err != nil {
+		return 0, fmt.Errorf("resultrollup: read the session usage of root %s: %w", rootID, err)
+	}
+	for _, id := range liveIDs {
+		total += tokens[id].Input + tokens[id].Output
+	}
+	return total, nil
+}
+
+// treeRootID is the session's recorded delegation tree root; an empty root
+// column collapses to the session's own id.
+func treeRootID(sess sessionstore.Session) string {
+	if sess.RootSessionID == "" {
+		return sess.ID
+	}
+	return sess.RootSessionID
+}
+
+// treeIndex is the live-plus-archive edge set of one delegation tree, which
+// TreeUsage and SubtreeTokens both walk. A settled, reclaimed descendant that
+// is gone from the live rows still appears through its archive record.
+type treeIndex struct {
+	live     map[string]sessionstore.Session
+	archived map[string]treearchive.ArchivedNode
+	// children[parentID] holds every node id whose parent is parentID.
+	children map[string][]string
+}
+
+// newTreeIndex builds the edge set from the tree's live rows and archived
+// nodes, deduplicating an edge both carry.
+func newTreeIndex(live []sessionstore.Session, archived []treearchive.ArchivedNode) treeIndex {
+	idx := treeIndex{
+		live:     make(map[string]sessionstore.Session, len(live)),
+		archived: make(map[string]treearchive.ArchivedNode, len(archived)),
+		children: map[string][]string{},
+	}
+	for _, s := range live {
+		idx.live[s.ID] = s
+		idx.addEdge(s.ID, s.ParentSessionID)
+	}
+	for _, n := range archived {
+		idx.archived[n.NodeSessionID] = n
+		idx.addEdge(n.NodeSessionID, n.ParentSessionID)
+	}
+	return idx
+}
+
+func (idx treeIndex) addEdge(child, parent string) {
+	if parent == "" || child == "" {
+		return
+	}
+	for _, existing := range idx.children[parent] {
+		if existing == child {
+			return
+		}
+	}
+	idx.children[parent] = append(idx.children[parent], child)
+}
+
+// walk visits start and every descendant depth first, each once, and stops
+// at the first visit that returns false. It reports whether every visit
+// returned true.
+func (idx treeIndex) walk(start string, visit func(id string, isStart bool) bool) bool {
+	seen := map[string]bool{}
+	var rec func(id string, isStart bool) bool
+	rec = func(id string, isStart bool) bool {
+		if seen[id] {
+			return true
+		}
+		seen[id] = true
+		if !visit(id, isStart) {
+			return false
+		}
+		for _, child := range idx.children[id] {
+			if !rec(child, false) {
 				return false
 			}
 		}
 		return true
 	}
-	if !walk(sess.ID, true) {
-		return nil
-	}
-	return &sum
+	return rec(start, true)
 }
 
 // nodeUsage resolves one subtree node's own usage and whether it has

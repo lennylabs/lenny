@@ -395,6 +395,9 @@ func runTerminalContextScenario(t *testing.T, seed session.State, drive tcDriver
 	go func() {
 		defer close(done)
 		drive(writerCtx, f)
+		// spec: §7.1 (Terminal pipeline context) — a detached writer's hook
+		// runs on its own goroutine under its terminal claim.
+		_ = f.srv.WaitTerminalWork(context.Background())
 	}()
 	select {
 	case <-done:

@@ -153,6 +153,9 @@ func TestSessionModePodDrainedOnTerminalTransition_spec_6_1(t *testing.T) {
 		// pre-terminal state is running, so the teardown follows the §6.2
 		// executor recycle path rather than the pre-running by-name reclaim.
 		srv.OnSessionTerminal(ctx, session.StateRunning, sess)
+		if err := srv.WaitTerminalWork(context.Background()); err != nil {
+			t.Fatalf("WaitTerminalWork: %v", err)
+		}
 
 		d, ok := exec.dispositionOf("sm")
 		if !ok || d != tc.want {
@@ -224,6 +227,9 @@ func TestTerminalConditionStampIsIdempotent_spec_7_2(t *testing.T) {
 	}
 
 	srv.OnSessionTerminal(ctx, session.StateRunning, first)
+	if err := srv.WaitTerminalWork(context.Background()); err != nil {
+		t.Fatalf("WaitTerminalWork: %v", err)
+	}
 	second, err := store.Get(ctx, "acme", "idem")
 	if err != nil {
 		t.Fatalf("get after second: %v", err)

@@ -8,7 +8,10 @@
 // over one session store, racing the root's own cancel_all cascade. The root
 // write's locked-row guard admits one writer, so the root fails once and one
 // event is emitted, while every detection is counted and the guarded cancels
-// end each member once.
+// end each member once. Each cancelled member's post-terminal hook runs its
+// budget return against the production return script on miniredis, so each
+// member returns once, and a return that meets the lost sentinel recreates no
+// key and starts no further cleanup.
 //
 // spec: §8.3 (BUDGET_KEYS_EXPIRED detection and tree cleanup), §7.1, §8.10
 package tier7a_load_local_test
@@ -24,8 +27,10 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/resultrollup"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionusage"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/orphanfixture"
 )
@@ -74,8 +79,11 @@ func (r *keysExpiredRecorder) snapshot() (int, map[string]int) {
 // detections), more than one or no delegation.budget_keys_expired event was
 // emitted (the event is not tied to the applied root write), a detection was
 // not counted under the root's pool, a member received two terminal writes or
-// two post-terminal hooks, or a member was left live after the cleanup
-// quiesced.
+// two post-terminal hooks, a member was left live after the cleanup
+// quiesced, a member's budget return ran twice or not at all (the return is
+// not tied to the single applied terminal write), or a return that met the
+// absent sentinel created or modified a budget key or was counted as a
+// detection.
 func TestBudgetKeysExpiredConcurrentDetectionsEndTheTreeOnce_spec_8_3(t *testing.T) {
 	seed := time.Now().UnixNano()
 	t.Logf("seed %d", seed)
@@ -87,13 +95,23 @@ func TestBudgetKeysExpiredConcurrentDetectionsEndTheTreeOnce_spec_8_3(t *testing
 		writes := orphanfixture.NewWriteCounter(memstore.New())
 		archive := orphanfixture.NewArchiveCounter()
 		rec := &keysExpiredRecorder{incs: map[string]int{}}
+		reserver, mr := orphanfixture.NewMiniReserver(t)
+		returns := orphanfixture.NewReturnCounter(reserver)
 		srv := sessionserver.New(writes, sessionserver.Options{
 			DevTenantHeader: true, TreeArchive: archive, OpsEmitter: rec,
 			IncDelegationBudgetKeysExpired: rec.inc,
+			TreeBudgetReturner:             returns,
+			TaskUsage:                      resultrollup.New(writes, sessionusage.NewMemory(), archive, nil),
+			UsageQuiescenceTimer:           orphanfixture.FiredTimer,
 		})
 		orphanfixture.Seed(t, writes, sessionstore.Session{TenantID: "acme", RuntimeRef: "echo", PoolRef: "pool-a"}, nodes)
 		rootID := nodes[0].ID
 		ctx := context.Background()
+		slices := orphanfixture.AssignSlices(t, writes, "acme", nodes, 1000)
+		orphanfixture.ReserveMembers(t, reserver, nodes, slices)
+		loss := orphanfixture.KeyLoss(rng.Intn(3))
+		orphanfixture.LoseKeys(mr, rootID, loss)
+		before := orphanfixture.BudgetKeys(mr, rootID)
 
 		detections := 2 + rng.Intn(7)
 		var wg sync.WaitGroup
@@ -144,6 +162,7 @@ func TestBudgetKeysExpiredConcurrentDetectionsEndTheTreeOnce_spec_8_3(t *testing
 			}
 		}
 		orphanfixture.CheckOnce(t, nodes, writes, archive.Hooks, exact)
+		orphanfixture.CheckReturns(t, fmt.Sprintf("round %d (key loss %d)", round, loss), mr, rootID, slices, returns, loss, before)
 		if open := srv.OpenTerminalWork(); open != 0 {
 			t.Errorf("round %d: OpenTerminalWork = %d after quiescence, want 0", round, open)
 		}

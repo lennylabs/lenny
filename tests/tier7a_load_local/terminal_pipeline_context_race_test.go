@@ -222,6 +222,11 @@ func ctxRaceRound(t *testing.T, round int, rng *rand.Rand) {
 	}
 	close(start)
 	wg.Wait()
+	// spec: §7.1 (Terminal pipeline context) — OnSessionTerminal runs the
+	// pipeline detached under its own claim.
+	if err := srv.WaitTerminalWork(context.Background()); err != nil {
+		t.Fatalf("round %d: WaitTerminalWork: %v", round, err)
+	}
 	assertCtxRaceRound(t, round, store, ids, sealer, exec)
 }
 

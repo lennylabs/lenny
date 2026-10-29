@@ -2288,7 +2288,11 @@ gateway:
   # anyway. 0 (default) leaves the gateway binary's own compiled-in
   # default (300s) in force. Deployers without a working checkpoint sink
   # in a given environment can shorten this so a session teardown is not
-  # held for the full 5-minute retry window on every termination.
+  # held for the full 5-minute retry window on every termination. The
+  # window must exceed the §11.3 usage quiescence timeout
+  # (--delegation-usage-quiescence-timeout-seconds, 5 s by default), which a
+  # delegated child's §8.3 budget return waits inside the terminal pipeline,
+  # or the gateway refuses to start.
   workspaceSealMaxDurationSeconds: 0
   # recommendations tunes the §25.3 Capacity Recommendations service.
   # spec: §25.3 — F-25.3.12.

@@ -48,6 +48,9 @@ func TestTerminalMarkerFailsOnlyResumePending_spec_8_10(t *testing.T) {
 				}
 				before, _ := store.Get(ctx, "acme", "n1")
 				sessionTerminalMarker{s: srv}.FailNode(ctx, before, reason)
+				if err := srv.WaitTerminalWork(ctx); err != nil {
+					t.Fatalf("WaitTerminalWork: %v", err)
+				}
 				got, err := store.Get(ctx, "acme", "n1")
 				if err != nil {
 					t.Fatalf("get: %v", err)
@@ -221,6 +224,9 @@ func TestTreeRecoveryFailRacesResumeEntry_spec_8_10(t *testing.T) {
 			sessionTerminalMarker{s: srv}.FailNode(ctx, row, recovery.ReasonLevelTimeout)
 		}()
 		wg.Wait()
+		if err := srv.WaitTerminalWork(ctx); err != nil {
+			t.Fatalf("WaitTerminalWork: %v", err)
+		}
 		got, _ := store.Get(ctx, "acme", "n1")
 		completes := eventCount(bus, "n1", "session_complete")
 		switch got.State {

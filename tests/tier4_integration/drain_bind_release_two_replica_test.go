@@ -52,6 +52,12 @@ func (f replicaForceTerminator) ForceTerminate(ctx context.Context, tenantID, id
 		return row, prev, false, err
 	}
 	f.r.Server.OnSessionTerminal(ctx, prev, row)
+	// spec: §7.1 (Terminal pipeline context) — the pipeline runs detached
+	// under the server's own claim; wait for it, as the drain's caller
+	// observes the release only after the hook returns.
+	if err := f.r.Server.WaitTerminalWork(ctx); err != nil {
+		return row, prev, true, err
+	}
 	return row, prev, true, nil
 }
 

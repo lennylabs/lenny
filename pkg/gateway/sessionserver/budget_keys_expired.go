@@ -67,10 +67,11 @@ func (s *Server) countBudgetKeysExpired(ctx context.Context, tenantID, rootID st
 // whose budget keys expired. It opens the root's terminal claim before the
 // Update and writes `failed` through budgetKeysExpiredGuard, which admits only
 // the states §7.2 gives a BUDGET_KEYS_EXPIRED transition to `failed`. On a
-// write that applied it runs the post-terminal pipeline through
-// OnSessionTerminal with the locked row's pre-terminal state, and the claim
-// ends when OnSessionTerminal returns. It reports whether the write applied;
-// a refused write or a store error runs no hook.
+// write that applied it hands the row to OnSessionTerminal with the locked
+// row's pre-terminal state; OnSessionTerminal runs the post-terminal
+// pipeline detached under a claim of its own, and this writer's claim ends
+// when OnSessionTerminal returns. It reports whether the write applied; a
+// refused write or a store error runs no hook.
 //
 // The write does not go through transitionToFailed: that funnel's guard
 // refuses a suspended root that holds no pod, and its reason mapping would

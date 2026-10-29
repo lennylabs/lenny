@@ -299,16 +299,22 @@ type Server struct {
 	treeArchive              treearchive.Store
 	taskUsage                *resultrollup.Builder
 	treeBudgetReturner       TreeBudgetReturner
-	quotaCheckpointer        QuotaFinalCheckpointer
-	hwmObserver              DelegationHighWatermarkObserver
-	hwmReader                DelegationHighWatermarkReader
-	maxOrphanTasks           int
-	evals                    evalstore.Store
-	memory                   memorystore.Store
-	experiments              experimentstore.Store
-	pools                    poolstore.Store
-	experimentReporter       ExperimentRejectionReporter
-	stickyCache              StickyCache
+	// usageQuiescenceTimeout is the §8.3 usage quiescence wait before a
+	// delegated child's budget return, resolved by UsageQuiescenceTimeoutFor.
+	usageQuiescenceTimeout time.Duration
+	// quiescenceTimer is the timer seam of that wait; New defaults it to
+	// time.After.
+	quiescenceTimer    func(time.Duration) <-chan time.Time
+	quotaCheckpointer  QuotaFinalCheckpointer
+	hwmObserver        DelegationHighWatermarkObserver
+	hwmReader          DelegationHighWatermarkReader
+	maxOrphanTasks     int
+	evals              evalstore.Store
+	memory             memorystore.Store
+	experiments        experimentstore.Store
+	pools              poolstore.Store
+	experimentReporter ExperimentRejectionReporter
+	stickyCache        StickyCache
 	// externalProviders resolves the §10.7 built-in OpenFeature SDK
 	// providers (launchdarkly, statsig, unleash) for mode:external
 	// targeting. Nil disables the SDK-provider path; only OFREP-targeted
@@ -1336,6 +1342,19 @@ type Options struct {
 	// the decrement (developer mode without Redis-backed counters).
 	TreeBudgetReturner TreeBudgetReturner
 
+	// UsageQuiescenceTimeout is the §11.3
+	// delegation.usageQuiescenceTimeoutSeconds: how long after a delegated
+	// child's terminal transition the post-terminal hook waits before it
+	// returns the child's tree budget. A non-positive value selects the
+	// §11.3 default of 5 s (DefaultUsageQuiescenceTimeout).
+	// spec: §8.3 (Usage quiescence before budget return), §11.3
+	UsageQuiescenceTimeout time.Duration
+
+	// UsageQuiescenceTimer is the timer seam of that wait: it returns a
+	// channel that delivers once the duration has elapsed. Nil uses
+	// time.After. A test drives the wait without real delay through it.
+	UsageQuiescenceTimer func(time.Duration) <-chan time.Time
+
 	// QuotaCheckpointer, when set, persists the §11.2 final
 	// token-usage checkpoint for the session's (tenant, user) when the
 	// session reaches a terminal state. Nil disables the final write
@@ -1736,6 +1755,8 @@ func New(store sessionstore.Store, opts Options) *Server {
 		treeArchive:                opts.TreeArchive,
 		taskUsage:                  opts.TaskUsage,
 		treeBudgetReturner:         opts.TreeBudgetReturner,
+		usageQuiescenceTimeout:     UsageQuiescenceTimeoutFor(opts.UsageQuiescenceTimeout),
+		quiescenceTimer:            opts.UsageQuiescenceTimer,
 		quotaCheckpointer:          opts.QuotaCheckpointer,
 		hwmReader:                  opts.HighWatermarkReader,
 		hwmObserver:                opts.HighWatermarkObserver,
@@ -1844,6 +1865,9 @@ func New(store sessionstore.Store, opts Options) *Server {
 	}
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }
+	}
+	if s.quiescenceTimer == nil {
+		s.quiescenceTimer = time.After
 	}
 	if s.coordLeaseTTL <= 0 {
 		// spec: §10.1 — the at-bind lease TTL must exceed the coordination

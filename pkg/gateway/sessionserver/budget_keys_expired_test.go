@@ -19,9 +19,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/resultrollup"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionusage"
 	"github.com/lennylabs/lenny/tests/testinfra/orphanfixture"
 )
 
@@ -222,11 +224,14 @@ func (f *keysExpiredFixture) waitCallbacks(t *testing.T, want int) {
 	}
 }
 
-func (f *keysExpiredFixture) rootClaimed() bool {
+// rootClaims returns the number of open terminal claims on the root.
+func (f *keysExpiredFixture) rootClaims() int {
 	f.srv.terminalClaims.mu.Lock()
 	defer f.srv.terminalClaims.mu.Unlock()
-	_, ok := f.srv.terminalClaims.entries["root"]
-	return ok
+	if e, ok := f.srv.terminalClaims.entries["root"]; ok {
+		return e.claims
+	}
+	return 0
 }
 
 func (f *keysExpiredFixture) assertDescendantsCancelled(t *testing.T) {
@@ -269,11 +274,16 @@ func TestBudgetKeysExpiredFailsAnAdmittedRootOnce_spec_8_3(t *testing.T) {
 			ctx := context.Background()
 
 			f.srv.HandleBudgetKeysExpired(ctx, "acme", "root")
-			if f.rootClaimed() {
-				t.Error("the root holds a terminal claim after the handler returned")
+			// The root writer's claim has ended; at most the claim the
+			// detached OnSessionTerminal pipeline holds remains.
+			if n := f.rootClaims(); n > 1 {
+				t.Errorf("the root holds %d terminal claims after the handler returned, want at most the hook's one", n)
 			}
 			if err := f.srv.WaitTerminalWork(ctx); err != nil {
 				t.Fatalf("WaitTerminalWork: %v", err)
+			}
+			if n := f.rootClaims(); n != 0 {
+				t.Errorf("the root holds %d terminal claims after its hook ended, want 0", n)
 			}
 
 			root := f.row(t, "root")
@@ -323,8 +333,8 @@ func TestBudgetKeysExpiredKeepsARefusedRootAndSweeps_spec_8_3(t *testing.T) {
 			ctx := context.Background()
 
 			f.srv.HandleBudgetKeysExpired(ctx, "acme", "root")
-			if f.rootClaimed() {
-				t.Error("the root holds a terminal claim after the handler returned")
+			if n := f.rootClaims(); n != 0 {
+				t.Errorf("the root holds %d terminal claims after the handler returned, want 0", n)
 			}
 			if err := f.srv.WaitTerminalWork(ctx); err != nil {
 				t.Fatalf("WaitTerminalWork: %v", err)
@@ -396,8 +406,8 @@ func TestBudgetKeysExpiredRootUpdateErrorEndsItsClaim_spec_8_3(t *testing.T) {
 	ctx := context.Background()
 
 	f.srv.HandleBudgetKeysExpired(ctx, "acme", "root")
-	if f.rootClaimed() {
-		t.Error("the root holds a terminal claim after the handler returned")
+	if n := f.rootClaims(); n != 0 {
+		t.Errorf("the root holds %d terminal claims after the handler returned, want 0", n)
 	}
 	if err := f.srv.WaitTerminalWork(ctx); err != nil {
 		t.Fatalf("WaitTerminalWork: %v", err)
@@ -464,10 +474,15 @@ func TestBudgetKeysExpiredMissingRootCountsUnderNoPool_spec_16_1(t *testing.T) {
 }
 
 // TestBudgetKeysExpiredConcurrentDetectionsFailTheRootOnce_spec_8_3 runs
-// randomized concurrent detections over randomized trees and asserts one
-// applied root write with the budget_keys_expired class, one event, one
-// metric increment per detection under the root's pool, one terminal write
-// and at most one post-terminal hook per member, and every member terminal.
+// randomized concurrent detections over randomized trees, with the cleanup's
+// own cancels running their budget returns through the post-terminal hook
+// against the production return script on miniredis, and asserts one applied
+// root write with the budget_keys_expired class, one event, one metric
+// increment per detection under the root's pool, one terminal write and at
+// most one post-terminal hook per member, and every member terminal. Each
+// member issues exactly one return; with the sentinel lost, every return
+// meets ErrBudgetKeysExpired, creates or modifies no key, and starts no
+// further cleanup or metric increment.
 //
 // spec: §8.3 (BUDGET_KEYS_EXPIRED detection and tree cleanup), §7.1, §8.10
 func TestBudgetKeysExpiredConcurrentDetectionsFailTheRootOnce_spec_8_3(t *testing.T) {
@@ -479,9 +494,11 @@ func TestBudgetKeysExpiredConcurrentDetectionsFailTheRootOnce_spec_8_3(t *testin
 	}
 }
 
-// runBudgetKeysExpiredRound seeds a random tree under a running root, runs
-// detections concurrent HandleBudgetKeysExpired calls with randomized start
-// offsets, and checks the once-per-root and once-per-member outcomes.
+// runBudgetKeysExpiredRound seeds a random tree under a running root with
+// each member's budget reserved on miniredis, removes a random part of the
+// key set, runs detections concurrent HandleBudgetKeysExpired calls with
+// randomized start offsets, and checks the once-per-root, once-per-member,
+// and once-per-return outcomes.
 func runBudgetKeysExpiredRound(t *testing.T, rng *rand.Rand, round, detections int) {
 	t.Helper()
 	n := 0
@@ -491,14 +508,24 @@ func runBudgetKeysExpiredRound(t *testing.T, rng *rand.Rand, round, detections i
 	archive := orphanfixture.NewArchiveCounter()
 	ops := &recordingOpsEmitter{}
 	metric := newKeysExpiredCounter()
+	reserver, mr := orphanfixture.NewMiniReserver(t)
+	returns := orphanfixture.NewReturnCounter(reserver)
 	srv := New(writes, Options{
 		DevTenantHeader: true, TreeArchive: archive, OpsEmitter: ops,
 		IncDelegationBudgetKeysExpired: metric.inc,
+		TreeBudgetReturner:             returns,
+		TaskUsage:                      resultrollup.New(writes, sessionusage.NewMemory(), archive, nil),
+		UsageQuiescenceTimer:           orphanfixture.FiredTimer,
 	})
 	defer srv.Close()
 	orphanfixture.Seed(t, writes, sessionstore.Session{TenantID: "acme", RuntimeRef: "echo", PoolRef: "pool-a"}, nodes)
 	rootID := nodes[0].ID
 	ctx := context.Background()
+	slices := orphanfixture.AssignSlices(t, writes, "acme", nodes, 1000)
+	orphanfixture.ReserveMembers(t, reserver, nodes, slices)
+	loss := orphanfixture.KeyLoss(rng.Intn(3))
+	orphanfixture.LoseKeys(mr, rootID, loss)
+	before := orphanfixture.BudgetKeys(mr, rootID)
 
 	var wg sync.WaitGroup
 	start := make(chan struct{})
@@ -546,6 +573,7 @@ func runBudgetKeysExpiredRound(t *testing.T, rng *rand.Rand, round, detections i
 		}
 	}
 	orphanfixture.CheckOnce(t, nodes, writes, archive.Hooks, exact)
+	orphanfixture.CheckReturns(t, fmt.Sprintf("round %d (key loss %d)", round, loss), mr, rootID, slices, returns, loss, before)
 	if open := srv.OpenTerminalWork(); open != 0 {
 		t.Errorf("round %d: OpenTerminalWork = %d after quiescence, want 0", round, open)
 	}

@@ -314,6 +314,9 @@ func TestTerminalCallbackDelivered_spec_14_108(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	gw.OnSessionTerminal(ctx, session.StateRunning, row)
+	if err := gw.WaitTerminalWork(context.Background()); err != nil {
+		t.Fatalf("WaitTerminalWork: %v", err)
+	}
 
 	select {
 	case rec := <-done:

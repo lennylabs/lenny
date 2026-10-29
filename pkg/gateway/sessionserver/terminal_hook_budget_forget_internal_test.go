@@ -108,6 +108,9 @@ func TestFunnelWriterForgetsBudgetStateOnce_spec_11_2(t *testing.T) {
 	if err := f.srv.WaitTerminalWork(context.Background()); err != nil {
 		t.Fatalf("WaitTerminalWork: %v", err)
 	}
+	if err := f.srv.WaitTerminalWork(context.Background()); err != nil {
+		t.Fatalf("WaitTerminalWork: %v", err)
+	}
 	assertForgetOnceAfterRelease(t, rec, "s")
 }
 

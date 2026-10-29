@@ -17,23 +17,34 @@ import (
 // resume driver and the §6.2 resuming watchdog own a node in resuming, a
 // node whose restore committed is recovered, the §6.2 resume_pending
 // wall-clock cap owns the move to awaiting_client_action, and a terminal row
-// already ran its hook. It is a hook-path terminal writer: it opens its
-// terminal claim before its Update, records the Terminated fact in the
-// write, and on a write that applied runs the post-terminal hook through
-// afterFailed with fromState from the locked row. A refused write
-// (sessionstore.ErrSuperseded) runs no hook, and a store error is ignored,
-// because its one caller, FailNode, returns nothing.
+// already ran its hook.
+//
+// It is a detached hook-path terminal writer. It opens its terminal claim
+// before its Update and records the Terminated fact in the write. On a
+// write that applied it runs the post-terminal hook through afterFailed on a
+// goroutine over a context detached from ctx's cancellation, with fromState
+// from the locked row, hands the claim to that goroutine, which ends it when
+// the hook returns, and returns without waiting, so recovery moves to its
+// next node while the node's hook, its budget return included, runs. A
+// refused write (sessionstore.ErrSuperseded) or a store error runs no hook
+// and ends the claim before failSession returns; the store error is
+// ignored, because its one caller, FailNode, returns nothing.
 //
 // spec: §8.10 (Delegation Tree Recovery), §7.2 (Interactive Session Model),
-// §6.2 (resume_pending wall-clock cap)
+// §6.2 (resume_pending wall-clock cap), §7.1 (Terminal pipeline context),
+// §10.1.7 (Terminal pipelines at process exit.)
 func (s *Server) failSession(ctx context.Context, tenantID, sessionID string) {
 	end := s.BeginTerminal(sessionID)
-	defer end()
 	from, updated, err := s.writeTerminal(ctx, tenantID, sessionID, session.StateFailed, resumePendingGuard)
 	if err != nil {
+		end()
 		return
 	}
-	s.afterFailed(ctx, from, updated)
+	hctx := context.WithoutCancel(ctx)
+	go func() {
+		defer end()
+		s.afterFailed(hctx, from, updated)
+	}()
 }
 
 // resumePendingGuard is tree recovery's locked-row guard: it admits only a
@@ -91,8 +102,10 @@ func (s *Server) afterFailed(ctx context.Context, fromState session.State, updat
 	s.AfterTerminalWrite(ctx, fromState, updated, s.settledChildSignals)
 }
 
-// settledChildSignals is the signal tail of afterFailed:
-// the §8.10 archive of a settled child, then the terminal lifecycle signals.
+// settledChildSignals is the signal tail of afterFailed: the §8.10 archive
+// of a settled child, then the terminal lifecycle signals. Its writers are
+// failSession, failFinalizing, and failStarting. It returns no budget; the
+// post-terminal hook's return step does.
 func (s *Server) settledChildSignals(ctx context.Context, sess sessionstore.Session) {
 	s.archiveSettledChild(ctx, sess)
 	s.emitTerminalLifecycle(ctx, sess)

@@ -5,6 +5,7 @@ package resultrollup_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -271,5 +272,95 @@ func TestNilBuilderSafe(t *testing.T) {
 	}
 	if tu := b.TreeUsage(context.Background(), sess, &sessionrecord.Usage{}); tu != nil {
 		t.Fatalf("nil builder TreeUsage = %+v, want nil", tu)
+	}
+}
+
+// failingLister fails ListByRoot.
+type failingLister struct{ *memstore.Store }
+
+func (failingLister) ListByRoot(context.Context, string, string) ([]sessionstore.Session, error) {
+	return nil, context.DeadlineExceeded
+}
+
+// failingReplay fails Replay.
+type failingReplay struct{ treearchive.Store }
+
+func (failingReplay) Replay(context.Context, string, string) ([]treearchive.ArchivedNode, error) {
+	return nil, errors.New("archive unavailable")
+}
+
+// failingGetMany fails GetMany.
+type failingGetMany struct{ sessionusage.Store }
+
+func (failingGetMany) GetMany(context.Context, string, []string) (map[string]sessionusage.Tokens, error) {
+	return nil, errors.New("usage unavailable")
+}
+
+// subtreeFixture seeds root → child → {live grandchild, archived-only
+// grandchild} plus a sibling of child, each with recorded tokens.
+func subtreeFixture(t *testing.T) (*memstore.Store, *sessionusage.Memory, treearchive.Store, sessionstore.Session) {
+	t.Helper()
+	ctx := context.Background()
+	sessions := memstore.New()
+	tokens := sessionusage.NewMemory()
+	archive := treearchive.NewMemory()
+	child := sessionstore.Session{ID: "child", TenantID: "acme", ParentSessionID: "root", RootSessionID: "root", DelegationDepth: 1, State: session.StateRunning}
+	for _, s := range []sessionstore.Session{
+		{ID: "root", TenantID: "acme", RootSessionID: "root", State: session.StateRunning},
+		child,
+		{ID: "gc", TenantID: "acme", ParentSessionID: "child", RootSessionID: "root", DelegationDepth: 2, State: session.StateCompleted},
+		{ID: "sibling", TenantID: "acme", ParentSessionID: "root", RootSessionID: "root", DelegationDepth: 1, State: session.StateRunning},
+	} {
+		mustCreate(t, sessions, s)
+	}
+	_ = tokens.Add(ctx, "acme", "root", 10000, 10000)
+	_ = tokens.Add(ctx, "acme", "child", 100, 50)
+	_ = tokens.Add(ctx, "acme", "gc", 20, 5)
+	_ = tokens.Add(ctx, "acme", "sibling", 7000, 0)
+	body, _ := json.Marshal(sessionrecord.Result{Usage: &sessionrecord.Usage{InputTokens: 300, OutputTokens: 200}})
+	if err := archive.Archive(ctx, treearchive.ArchivedNode{
+		TenantID: "acme", RootSessionID: "root", NodeSessionID: "gone", ParentSessionID: "child",
+		State: string(session.StateCompleted), Result: string(body),
+	}); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	child.State = session.StateCancelled
+	return sessions, tokens, archive, child
+}
+
+// TestSubtreeTokensSumsLiveAndArchivedDescendants_spec_8_3 asserts that the
+// subtree consumption is the session's own tokens plus every descendant's,
+// with a descendant whose live row is gone counted from its archived usage,
+// and that ancestors and siblings are excluded.
+//
+// spec: §8.3 (Return on completion), §8.10
+func TestSubtreeTokensSumsLiveAndArchivedDescendants_spec_8_3(t *testing.T) {
+	sessions, tokens, archive, child := subtreeFixture(t)
+	got, err := resultrollup.New(sessions, tokens, archive, nil).SubtreeTokens(context.Background(), child)
+	if err != nil {
+		t.Fatalf("SubtreeTokens: %v", err)
+	}
+	if want := int64(150 + 25 + 500); got != want {
+		t.Errorf("SubtreeTokens = %d, want %d", got, want)
+	}
+}
+
+// TestSubtreeTokensErrors_spec_8_3 asserts that a ListByRoot, Replay, or
+// GetMany error, and a Builder missing a store, each return an error.
+//
+// spec: §8.3 (Return on completion)
+func TestSubtreeTokensErrors_spec_8_3(t *testing.T) {
+	sessions, tokens, archive, child := subtreeFixture(t)
+	for name, b := range map[string]*resultrollup.Builder{
+		"ListByRoot":     resultrollup.New(failingLister{sessions}, tokens, archive, nil),
+		"Replay":         resultrollup.New(sessions, tokens, failingReplay{archive}, nil),
+		"GetMany":        resultrollup.New(sessions, failingGetMany{tokens}, archive, nil),
+		"no token store": resultrollup.New(sessions, nil, archive, nil),
+		"no archive":     resultrollup.New(sessions, tokens, nil, nil),
+		"nil Builder":    nil,
+	} {
+		if _, err := b.SubtreeTokens(context.Background(), child); err == nil {
+			t.Errorf("%s: SubtreeTokens returned no error", name)
+		}
 	}
 }
