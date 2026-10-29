@@ -221,6 +221,9 @@
     "tests/tier3_contract/admin_conflict_codes/": {
       "contract": ["tests/tier3_contract/admin_conflict_codes/..."]
     },
+    "tests/tier3_contract/admin_extension_denial/": {
+      "contract": ["tests/tier3_contract/admin_extension_denial/..."]
+    },
     "tests/tier3_contract/admin_impersonation/": {
       "contract": ["tests/tier3_contract/admin_impersonation/..."]
     },
