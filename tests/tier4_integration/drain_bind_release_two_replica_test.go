@@ -6,6 +6,7 @@ package tier4_integration_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,7 +36,10 @@ type replicaForceTerminator struct {
 
 func (f replicaForceTerminator) ForceTerminate(ctx context.Context, tenantID, id string) (sessionstore.Session, session.State, bool, error) {
 	ctx = context.WithoutCancel(ctx)
-	defer f.r.Server.BeginTerminal(id)()
+	// The claim ends before the wait below: WaitTerminalWork returns only
+	// once every open claim has ended, this one included.
+	endClaim := sync.OnceFunc(f.r.Server.BeginTerminal(id))
+	defer endClaim()
 	var prev session.State
 	transitioned := false
 	row, err := f.h.Store.Update(ctx, tenantID, id, func(s *sessionstore.Session) error {
@@ -52,6 +56,7 @@ func (f replicaForceTerminator) ForceTerminate(ctx context.Context, tenantID, id
 		return row, prev, false, err
 	}
 	f.r.Server.OnSessionTerminal(ctx, prev, row)
+	endClaim()
 	// spec: §7.1 (Terminal pipeline context) — the pipeline runs detached
 	// under the server's own claim; wait for it, as the drain's caller
 	// observes the release only after the hook returns.
