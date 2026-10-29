@@ -5476,7 +5476,8 @@
         "pkg/gateway/runtime/runtimestore/workspace_defaults_test.go::TestComposeWorkspaceDefaultsResolve_spec_14_1",
         "pkg/gateway/sessionserver/workspace_defaults_bind_internal_test.go::TestDefaultsResolveFailureLeavesStateUnchanged_spec_14_1",
         "pkg/gateway/mcpfabric/delegation/workspace_defaults_test.go::TestDelegatedChildPlanComposesRuntimeDefaults_spec_14_1",
-        "tests/tier4_integration/workspace_defaults_test.go::TestRuntimeDefaultsMaterializeAtFinalize_spec_14_1"
+        "tests/tier4_integration/workspace_defaults_test.go::TestRuntimeDefaultsMaterializeAtFinalize_spec_14_1",
+        "tests/tier8_chaos/workspace_defaults_outage_test.go::TestWorkspaceDefaultsPostgresOutageFailsClosed_spec_14_1"
       ],
       "packages": [
         "pkg/workspaceplan"
