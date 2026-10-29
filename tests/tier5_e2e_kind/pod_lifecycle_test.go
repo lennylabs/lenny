@@ -52,8 +52,22 @@ func TestPodLifecycle(t *testing.T) {
 		}
 	}
 
+	// A warm pool replaces pods on a scale-down, an upgrade, or a drain,
+	// and the cluster is shared, so a listed pod can be deleted during the
+	// walk. A vanished pod says nothing about the lifecycle under test; it
+	// is logged and skipped, and a model fails only when none of its pods
+	// could be verified.
+	verified := map[string]int{}
 	for _, p := range pods {
-		assertPodLifecycle(t, c, p)
+		if assertPodLifecycle(t, c, p) {
+			verified[p.Model]++
+		}
+	}
+	for _, model := range []string{"sidecar", "embedded"} {
+		if seen[model] && verified[model] == 0 {
+			t.Errorf("every warm pod of the §4.7 %s deployment model was deleted before it could be verified "+
+				"(pods: %v)", model, pods)
+		}
 	}
 }
 
@@ -170,11 +184,15 @@ func objectExists(t *testing.T, c *kind.Cluster, kindName, name string) bool {
 }
 
 // assertPodLifecycle checks one warm agent pod against the §4.7
-// contract for its pool's deployment model.
-func assertPodLifecycle(t *testing.T, c *kind.Cluster, p kind.AgentPod) {
+// contract for its pool's deployment model. It returns false, without
+// failing, when the pod was deleted before its reads completed.
+func assertPodLifecycle(t *testing.T, c *kind.Cluster, p kind.AgentPod) bool {
 	t.Helper()
 
-	containers := podContainers(t, c, p.Name)
+	containers, ok := livePodContainers(t, c, p.Name)
+	if !ok {
+		return false
+	}
 	// The TESTING.md §12.9.8 egress-capture sidecar is optional per
 	// SandboxTemplate annotation. Filter it from the topology check
 	// so the §4.7 model assertion stays focused on the runtime /
@@ -205,17 +223,28 @@ func assertPodLifecycle(t *testing.T, c *kind.Cluster, p kind.AgentPod) {
 	// needs the right expectation per pool so it does not misreport a
 	// correctly-sandboxed pod as a RuntimeClass regression.
 	want := expectedRuntimeClass(p.Pool)
-	if rc := podField(t, c, p.Name, "{.spec.runtimeClassName}"); rc != want {
+	rc, ok := livePodField(t, c, p.Name, "{.spec.runtimeClassName}")
+	if !ok {
+		return false
+	}
+	if rc != want {
 		t.Errorf("%s: runtimeClassName = %q, want %q (§5.3 isolation profile for pool %s)", p.Name, rc, want, p.Pool)
 	}
 
-	// A warmed, unclaimed pod's Sandbox sits in the idle phase.
+	// A warmed, unclaimed pod's Sandbox sits in the idle phase. A pod
+	// deleted since the reads above has left its pool, so its Sandbox
+	// phase is no longer the warm pod's.
 	if phase := sandboxPhaseForPod(t, c, p.Name); phase != "idle" {
+		if !objectExists(t, c, "pod", p.Name) {
+			t.Logf("%s: deleted during the walk (Sandbox phase %q); skipped", p.Name, phase)
+			return false
+		}
 		t.Errorf("%s: backing Sandbox phase = %q, want \"idle\" (a warm, claimable pod)", p.Name, phase)
 	}
 
 	t.Logf("%s: §4.7 %s model verified — containers %v, RuntimeClass %s, Sandbox idle",
 		p.Name, p.Model, containers, want)
+	return true
 }
 
 // expectedRuntimeClass returns the §5.3 RuntimeClass the Sandbox
@@ -233,7 +262,26 @@ func expectedRuntimeClass(pool string) string {
 // podContainers returns the names of a pod's containers.
 func podContainers(t *testing.T, c *kind.Cluster, pod string) []string {
 	t.Helper()
-	out := podField(t, c, pod, "{range .spec.containers[*]}{.name}{\"\\n\"}{end}")
+	return containerNames(podField(t, c, pod, containerNamesPath))
+}
+
+// livePodContainers returns the names of a pod's containers, and false
+// when the pod was deleted after it was listed.
+func livePodContainers(t *testing.T, c *kind.Cluster, pod string) ([]string, bool) {
+	t.Helper()
+	out, ok := livePodField(t, c, pod, containerNamesPath)
+	if !ok {
+		return nil, false
+	}
+	return containerNames(out), true
+}
+
+// containerNamesPath is the jsonpath listing a pod's container names, one
+// per line.
+const containerNamesPath = "{range .spec.containers[*]}{.name}{\"\\n\"}{end}"
+
+// containerNames splits the containerNamesPath output into names.
+func containerNames(out string) []string {
 	var names []string
 	for _, n := range strings.Split(strings.TrimSpace(out), "\n") {
 		if n = strings.TrimSpace(n); n != "" {
@@ -251,6 +299,22 @@ func podField(t *testing.T, c *kind.Cluster, pod, jsonpath string) string {
 		t.Fatalf("reading pod %s field %s: %v\n%s", pod, jsonpath, err, out)
 	}
 	return strings.TrimSpace(out)
+}
+
+// livePodField reads a single jsonpath field from an agent pod. It returns
+// false, and logs the skip, when the read failed because the pod was
+// deleted after it was listed; any other read failure is fatal.
+func livePodField(t *testing.T, c *kind.Cluster, pod, jsonpath string) (string, bool) {
+	t.Helper()
+	out, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "pod", pod, "-o", "jsonpath="+jsonpath)
+	if err != nil {
+		if !objectExists(t, c, "pod", pod) {
+			t.Logf("%s: deleted during the walk; skipped", pod)
+			return "", false
+		}
+		t.Fatalf("reading pod %s field %s: %v\n%s", pod, jsonpath, err, out)
+	}
+	return strings.TrimSpace(out), true
 }
 
 // sandboxPhaseForPod returns the status.phase of the Sandbox whose

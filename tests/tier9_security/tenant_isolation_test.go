@@ -145,7 +145,7 @@ func TestTenantIsolationCrossStore(t *testing.T) {
 	// tenant B's audit data.
 	tenantAAdmin := gwRole{tenant: tenantA, roles: "tenant-admin", user: "carol"}
 	cross := gatewayRequestRetry(t, c, probe, gatewayIP, "GET",
-		"/v1/admin/audit-events/verify?tenantId="+tenantB, tenantAAdmin, "")
+		auditEventsListPath(tenantB, 1), tenantAAdmin, "")
 	if cross.statusCode != 403 {
 		t.Errorf("TESTING.md §12.9.1 violation: a tenant-admin for %s requesting %s's audit chain received "+
 			"status %d, expected 403 FORBIDDEN; the cross-tenant audit-query guard did not reject it "+
@@ -163,7 +163,7 @@ func TestTenantIsolationCrossStore(t *testing.T) {
 	// tenant-admin audit read. This rules out a false positive where the
 	// 403 above came from a blanket denial.
 	own := gatewayRequestRetry(t, c, probe, gatewayIP, "GET",
-		"/v1/admin/audit-events/verify?tenantId="+tenantA, tenantAAdmin, "")
+		auditEventsListPath(tenantA, 1), tenantAAdmin, "")
 	if own.statusCode != 200 {
 		t.Errorf("a tenant-admin for %s reading its OWN audit chain received status %d, expected 200; "+
 			"the audit-query guard is over-broad (body %q)", tenantA, own.statusCode, own.body)
@@ -197,15 +197,21 @@ func seedTenantAuditEvents(t *testing.T, c *kind.Cluster, probe, gatewayIP, tena
 func listAuditEventTenants(t *testing.T, c *kind.Cluster, probe, gatewayIP string, role gwRole, tenant string) []string {
 	t.Helper()
 	res := gatewayRequestRetry(t, c, probe, gatewayIP, "GET",
-		"/v1/admin/audit-events?tenantId="+tenant+"&limit=1000", role, "")
+		auditEventsListPath(tenant, 1000), role, "")
 	if res.curlExit != 0 || res.statusCode != 200 {
 		t.Fatalf("audit-events list for tenant %s failed (curl exit %d, status %d, body %q)",
 			tenant, res.curlExit, res.statusCode, res.body)
 	}
+	// The §25.9 list envelope names the queried tenant at the top level
+	// and carries each row as its §11.7 OCSF record, whose owning tenant
+	// is metadata.tenant_uid.
 	var doc struct {
-		AuditEvents []struct {
-			TenantID string `json:"tenantId"`
-		} `json:"auditEvents"`
+		TenantID string `json:"tenantId"`
+		Items    []struct {
+			Metadata struct {
+				TenantUID string `json:"tenant_uid"`
+			} `json:"metadata"`
+		} `json:"items"`
 	}
 	// An empty body would decode to a zero struct and read as "no rows",
 	// masking a failed request; reject it explicitly.
@@ -216,11 +222,24 @@ func listAuditEventTenants(t *testing.T, c *kind.Cluster, probe, gatewayIP strin
 		t.Fatalf("the audit-events list for tenant %s is not valid JSON: %v\nbody: %q",
 			tenant, err, res.body)
 	}
-	out := make([]string, 0, len(doc.AuditEvents))
-	for _, ev := range doc.AuditEvents {
-		out = append(out, ev.TenantID)
+	if doc.TenantID != tenant {
+		t.Errorf("TESTING.md §12.9.1 violation: the audit-events list for tenant %s names tenant %q in its "+
+			"envelope; the query was answered from another tenant's chain", tenant, doc.TenantID)
+	}
+	out := make([]string, 0, len(doc.Items))
+	for _, ev := range doc.Items {
+		out = append(out, ev.Metadata.TenantUID)
 	}
 	return out
+}
+
+// auditEventsListPath is the §25.9 audit-events list query for one
+// tenant's chain. The list is the tenant-scoped audit read the admin API
+// exposes; GET /v1/admin/audit-events/{seq} matches any other single path
+// segment, so a path such as /v1/admin/audit-events/verify reaches the
+// single-event handler and fails its sequence-number parse.
+func auditEventsListPath(tenant string, limit int) string {
+	return fmt.Sprintf("/v1/admin/audit-events?tenantId=%s&limit=%d", tenant, limit)
 }
 
 // keptRuntimeHarness is a dedicated recycling pool on the Kind cluster whose
