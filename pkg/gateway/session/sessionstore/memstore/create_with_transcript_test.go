@@ -74,11 +74,23 @@ func replayOf(src sessionstore.Session) sessionstore.Session {
 	return r
 }
 
+// reservedReplay is replayOf with the replay's ID reserved for its owner,
+// as the replay handler reserves it before it copies the source snapshot.
+func (tf *transcriptFixture) reservedReplay(t *testing.T, src sessionstore.Session) sessionstore.Session {
+	t.Helper()
+	r := replayOf(src)
+	if err := tf.sessions.Reserve(context.Background(), r.TenantID, r.UserID, r.ID, false); err != nil {
+		t.Fatalf("reserve replay ID: %v", err)
+	}
+	return r
+}
+
 // TestMemstoreCreateWithTranscript_spec_12_8 pins the replay transcript copy
 // inside the insert on the in-memory store: the copy keeps order, roles,
 // contents, timestamps, and schema versions; an empty source inserts the
-// row with no entries; and a fence refusal, a copier error, and a store
-// with no copier each leave neither the row nor an entry under the new ID.
+// row with no entries; and a fence refusal, a reservation that is gone, a
+// copier error, and a store with no copier each leave neither the row nor
+// an entry under the new ID.
 //
 // spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 15.1 (REST API)
 func TestMemstoreCreateWithTranscript_spec_12_8(t *testing.T) {
@@ -87,7 +99,7 @@ func TestMemstoreCreateWithTranscript_spec_12_8(t *testing.T) {
 	t.Run("copies the source transcript in order", func(t *testing.T) {
 		tf := newTranscriptFixture(t, nil)
 		src := tf.seedSource(t, fenceOwner)
-		replay := replayOf(src)
+		replay := tf.reservedReplay(t, src)
 		if err := tf.sessions.CreateWithTranscript(ctx, replay, src.ID); err != nil {
 			t.Fatalf("CreateWithTranscript: %v", err)
 		}
@@ -122,7 +134,7 @@ func TestMemstoreCreateWithTranscript_spec_12_8(t *testing.T) {
 		if err := tf.sessions.Create(ctx, src); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
-		replay := replayOf(src)
+		replay := tf.reservedReplay(t, src)
 		if err := tf.sessions.CreateWithTranscript(ctx, replay, src.ID); err != nil {
 			t.Fatalf("CreateWithTranscript: %v", err)
 		}
@@ -132,8 +144,8 @@ func TestMemstoreCreateWithTranscript_spec_12_8(t *testing.T) {
 	t.Run("fence refusal leaves no row and no entry", func(t *testing.T) {
 		tf := newTranscriptFixture(t, nil)
 		src := tf.seedSource(t, fenceOwner)
+		replay := tf.reservedReplay(t, src)
 		setUser(func(u *userstore.User) { u.ProcessingRestricted = true })(t, tf.fenceFixture)
-		replay := replayOf(src)
 		requireRefusal(t, tf.sessions.CreateWithTranscript(ctx, replay, src.ID), sessionstore.RefusalErasureInProgress)
 		requireNoRow(t, tf.sessions, replay.ID)
 		tf.requireNoEntries(t, replay.ID)
@@ -142,11 +154,31 @@ func TestMemstoreCreateWithTranscript_spec_12_8(t *testing.T) {
 		}
 	})
 
+	// spec: §12.8 (Lifecycle fence and drain) — the replay reserves its ID
+	// before it copies the source snapshot, so an insert whose reservation
+	// the owner's erasure already removed is refused as CreateReserved
+	// refuses it, and copies no transcript.
+	t.Run("a row whose reservation is gone is refused", func(t *testing.T) {
+		tf := newTranscriptFixture(t, nil)
+		src := tf.seedSource(t, fenceOwner)
+		replay := replayOf(src)
+		err := tf.sessions.CreateWithTranscript(ctx, replay, src.ID)
+		ref := refusalOf(t, err, sessionstore.RefusalErasureInProgress)
+		if ref.Details["userId"] != fenceOwner {
+			t.Fatalf("refusal details = %v, want userId %s", ref.Details, fenceOwner)
+		}
+		requireNoRow(t, tf.sessions, replay.ID)
+		tf.requireNoEntries(t, replay.ID)
+		if tf.copies != 0 {
+			t.Fatalf("copier ran %d times for a row with no reservation", tf.copies)
+		}
+	})
+
 	t.Run("copier error leaves no row and no entry", func(t *testing.T) {
 		boom := errors.New("copy failed")
 		tf := newTranscriptFixture(t, boom)
 		src := tf.seedSource(t, fenceOwner)
-		replay := replayOf(src)
+		replay := tf.reservedReplay(t, src)
 		if err := tf.sessions.CreateWithTranscript(ctx, replay, src.ID); !errors.Is(err, boom) {
 			t.Fatalf("CreateWithTranscript = %v, want the copier error", err)
 		}
@@ -193,7 +225,7 @@ func TestMemstoreReplayTranscriptAgainstErasure_spec_12_8(t *testing.T) {
 	t.Run("insert after the flag is refused", func(t *testing.T) {
 		tf := newTranscriptFixture(t, nil)
 		src := tf.seedSource(t, fenceOwner)
-		replay := replayOf(src) // admitted: the caller and source-owner checks ran before the flag
+		replay := tf.reservedReplay(t, src) // admitted: the caller and source-owner checks ran before the flag
 		setUser(func(u *userstore.User) { u.ProcessingRestricted, u.ErasureJobID = true, "job-1" })(t, tf.fenceFixture)
 		requireRefusal(t, tf.sessions.CreateWithTranscript(ctx, replay, src.ID), sessionstore.RefusalErasureInProgress)
 		tf.requireNoEntries(t, replay.ID)
@@ -202,7 +234,7 @@ func TestMemstoreReplayTranscriptAgainstErasure_spec_12_8(t *testing.T) {
 	t.Run("insert before the flag is erased", func(t *testing.T) {
 		tf := newTranscriptFixture(t, nil)
 		src := tf.seedSource(t, fenceOwner)
-		replay := replayOf(src)
+		replay := tf.reservedReplay(t, src)
 		if err := tf.sessions.CreateWithTranscript(ctx, replay, src.ID); err != nil {
 			t.Fatalf("CreateWithTranscript: %v", err)
 		}

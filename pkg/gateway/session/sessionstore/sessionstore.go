@@ -1021,10 +1021,13 @@ type Store interface {
 	// spec: §12.8 (Lifecycle fence and drain).
 	CreateReserved(ctx context.Context, s Session) error
 
-	// CreateWithTranscript is Create, plus a copy of the transcript of
-	// transcriptSourceID into s.ID, in Create's transaction. A fence
-	// refusal, a copy error, or any other insert error leaves neither the
-	// row nor a copied entry. A store built without a transcript copier
+	// CreateWithTranscript is CreateReserved, plus a copy of the transcript
+	// of transcriptSourceID into s.ID, in the insert transaction. The
+	// replay that calls it reserves s.ID before it copies the source's
+	// workspace snapshot under it, so a row with an owner whose reservation
+	// is gone returns ReservationEndedRefusal. A fence refusal, a refused
+	// reservation, a copy error, or any other insert error leaves neither
+	// the row nor a copied entry. A store built without a transcript copier
 	// returns ErrTranscriptCopierUnwired and inserts nothing.
 	// spec: §12.8 (Lifecycle fence and drain), §15.1 (REST API).
 	CreateWithTranscript(ctx context.Context, s Session, transcriptSourceID string) error

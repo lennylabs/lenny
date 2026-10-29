@@ -121,16 +121,20 @@ func (s *Store) deleteOwnReservationLocked(sess sessionstore.Session) bool {
 func (s *Store) CreateReserved(ctx context.Context, sess sessionstore.Session) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.createLocked(ctx, sess, func(row sessionstore.Session) error {
-		if row.UserID == "" {
-			return nil
-		}
-		r, ok := s.reservations[reservationKey(row.TenantID, row.ID)]
-		if !ok || r.UserID != row.UserID {
-			return sessionstore.ReservationEndedRefusal(row.UserID)
-		}
+	return s.createLocked(ctx, sess, s.requireReservationLocked)
+}
+
+// requireReservationLocked refuses a row with an owner whose reservation is
+// gone. Callers hold s.mu. spec: §12.8 (Lifecycle fence and drain).
+func (s *Store) requireReservationLocked(row sessionstore.Session) error {
+	if row.UserID == "" {
 		return nil
-	})
+	}
+	r, ok := s.reservations[reservationKey(row.TenantID, row.ID)]
+	if !ok || r.UserID != row.UserID {
+		return sessionstore.ReservationEndedRefusal(row.UserID)
+	}
+	return nil
 }
 
 // CreateWithTranscript implements sessionstore.Store.
@@ -142,6 +146,9 @@ func (s *Store) CreateWithTranscript(ctx context.Context, sess sessionstore.Sess
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.createLocked(ctx, sess, func(row sessionstore.Session) error {
+		if err := s.requireReservationLocked(row); err != nil {
+			return err
+		}
 		if err := s.copyTranscript(ctx, row.TenantID, transcriptSourceID, row.ID); err != nil {
 			return fmt.Errorf("copy transcript %s to %s: %w", transcriptSourceID, row.ID, err)
 		}

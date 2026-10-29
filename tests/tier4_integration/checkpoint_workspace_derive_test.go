@@ -168,6 +168,74 @@ func TestDeriveCopiesEveryChunkIntoDerivedPrefix(t *testing.T) {
 	}
 }
 
+// spec: §15.1 (Session Replay Semantics), §7.1 (Derive copy semantics),
+// §10.1 — a replay in either mode copies every chunk of the source's
+// checkpoint into the replayed session's own prefix with a complete
+// derived manifest row, so the replayed session's stored ref names objects
+// that exist, and its workspace download reassembles the source's archive.
+//
+// diagnosis: a failure here means a replayed session's WorkspaceSnapshot
+// names no copied object (the synthetic derived-from ref F-7.1.34
+// reported), so the replay starts from nothing even though §15.1 states it
+// starts from the source's snapshot.
+func TestReplayCopiesEveryChunkIntoReplayedPrefix(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"prompt_history", "workspace_derive"} {
+		t.Run(mode, func(t *testing.T) {
+			const (
+				tenant   = "acme"
+				parentID = "sess_source"
+				parentCk = "ck_parent"
+			)
+			store := newLiveChunkStore(t)
+			mstore := partialmanifeststore.NewMemoryStore(nil)
+			archive := seedCheckpoint(t, store, mstore, tenant, parentID, parentCk,
+				[]int{2048, 900}, partialmanifeststore.ChunkEncodingTar)
+			ctx := context.Background()
+			ids := []string{"sess_replay", "ck_replay"}
+			handler, sessions := newChunkGateway(t, store, mstore, func() string {
+				id := ids[0]
+				ids = append(ids[1:], "unused")
+				return id
+			}, sessionstore.Session{
+				ID: parentID, TenantID: tenant, State: session.StateCompleted,
+				RuntimeRef: "claude-code", PoolRef: "default-pool", IsolationProfile: isolation.ProfileSandboxed,
+				WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: parentCk, Source: sessionstore.WorkspaceSnapshotSealed},
+			})
+
+			buf, _ := json.Marshal(map[string]any{"replayMode": mode, "targetRuntime": "claude-code"})
+			req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+parentID+"/replay", bytes.NewReader(buf))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Lenny-Tenant-ID", tenant)
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+			if rr.Code != http.StatusCreated {
+				t.Fatalf("replay status = %d, want 201; body=%s", rr.Code, rr.Body.String())
+			}
+			replayed, err := sessions.Get(ctx, tenant, "sess_replay")
+			if err != nil {
+				t.Fatalf("get replayed session: %v", err)
+			}
+			const wantRef = "/acme/checkpoints/sess_replay/ck_replay"
+			if replayed.WorkspaceSnapshot == nil || replayed.WorkspaceSnapshot.Ref != wantRef {
+				t.Fatalf("replayed ref = %+v, want %s", replayed.WorkspaceSnapshot, wantRef)
+			}
+			objs, err := store.ListByPrefix(ctx, resumechunkPrefixURI(tenant, "sess_replay", "ck_replay"))
+			if err != nil {
+				t.Fatalf("list replayed prefix: %v", err)
+			}
+			if len(objs) != 2 {
+				t.Fatalf("replayed chunk objects = %d, want 2", len(objs))
+			}
+			rrWs := getWorkspace(t, handler, tenant, "sess_replay")
+			if rrWs.Code != http.StatusOK || rrWs.Body.String() != string(archive) {
+				t.Fatalf("replayed workspace = %d (%d bytes), want 200 with the source archive (%d bytes)",
+					rrWs.Code, rrWs.Body.Len(), len(archive))
+			}
+		})
+	}
+}
+
 // spec: §10.1 / §4.5 — the stored WorkspaceSnapshot.Ref
 // is the four-segment object-path form /{tenant}/checkpoints/{session}/
 // {checkpoint_id} the snapshot parsers accept; the workspace download

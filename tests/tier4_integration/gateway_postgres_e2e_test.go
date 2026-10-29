@@ -15,10 +15,15 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
+	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 )
 
@@ -32,7 +37,12 @@ func TestGatewayPostgresPersistenceE2E(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 
 	pg := sharedDatabase(t)
-	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn="+pg.DSN)
+	// The replay below copies the source's workspace snapshot object, so
+	// the gateway stores artifacts in a MinIO the test can seed.
+	mio := containers.StartMinIO(t, containers.MinIOOptions{})
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn="+pg.DSN,
+		"--minio-endpoint="+mio.Endpoint, "--minio-bucket="+mio.Bucket,
+		"--minio-access-key="+mio.AccessKey, "--minio-secret-key="+mio.SecretKey, "--minio-use-ssl=false")
 	base := gw.BaseURL()
 	client := http.DefaultClient
 	ctx := context.Background()
@@ -186,8 +196,12 @@ func TestGatewayPostgresPersistenceE2E(t *testing.T) {
 	//      its transcript into the new session inside the insert
 	//      transaction (§12.8 Lifecycle fence and drain, §15.1 replay),
 	//      through the transcript copier stores.go wires in the Postgres
-	//      branch. Without the copier the replay answers 500. ----
+	//      branch. Without the copier the replay answers 500. The replay
+	//      also copies the source's sealed snapshot object under its own
+	//      ID (§15.1 Session Replay Semantics), and its workspace download
+	//      serves the copied bytes. ----
 	setSnapshotRef(t, ctx, pg.Pool, sid)
+	seedSnapshotObject(t, mio, sid, "replay-source-workspace")
 	code, replayed := do(http.MethodPost, "/v1/sessions/"+sid+"/replay", "", map[string]any{
 		"replayMode": "prompt_history", "targetRuntime": "echo",
 	})
@@ -198,6 +212,9 @@ func TestGatewayPostgresPersistenceE2E(t *testing.T) {
 	src := dbCount(`SELECT COUNT(*) FROM session_messages WHERE session_id = $1::uuid`, sid)
 	if got := dbCount(`SELECT COUNT(*) FROM session_messages WHERE session_id = $1::uuid`, replayedID); got != src || got == 0 {
 		t.Errorf("replayed session_messages = %d, want the source's %d", got, src)
+	}
+	if body := downloadWorkspace(t, base, replayedID); body != "replay-source-workspace" {
+		t.Errorf("replayed workspace download = %q, want the source snapshot's bytes", body)
 	}
 
 	// ---- health: the §25.3 API reports the live Postgres backend ----
@@ -251,6 +268,43 @@ func TestGatewayPostgresIntegrityWarningStartup(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("healthz status = %d, want 200", resp.StatusCode)
 	}
+}
+
+// seedSnapshotObject writes body at the object setSnapshotRef's ref names,
+// /acme/workspace/{sid}/snap, in the gateway's MinIO bucket.
+func seedSnapshotObject(t *testing.T, mio *containers.MinIO, sid, body string) {
+	t.Helper()
+	store, err := miniostore.New(miniostore.Config{
+		Endpoint: mio.Endpoint, AccessKey: mio.AccessKey, SecretKey: mio.SecretKey, Bucket: mio.Bucket,
+	})
+	if err != nil {
+		t.Fatalf("miniostore.New: %v", err)
+	}
+	uri := blobstore.URI{
+		TenantID: "acme", ObjectType: blobstore.ObjectTypeWorkspace,
+		SessionID: sid, PartID: "snap", TTL: time.Hour,
+	}
+	if _, err := store.Put(uri, "application/gzip", strings.NewReader(body)); err != nil {
+		t.Fatalf("seed snapshot object: %v", err)
+	}
+}
+
+// downloadWorkspace reads GET /v1/sessions/{id}/workspace as alice.
+func downloadWorkspace(t *testing.T, base, id string) string {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, base+"/v1/sessions/"+id+"/workspace", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("workspace download: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("workspace download: status %d (%s)", resp.StatusCode, raw)
+	}
+	return string(raw)
 }
 
 // setSnapshotRef gives the session a sealed workspace snapshot reference,

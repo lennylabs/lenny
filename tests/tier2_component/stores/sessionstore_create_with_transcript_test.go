@@ -63,16 +63,41 @@ func TestSessionStoreCreateWithTranscript_spec_12_8(t *testing.T) {
 		}
 		return src
 	}
-	replayOf := func(src sessionstore.Session) sessionstore.Session {
+	// replayOf builds the replay row and reserves its ID for the owner, as
+	// the replay handler reserves it before it copies the source snapshot.
+	unreservedReplayOf := func(src sessionstore.Session) sessionstore.Session {
 		r := e.row(src.UserID)
 		r.ParentSessionID = src.ID
 		return r
 	}
+	replayOf := func(t *testing.T, src sessionstore.Session) sessionstore.Session {
+		t.Helper()
+		r := unreservedReplayOf(src)
+		if err := e.sessions.Reserve(ctx, e.tenant, r.UserID, r.ID, false); err != nil {
+			t.Fatalf("reserve replay ID: %v", err)
+		}
+		return r
+	}
+
+	// spec: §12.8 (Lifecycle fence and drain) — an insert whose reservation
+	// is gone is refused before the copy, as CreateReserved refuses it.
+	t.Run("a row whose reservation is gone is refused and copies nothing", func(t *testing.T) {
+		e.addTenant(t)
+		src := seedSource(t)
+		replay := unreservedReplayOf(src)
+		requirePGRefusal(t, e.sessions.CreateWithTranscript(ctx, replay, src.ID), sessionstore.RefusalErasureInProgress)
+		if n := e.rowCount(t, replay.ID); n != 0 {
+			t.Fatalf("refused replay left %d session rows", n)
+		}
+		if n := messageCount(t, ctx, e.pg, replay.ID); n != 0 {
+			t.Fatalf("refused replay left %d message rows", n)
+		}
+	})
 
 	t.Run("row and copied rows commit together in source order", func(t *testing.T) {
 		e.addTenant(t)
 		src := seedSource(t)
-		replay := replayOf(src)
+		replay := replayOf(t, src)
 		if err := e.sessions.CreateWithTranscript(ctx, replay, src.ID); err != nil {
 			t.Fatalf("CreateWithTranscript: %v", err)
 		}
@@ -104,7 +129,7 @@ func TestSessionStoreCreateWithTranscript_spec_12_8(t *testing.T) {
 		if err := e.sessions.Create(ctx, src); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
-		replay := replayOf(src)
+		replay := replayOf(t, src)
 		if err := e.sessions.CreateWithTranscript(ctx, replay, src.ID); err != nil {
 			t.Fatalf("CreateWithTranscript: %v", err)
 		}
@@ -116,7 +141,7 @@ func TestSessionStoreCreateWithTranscript_spec_12_8(t *testing.T) {
 	t.Run("a copier failing after a partial write leaves neither", func(t *testing.T) {
 		e.addTenant(t)
 		src := seedSource(t)
-		replay := replayOf(src)
+		replay := replayOf(t, src)
 		failAfterCopy = true
 		defer func() { failAfterCopy = false }()
 		if err := e.sessions.CreateWithTranscript(ctx, replay, src.ID); !errors.Is(err, errCopy) {
@@ -145,7 +170,7 @@ func TestSessionStoreCreateWithTranscript_spec_12_8(t *testing.T) {
 	t.Run("a replay waiting on the flag write is refused and copies nothing", func(t *testing.T) {
 		e.addTenant(t)
 		src := seedSource(t)
-		replay := replayOf(src) // admitted: its request-time checks ran before the flag
+		replay := replayOf(t, src) // admitted: its request-time checks ran before the flag
 		hold, entered := make(chan struct{}), make(chan struct{})
 		writeDone := make(chan error, 1)
 		go func() {
@@ -174,7 +199,7 @@ func TestSessionStoreCreateWithTranscript_spec_12_8(t *testing.T) {
 	t.Run("a replay committed before the flag is erased by DeleteByUser", func(t *testing.T) {
 		e.addTenant(t)
 		src := seedSource(t)
-		replay := replayOf(src)
+		replay := replayOf(t, src)
 		if err := e.sessions.CreateWithTranscript(ctx, replay, src.ID); err != nil {
 			t.Fatalf("CreateWithTranscript: %v", err)
 		}

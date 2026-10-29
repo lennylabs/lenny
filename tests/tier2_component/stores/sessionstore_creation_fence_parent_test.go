@@ -230,6 +230,11 @@ func TestSessionStoreCreationFenceSerializesWithParentTerminalWrite_spec_12_8(t 
 		gate = newHeldCopier()
 		t.Cleanup(gate.release)
 		child := e.childOf(parent.ID)
+		// CreateWithTranscript consumes a reservation, so the ID is
+		// reserved first, as the replay handler reserves it.
+		if err := e.sessions.Reserve(ctx, e.tenant, child.UserID, child.ID, true); err != nil {
+			t.Fatalf("reserve child ID: %v", err)
+		}
 		createDone := make(chan error, 1)
 		go func() { createDone <- e.sessions.CreateWithTranscript(ctx, child, parent.ID) }()
 		<-gate.entered // the fence holds its FOR SHARE lock on the parent row

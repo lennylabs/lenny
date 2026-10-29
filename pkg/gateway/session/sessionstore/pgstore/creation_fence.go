@@ -171,13 +171,18 @@ func (s *Store) CreateReserved(ctx context.Context, sess sessionstore.Session) e
 // CreateWithTranscript implements sessionstore.Store: the copy runs on the
 // insert transaction after the fence, the INSERT, and the reservation
 // DELETE, so the copied rows commit only with the session row and the fence
-// holds its FOR SHARE locks until the copy ends.
+// holds its FOR SHARE locks until the copy ends. A row with an owner whose
+// reservation was already gone is refused before the copy, as
+// CreateReserved refuses it.
 // spec: §12.8 (Lifecycle fence and drain), §15.1 (REST API).
 func (s *Store) CreateWithTranscript(ctx context.Context, sess sessionstore.Session, transcriptSourceID string) error {
 	if s.copyTranscript == nil {
 		return sessionstore.ErrTranscriptCopierUnwired
 	}
-	return s.create(ctx, sess, nil, func(ctx context.Context, tx pgx.Tx, sess sessionstore.Session, _ bool) error {
+	return s.create(ctx, sess, nil, func(ctx context.Context, tx pgx.Tx, sess sessionstore.Session, deleted bool) error {
+		if err := requireReservation(ctx, tx, sess, deleted); err != nil {
+			return err
+		}
 		if err := s.copyTranscript(ctx, tx, sess.TenantID, transcriptSourceID, sess.ID); err != nil {
 			return fmt.Errorf("copy transcript %s to %s: %w", transcriptSourceID, sess.ID, err)
 		}
