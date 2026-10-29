@@ -536,11 +536,11 @@ Run after workspace finalization, before session start.
 - Resource-bounded
 - Fully logged (stdout/stderr captured)
 - Network **blocked by default** during setup (static NetworkPolicy; no dynamic toggling which would require NET_ADMIN)
-- Max commands per session enforced (`setupCommandPolicy.maxCommands`)
+- Max commands per session enforced (`setupCommandPolicy.maxCommands`; **Command policy:** below states which commands count)
 
 **Security model:** The true security boundary for setup commands is the pod's isolation profile (gVisor/Kata), filesystem read-only root, non-root UID, network policy, and the ephemeral nature of the pod. Setup commands run inside the sandbox — even a malicious setup command is constrained by the pod's security context. The command policy modes below are defense-in-depth layers, not the primary security boundary.
 
-**Command policy:** The gateway validates every setup command against the Runtime's `setupCommandPolicy` before forwarding to the pod:
+**Command policy:** Before forwarding to the pod, the gateway validates every setup command of a client-submitted `WorkspacePlan` against the Runtime's `setupCommandPolicy` and counts those commands toward `maxCommands`. The setup commands that the runtime's own `workspaceDefaults` contributes ([Section 5.1](05_runtime-registry-and-pool-model.md#51-runtime)) are exempt from both checks, and **Shell-free execution (`shell: false`):** below applies to every setup command. The policy modes are:
 
 | Mode        | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
