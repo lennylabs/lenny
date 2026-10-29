@@ -31,7 +31,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionlogstore"
@@ -57,7 +56,6 @@ import (
 func (w *gatewayWiring) buildSessionServer(
 	gwMetrics *gatewaymetrics.Metrics,
 	activityStamper *sessionidle.Stamper,
-	sessionBudgetEnforcer *sessionbudget.Enforcer,
 	dsMonitor *dualstore.Monitor,
 	environments environmentstore.Store,
 	tenantAccess tenantaccessstore.Store,
@@ -147,20 +145,21 @@ func (w *gatewayWiring) buildSessionServer(
 		partialCleaner.Objects = w.minioStore
 	}
 
+	// spec: §11.2, §10.1.1 — every replica sweeps the per-session budget
+	// state it holds for sessions that ended on another replica or were
+	// erased; startBackgroundWorkers runs it under the watchdog context.
+	w.budgetStateSweep = w.buildBudgetStateSweep(*w.f.budgetStateSweepInterval)
+
 	return sessionserver.New(w.sessions, sessionserver.Options{
 		// spec: §6.2 — stamp agent_output / tool_use events
 		// published on the session bus as idle-timer activity. F-11.3.7.
 		ActivityStamper: activityStamper,
 		// spec: §11.2 — drop a settled session's mid-session budget
 		// accounting so the enforcer's per-session map does not grow
-		// unbounded. The closure also clears the §8.6 recorder's accumulated
-		// grant delta for the session (proposal 0023 S3/S4); the recorder is
-		// constructed in a later build step, so w.proxyUsageRec is read at
-		// call time rather than captured now.
-		BudgetForget: func(sessionID string) {
-			sessionBudgetEnforcer.Forget(sessionID)
-			w.proxyUsageRec.forget(sessionID)
-		},
+		// unbounded. The composed forget also clears the §8.6 recorder's
+		// accumulated grant delta and the anomaly detector's accumulator; the
+		// per-replica budget state sweep calls the same forget.
+		BudgetForget: w.forgetBudgetState,
 		// spec: §8.10 — operator-tunable per-tenant orphan cap.
 		// The default (100) flows through the constructor when the flag
 		// is unset; an override surfaces both on the sessionserver

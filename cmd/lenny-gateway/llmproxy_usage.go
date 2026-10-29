@@ -225,6 +225,24 @@ func (r *proxyUsageRecorder) forget(sessionID string) {
 	}
 }
 
+// TrackedSessions returns the ids of the sessions whose granted token delta
+// the recorder holds, in no particular order. The per-replica budget state
+// sweep resolves them against the session store and forgets each one whose
+// row is terminal or absent. Nil-safe.
+// spec: §8.6, §11.2, §10.1.1.
+func (r *proxyUsageRecorder) TrackedSessions() []string {
+	if r == nil {
+		return nil
+	}
+	r.grantMu.Lock()
+	defer r.grantMu.Unlock()
+	ids := make([]string, 0, len(r.grantedDelta))
+	for id := range r.grantedDelta {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 // setBudgetTracker selects the §12.4 in_memory_reconciled quota
 // path: recordQuota folds the proxy-extracted tenant token count into the
 // per-replica budget slice instead of the Redis counter. Nil-safe so the

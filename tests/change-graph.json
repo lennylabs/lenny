@@ -784,13 +784,18 @@
       "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/rest_mcp/..."],
       "integration": ["tests/tier4_integration/session_lifecycle_test.go"]
     },
+    "pkg/gateway/session/budgetstate": {
+      "unit": ["pkg/gateway/session/budgetstate/...", "cmd/lenny-gateway/..."],
+      "load_local": ["tests/tier7a_load_local/budget_state_sweep_interleaving_test.go"]
+    },
     "pkg/gateway/session/sessionbudget": {
       "unit": ["pkg/gateway/session/sessionbudget/..."],
       "load_local": ["tests/tier7a_load_local/enforcer_terminate_deny_race_test.go", "tests/tier7a_load_local/scenarios/raisebudget_enforcer_race/...", "tests/tier7a_load_local/scenarios/budget_gate_deny_flag_race/..."]
     },
     "pkg/gateway/session/sessionstore": {
       "unit": ["pkg/gateway/session/sessionstore/..."],
-      "contract": ["tests/tier3_contract/rest_sessions/..."]
+      "contract": ["tests/tier3_contract/rest_sessions/..."],
+      "integration": ["tests/tier4_integration/absent_sessions_pgstore_test.go"]
     },
     "pkg/gateway/sessionserver": {
       "unit": ["pkg/gateway/sessionserver/...", "tests/testinfra/lifecyclefence/..."],

@@ -30,12 +30,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/serviceidentity"
+	"github.com/lennylabs/lenny/pkg/gateway/session/budgetstate"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/orphansession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionlogstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/tokenanomaly"
 	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
@@ -257,7 +259,14 @@ type gatewayWiringFields struct {
 	// usagestore is wired (the recorder is nil), in which case exhaustion
 	// keeps the §11.2 terminate-immediately posture.
 	proxyUsageRec *proxyUsageRecorder
-	leaseBudgets  *leasecontrol.StoreBudgetSource
+	// tokenAnomaly is the §11.2 direct-mode anomaly detector buildLLMProxy
+	// constructs. The budget state sweep reads the sessions it tracks.
+	tokenAnomaly *tokenanomaly.Detector
+	// budgetStateSweep reclaims per-session budget state for sessions that
+	// ended on another replica or were erased. buildSessionServer constructs
+	// it and startBackgroundWorkers runs it. spec: §11.2, §10.1.1.
+	budgetStateSweep *budgetstate.Sweep
+	leaseBudgets     *leasecontrol.StoreBudgetSource
 	// leaseDenials is the §8.6 DenialStore behind leaseBudgets. It is built
 	// whether or not the GatewayControl listener is enabled, because the
 	// delegate_task token cap reads the tree's cumulative grants from it.

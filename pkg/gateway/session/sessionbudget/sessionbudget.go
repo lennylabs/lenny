@@ -396,3 +396,22 @@ func (e *Enforcer) Forget(sessionID string) {
 	delete(e.sessions, sessionID)
 	e.mu.Unlock()
 }
+
+// TrackedSessions returns the ids of the sessions the enforcer holds a
+// counter for, in no particular order. The per-replica budget state sweep
+// resolves them against the session store and forgets each one whose row is
+// terminal or absent, which reclaims a counter the terminal pipeline on
+// another replica could not reach.
+// spec: §11.2, §10.1.1.
+func (e *Enforcer) TrackedSessions() []string {
+	if e == nil {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	ids := make([]string, 0, len(e.sessions))
+	for id := range e.sessions {
+		ids = append(ids, id)
+	}
+	return ids
+}

@@ -217,6 +217,9 @@ func (w *gatewayWiring) buildStartupGates() {
 	}); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
+	if err := validateBudgetStateSweepInterval(*f.budgetStateSweepInterval); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
 	if err := validateUsageQuiescenceTimeout(*f.delegationUsageQuiescenceTimeoutSeconds, *f.workspaceSealMaxDurationSeconds); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}

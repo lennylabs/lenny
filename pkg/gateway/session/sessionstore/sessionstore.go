@@ -1139,6 +1139,14 @@ type Store interface {
 	// spec: §5.2 (Slot assignment atomicity).
 	ListStaleTerminalSessions(ctx context.Context, ids []string, terminatedBefore time.Time) ([]string, error)
 
+	// ListAbsentSessions returns the identifiers in ids that have no session
+	// row, across tenants. An identifier that is not a session identifier
+	// can name no row, so it is returned as absent. The per-replica budget
+	// state sweep resolves the session ids it tracks through it, so the
+	// per-session state of an erased session is reclaimed on every replica.
+	// spec: §11.2, §10.1.1.
+	ListAbsentSessions(ctx context.Context, ids []string) ([]string, error)
+
 	// ReserveSlotUnderLock is the §12.4 Redis-outage capacity gate for the
 	// per-pod session-mode slot counter. It serializes the slot-admission
 	// decision for podID under a per-pod Postgres advisory lock so two

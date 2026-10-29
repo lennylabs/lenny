@@ -174,7 +174,7 @@ func runGateway(f *gatewayFlags) {
 	// sessionserver interfaces); the returned server threads to the MCP
 	// fabric, the admin router, the HTTP surface, and the watchdog.
 	sessionSrv := w.buildSessionServer(
-		gwMetrics, activityStamper, sessionBudgetEnforcer, dsMonitor,
+		gwMetrics, activityStamper, dsMonitor,
 		environments, tenantAccess, opsEmitter, credentialPools, vcsCreds,
 		customRoles, resolvedNoEnvPolicy, auditSink, w.sessionStickyCache,
 		w.experimentProviders, usage, taskUsageBuilder, quotaCheckpointSvc, policyChain, policyAuditSink,
