@@ -73,12 +73,6 @@ type ClaimOpts struct {
 	TenantID  string
 	SessionID string
 
-	// RequiresDemotion asks for an SDK-warm pod to be demoted to
-	// pod-warm before the claim is satisfied (§6 SDK-warm → pod-warm
-	// demotion, which feeds lenny_warmpool_sdk_demotions_total). v1
-	// callers leave it false.
-	RequiresDemotion bool
-
 	// Priority is the admission-control claim priority. nil means
 	// unset, the §12.6 default; a future priority-aware
 	// admission path branches on a non-nil value.
