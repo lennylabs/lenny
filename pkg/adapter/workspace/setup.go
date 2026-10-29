@@ -58,8 +58,9 @@ type SetupOptions struct {
 	AggregateTimeout time.Duration
 
 	// FailOnAggregateTimeout selects the §5.1 setupPolicy.onTimeout
-	// disposition: true is `fail` (abort pod startup), false is `warn`
-	// (proceed to runtime start despite the unfinished setup phase). When
+	// disposition: true is `fail` (fails the session's setup; spec: §7.5
+	// Setup Commands; §6.2 Pod State Machine), false is `warn` (proceed
+	// to runtime start despite the unfinished setup phase). When
 	// false RunSetup returns ErrSetupAggregateTimeoutWarn (non-fatal) on
 	// cap-exceed so the caller can emit the §5.1 warn observability
 	// before unwrapping to RPC success. spec: §5.1 — F-7.5.13.
