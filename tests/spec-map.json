@@ -2857,6 +2857,8 @@
         "tests/tier4_integration/delegation_budget_keys_expired_test.go::TestDenialStoreGrantsReadsCumulativeExtColumns_spec_8_6",
         "tests/tier7a_load_local/budget_sentinel_interleaving_test.go::TestBudgetSentinelRandomizedInterleaving_spec_8_3",
         "tests/tier8_chaos/delegation_budget_datastore_outage_test.go::TestDelegateTaskPostgresOutageFailsClosed_spec_8_3",
+        "tests/tier8_chaos/delegation_budget_redis_loss_test.go::TestRedisDataLossOnALiveDelegationTree_spec_8_3",
+        "tests/tier8_chaos/delegation_budget_redis_loss_test.go::TestRedisOutageDuringABudgetReturn_spec_8_3",
         "pkg/delegation/lease/lease_test.go::TestValidateChildSliceRejectsParallelOverrun",
         "pkg/delegation/lease/lease_test.go::TestValidateChildSliceRejectsTokenBudgetOverrun",
         "pkg/delegation/lease/lease_test.go::TestValidateChildSliceWithinBudget",
