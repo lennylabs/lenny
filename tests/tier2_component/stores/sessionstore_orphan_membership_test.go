@@ -73,9 +73,7 @@ func TestDeletedParentLeavesDelegatedChildSelectedAsOrphan_spec_8_10(t *testing.
 	if err := e.sessions.Create(ctx, child); err != nil {
 		t.Fatalf("create child: %v", err)
 	}
-	if _, err := e.pg.Pool.Exec(ctx, `DELETE FROM sessions WHERE id = $1::uuid`, parent.ID); err != nil {
-		t.Fatalf("delete parent: %v", err)
-	}
+	e.deleteSessionRow(t, parent.ID)
 	got, err := e.sessions.Get(ctx, e.tenant, child.ID)
 	if err != nil {
 		t.Fatalf("get child: %v", err)
@@ -150,5 +148,26 @@ func TestTwoOrphanSweepersOverPostgresEndEachOrphanOnce_spec_8_10(t *testing.T) 
 		if h := hooks.Hooks(id); h != 1 {
 			t.Errorf("session %s ran %d sweeper hooks, want 1", id, h)
 		}
+	}
+}
+
+// deleteSessionRow deletes one session row directly in Postgres, inside a
+// transaction scoped to the env's tenant so the tenant guard admits the write.
+func (e *fenceEnv) deleteSessionRow(t *testing.T, id string) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := e.pg.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.current_tenant', $1, true)`, e.tenant); err != nil {
+		t.Fatalf("set tenant: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE id = $1::uuid`, id); err != nil {
+		t.Fatalf("delete session %s: %v", id, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit delete: %v", err)
 	}
 }

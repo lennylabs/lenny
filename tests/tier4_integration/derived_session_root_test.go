@@ -101,8 +101,11 @@ func TestDerivedSessionIsOutsideTheSourceTree_spec_12_6(t *testing.T) {
 			t.Fatalf("seed %s: %v", row.ID, err)
 		}
 	}
+	// The creation fence refuses a delegated child under an ended parent, so
+	// the source tree's root is seeded live, its children are created, and
+	// the root is ended afterwards.
 	seed(func(r *sessionstore.Session) {
-		r.ID, r.State, r.TerminatedAt = "sess_old_root", session.StateCompleted, clock.Add(-time.Hour)
+		r.ID, r.State = "sess_old_root", session.StateRunning
 		r.CascadeOnFailure = session.CascadeDetach
 	})
 	seed(func(r *sessionstore.Session) {
@@ -118,6 +121,12 @@ func TestDerivedSessionIsOutsideTheSourceTree_spec_12_6(t *testing.T) {
 		r.ID, r.State, r.CascadeOnFailure = "sess_src_live", session.StateRunning, session.CascadeCancelAll
 		r.WorkspaceSnapshot = &sessionstore.WorkspaceSnapshot{Ref: "ck_live", Source: sessionstore.WorkspaceSnapshotCheckpoint}
 	})
+	if _, err := sessions.Update(ctx, tenant, "sess_old_root", func(r *sessionstore.Session) error {
+		r.State, r.TerminatedAt = session.StateCompleted, clock.Add(-time.Hour)
+		return nil
+	}); err != nil {
+		t.Fatalf("end sess_old_root: %v", err)
+	}
 
 	handler := srv.Handler()
 	fromDone := deriveVia(t, handler, tenant, "sess_src_done", false)
