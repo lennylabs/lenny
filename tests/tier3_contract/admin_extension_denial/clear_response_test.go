@@ -107,12 +107,14 @@ func (f fixture) denied(t *testing.T) bool {
 func envelopeCode(t *testing.T, rr *httptest.ResponseRecorder) string {
 	t.Helper()
 	var body struct {
-		Code string `json:"code"`
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode error envelope %q: %v", rr.Body.String(), err)
 	}
-	return body.Code
+	return body.Error.Code
 }
 
 // spec: §15.1 (REST API), §8.6 (Extension state), §24.11
