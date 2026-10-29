@@ -336,7 +336,7 @@ func cmdSessionNew(ctx context.Context, args []string, stdout, stderr io.Writer)
 // starts the session. It returns the created session id.
 //
 // spec: §26.2; §7.1 (decomposed create → upload → finalize →
-// start); §14 uploadArchive / uploadFile.
+// start); §14 uploadArchive / uploadFile; §14.1 (Plan binding).
 func createSessionWithWorkspace(ctx context.Context, client *lenny.Client, f sessionFlags, stderr io.Writer) (string, error) {
 	created, err := client.CreateSession(ctx, lenny.CreateSessionRequest{
 		RuntimeRef: f.runtime,

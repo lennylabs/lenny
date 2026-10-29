@@ -908,3 +908,26 @@ func TestProductionAuditAlertDescriptions_spec_16_5(t *testing.T) {
 		})
 	}
 }
+
+// TestWarmPoolReplenishmentFailingNamesNoWarmUpCause_spec_16_5 pins the
+// WarmPoolReplenishmentFailing description to the counter's own scope: the
+// warm-up failure counter is classified by its error_type label, and the
+// description no longer asserts that every failure is a pod failing to
+// reach idle during warm-up. The expression is unchanged.
+//
+// spec: 16.5 (Alerting Rules and SLOs), 16.1 (Metrics)
+func TestWarmPoolReplenishmentFailingNamesNoWarmUpCause_spec_16_5(t *testing.T) {
+	r := catalogRule(t, "WarmPoolReplenishmentFailing")
+	if want := `rate(lenny_warmpool_warmup_failure_total[5m]) * 60 > 1`; r.Expr != want {
+		t.Errorf("Expr = %q, want %q unchanged", r.Expr, want)
+	}
+	if !strings.Contains(r.Description, "error_type") {
+		t.Errorf("Description = %q, want it to name the error_type label", r.Description)
+	}
+	if strings.Contains(r.Description, "reach idle") {
+		t.Errorf("Description = %q, must not attribute every failure to reaching idle", r.Description)
+	}
+	if r.For != 5*time.Minute || r.SpecRef != "§16.5" {
+		t.Errorf("For/SpecRef = %v/%q, want 5m/§16.5 unchanged", r.For, r.SpecRef)
+	}
+}

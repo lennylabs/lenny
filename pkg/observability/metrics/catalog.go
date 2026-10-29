@@ -227,7 +227,7 @@ var metricCatalog = []MetricSpec{
 	{"lenny_warmpool_cold_start_total", TypeCounter, "Cold-start sessions served"},
 	{"lenny_warmpool_fill_duration_seconds", TypeHistogram, "Time from pool creation to reaching minWarm ready pods"},
 	{"lenny_warmpool_claims_total", TypeCounter, "Warm pod claims (idle to claimed transitions)"},
-	{"lenny_warmpool_sdk_demotions_total", TypeCounter, "SDK-warm pods demoted to pod-warm before session assignment"},
+	{"lenny_warmpool_sdk_demotions_total", TypeCounter, "SDK-warm pods demoted to pod-warm"},
 	{"lenny_pod_session_reuse_count", TypeHistogram, "Sessions served by a single pod under recycle.enabled"},
 	{"lenny_pool_config_reconciliation_lag_seconds", TypeGauge, "Time since the last successful CRD reconciliation"},
 	{"lenny_pool_bootstrap_mode", TypeGauge, "Pool bootstrap mode flag (1 active, 0 converged)"},

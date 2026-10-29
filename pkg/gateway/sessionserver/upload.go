@@ -53,8 +53,14 @@ const UploadMaxBodyBytes int64 = 64 * 1024 * 1024 // 64 MiB
 
 // UploadResponse is the §15.1 POST /v1/sessions/{id}/upload reply.
 type UploadResponse struct {
-	// UploadRef is the §4.5 `lenny-blob://` URI clients pass as
-	// `sources[<n>].uploadRef` in a subsequent finalize call.
+	// UploadRef is the reference clients pass as `sources[<n>].uploadRef`
+	// in a plan bound to this session. The gateway emits a `lenny-blob://`
+	// URI, but clients treat the value as opaque. It is valid only in a
+	// plan bound to the uploading session, which validatePlanUploadRefs
+	// enforces.
+	//
+	// spec: §14 Workspace Plan Schema (uploadRef field note); §14.1
+	// WorkspacePlan Schema Versioning (Plan binding).
 	UploadRef string `json:"uploadRef"`
 
 	// MimeType echoes the Content-Type the gateway stored alongside
