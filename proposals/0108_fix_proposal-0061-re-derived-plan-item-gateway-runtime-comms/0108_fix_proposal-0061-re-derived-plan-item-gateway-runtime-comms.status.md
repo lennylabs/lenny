@@ -2,13 +2,13 @@
 proposal: 0108_fix_proposal-0061-re-derived-plan-item-gateway-runtime-comms
 title: Built-in OpenAI-dialect adapter conversations claim a pod per turn
 kind: fix
-status: Reviewed
+status: Approved
 drafted-date: 2026-10-29
 drafted-by: change-proposal
 reviewed-date: 2026-10-29
 reviewed-by: change-proposal
-approved-date: 
-approved-by: 
+approved-date: 2026-10-29
+approved-by: jaf
 implemented-date: 
 implemented-by: 
 ---
