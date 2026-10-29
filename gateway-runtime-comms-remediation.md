@@ -3938,7 +3938,11 @@ stages neither, so F-7.2.43 is queued here and F-5.2.57 is re-routed in the 0100
     carry `WorkspaceSnapshot` through every bind path that binds a `created` row, and restore it before the
     plan's sources. It lands after 0105's implementation, which edits the sessionserver start and finalize
     files, and ahead of F-7.1.33's proposal, which settles the order on a colliding path. Split from F-7.1.33
-    on 2026-10-29.
+    on 2026-10-29. Partly done on 2026-10-29 (branch `fix/f-7-1-34`, commit `1bb4580cb`): replay copies the
+    snapshot as derive does, and both fail closed instead of storing a ref with no object. The restore half
+    stays open and leaves this queue: it needs an adapter contract change (a chunk field on
+    `FinalizeWorkspaceRequest`) that no specification section states, so it moves to F-7.1.33's proposal
+    below. F-4.5.24 (Low, direct fix) was filed from the same work.
   - [ ] **F-11.3.45** (Low) and **F-11.3.46** (Low), one fix: every replica sends its own
     `session_expiring_soon` and `DEADLINE_APPROACHING` for a session, because the warning's dedup set is per
     process, and the warning is sent from the listing without a re-read, so it can follow a terminal write.
@@ -4080,7 +4084,12 @@ D2), which stays with the upload route proposal.
   - [ ] Its own proposal, after 0086's implementation: **F-7.1.33** (Medium, the specification does not state
     how a derived or replayed session's copied snapshot composes with the plan it binds at finalize). The
     missing restore was split out on 2026-10-29 as F-7.1.34, a direct fix in the 0105 direct-fix queue.
-    F-4.5.21 can ride with it.
+    F-4.5.21 can ride with it. F-7.1.34's restore half (High) joins this proposal: the specification names no
+    mechanism that restores the copied snapshot on the bind path of a `created` row, so the proposal states
+    one (the smallest is a `restore_chunks` field on `FinalizeWorkspaceRequest` filled from
+    `resolveResumeChunks`, restored before the plan's sources) along with the colliding-path order.
+  - [ ] Direct fix: **F-4.5.24** (Low, the memory and filesystem blob stores expire a copied checkpoint chunk
+    at once, because the chunk copy sets no TTL).
   - [ ] Its own proposal, after 0086's implementation: **F-4.5.22** (Low, an upload blob expires 7 days after
     it is stored, and the specification states no retention for a blob a bound plan names).
   - [ ] Its own proposal, or the next proposal that edits §28.5.3: **F-4.5.23** (Low, the emitted
