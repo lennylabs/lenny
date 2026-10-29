@@ -35,8 +35,11 @@ import (
 
 // §8.10 defaults.
 const (
-	// DefaultCascadeTimeout bounds how long an orphaned child persists
-	// after its root session terminates (`delegation.cascadeTimeoutSeconds`).
+	// DefaultCascadeTimeout bounds how long an orphan under a terminal parent
+	// whose cascade policy is something other than cancel_all persists after
+	// its earliest terminal ancestor terminated
+	// (`delegation.cascadeTimeoutSeconds`). An orphan under a terminal
+	// cancel_all parent is cancelled with no window.
 	DefaultCascadeTimeout = 3600 * time.Second
 	// DefaultSweepInterval is how often the cleanup job runs
 	// (`delegation.orphanCleanupIntervalSeconds`).
