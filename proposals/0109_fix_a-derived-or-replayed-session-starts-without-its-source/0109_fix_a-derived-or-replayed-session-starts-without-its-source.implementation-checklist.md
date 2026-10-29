@@ -25,7 +25,7 @@
 - [ ] **S11 · code** — CODE-4. Lands the composer restore closure.
       Tiers 0, 1, 4. Depends on: S1, S5, S6, S10
 - [ ] **S12 · code** — CODE-5. Lands the chunked-only derive and replay copy.
-      Tiers 0, 1, 4. Depends on: S1
+      Tiers 0, 1, 4, 7a, 8, 9. Depends on: S1
 - [ ] **S13 · test** — TEST-1. Lands the tests under the non-spec Testing section.
       Tiers 0, 1, 3, 4, 10. Depends on: S9, S10, S11, S12
 - [ ] **S14 · docs** — DOC-1. Lands the docs pages, chart comment, and tier-11 mirror check.

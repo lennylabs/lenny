@@ -41,7 +41,7 @@
 - The composers also run on claim-only and launch-only paths. Minting there, or eagerly in the composer, lets the 30 s grants lapse; only the Binder invokes the closure.
 - `resolveResumeChunks` looks reusable and silently drops the restore; use `Resolver.Resolve` directly (CODE-4).
 - On exclusive pools derive and replay never claim a pod at create, so a derived row cannot start there today. Tests that expect an exclusive-pool end-to-end restore will fail for that separate reason; the exclusive `Prepare` site is pinned at unit tier only.
-- Only `miniostore` implements `ListByPrefix`, so the resolver is nil on s3, gcs, and azure. Tier 4 must run on MinIO, and on those backends a derived bind now fails closed where it used to start empty.
+- Only `miniostore` implements `ListByPrefix`, so the resolver is nil on s3, gcs, and azure. Tier 4 must run on MinIO, and on those backends derive and replay answer 500 (CODE-5 step 2).
 - `RequiresDemotion` must give the same answer from `Prepare` and from `launchPrepared`'s recomputation (CODE-3 step 4).
 
 ## Goals
@@ -87,18 +87,13 @@
 
 ## Open decisions for human to make
 
-1. **Should the gateway check that the pod's adapter understands `restore_chunks` before sending a restore?** A derived or replayed session's first bind sends its starting snapshot to the pod's adapter in a new `FinalizeWorkspaceRequest` field, `restore_chunks` (field 7). An adapter built before that field exists drops it without error and promotes a workspace that holds only the plan's sources, so the session starts without its source workspace and nothing reports the failure. The options the loop recorded are these.
-   - Option A (staged now, the loop's default): no check. Field 7 joins adapter protocol version `"1.0.0"` with no capability token and no version bump (decision 17). The ground the loop gives is that no release of the protocol has shipped, so the skew needs a warm pod with an earlier adapter image to outlive a gateway upgrade, which happens only in development clusters, and `.claude/rules/code-best-practices.md` excludes backward-compatibility shims whose only target is such an adapter. Proposal 0081 added `bind_attempt` to the same request without a check.
-   - Option B: bump the adapter protocol to `1.1.0`, edit the §15.4.2 `INIT` row, record the selected version on the negotiated handshake result, and thread it through `connectSlot`, `materializeSlot`, and `materializeSlotStages` so the gateway refuses to restore onto an older adapter.
-   - Option C: restore the earlier `workspaceRestore` capability token, which the adapter advertises in `NegotiateVersionResponse.capabilities` and without which the gateway fails the bind before minting any grant.
-
-   The loop flagged this for the owner because Option A reverses a decision recorded earlier in the review (the token gate of Option C) and reopened the SPEC-1 failure sentence to remove the gate's clause. Option A requires no further edit. Option B or C reinstates a staged spec clause and code changes in CODE-1, CODE-2, and CODE-3.
+None.
 
 ## Defects in the shipped tree that this proposal does not stage
 
 - **Derive and replay never claim a pod at create.** On an exclusive pool, `prepareAtFinalize` skips the derived row because its PodAssignment is empty, and the launch-only `/start` fails in `reconnect` because the sandbox binding is empty, contrary to the §15.1 `created` row and §7.1 derive rule 2. It stays out because the session cannot start at all, which differs from starting without its workspace, and the fix changes derive and replay responses (`SESSION_CREATION_FAILED`, `CREDENTIAL_POOL_EXHAUSTED`, pool-warming 503) and makes them hold a warm pod under `maxCreatedStateTimeoutSeconds`.
 - **Derive and replay mint no `uploadToken`**, although the §15.1 replay response is "identical to POST /v1/sessions". It is unrelated to the restore.
-- **Only `miniostore` implements `ListByPrefix`**, so the chunk resolver is nil on s3, gcs, and azure: resume restores nothing there, and after this proposal a derived bind fails closed there. Implementing listing per backend is a separate storage change.
+- **Only `miniostore` implements `ListByPrefix`**, so the chunk resolver is nil on s3, gcs, and azure: resume restores nothing there, and after this proposal derive and replay answer 500 there. Implementing listing per backend is a separate storage change.
 - **A derived or replayed session resumed before its own first checkpoint** restores the derived manifest through the Resume RPC, carrying the source's `/sessions` tree and dropping the plan's sources. It exists independent of this design and needs its own mechanism.
 - **F-4.5.24**: the memory and filesystem blob stores expire a copied chunk immediately because the copy sets no TTL. It stays a direct fix in `pkg/blobstore`; no bind-time restore reads from those stores.
 - **F-4.5.21**: §4.5 omits replay from the lineage writer list. It is a text correction the restore does not depend on.
@@ -124,7 +119,7 @@
 - CODE-2 — pkg/adapter/staging.go, pkg/adapter/resume.go, pkg/adapter/workspace/materialize.go — build-tree seed, pairing refusal, and error mapping.
 - CODE-3 — pkg/gateway/podlifecycle/podsession/bindrequest.go, slotbinder.go, bindprepare.go, sdkdemotion.go — Binder restore closure call sites and demotion clause.
 - CODE-4 — pkg/gateway/sessionserver/bind_request.go, pkg/gateway/sessionserver/snapshot_restore.go (new) — composer restore closure.
-- CODE-5 — pkg/gateway/sessionserver/snapshot_copy.go, pkg/gateway/sessionserver/derive.go, pkg/gateway/externalapi/openapi/openapi.json — chunked-only derive and replay copy.
-- TEST-1 — test files across pkg/adapter, pkg/gateway, tests/testinfra/bindattempt, and tests/tier4_integration, and tests/spec-map.json — tests listed under the non-spec Testing section.
+- CODE-5 — pkg/gateway/sessionserver/snapshot_copy.go, pkg/gateway/sessionserver/derive.go, pkg/gateway/externalapi/openapi/openapi.json, the tests and test harnesses step 6 reaches, and tests/spec-map.json — chunked-only derive and replay copy.
+- TEST-1 — test files across pkg/adapter, pkg/gateway, tests/testinfra/bindattempt, and tests/tier4_integration — tests listed under the non-spec Testing section.
 - DOC-1 — docs/reference/error-catalog.md, docs/api/rest.md, docs/getting-started/concepts.md, docs/operator-guide/security.md, docs/reference/glossary.md, docs/tutorials/session-derive-replay.md, charts/lenny/templates/agent-network-policies.yaml, tests/tier11_docs/checkpoint_pipeline_consistency_test.go — client error pages, first-bind pod `GET` wording, glossary and tutorial derive wording, and the tier-11 mirror check.
 - REC-1 — BUILD-GAPS.md, gateway-runtime-comms-remediation.md — close findings and file unstaged defects.

@@ -115,17 +115,18 @@ Trap: do not call `resolveResumeChunks` here. It returns nil with only a log lin
 
 ### CODE-5 · Derive and replay copy chunked checkpoints only
 
-Targets: `pkg/gateway/sessionserver/snapshot_copy.go` (`copyWorkspaceSnapshot` and its doc comment), `pkg/gateway/sessionserver/derive.go` (`deriveChunkedCheckpoint`, `parseDeriveURIs`, `derivedSnapshotPart`), `pkg/gateway/externalapi/openapi/openapi.json`, and the tests that seed path-form or URI-form source refs.
+Targets: `pkg/gateway/sessionserver/snapshot_copy.go` (`copyWorkspaceSnapshot` and its doc comment), `pkg/gateway/sessionserver/derive.go` (`deriveChunkedCheckpoint`, `parseDeriveURIs`, `derivedSnapshotPart`), `pkg/gateway/externalapi/openapi/openapi.json`, the tests and test harnesses step 6 reaches, and `tests/spec-map.json`.
 
 1. Delete the legacy single-object branch of `copyWorkspaceSnapshot`, drop the `handled` return of `deriveChunkedCheckpoint`, and delete `parseDeriveURIs` and `derivedSnapshotPart`.
 2. Error mapping after the deletion:
    - manifest `ErrNotFound`, or `ChunkCount <= 0`: `errSnapshotRefUnresolvable`, answered `503 DERIVE_SNAPSHOT_UNAVAILABLE` through the existing `writeSnapshotCopyError`/`snapshotMissing`;
    - a chunk `Copy` returning `blobstore.ErrNotFound`: 503, as today;
-   - unwired manifests, an unwired writer, or no `Copier`: `errSnapshotCopierUnwired`, 500;
+   - unwired manifests, an unwired writer, no `Copier`, or no chunk resolver (`resumeChunkResolver`, which CODE-4's restore reads): `errSnapshotCopierUnwired`, 500, checked before any chunk is copied;
    - any other error, including a transient manifest `Get` error: 500 `INTERNAL_ERROR`.
-3. Rewrite the `copyWorkspaceSnapshot` doc comment to describe only the chunked copy and the mapping above.
+3. Rewrite the `copyWorkspaceSnapshot` doc comment to describe only the chunked copy and the mapping above, and widen the `errSnapshotCopierUnwired` message and doc comment to "cannot copy or restore the source workspace snapshot".
 4. Keep the copy loop, `Put` → `ConfirmChunk` → `Finalise`, and `DerivedSnapshotTTL` unchanged. `session_subresources.go` is untouched.
 5. Add a `503` response described as `DERIVE_SNAPSHOT_UNAVAILABLE`, with the `Error` schema, to the POST operations of `/v1/sessions/{id}/derive` and `/v1/sessions/{id}/replay` in the hand-maintained `openapi.json`.
+6. `TestSnapshotCopyFailsClosed_spec_7_1` carries one case per condition step 2 names, on derive and both replay modes, with its existing no-row, no-object, and released-reservation assertions. Each unwired case leaves only its own dependency unwired, so no other case reaches its status through the unwired arm. `TestSnapshotCopyStoresRefOfCopiedObject_spec_7_1` and `TestDeriveCopiesParentBytesIntoDerivedURI` pin the deleted branch and are deleted, and the `derive_test.go::TestDeriveCopiesParentBytesIntoDerivedURI` entry is removed from `tests/spec-map.json`. Every other derive or replay test seeded with a path-form or URI-form source ref keeps its subject and is re-seeded as a chunked checkpoint, with its chunk objects present and a manifest reader and writer wired. Every session server a test or test harness builds to serve a derive or replay that reaches the copy wires a chunk resolver (step 2). `runDerive` in `tests/testinfra/lifecyclefence/derive_path.go` is one: its memory store cannot presign and it never binds the derived session, so it wires a stub. The shared seeds are `newSourceSession` and `snapshotBlobs` in `derive_test.go`, `seedSourceWithSnapshot` in `creation_fence_test.go`, and `seedSnapshotObject` in `tests/tier4_integration/gateway_postgres_e2e_test.go`. An assertion on the legacy derived object (`derivedObject`) moves to the derived chunk objects.
 
 ## Staged schema, chart, and migration changes
 
@@ -190,19 +191,18 @@ Every test carries `// spec:` naming §7.1 (Derive restore semantics) plus the s
 - `RequiresDemotion` with a restore and non-empty blocking paths is `true`; with an empty list it is `false`; with `PreConnect` false it is `false`. `Prepare` and `launchPrepared` agree for the same row. (§6.1)
 - Exclusive-pool `Prepare` restore is pinned at this tier only until the create-time claim defect is fixed.
 
-**Sessionserver, tiers 1 and 4** (`snapshot_restore_test.go` new, `bind_request_test.go` new, `snapshot_copy_test.go`, `derive_test.go`, `derive_lock_test.go`, `derive_failure_audit_test.go`, `creation_fence_test.go`, `replay_test.go`, `tests/tier4_integration/gateway_postgres_e2e_test.go`):
+**Sessionserver, tier 1** (`snapshot_restore_test.go` new, `bind_request_test.go` new):
 
-- `workspaceRestore` returns nil for a nil snapshot and for an empty `Ref`. For a row with a `Ref`, the closure fails on a nil resolver, on each resolver error (contiguity, missing manifest, presign), and on zero grants; it never returns a nil error with no grants.
+- `workspaceRestore` returns nil for a nil snapshot and for an empty `Ref`. For a row with a `Ref`, the closure fails on a nil resolver, on each resolver error (contiguity, missing manifest, presign), and on zero grants; it never returns a nil error with no grants. With a recording resolver, the closure passes the derived row's `TenantID` and `ID` and the `Ref`'s checkpoint id, which is the discriminating assertion for the SPEC-5(a) key scope; with a `resumechunks.Resolver` over in-memory fakes, a `Ref` naming a checkpoint outside the derived session's prefix fails contiguity and mints nothing.
 - Both composers set `RestoreChunks` for a derived row and leave it nil for an ordinary row.
-- CODE-5: `TestSnapshotCopyFailsClosed_spec_7_1` carries one case per condition CODE-5 step 2 names, on derive and both replay modes, with its existing no-row, no-object, and released-reservation assertions. Every case except the unwired-reader and unwired-writer cases wires both manifest stores, so no case reaches its status through the unwired arm. `TestSnapshotCopyStoresRefOfCopiedObject_spec_7_1` and `TestDeriveCopiesParentBytesIntoDerivedURI` pin the deleted branch and are deleted, and the `derive_test.go::TestDeriveCopiesParentBytesIntoDerivedURI` entry is removed from `tests/spec-map.json`. Every other derive or replay test seeded with a path-form or URI-form source ref keeps its subject and is re-seeded as a chunked checkpoint, with its chunk objects present and a manifest reader and writer wired. The shared seeds are `newSourceSession` and `snapshotBlobs` in `derive_test.go`, `seedSourceWithSnapshot` in `creation_fence_test.go`, and `seedSnapshotObject` in `tests/tier4_integration/gateway_postgres_e2e_test.go`. An assertion on the legacy derived object (`derivedObject`) moves to the derived chunk objects.
 
 **Contract, tier 3:** `FinalizeWorkspaceRequest.restore_chunks` round-trips through `adapterclient` and the adapter server with grant URLs and headers intact, and in index order.
 
-**Integration, tier 4** (`tests/tier4_integration/checkpoint_workspace_derive_test.go`, beside `TestDeriveCopiesEveryChunkIntoDerivedPrefix` and `TestReplayCopiesEveryChunkIntoReplayedPrefix`; add `§7.1 Derive restore semantics` to the file header spec line): derive, replay `prompt_history`, and replay `workspace_derive` onto a concurrent-workspace pool using the in-process adapter harness `concurrent_workspace_test.go` uses, against MinIO. Assert the bound pod's `current` equals the source snapshot overlaid with the plan's sources, and that a derived chunk overwritten in place with the same number of bytes that are not a gzip stream answers `/start` with 422 `SLOT_FAILED` (`details.category` `transient`; see the summary's defects list on `error.category`) after the §5.2 slot retry and leaves no started session. The corrupted chunk passes the gateway's resolver, so this case pins CODE-2 step 4's status through the gateway's slot classification. Tier 4 runs on MinIO because only `miniostore` implements `ListByPrefix`.
+**Integration, tier 4** (`tests/tier4_integration/checkpoint_workspace_derive_test.go`, beside `TestDeriveCopiesEveryChunkIntoDerivedPrefix` and `TestReplayCopiesEveryChunkIntoReplayedPrefix`; add `§7.1 Derive restore semantics` to the file header spec line): derive, replay `prompt_history`, and replay `workspace_derive` onto a concurrent-workspace pool using the in-process adapter harness `concurrent_workspace_test.go` uses, against MinIO. Assert the bound pod's `current` equals the source snapshot overlaid with the plan's sources, including when the source session's chunk objects are deleted before `/start`, and that a derived chunk overwritten in place with the same number of bytes that are not a gzip stream answers `/start` with 422 `SLOT_FAILED` (`details.category` `transient`; see the summary's defects list on `error.category`) after the §5.2 slot retry and leaves no started session. The corrupted chunk passes the gateway's resolver, so this case pins CODE-2 step 4's status through the gateway's slot classification. Tier 4 runs on MinIO because only `miniostore` implements `ListByPrefix`.
 
 ## Edge cases and accepted failure modes
 
-- On s3, gcs, and azure backends the chunk resolver is nil, so a derived or replayed bind fails closed there. This is recorded as a defect, not fixed here.
+- On s3, gcs, and azure backends the chunk resolver is nil, so derive and replay answer 500 there (CODE-5 step 2). This is recorded as a defect, not fixed here.
 - On exclusive pools a derived or replayed session cannot start until the create-time claim defect is fixed, so the restore is observable end to end only on concurrent-workspace pools.
 - A large snapshot with many chunks must be fetched within one `checkpointCapabilityTTLSeconds` window per grant; a lapse fails the attempt like any other restore failure (CODE-2 step 4), and a later attempt mints fresh grants.
 
@@ -224,7 +224,7 @@ Every test carries `// spec:` naming §7.1 (Derive restore semantics) plus the s
 - pkg/gateway/sessionserver/snapshot_copy.go
 - pkg/gateway/sessionserver/derive.go
 - pkg/gateway/externalapi/openapi/openapi.json
-- Test files named under Testing
+- Test files named under Testing, and the tests and test harnesses CODE-5 step 6 reaches
 - tests/spec-map.json
 - docs/reference/error-catalog.md
 - docs/api/rest.md
