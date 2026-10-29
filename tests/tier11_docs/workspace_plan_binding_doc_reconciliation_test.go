@@ -416,3 +416,68 @@ func TestConceptsWorkspaceSourcesStateBindTiming_spec_14_1(t *testing.T) {
 		t.Error("Setup commands does not state that runtime default setup commands are exempt from the policy")
 	}
 }
+
+// backtickedTokenPattern matches an inline code span in markdown prose.
+var backtickedTokenPattern = regexp.MustCompile("`([^`]+)`")
+
+// uploadPreconditionRowPrefix opens the State Transition Preconditions
+// table row that covers both upload endpoints.
+const uploadPreconditionRowPrefix = "| `POST /v1/sessions/{id}/upload`, `POST /v1/sessions/{id}/upload-archive` |"
+
+// sectionPreconditionLine returns the "Valid precondition states" line of
+// a markdown section.
+func sectionPreconditionLine(t *testing.T, section string) string {
+	t.Helper()
+	for _, line := range strings.Split(section, "\n") {
+		if strings.HasPrefix(line, "**Valid precondition states:**") {
+			return line
+		}
+	}
+	t.Fatal("section has no Valid precondition states line")
+	return ""
+}
+
+// uploadPreconditionStates returns the session states the session
+// lifecycle page's precondition table lists for the upload endpoints.
+func uploadPreconditionStates(t *testing.T, page string) []string {
+	t.Helper()
+	for _, line := range strings.Split(page, "\n") {
+		if !strings.HasPrefix(line, uploadPreconditionRowPrefix) {
+			continue
+		}
+		cells := strings.Split(strings.TrimPrefix(line, uploadPreconditionRowPrefix), "|")
+		var states []string
+		for _, match := range backtickedTokenPattern.FindAllStringSubmatch(cells[0], -1) {
+			states = append(states, match[1])
+		}
+		return states
+	}
+	t.Fatal("session-lifecycle.md has no precondition row for the upload endpoints")
+	return nil
+}
+
+// spec: 15.1 (REST API), 7.4 (Upload Safety), 7.1 (Session Lifecycle)
+// diagnosis: the REST page's upload precondition line lists fewer states
+//
+//	than the session lifecycle precondition table, so the page states the
+//	mid-session upload precondition twice with two different answers and
+//	the archive endpoint, which inherits that line, inherits the narrower
+//	one.
+func TestRESTUploadPreconditionMatchesLifecycleTable_spec_15_1(t *testing.T) {
+	root := repoRoot(t)
+	rest := readRepoFile(t, root, "docs", "api", "rest.md")
+	line := sectionPreconditionLine(t, markdownSection(t, rest, "### POST /v1/sessions/{id}/upload"))
+	lifecycle := readRepoFile(t, root, "docs", "client-guide", "session-lifecycle.md")
+	states := uploadPreconditionStates(t, lifecycle)
+	if len(states) == 0 {
+		t.Fatal("the upload precondition row names no states")
+	}
+	for _, state := range states {
+		if !strings.Contains(line, "`"+state+"`") {
+			t.Errorf("rest.md upload precondition line %q omits the state %q the lifecycle table lists", line, state)
+		}
+	}
+	if !strings.Contains(line, "`capabilities.midSessionUpload: true`") {
+		t.Errorf("rest.md upload precondition line %q does not name the mid-session upload capability", line)
+	}
+}

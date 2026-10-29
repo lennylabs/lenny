@@ -105,7 +105,7 @@ curl -X POST "https://lenny.example.com/v1/sessions/$SESSION_ID/upload" \
 }
 ```
 
-**Valid precondition states:** `created`.
+**Valid precondition states:** `created`; also `running` if the runtime declares `capabilities.midSessionUpload: true`.
 
 **Key error codes:** `UPLOAD_TOKEN_INVALID` (401), `UPLOAD_TOKEN_EXPIRED` (401), `UPLOAD_TOKEN_MISMATCH` (403), `UPLOAD_TOKEN_CONSUMED` (410), `PAYLOAD_TOO_LARGE` (413), `STORAGE_QUOTA_EXCEEDED` (429), and `INVALID_STATE_TRANSITION` (409).
 
