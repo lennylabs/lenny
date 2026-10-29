@@ -65,7 +65,7 @@ files:
   pkg/gateway/runtime/slothealth/slothealth_test.go: 2
   pkg/gateway/session/recycle/holdcoordinator.go: 1
   pkg/gateway/session/recycle/scrubreporter_seams.go: 2
-  pkg/gateway/session/sessionbudget/sessionbudget.go: 9
+  pkg/gateway/session/sessionbudget/sessionbudget.go: 8
   pkg/gateway/session/sessionbudget/sessionbudget_test.go: 5
   pkg/gateway/session/sessionstore/pgstore/pgstore.go: 2
   pkg/gateway/sessionserver/slotretry_load_test.go: 2

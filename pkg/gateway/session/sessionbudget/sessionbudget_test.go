@@ -497,3 +497,80 @@ func TestConcurrentAccess_spec_11_2(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// spec: §8.6, §11.2 — a RaiseBudget that lands after TerminateSession (a
+// deferred grant fanned out to a session the episode is terminating) leaves
+// the deny flag set. Before the terminating flag, RaiseBudget cleared deny
+// unconditionally and Allow admitted a session that was ending.
+func TestRaiseBudgetAfterTerminateSessionKeepsDeny_spec_8_6(t *testing.T) {
+	e := New(&recordingTerminator{}, nil, nil)
+	req, wait := bg()
+	e.Record(req, wait, "acme", "s1", 0, 100)
+	e.TerminateSession("s1")
+	e.RaiseBudget("s1", 1000)
+	if e.Allow("s1") {
+		t.Fatalf("RaiseBudget after TerminateSession cleared deny; Allow must stay false")
+	}
+}
+
+// spec: §8.6, §11.2 — Record's terminal branch (a Terminal outcome from the
+// extension seam) marks the session terminating, so a RaiseBudget that lands
+// once the terminator has run leaves Allow false and keeps the exhausted
+// flag, so a later Record does not re-dispatch the extension.
+func TestRaiseBudgetAfterRecordTerminalKeepsDeny_spec_11_2(t *testing.T) {
+	term := &recordingTerminator{}
+	seam := &recordingSeam{outcome: Terminal}
+	e := New(term, seam.fn, nil)
+	req, wait := bg()
+	if exhausted, out := e.Record(req, wait, "acme", "s1", 100, 100); !exhausted || out != Terminal {
+		t.Fatalf("Record = (%v, %v), want (true, TERMINAL)", exhausted, out)
+	}
+	e.RaiseBudget("s1", 1000)
+	if e.Allow("s1") {
+		t.Fatalf("RaiseBudget after Record's terminal branch cleared deny; Allow must stay false")
+	}
+	e.Record(req, wait, "acme", "s1", 100, 10)
+	if seam.count() != 1 {
+		t.Fatalf("extension seam calls = %d, want 1: a raise during a terminate must not re-arm the exhaustion", seam.count())
+	}
+	if got := term.snapshot(); len(got) != 1 {
+		t.Fatalf("TerminateSession calls = %v, want exactly one", got)
+	}
+}
+
+// spec: §8.6 — a Pending outcome denies without marking the session
+// terminating, so the deferred grant's RaiseBudget still clears deny.
+func TestRaiseBudgetAfterPendingClearsDeny_spec_8_6(t *testing.T) {
+	seam := &recordingSeam{outcome: Pending}
+	e := New(&recordingTerminator{}, seam.fn, nil)
+	req, wait := bg()
+	e.Record(req, wait, "acme", "s1", 100, 100)
+	if e.Allow("s1") {
+		t.Fatalf("Pending must deny the next request")
+	}
+	e.RaiseBudget("s1", 1000)
+	if !e.Allow("s1") {
+		t.Fatalf("RaiseBudget after Pending must clear deny")
+	}
+}
+
+// spec: §8.6, §11.2 — the terminating flag lives on the counter, so Forget
+// (the post-terminal hook's forget step) drops it with the entry, and
+// TerminateSession on an unknown session creates no entry.
+func TestTerminatingFlagDroppedByForget_spec_11_2(t *testing.T) {
+	e := New(nil, nil, nil)
+	e.TerminateSession("ghost")
+	if !e.Allow("ghost") {
+		t.Fatalf("TerminateSession on an unknown session must create no denying entry")
+	}
+	req, wait := bg()
+	e.Record(req, wait, "acme", "s1", 0, 1)
+	e.TerminateSession("s1")
+	e.Forget("s1")
+	e.mu.Lock()
+	_, present := e.sessions["s1"]
+	e.mu.Unlock()
+	if present {
+		t.Fatalf("Forget must drop the terminating counter")
+	}
+}

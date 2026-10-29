@@ -58,7 +58,9 @@ func (s *Server) BeginTerminal(sessionID string) (end func()) {
 //     (releaseAfterTerminal): a pre-running claim by name, otherwise the
 //     executor's binding with the failed disposition after a failed seal
 //     and the disposition of the row's state otherwise.
-//  7. Expire the pending elicitations the session's pod raised.
+//  7. Forget the session's per-session budget state (budgetForget): the
+//     §11.2 enforcer, usage recorder, and anomaly detector entries.
+//  8. Expire the pending elicitations the session's pod raised.
 //
 // Every step is best-effort and none fails the terminal write. The hook
 // writes no row except failWorkspaceSeal's relabel. It returns the row the
@@ -114,10 +116,23 @@ func (s *Server) afterTerminalWrite(ctx context.Context, fromState session.State
 		signals(ctx, sess)
 	}
 	s.releaseAfterTerminal(ctx, fromState, sess, releaseDisposition(sess.State, sealFailed))
+	s.forgetBudgetState(sess.ID)
 	// spec: §9.2 (Elicitation Chain) — last, after the pod release, so the
 	// runtime on the released pod cannot raise again after the expiry.
 	s.expireRaisedElicitations(ctx, sess)
 	return sess
+}
+
+// forgetBudgetState is the post-terminal hook's forget step. It drops the
+// session's §11.2 mid-session budget accounting (the composed forget of the
+// enforcer, the usage recorder, and the anomaly detector) once per applied
+// terminal write, whichever writer committed it, so every hook-path writer
+// reclaims the entry rather than only the funnel writers. A nil hook is a
+// no-op. spec: §8.6, §11.2
+func (s *Server) forgetBudgetState(sessionID string) {
+	if s.budgetForget != nil {
+		s.budgetForget(sessionID)
+	}
 }
 
 // releaseDisposition is the executor disposition the post-terminal hook

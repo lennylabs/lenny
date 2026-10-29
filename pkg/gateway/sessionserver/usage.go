@@ -313,8 +313,8 @@ func (s *Server) OnSessionExpired(_ context.Context, sess sessionstore.Session, 
 // recordSessionCompleted is the terminal funnel of the funnel-path terminal
 // writers. It runs the post-terminal hook (AfterTerminalWrite) first, with
 // terminalSignals as the hook's signal tail, and then, on the row the hook
-// returned, the session-log close hook, the input-wait and budget forget, the
-// quota checkpoint, and the billing event. The seal precedes every terminal
+// returned, the session-log close hook, the input-wait forget, the quota
+// checkpoint, and the billing event. The seal precedes every terminal
 // signal, and the pod release follows the operational event, the callback,
 // the terminal lifecycle signals, and the archive, child-failed, watermark,
 // and cascade steps. All are best-effort: a failure never fails the
@@ -395,9 +395,10 @@ func (s *Server) terminalSignals(ctx context.Context, sess sessionstore.Session)
 	s.cascadeToChildren(ctx, sess)
 }
 
-// afterTerminalRelease runs the funnel's steps that follow the pod release:
-// the session-log close hook, the input-wait and budget forget, the quota
-// checkpoint, and the billing event. spec: §4.4; §8.8; §11.2; §10.6.
+// afterTerminalRelease runs the funnel's steps that follow the post-terminal
+// hook: the session-log close hook, the input-wait forget, the quota
+// checkpoint, and the billing event. The budget forget is a step of the hook
+// body itself (forgetBudgetState). spec: §4.4; §8.8; §11.2; §10.6.
 func (s *Server) afterTerminalRelease(ctx context.Context, sess sessionstore.Session) {
 	// §4.4: best-effort session-log close-hook. The hook
 	// persists the session log it is handed as the
@@ -418,12 +419,6 @@ func (s *Server) afterTerminalRelease(ctx context.Context, sess sessionstore.Ses
 	// whose rows are gone. F-8.8.10.
 	if s.inputWaits != nil {
 		s.inputWaits.ForgetSession(sess.ID)
-	}
-	// spec: §11.2 — drop the settled session's mid-session token-budget
-	// accounting from the §4.9 LLM-proxy enforcer so the per-session map
-	// does not retain an entry for a session whose row is gone.
-	if s.budgetForget != nil {
-		s.budgetForget(sess.ID)
 	}
 	// spec: §11.2 — on session completion the final cumulative
 	// token usage is written to Postgres as the authoritative value so a

@@ -239,7 +239,6 @@ prefixes:
   - pkg/gateway/session/recycle/
   - pkg/gateway/session/routingcache/
   - pkg/gateway/session/sessionage/
-  - pkg/gateway/session/sessionbudget/
   - pkg/gateway/session/sessioncallback/
   - pkg/gateway/session/sessioncheckpointmeta/
   - pkg/gateway/session/sessioncheckpointmeta/pgstore/
