@@ -171,7 +171,8 @@ var errSubtreeTokensUnwired = errors.New("resultrollup: subtree token read needs
 // contributes its session_usage tokens, read in one GetMany over every such
 // node; a node with only an archive record contributes the tokens its
 // archived TaskResult.usage carries, because a session_usage row is deleted
-// with its session row. It does not read the billing ledger, whose tokens
+// with its session row. sess itself follows the same rule, so a session whose
+// row was reclaimed after it was archived still counts its own consumption. It does not read the billing ledger, whose tokens
 // arrive only in periodic checkpoints, and it lists only the recorded root's
 // tree rather than the tenant.
 //
@@ -197,7 +198,7 @@ func (b *Builder) SubtreeTokens(ctx context.Context, sess sessionstore.Session) 
 	var liveIDs []string
 	var total int64
 	idx.walk(sess.ID, func(id string, _ bool) bool {
-		if _, ok := idx.live[id]; ok || id == sess.ID {
+		if _, ok := idx.live[id]; ok {
 			liveIDs = append(liveIDs, id)
 			return true
 		}

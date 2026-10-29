@@ -345,6 +345,52 @@ func TestSubtreeTokensSumsLiveAndArchivedDescendants_spec_8_3(t *testing.T) {
 	}
 }
 
+// TestSubtreeTokensCountsArchivedStartNode_spec_8_3 asserts that a start
+// node with an archive record and no live row contributes the tokens its
+// archived TaskResult.usage carries. Its session_usage row was deleted with
+// its session row during the usage quiescence wait, so reading the start node
+// from session_usage would drop its own consumption and credit those tokens
+// back to the root.
+//
+// spec: §8.3 (Usage quiescence before budget return), §8.3 (Return on
+// completion), §8.10
+func TestSubtreeTokensCountsArchivedStartNode_spec_8_3(t *testing.T) {
+	ctx := context.Background()
+	sessions := memstore.New()
+	tokens := sessionusage.NewMemory()
+	archive := treearchive.NewMemory()
+	child := sessionstore.Session{ID: "child", TenantID: "acme", ParentSessionID: "root", RootSessionID: "root", DelegationDepth: 1, State: session.StateRunning}
+	for _, s := range []sessionstore.Session{
+		{ID: "root", TenantID: "acme", RootSessionID: "root", State: session.StateRunning},
+		child,
+		{ID: "gc", TenantID: "acme", ParentSessionID: "child", RootSessionID: "root", DelegationDepth: 2, State: session.StateCompleted},
+	} {
+		mustCreate(t, sessions, s)
+	}
+	_ = tokens.Add(ctx, "acme", "root", 10000, 10000)
+	_ = tokens.Add(ctx, "acme", "gc", 20, 5)
+	// The child's session row, and with it its session_usage row, is reclaimed
+	// after the child was archived: no live row and no usage tokens remain.
+	if err := sessions.Delete(ctx, "acme", "child"); err != nil {
+		t.Fatalf("delete child: %v", err)
+	}
+	body, _ := json.Marshal(sessionrecord.Result{Usage: &sessionrecord.Usage{InputTokens: 400, OutputTokens: 100}})
+	if err := archive.Archive(ctx, treearchive.ArchivedNode{
+		TenantID: "acme", RootSessionID: "root", NodeSessionID: "child", ParentSessionID: "root",
+		State: string(session.StateCompleted), Result: string(body),
+	}); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	child.State = session.StateCompleted
+	got, err := resultrollup.New(sessions, tokens, archive, nil).SubtreeTokens(ctx, child)
+	if err != nil {
+		t.Fatalf("SubtreeTokens: %v", err)
+	}
+	if want := int64(500 + 25); got != want {
+		t.Errorf("SubtreeTokens = %d, want %d (the archived start node's own tokens dropped out)", got, want)
+	}
+}
+
 // TestSubtreeTokensErrors_spec_8_3 asserts that a ListByRoot, Replay, or
 // GetMany error, and a Builder missing a store, each return an error.
 //
