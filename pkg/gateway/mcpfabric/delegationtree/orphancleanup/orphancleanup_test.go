@@ -15,14 +15,23 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// seed inserts a session row with the given state and parent. A terminal row
-// records updatedAt as its TerminatedAt, the instant the cascade window counts
-// from.
+// seed inserts a session row with the given state and parent under the
+// `detach` cascade policy. A row with a parent is a delegated session one
+// delegation level below its parent, and a terminal row records updatedAt as
+// its TerminatedAt, the instant the cascade window counts from.
 func seed(t *testing.T, store sessionstore.Store, id, parent string, state session.State, updatedAt time.Time) {
 	t.Helper()
 	row := sessionstore.Session{
 		ID: id, TenantID: "acme", State: state, ParentSessionID: parent,
-		CreatedAt: updatedAt, UpdatedAt: updatedAt,
+		CascadeOnFailure: session.CascadeDetach,
+		CreatedAt:        updatedAt, UpdatedAt: updatedAt,
+	}
+	if parent != "" {
+		p, err := store.Get(context.Background(), "acme", parent)
+		if err != nil {
+			t.Fatalf("seed %s: get parent %s: %v", id, parent, err)
+		}
+		row.DelegationDepth = p.DelegationDepth + 1
 	}
 	if session.IsTerminal(state) {
 		row.TerminatedAt = updatedAt
@@ -30,11 +39,32 @@ func seed(t *testing.T, store sessionstore.Store, id, parent string, state sessi
 	seedRow(t, store, row)
 }
 
-// seedRow inserts row as given.
+// seedRow inserts row as given. The store's creation fence refuses a
+// delegated row under a terminal parent, which lenny/delegate_task never
+// creates, so a terminal parent is put back in a live state for the insert
+// and then restored with its recorded termination. A test seeds the row
+// that a parent's later end leaves behind.
 func seedRow(t *testing.T, store sessionstore.Store, row sessionstore.Session) {
 	t.Helper()
-	if err := store.Create(context.Background(), row); err != nil {
+	ctx := context.Background()
+	if parent, err := store.Get(ctx, row.TenantID, row.ParentSessionID); err == nil && session.IsTerminal(parent.State) {
+		setState(t, store, parent.ID, session.StateRunning, time.Time{})
+		defer setState(t, store, parent.ID, parent.State, parent.TerminatedAt)
+	}
+	if err := store.Create(ctx, row); err != nil {
 		t.Fatalf("seed %s: %v", row.ID, err)
+	}
+}
+
+// setState rewrites a seeded row's state and TerminatedAt with a raw store
+// write, outside every production writer.
+func setState(t *testing.T, store sessionstore.Store, id string, state session.State, terminatedAt time.Time) {
+	t.Helper()
+	if _, err := store.Update(context.Background(), "acme", id, func(r *sessionstore.Session) error {
+		r.State, r.TerminatedAt = state, terminatedAt
+		return nil
+	}); err != nil {
+		t.Fatalf("set %s to %s: %v", id, state, err)
 	}
 }
 
@@ -388,7 +418,7 @@ func TestOrphanCleanupSkipsRootWithZeroTerminatedAt_spec_8_10(t *testing.T) {
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	seedRow(t, store, sessionstore.Session{
 		ID: "sess_root", TenantID: "acme", State: session.StateCompleted,
-		CreatedAt: base, UpdatedAt: base,
+		CascadeOnFailure: session.CascadeDetach, CreatedAt: base, UpdatedAt: base,
 	})
 	seed(t, store, "sess_child", "sess_root", session.StateRunning, base)
 	sink := &fakeMetricsSink{}

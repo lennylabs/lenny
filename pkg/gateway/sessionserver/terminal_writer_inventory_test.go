@@ -34,7 +34,7 @@ type terminalWriter struct {
 // writeTerminal is the shared mutator of failSession, failFinalizing,
 // failStarting, and cancelCascadedChild; cancelNode and cancelSession are
 // the mutators of cancelSubtree and the lenny/cancel_session handler;
-// expireOrphan is sweepTenant's; failPreRunning is sweepPreRunning's,
+// endOrphan is sweepTenant's; failPreRunning is sweepPreRunning's,
 // expireAwaiting is sweepAwaitingClientAction's, expireMaxAge is
 // sweepMaxAge's, expireIdle is sweepIdle's, and expireSuspendedIfDue is
 // sweepSuspended's; transitionTerminate is applied inside
@@ -52,7 +52,7 @@ var terminalWriterInventory = []terminalWriter{
 	{"pkg/gateway/runtime/watchdog/suspended.go", "expireSuspendedIfDue", "expireSuspendedIfDue"},
 	{"pkg/gateway/runtime/watchdog/watchdog.go", "expireMaxAge", "expireMaxAge"},
 	{"pkg/gateway/session/orphansession/orphansession.go", "failOrphan", "failOrphan"},
-	{"pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go", "expireOrphan", "expireOrphan"},
+	{"pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go", "endOrphan", "endOrphan"},
 	{"pkg/gateway/mcpfabric/mcptools/mcptools.go", "cancelNode", "cancelNode"},
 	{"pkg/gateway/mcpfabric/mcptools/mcptools_register.go", "cancelSession", "cancelSession"},
 	{"pkg/gateway/externalapi/admin/users.go", "cancelForRevoke", "cancelForRevoke"},

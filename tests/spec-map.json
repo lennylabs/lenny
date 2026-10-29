@@ -2522,7 +2522,9 @@
         "tests/tier11_docs/build_gaps_session_timers_records_currency_test.go::TestSessionTimersFiledDefectsAreConfirmed_spec_7_2",
         "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestRearmDuringRecoveryLeavesConnectionUnrecovered_spec_28_3",
         "tests/tier7a_load_local/input_wait_recovery_invariant_test.go::TestInputWaitRecoveryKeepsRowsOnLiveWaits_spec_28_3",
-        "tests/tier8_chaos/input_wait_recovery_chaos_test.go::TestStaleInputWaitRowEndsAtMaxSessionAge_spec_6_2"
+        "tests/tier8_chaos/input_wait_recovery_chaos_test.go::TestStaleInputWaitRowEndsAtMaxSessionAge_spec_6_2",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/dispositions_test.go::TestOrphanUnderTerminalCancelAllParentIsCancelledOnFirstPass_spec_8_10",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/dispositions_test.go::TestTwoOrphanSweepersEndEachOrphanOnce_spec_8_10"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -2907,7 +2909,20 @@
         "pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup_test.go::TestOrphanCascadeWindowCountsFromRootTerminatedAt_spec_8_10",
         "pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup_test.go::TestOrphanCleanupSkipsRootWithZeroTerminatedAt_spec_8_10",
         "pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup_test.go::TestOrphanCascadeWindowBoundary_spec_8_10",
-        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/pass_continuation_test.go::TestOrphanCleanupTenantListingFailure_spec_8_10"
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/pass_continuation_test.go::TestOrphanCleanupTenantListingFailure_spec_8_10",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/dispositions_test.go::TestOrphanUnderTerminalCancelAllParentIsCancelledOnFirstPass_spec_8_10",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/dispositions_test.go::TestOrphanWithAbsentParentIsExpiredOnFirstPass_spec_8_10",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/dispositions_test.go::TestOrphanUnderTerminalNonCancelParentExpiresAfterWindow_spec_8_10",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/dispositions_test.go::TestOrphanWindowAnchorsOnEarliestTerminalAncestor_spec_8_10",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/dispositions_test.go::TestOrphanDetachChainEndsAtOneWindow_spec_8_10",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/dispositions_test.go::TestOrphanWithZeroTerminatedAtAncestorsIsCountedNotEnded_spec_8_10",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/dispositions_test.go::TestOrphanSelectionSkipsRootsAndLiveTrees_spec_8_10",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/dispositions_test.go::TestOrphanAbsentAncestorAboveLiveDetachParent_spec_8_10",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/dispositions_test.go::TestOrphanUnderLiveParentWaitsThenCancelsWithParent_spec_8_10",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/dispositions_test.go::TestOrphanGaugeIsSelectedMinusAppliedEnds_spec_8_10",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/dispositions_test.go::TestOrphanedPredicate_spec_8_10",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/dispositions_test.go::TestTwoOrphanSweepersEndEachOrphanOnce_spec_8_10",
+        "pkg/gateway/sessionserver/tree_archive_test.go::TestOrphanCapCountsChildrenOfTerminalMidTreeSession_spec_8_10"
       ],
       "packages": [
         "pkg/delegation/tree",

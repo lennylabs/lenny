@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: MIT
 
 // Package orphancleanup implements the §8.10 orphan-cleanup job. A
-// periodic sweep terminates delegation-tree children left running
-// after their root session reached a terminal state and the
-// cascadeTimeoutSeconds window elapsed.
+// periodic sweep selects the tenant's active orphans: every non-terminal
+// session that lenny/delegate_task created (DelegationDepth above zero)
+// and that has an ancestor that is terminal or no longer exists.
 //
-// A child survives a parent termination only under the `detach` and
-// `await_completion` cascade policies (the `cancel_all` default
-// cancels descendants immediately, see §8.10 cascadeOnFailure). This
-// job bounds how long such orphans persist: once a node's tree root
-// has been terminal for longer than cascadeTimeoutSeconds, the orphan
-// is expired and archived.
+// The sweep ends each selected session by its direct parent's state. A
+// session whose parent no longer exists is expired on the pass that
+// selects it. A session whose parent is terminal with the `cancel_all`
+// cascade policy is cancelled on the pass that selects it, which completes
+// a cascade that a store error or a replica failure interrupted. A session
+// whose parent is terminal with any other policy is expired once
+// cascadeTimeoutSeconds has elapsed since the earliest terminal transition
+// among its ancestors. A session whose parent is live is counted and left
+// in place, and the sweep visits rows in ascending delegation depth so the
+// parent is evaluated first on the same pass.
 package orphancleanup
 
 import (
@@ -19,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -150,13 +155,87 @@ func New(store sessionstore.Store, tenants TenantLister, opts Options) *Sweeper 
 	return s
 }
 
-// Tick runs one sweep at now and returns the count of orphaned
-// children it terminated. An orphan is a non-terminal session whose
-// delegation tree root is terminal and whose root has been terminal
-// for longer than cascadeTimeout. Per §16.1 every Tick
-// also bumps the cleanup-runs counter, the cumulative terminated
-// counter, the fleet-wide active gauge, and the per-tenant active gauge
-// when a MetricsSink is wired.
+// Orphan is why a row is in the §8.10 active orphan set.
+type Orphan struct {
+	// Parent is the direct parent; zero when ParentPresent is false.
+	Parent sessionstore.Session
+	// ParentPresent is true when the row names a parent and byID holds it.
+	ParentPresent bool
+	// Anchor is the minimum non-zero TerminatedAt among the row's terminal
+	// ancestors; zero when none carries one.
+	Anchor time.Time
+}
+
+// Orphaned reports whether row is an active orphan under §8.10: a
+// non-terminal session with DelegationDepth above zero whose parent is
+// absent, that has a terminal ancestor, or whose ancestor chain ends at a
+// delegated session whose own parent is absent. DelegationDepth rather than
+// ParentSessionID marks a delegated session, because the parent foreign key
+// is cleared when the parent row is deleted. byID holds the tenant's rows by
+// id; an ancestor missing from it no longer exists.
+//
+// spec: §8.10 (Orphan cleanup).
+func Orphaned(row sessionstore.Session, byID map[string]sessionstore.Session) (Orphan, bool) {
+	if session.IsTerminal(row.State) || row.DelegationDepth <= 0 {
+		return Orphan{}, false
+	}
+	parent, present := lookup(byID, row.ParentSessionID)
+	o := Orphan{Parent: parent, ParentPresent: present}
+	if !present {
+		return o, true
+	}
+	anchor, terminal, broken := walkAncestors(row.ID, parent, byID)
+	o.Anchor = anchor
+	return o, terminal || broken
+}
+
+// walkAncestors follows the ParentSessionID chain up from parent through
+// byID to its end. It returns the minimum non-zero TerminatedAt among the
+// terminal ancestors, whether any ancestor is terminal, and whether the chain
+// ends at a delegated ancestor whose own parent is absent. The visited set,
+// seeded with the row's own id, stops the walk on a cyclic chain.
+func walkAncestors(rowID string, parent sessionstore.Session, byID map[string]sessionstore.Session) (anchor time.Time, terminal, broken bool) {
+	visited := map[string]bool{rowID: true}
+	cur := parent
+	for {
+		visited[cur.ID] = true
+		if session.IsTerminal(cur.State) {
+			terminal = true
+			anchor = earliest(anchor, cur.TerminatedAt)
+		}
+		next, ok := lookup(byID, cur.ParentSessionID)
+		if !ok {
+			return anchor, terminal, cur.DelegationDepth > 0
+		}
+		if visited[next.ID] {
+			return anchor, terminal, false
+		}
+		cur = next
+	}
+}
+
+// lookup returns the row byID holds for id; an empty id names no row.
+func lookup(byID map[string]sessionstore.Session, id string) (sessionstore.Session, bool) {
+	if id == "" {
+		return sessionstore.Session{}, false
+	}
+	row, ok := byID[id]
+	return row, ok
+}
+
+// earliest returns the earlier of a and t, ignoring a zero t and treating a
+// zero a as unset.
+func earliest(a, t time.Time) time.Time {
+	if t.IsZero() || (!a.IsZero() && !t.Before(a)) {
+		return a
+	}
+	return t
+}
+
+// Tick runs one sweep at now and returns the count of orphans it ended.
+// Per §16.1 every Tick also bumps the cleanup-runs counter, the cumulative
+// terminated counter, the fleet-wide active gauge, and the per-tenant active
+// gauge when a MetricsSink is wired.
 //
 // A failure to list one tenant's rows skips that tenant, and a failed write
 // of one orphan skips that orphan. Each is logged with the tenant_id and, for
@@ -166,7 +245,7 @@ func New(store sessionstore.Store, tenants TenantLister, opts Options) *Sweeper 
 // writes that applied; their terminal hooks run on goroutines that own the
 // writes' terminal claims and may still be running when Tick returns.
 //
-// spec: §8.10; §10.1.1 (Primary:); §7.1 (Terminal pipeline context:).
+// spec: §8.10 (Orphan cleanup); §10.1.1 (Primary:); §7.1 (Terminal pipeline context:).
 func (s *Sweeper) Tick(ctx context.Context, now time.Time) (int, error) {
 	if s.metrics != nil {
 		s.metrics.IncOrphanCleanupRun()
@@ -196,43 +275,40 @@ func (s *Sweeper) Tick(ctx context.Context, now time.Time) (int, error) {
 	return terminated, errors.Join(errs...)
 }
 
-// sweepTenant scans tenant rows and terminates orphans whose cascade
-// window has elapsed. It returns the number terminated this Tick, the
-// count of orphan rows remaining in a non-terminal state under the
-// tenant's tree (the post-sweep gauge value), and the joined errors of the
-// pass. A listing error returns at once with no rows swept; a failed write
-// leaves its orphan in the active count and the sweep goes on to the next.
+// sweepTenant lists the tenant once, visits its rows in ascending
+// delegation depth, and ends each active orphan whose disposition is due. It
+// returns the number ended this Tick, the active orphans left non-terminal
+// (the post-sweep gauge value), and the joined errors of the pass. An applied
+// end writes the ended state and now into byID, so a child visited later in
+// the pass sees its parent's end. A listing error returns at once with no
+// rows swept; a failed write leaves its orphan in the active count and the
+// sweep goes on to the next.
 //
-// spec: §8.10; §10.1.1 (Primary:).
+// spec: §8.10 (Orphan cleanup); §10.1.1 (Primary:).
 func (s *Sweeper) sweepTenant(ctx context.Context, tenant string, now time.Time) (int, int, error) {
 	rows, err := s.store.List(ctx, tenant, sessionstore.ListFilter{})
 	if err != nil {
 		slog.Warn("orphancleanup: list a tenant's sessions", "tenant_id", tenant, "error", err)
 		return 0, 0, fmt.Errorf("orphancleanup: list sessions: tenant %s: %w", tenant, err)
 	}
-	byID := make(map[string]sessionstore.Session, len(rows))
-	for _, r := range rows {
-		byID[r.ID] = r
-	}
+	byID := IndexByID(rows)
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].DelegationDepth < rows[j].DelegationDepth })
 	terminated := 0
 	activeOrphans := 0
 	var errs []error
 	for _, row := range rows {
-		if session.IsTerminal(row.State) || row.ParentSessionID == "" {
+		o, ok := Orphaned(row, byID)
+		if !ok {
 			continue
 		}
-		root := treeRoot(row, byID)
-		if !session.IsTerminal(root.State) {
-			continue // the tree is still active
-		}
-		// spec: §8.10 — `lenny_orphan_tasks_active_per_tenant`
-		// counts every non-terminal child whose root is terminal,
-		// regardless of whether the cascade window has elapsed. F-8.10.7.
+		// spec: §8.10 — the active-orphan gauges count every selected
+		// session, whether or not its disposition is due. F-8.10.7.
 		activeOrphans++
-		if !cascadeWindowElapsed(root, now, s.cascadeTimeout) {
+		to, due := s.disposition(o, now)
+		if !due {
 			continue
 		}
-		applied, err := s.expireOrphan(ctx, tenant, row, root.ID)
+		applied, err := s.endOrphan(ctx, tenant, row, to)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -241,23 +317,61 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant string, now time.Time)
 			terminated++
 			// The row left the active-orphan set as part of this Tick.
 			activeOrphans--
+			ended := byID[row.ID]
+			ended.State = to
+			ended.TerminatedAt = now
+			byID[row.ID] = ended
 		}
 	}
 	return terminated, activeOrphans, errors.Join(errs...)
 }
 
-// expireOrphan is the sweep's funnel terminal write for one orphan: it opens
-// the terminal claim before its Update, writes expired only over a
-// non-terminal locked row with the Terminated fact recorded in the write, and
-// when the write applied hands the claim to dispatchTerminal, whose goroutine
-// runs the terminal pipeline with fromState from the locked row and then ends
-// the claim. A row another writer already ended, or one that no longer
-// exists, is not applied and the claim ends at once. A store error ends the
-// claim at once, is logged with the tenant and session IDs, and is returned
-// for the pass to collect; the sweep goes on to the next child.
+// IndexByID keys rows by their session id, the map Orphaned walks.
+func IndexByID(rows []sessionstore.Session) map[string]sessionstore.Session {
+	byID := make(map[string]sessionstore.Session, len(rows))
+	for _, r := range rows {
+		byID[r.ID] = r
+	}
+	return byID
+}
+
+// disposition returns the terminal state an active orphan ends in at now and
+// whether that end is due. A session whose parent no longer exists is
+// expired at once. A session under a live parent waits for it. A session
+// under a terminal `cancel_all` parent is cancelled at once. Any other
+// terminal parent policy expires the session once cascadeTimeout has elapsed
+// from the earliest terminal ancestor's TerminatedAt; the window is inclusive
+// of its end, and a zero anchor opens no window.
 //
-// spec: §8.10; §7.2 (Interactive Session Model); §10.1.1 (Primary:).
-func (s *Sweeper) expireOrphan(ctx context.Context, tenant string, row sessionstore.Session, rootID string) (bool, error) {
+// spec: §8.10 (Orphan cleanup).
+func (s *Sweeper) disposition(o Orphan, now time.Time) (session.State, bool) {
+	switch {
+	case !o.ParentPresent:
+		return session.StateExpired, true
+	case !session.IsTerminal(o.Parent.State):
+		return "", false
+	case o.Parent.CascadeOnFailure.Resolve() == session.CascadeCancelAll:
+		return session.StateCancelled, true
+	case o.Anchor.IsZero() || now.Sub(o.Anchor) <= s.cascadeTimeout:
+		return "", false
+	default:
+		return session.StateExpired, true
+	}
+}
+
+// endOrphan is the sweep's funnel terminal write for one orphan: it opens
+// the terminal claim before its Update, writes to (cancelled or expired) only
+// over a non-terminal locked row with the Terminated fact recorded in the
+// write, and when the write applied hands the claim to dispatchTerminal,
+// whose goroutine runs the terminal pipeline with fromState from the locked
+// row and then ends the claim. The terminal pipeline runs the ended row's own
+// cascade. A row another writer already ended, or one that no longer exists,
+// is not applied and the claim ends at once. A store error ends the claim at
+// once, is logged with the tenant and session IDs, and is returned for the
+// pass to collect; the sweep goes on to the next orphan.
+//
+// spec: §8.10 (Orphan cleanup); §7.2 (Terminal writes from any non-terminal state); §10.1.1 (Primary:).
+func (s *Sweeper) endOrphan(ctx context.Context, tenant string, row sessionstore.Session, to session.State) (bool, error) {
 	end := func() {}
 	if s.terminal != nil {
 		end = s.terminal.BeginTerminal(row.ID)
@@ -268,13 +382,23 @@ func (s *Sweeper) expireOrphan(ctx context.Context, tenant string, row sessionst
 			return sessionstore.ErrSuperseded
 		}
 		from = r.State
-		r.State = session.StateExpired
-		// spec: §8.8 — orphan cleanup is a wall-clock deadline (the
-		// cascade window after a root settles), so the MCP boundary
-		// surfaces `failed` with code `expired:deadline`. F-8.8.8.
-		// spec: §6.2, §7.2 — the writer stamps its own reason over any
-		// reason an earlier recovery left on the row.
-		r.FailureReason = string(session.FailureExpiredDeadline)
+		switch to {
+		case session.StateCancelled:
+			// spec: §8.10 — the cancel completes the terminal `cancel_all`
+			// parent's cascade, and a cascaded cancel stamps no reason.
+			r.State = session.StateCancelled
+		case session.StateExpired:
+			r.State = session.StateExpired
+			// spec: §8.8 — an orphan expiry is a wall-clock deadline (the
+			// cascade window after an ancestor settles, or an absent parent),
+			// so the MCP boundary surfaces `failed` with code
+			// `expired:deadline`. F-8.8.8.
+			// spec: §6.2, §7.2 — the writer stamps its own reason over any
+			// reason an earlier recovery left on the row.
+			r.FailureReason = string(session.FailureExpiredDeadline)
+		default:
+			return fmt.Errorf("orphancleanup: unsupported orphan end state %q", to)
+		}
 		// spec: §5.2 (Slot assignment atomicity) — the stamp reads the clock
 		// inside this row's Update, because the dispatched hooks of earlier
 		// rows, seal included, may have run past the pass's now.
@@ -287,24 +411,24 @@ func (s *Sweeper) expireOrphan(ctx context.Context, tenant string, row sessionst
 	}
 	if err != nil {
 		end()
-		slog.Warn("orphancleanup: expire an orphaned child", "tenant_id", tenant, "session_id", row.ID, "error", err)
-		return false, fmt.Errorf("orphancleanup: expire orphan: tenant %s session %s: %w", tenant, row.ID, err)
+		slog.Warn("orphancleanup: end an orphaned session", "tenant_id", tenant, "session_id", row.ID, "state", string(to), "error", err)
+		return false, fmt.Errorf("orphancleanup: end orphan: tenant %s session %s: %w", tenant, row.ID, err)
 	}
 	s.dispatchTerminal(ctx, end, func(hctx context.Context) {
 		if s.terminal != nil {
 			// Gateway-side terminal pipeline — release the executor (drains
 			// the pod, returns concurrent-mode slots per §5.2), emit SSE/
-			// audit/billing, and archive the child. from is the locked row's
-			// pre-terminal state (§4.6).
+			// audit/billing, run the row's own cascade, and archive it.
+			// from is the locked row's pre-terminal state (§4.6).
 			s.terminal.OnSessionTerminal(hctx, from, updated)
 			return
 		}
-		s.archiveOrphan(hctx, updated, rootID)
+		s.archiveOrphan(hctx, updated)
 	})
 	return true, nil
 }
 
-// dispatchTerminal hands an applied orphan expiry's open claim to a goroutine
+// dispatchTerminal hands an applied orphan end's open claim to a goroutine
 // that runs the terminal hooks and then ends the claim. The hooks receive a
 // context that keeps ctx's values and drops its cancellation, so the end of
 // the pass does not cut a terminal pipeline that has started, and the open
@@ -321,39 +445,9 @@ func (s *Sweeper) dispatchTerminal(ctx context.Context, end func(), hooks func(c
 	}()
 }
 
-// cascadeWindowElapsed reports whether root has been terminal for longer than
-// cascadeTimeout. The window counts from the root's TerminatedAt, which a later
-// write to the root does not move, so a root with no recorded termination
-// instant opens no window and its orphans are left for a later pass.
-//
-// spec: §8.10 (the root session has been terminated for cascadeTimeoutSeconds).
-func cascadeWindowElapsed(root sessionstore.Session, now time.Time, cascadeTimeout time.Duration) bool {
-	if root.TerminatedAt.IsZero() {
-		return false
-	}
-	return now.Sub(root.TerminatedAt) > cascadeTimeout
-}
-
-// treeRoot walks the ParentSessionID chain up from row to the tree
-// root. The visited set guards against a malformed cyclic chain, and
-// an ancestor absent from byID ends the walk at the deepest reachable
-// node.
-func treeRoot(row sessionstore.Session, byID map[string]sessionstore.Session) sessionstore.Session {
-	cur := row
-	visited := map[string]bool{}
-	for cur.ParentSessionID != "" && !visited[cur.ID] {
-		visited[cur.ID] = true
-		next, ok := byID[cur.ParentSessionID]
-		if !ok {
-			break
-		}
-		cur = next
-	}
-	return cur
-}
-
-// archiveOrphan records a terminated orphan in the §8.10 archive.
-func (s *Sweeper) archiveOrphan(ctx context.Context, sess sessionstore.Session, rootID string) {
+// archiveOrphan records an ended orphan in the §8.10 archive under its
+// row's delegation-tree root.
+func (s *Sweeper) archiveOrphan(ctx context.Context, sess sessionstore.Session) {
 	if s.archive == nil {
 		return
 	}
@@ -363,12 +457,12 @@ func (s *Sweeper) archiveOrphan(ctx context.Context, sess sessionstore.Session, 
 		"state":         string(sess.State),
 		"error": map[string]any{
 			"code":    "CHILD_" + strings.ToUpper(string(sess.State)),
-			"message": "orphaned child terminated after the cascade timeout elapsed",
+			"message": "orphaned child terminated by orphan cleanup",
 		},
 	})
 	_ = s.archive.Archive(ctx, treearchive.ArchivedNode{
 		TenantID:        sess.TenantID,
-		RootSessionID:   rootID,
+		RootSessionID:   sess.RootSessionID,
 		NodeSessionID:   sess.ID,
 		ParentSessionID: sess.ParentSessionID,
 		State:           string(sess.State),

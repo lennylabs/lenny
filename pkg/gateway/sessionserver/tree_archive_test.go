@@ -63,6 +63,35 @@ func seedCascadeSession(t *testing.T, store sessionstore.Store, id, parent strin
 	}
 }
 
+// seedDelegatedSession inserts a running session that lenny/delegate_task
+// created under parent: a delegation depth of 1 marks it delegated, which the
+// §8.10 orphan count keys on.
+func seedDelegatedSession(t *testing.T, store sessionstore.Store, id, parent string) {
+	t.Helper()
+	now := time.Now()
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: id, TenantID: "acme", State: session.StateRunning, RuntimeRef: "echo",
+		ParentSessionID: parent, DelegationDepth: 1,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed delegated session %s: %v", id, err)
+	}
+}
+
+// endSeededSession moves a seeded row to completed with a raw store write
+// once its delegated children exist: the store's creation fence refuses a
+// delegated child under a terminal parent, so a test seeds the children a
+// parent's end leaves behind before ending it.
+func endSeededSession(t *testing.T, store sessionstore.Store, id string) {
+	t.Helper()
+	if _, err := store.Update(context.Background(), "acme", id, func(r *sessionstore.Session) error {
+		r.State, r.TerminatedAt = session.StateCompleted, time.Now()
+		return nil
+	}); err != nil {
+		t.Fatalf("end seeded session %s: %v", id, err)
+	}
+}
+
 func TestTerminateArchivesChildToTreeArchive(t *testing.T) {
 	store := memstore.New()
 	archive := treearchive.NewMemory()
@@ -209,15 +238,16 @@ func TestDetachFallsBackToCancelAllOverOrphanCap(t *testing.T) {
 	now := time.Now()
 	// A pre-existing orphan: a running child of an already-terminal root.
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "old_root", TenantID: "acme", State: session.StateCompleted,
+		ID: "old_root", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed old root: %v", err)
 	}
-	seedTreeSession(t, store, "old_child", "old_root")
+	seedDelegatedSession(t, store, "old_child", "old_root")
+	endSeededSession(t, store, "old_root")
 	// A detach parent with a running child.
 	seedCascadeSession(t, store, "sess_parent", "", session.CascadeDetach)
-	seedTreeSession(t, store, "sess_child", "sess_parent")
+	seedDelegatedSession(t, store, "sess_child", "sess_parent")
 
 	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/terminate")
 	if rr.Code != http.StatusOK {
@@ -231,6 +261,43 @@ func TestDetachFallsBackToCancelAllOverOrphanCap(t *testing.T) {
 	}
 	if row.State != session.StateCancelled {
 		t.Errorf("child state = %q, want cancelled — a detach over the orphan cap falls back to cancel_all", row.State)
+	}
+}
+
+// spec: §8.10 (Orphan cleanup)
+//
+// The orphan cap counts the orphan-cleanup selection, which includes the live
+// children of a terminal mid-tree session under a live root. Two such
+// children plus the detach parent's own child exceed a cap of 1, so the
+// detach falls back to cancel_all. A count keyed on the tree root saw no
+// orphan under the live root and let the detach stand.
+func TestOrphanCapCountsChildrenOfTerminalMidTreeSession_spec_8_10(t *testing.T) {
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, MaxOrphanTasksPerTenant: 2})
+	seedTreeSession(t, store, "live_root", "")
+	seedDelegatedSession(t, store, "mid", "live_root")
+	for _, id := range []string{"mid_kid_a", "mid_kid_b"} {
+		if err := store.Create(context.Background(), sessionstore.Session{
+			ID: id, TenantID: "acme", State: session.StateRunning, RuntimeRef: "echo",
+			ParentSessionID: "mid", DelegationDepth: 2,
+		}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	endSeededSession(t, store, "mid")
+	seedCascadeSession(t, store, "sess_parent", "", session.CascadeDetach)
+	seedDelegatedSession(t, store, "sess_child", "sess_parent")
+
+	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/terminate")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("terminate: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	row, err := store.Get(context.Background(), "acme", "sess_child")
+	if err != nil {
+		t.Fatalf("get child: %v", err)
+	}
+	if row.State != session.StateCancelled {
+		t.Errorf("child state = %q, want cancelled: three orphans exceed the cap of 2", row.State)
 	}
 }
 
@@ -261,14 +328,15 @@ func TestDetachFallbackEmitsCascadeAppliedAudit_spec_8_10_1103(t *testing.T) {
 	now := time.Now()
 	// Pre-existing orphan to push the tenant over the cap.
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "old_root", TenantID: "acme", State: session.StateCompleted,
+		ID: "old_root", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed old root: %v", err)
 	}
-	seedTreeSession(t, store, "old_child", "old_root")
+	seedDelegatedSession(t, store, "old_child", "old_root")
+	endSeededSession(t, store, "old_root")
 	seedCascadeSession(t, store, "sess_parent", "", session.CascadeDetach)
-	seedTreeSession(t, store, "sess_child", "sess_parent")
+	seedDelegatedSession(t, store, "sess_child", "sess_parent")
 
 	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/terminate")
 	if rr.Code != http.StatusOK {

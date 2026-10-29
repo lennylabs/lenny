@@ -281,7 +281,7 @@ var terminalContextWriters = []tcWriter{
 	{key: "pkg/gateway/runtime/watchdog/suspended.go expireSuspendedIfDue", drive: onSessionTerminalDriver(session.StateExpired)},
 	{key: "pkg/gateway/runtime/watchdog/watchdog.go expireMaxAge", drive: onSessionTerminalDriver(session.StateExpired)},
 	{key: "pkg/gateway/session/orphansession/orphansession.go failOrphan", drive: onSessionTerminalDriver(session.StateFailed)},
-	{key: "pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go expireOrphan", drive: onSessionTerminalDriver(session.StateExpired)},
+	{key: "pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go endOrphan", drive: onSessionTerminalDriver(session.StateExpired)},
 	{key: "pkg/gateway/mcpfabric/mcptools/mcptools.go cancelNode", drive: afterTerminalWriteDriver},
 	{key: "pkg/gateway/mcpfabric/mcptools/mcptools_register.go cancelSession", drive: afterTerminalWriteDriver},
 	{key: "pkg/gateway/externalapi/admin/users.go cancelForRevoke", noHook: "the full_revoke write runs AfterRevokeWrite and the revoked-binding release"},

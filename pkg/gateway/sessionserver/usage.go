@@ -17,6 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/orphancleanup"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
@@ -810,27 +811,25 @@ func (s *Server) cancelCascadedChild(ctx context.Context, tenantID string, cur s
 }
 
 // detachExceedsOrphanCap reports whether the tenant's active orphan
-// count is over the §8.10 maxOrphanTasksPerTenant cap. An orphan is a
-// non-terminal child session whose delegation tree root has reached a
-// terminal state — the caller invokes this after a `detach`-policy
-// session has terminated, so that session's own children are already
-// counted. Best-effort: a store error reports "not over cap" so a
-// transient failure does not silently escalate detach to cancel_all.
+// count is over the §8.10 maxOrphanTasksPerTenant cap. The count is the
+// orphan-cleanup selection itself: every non-terminal delegated session with
+// an ancestor that is terminal or no longer exists, evaluated over one
+// listing of the tenant, so the cap, the active-orphan gauges, and the sweep
+// describe one set. The caller invokes this after a `detach`-policy session
+// has terminated, so that session's own children are already counted.
+// Best-effort: a store error reports "not over cap" so a transient failure
+// does not silently escalate detach to cancel_all.
+//
+// spec: §8.10 (Orphan cleanup).
 func (s *Server) detachExceedsOrphanCap(ctx context.Context, tenantID string) bool {
 	all, err := s.store.List(ctx, tenantID, sessionstore.ListFilter{})
 	if err != nil {
 		return false
 	}
+	byID := orphancleanup.IndexByID(all)
 	orphans := 0
 	for _, r := range all {
-		if session.IsTerminal(r.State) || r.ParentSessionID == "" {
-			continue
-		}
-		root, err := s.store.Get(ctx, tenantID, s.treeRoot(ctx, r))
-		if err != nil {
-			continue
-		}
-		if session.IsTerminal(root.State) {
+		if _, ok := orphancleanup.Orphaned(r, byID); ok {
 			orphans++
 		}
 	}

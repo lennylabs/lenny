@@ -197,6 +197,18 @@ func sweepCreate(t *testing.T, store sessionstore.Store, row sessionstore.Sessio
 	}
 }
 
+// sweepSetRoot rewrites a seeded root's state and TerminatedAt with a raw
+// store write.
+func sweepSetRoot(t *testing.T, store sessionstore.Store, tenant, id string, state session.State, terminatedAt time.Time) {
+	t.Helper()
+	if _, err := store.Update(context.Background(), tenant, id, func(r *sessionstore.Session) error {
+		r.State, r.TerminatedAt = state, terminatedAt
+		return nil
+	}); err != nil {
+		t.Fatalf("set %s to %s: %v", id, state, err)
+	}
+}
+
 // sweepTenants is the tenant set every subject sweeps.
 var sweepTenants = []string{"acme", "globex"}
 
@@ -230,15 +242,22 @@ func continuationSubjects() []sweepFaultSubject {
 		{
 			name: "orphan cleanup",
 			seed: func(t *testing.T, store sessionstore.Store, tenant, id string) {
+				// The store's creation fence refuses a delegated child under a
+				// terminal parent, so the root is live while each child is
+				// inserted and ended after it.
 				root := tenant + "-root"
 				if _, err := store.Get(context.Background(), tenant, root); err != nil {
 					sweepCreate(t, store, sessionstore.Session{
-						ID: root, TenantID: tenant, State: session.StateCompleted, TerminatedAt: sweepBorn,
+						ID: root, TenantID: tenant, State: session.StateRunning, CascadeOnFailure: session.CascadeDetach,
 					})
+				} else {
+					sweepSetRoot(t, store, tenant, root, session.StateRunning, time.Time{})
 				}
 				sweepCreate(t, store, sessionstore.Session{
 					ID: id, TenantID: tenant, State: session.StateRunning, ParentSessionID: root,
+					DelegationDepth: 1,
 				})
+				sweepSetRoot(t, store, tenant, root, session.StateCompleted, sweepBorn)
 			},
 			tick: func(ctx context.Context, store sessionstore.Store, hook *claimHook) error {
 				sw := orphancleanup.New(store, orphancleanup.StaticTenants(sweepTenants), orphancleanup.Options{Terminal: hook})
