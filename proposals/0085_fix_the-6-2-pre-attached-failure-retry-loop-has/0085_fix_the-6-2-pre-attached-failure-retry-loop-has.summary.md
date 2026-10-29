@@ -70,7 +70,7 @@
 
 ## Open decisions for human to make
 
-None yet. The review loops write this section.
+None. The one contested item, whether 0085 retires anything Implemented proposal 0082 landed, was settled on 2026-10-29 by the orchestrator under the owner's standing delegation: nothing 0082 landed is retired, as the 0082 row of Impacts on other proposals states.
 
 ## Defects in the shipped tree that this proposal does not stage
 

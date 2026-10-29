@@ -592,3 +592,7 @@ FACT: TEST-1 anchors exist: start_pod_test.go imports sync/atomic (:18), client 
 DECISION: no test-coverage finding this round — BECAUSE no production behavior changes, CODE-1 is comment-only, and TEST-1 pins the one changed clause at tier 2 with a counter that fails on re-claim — ALTERNATIVES: a delegated-child pinning test (already refuted as nice-to-have).
 
 ## Retired
+
+### [orchestrator.contested-0082]
+
+- DECISION (orchestrator under the owner's standing delegation, 2026-10-29): the contested other-proposal item is settled as the 0082 impact row states. SPEC-1 leaves persisted-row seams without a retry, and SPEC-2 edits the §15.1 `SETUP_COMMAND_FAILED` row, which is separate from the finalize precondition row that 0082 SPEC-1 edited. Nothing 0082 landed is retired, and the implemented 0082 is not edited.
