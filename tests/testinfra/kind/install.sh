@@ -1258,7 +1258,7 @@ bootstrap:
     # this runtime's single stdin/stdout dispatch loop keyed on sessionId.
     # capabilities.injection.supported is true (§5.1) to match the Runtime
     # CRD in agent-workload.yaml: each slot's echocore loop answers every
-    # inbound `message` frame, so the tier-5 harness can send several
+    # inbound message frame, so the tier-5 harness can send several
     # messages on each slot session.
     - name: echo-runtime-concurrent
       type: agent
@@ -1288,7 +1288,7 @@ bootstrap:
     # Test-only heartbeat-silence fixture runtimes (see IMAGE_SPECS and
     # agent-workload.yaml). They back only the heartbeat-silence pools
     # below. capabilities.injection.supported is true (§5.1) to match the
-    # Runtime CRDs: the wrapped echo loops answer every inbound `message`
+    # Runtime CRDs: the wrapped echo loops answer every inbound message
     # frame, so a session can carry several messages.
     - name: heartbeat-silence-echo-runtime
       type: agent
@@ -1796,10 +1796,24 @@ log "waiting for the lenny-system control-plane rollouts to complete"
 for deploy in $(kc -n lenny-system get deploy -l app.kubernetes.io/name=lenny -o name); do
   kc -n lenny-system rollout status "${deploy}" --timeout=300s
 done
+# A pod of a replaced ReplicaSet can still be terminating after its rollout
+# reports complete. `kubectl wait` resolves the selector once, so such a pod
+# matches, is deleted during the wait, and fails it with NotFound. Retry the
+# wait so it resolves the selector again without the deleted pod.
 log "waiting for the lenny-system control-plane pods to become Ready"
-kc -n lenny-system wait --for=condition=Ready pod \
-  -l app.kubernetes.io/name=lenny,lenny.dev/component!=coredns \
-  --timeout=300s
+for attempt in 1 2 3; do
+  if kc -n lenny-system wait --for=condition=Ready pod \
+    -l app.kubernetes.io/name=lenny,lenny.dev/component!=coredns \
+    --timeout=300s; then
+    break
+  fi
+  if [ "${attempt}" -eq 3 ]; then
+    echo "error: the lenny-system control-plane pods did not become Ready" >&2
+    exit 1
+  fi
+  log "the Ready wait failed (attempt ${attempt}); retrying once the replaced pods are gone"
+  sleep 5
+done
 
 # ---------------------------------------------------------------------
 # Step 10: apply the agent Runtime CRs and wait for the warm pods.

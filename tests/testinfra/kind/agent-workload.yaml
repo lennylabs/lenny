@@ -127,8 +127,10 @@ spec:
   type: agent
   image: __CRED_SHELL_ECHO_IMAGE__
   # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
-  # supervisor launches; the image sets no ENV the binary relies on.
-  command: ["/usr/local/bin/lenny"]
+  # supervisor launches; the image sets no ENV the binary relies on. The
+  # image is built from cmd/runtimes/cred-shell-echo/Dockerfile, whose
+  # ENTRYPOINT is /usr/local/bin/cred-shell-echo.
+  command: ["/usr/local/bin/cred-shell-echo"]
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
