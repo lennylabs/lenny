@@ -28,12 +28,11 @@ import (
 const finalizePlanMaxBytes int64 = 1 << 20 // 1 MiB
 
 // finalizeRequest is the optional body of POST /v1/sessions/{id}/finalize.
-// A no-body finalize (the pre-upload single-shot path) leaves WorkspacePlan
-// nil. The §26.2 CLI submits the plan here, after the create →
-// upload-archive steps have minted the session-scoped uploadRef the plan
-// references: the create-time plan cannot name an uploadRef that does not
-// exist yet, so the §7.1 decomposed flow binds the plan at finalize
-// (step 11, FinalizeWorkspace).
+// A no-body finalize leaves WorkspacePlan nil. A session created without a
+// plan binds the plan carried here.
+//
+// spec: §14.1 WorkspacePlan Schema Versioning (Plan binding); §7.1 Normal
+// Flow.
 type finalizeRequest struct {
 	WorkspacePlan json.RawMessage `json:"workspacePlan,omitempty"`
 }
@@ -43,15 +42,11 @@ type finalizeRequest struct {
 // session row. It returns the canonical JSON to persist, the parser's
 // consumer-advisory warnings, whether a plan was supplied, and ok=false
 // (with the error response already written) on any validation failure.
+// The plan binds to this session, so its uploadRef values are checked
+// against row.ID.
 //
-// The plan reaching finalize references blobs uploaded against this
-// session (POST /v1/sessions/{id}/upload-archive), so it closes the
-// §26.2↔§15.1 ordering gap: the upload mints a session-scoped uploadRef
-// only after the session exists, and the immutable create-time plan
-// cannot name it, so the CLI uploads first and binds the plan here.
-//
-// spec: §7.1; §26.2;
-// §14 workspace-plan schema.
+// spec: §14.1 WorkspacePlan Schema Versioning (Plan binding); §7.1 Normal
+// Flow.
 func (s *Server) resolveFinalizePlan(w http.ResponseWriter, r *http.Request, tenantID string, row sessionstore.Session) (
 	storedJSON json.RawMessage, warnings []workspaceplan.Warning, hasPlan bool, ok bool,
 ) {
@@ -74,20 +69,13 @@ func (s *Server) resolveFinalizePlan(w http.ResponseWriter, r *http.Request, ten
 		return nil, nil, false, false
 	}
 
-	parsed, storedJSON, warns, planOK := s.resolvePlanForCreate(w, r, raw)
+	parsed, storedJSON, warns, planOK := s.resolveSubmittedPlan(w, r, raw, tenantID, row.ID)
 	if !planOK {
 		return nil, nil, false, false
 	}
 	// spec: §7.5 / §5.1 — the setup-command cap applies to
 	// a finalize-bound plan exactly as it does at create.
 	if !s.enforceSetupCommandPolicy(w, r, row.RuntimeRef, parsed) {
-		return nil, nil, false, false
-	}
-	// spec: §12.5 / §13.4 — every uploadRef the finalize plan
-	// references must be a blob staged against this very session. This
-	// keeps the binding safe by construction: a client cannot finalize its
-	// session against another tenant's or another session's staged blob.
-	if !s.validateFinalizeUploadRefs(w, tenantID, row.ID, parsed) {
 		return nil, nil, false, false
 	}
 	return storedJSON, warns, true, true
@@ -118,16 +106,20 @@ func (s *Server) readFinalizePlanBody(w http.ResponseWriter, r *http.Request) (j
 	return req.WorkspacePlan, true
 }
 
-// validateFinalizeUploadRefs verifies that every uploadFile / uploadArchive
-// source in the finalize plan references a blob staged against this exact
-// session. The check parses each uploadRef as a §4.5 lenny-blob:// URI and
-// requires its tenant and session segments to match the finalizing
-// session. It writes the §15.1 error response and returns false on the
-// first foreign or malformed ref.
+// validatePlanUploadRefs verifies that every uploadFile and uploadArchive
+// source in a client-submitted plan references content stored for the
+// session the plan binds to. The gateway reads its own lenny-blob://
+// encoding of the uploadRef, while clients treat the value as opaque. A
+// value the gateway cannot decode writes 400 VALIDATION_ERROR with
+// reason invalid_upload_ref. A value stored for another tenant or
+// session, or any upload source when bindSessionID is empty (a plan bound
+// at creation), writes 400 VALIDATION_ERROR with reason
+// upload_ref_foreign_session. It returns false on the first rejected
+// source.
 //
-// spec: §12.5; §13.4 (upload
-// security).
-func (s *Server) validateFinalizeUploadRefs(w http.ResponseWriter, tenantID, sessionID string, plan workspaceplan.Plan) bool {
+// spec: §14 Workspace Plan Schema (uploadRef field note); §14.1
+// WorkspacePlan Schema Versioning (Plan binding); §12.5.
+func (s *Server) validatePlanUploadRefs(w http.ResponseWriter, tenantID, bindSessionID string, plan workspaceplan.Plan) bool {
 	for i, src := range plan.Sources {
 		var ref string
 		switch v := src.Variant.(type) {
@@ -145,11 +137,10 @@ func (s *Server) validateFinalizeUploadRefs(w http.ResponseWriter, tenantID, ses
 				map[string]any{"field": sourceUploadRefField(i, src.Type), "reason": "invalid_upload_ref"})
 			return false
 		}
-		if uri.TenantID != tenantID || uri.SessionID != sessionID {
-			// spec: §12.5 — the staged blob lives under the
-			// session's own tenant+session prefix. A ref into another
-			// session's prefix is rejected so finalize cannot bind a plan
-			// to a blob the caller did not stage for this session.
+		// A plan bound at creation has no session whose uploads it could
+		// name, so the empty bindSessionID rejects every upload source
+		// even if the decoder ever admits an empty session segment.
+		if bindSessionID == "" || uri.TenantID != tenantID || uri.SessionID != bindSessionID {
 			s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 				"uploadRef must reference a blob uploaded to this session",
 				map[string]any{"field": sourceUploadRefField(i, src.Type), "reason": "upload_ref_foreign_session"})

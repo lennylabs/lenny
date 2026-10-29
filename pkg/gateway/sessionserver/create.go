@@ -194,7 +194,7 @@ func (s *Server) validateAndBuildCreateRow(w http.ResponseWriter, r *http.Reques
 	// state-machine paths). The validated plan is stored on the row so
 	// the start handler can materialize it onto the claimed pod and
 	// GET /v1/sessions/{id} can return it per §15.1.
-	parsedPlan, planJSON, planWarnings, planOK := s.resolvePlanForCreate(w, r, req.WorkspacePlan)
+	parsedPlan, planJSON, planWarnings, planOK := s.resolveSubmittedPlan(w, r, req.WorkspacePlan, tenantID, "")
 	if !planOK {
 		return sessionstore.Session{}, createBuild{}, false
 	}

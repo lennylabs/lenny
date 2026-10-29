@@ -5467,7 +5467,12 @@
         "pkg/gateway/sessionserver/create_test.go",
         "pkg/gateway/sessionserver/pool_selection_component_test.go::TestCreateBodyPoolHonorsPinnedProfileWhenIsolationOmitted_spec_7_1",
         "pkg/gateway/sessionserver/pool_selection_component_test.go::TestCreateBodyPoolRejectsUnsatisfiablePin_spec_14_1",
-        "pkg/gateway/sessionserver/pool_selection_component_test.go::TestCreateBodyPoolHonorsBackedAuthorizedPin_spec_7_1"
+        "pkg/gateway/sessionserver/pool_selection_component_test.go::TestCreateBodyPoolHonorsBackedAuthorizedPin_spec_7_1",
+        "pkg/gateway/sessionserver/plan_binding_internal_test.go::TestCreateTimePlanRejectsUploadSources_spec_14_1",
+        "pkg/gateway/sessionserver/plan_binding_internal_test.go::TestUploadRefScopeRunsBeforeGitClonePin_spec_14_1",
+        "pkg/gateway/sessionserver/plan_binding_pod_test.go::TestCreateTimeUploadRefRejectedBeforePodClaim_spec_14_1",
+        "pkg/gateway/sessionserver/plan_binding_pod_test.go::TestFinalizeForeignUploadRefKeepsClaimedPod_spec_14_1",
+        "tests/tier4_integration/plan_binding_upload_ref_test.go::TestCreateTimePlanCannotNameAnotherSessionsUpload_spec_14_1"
       ],
       "packages": [
         "pkg/workspaceplan"

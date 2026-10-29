@@ -254,7 +254,7 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
 
-	parsedPlan, planJSON, planWarnings, planOK := s.resolvePlanForCreate(w, r, req.WorkspacePlan)
+	parsedPlan, planJSON, planWarnings, planOK := s.resolveSubmittedPlan(w, r, req.WorkspacePlan, tenantID, "")
 	if !planOK {
 		return sessionstore.Session{}, createAndStartBuild{}, false
 	}

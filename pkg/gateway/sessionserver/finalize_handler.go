@@ -107,12 +107,10 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		s.writePreconditionError(w, err)
 		return
 	}
-	// spec: §7.1 step 11 (FinalizeWorkspace); §26.2 — the
-	// §14 WorkspacePlan referencing this session's staged uploadArchive
-	// blob is bound here in the decomposed create → upload → finalize
-	// flow, because the create-time plan is immutable and cannot name an
-	// uploadRef minted only after the session exists. A no-body finalize
-	// keeps the existing plan (or empty workspace). F-24.17.4 / F-26.2.4.
+	// spec: §14.1 WorkspacePlan Schema Versioning (Plan binding); §7.1
+	// Normal Flow — a session created without a plan binds the plan the
+	// finalize body carries. A no-body finalize keeps the existing plan
+	// (or empty workspace).
 	planJSON, planWarnings, hasPlan, planOK := s.resolveFinalizePlan(w, r, tenantID, row)
 	if !planOK {
 		return

@@ -29,15 +29,28 @@ func storedWorkspacePlan(row sessionstore.Session) (workspaceplan.Plan, error) {
 	return plan, err
 }
 
-// resolvePlanForCreate parses a client-submitted §14 WorkspacePlan and,
+// resolveSubmittedPlan parses a client-submitted §14 WorkspacePlan,
+// checks every uploadFile and uploadArchive source's uploadRef against
+// the binding session, runs the gitClone auth host-to-pool check, and,
 // when a RefResolver is wired and the plan has a gitClone source, pins
-// each gitClone ref to an immutable commit SHA per §14. It returns the
-// parsed plan, the canonical JSON to persist on the session row (the
-// pinned form when pinning occurred, the submitted bytes otherwise),
-// and the consumer-advisory warnings. On a validation or
-// ref-resolution failure it writes the §15.1 error response and
-// returns ok=false; the caller must abort.
-func (s *Server) resolvePlanForCreate(w http.ResponseWriter, r *http.Request, rawPlan json.RawMessage) (
+// each gitClone ref to an immutable commit SHA. The uploadRef check runs
+// ahead of the gitClone checks, so a foreign ref fails before any
+// ls-remote runs.
+//
+// bindSessionID is the ID of the session the plan binds to. It is empty
+// for a plan bound at creation, because the session ID is minted after
+// plan validation and no upload for the session can exist yet, so every
+// upload source in a create-time plan is rejected.
+//
+// It returns the parsed plan, the canonical JSON to persist on the
+// session row (the pinned form when pinning occurred, the submitted bytes
+// otherwise), and the consumer-advisory warnings. On a validation or
+// ref-resolution failure it writes the §15.1 error response and returns
+// ok=false; the caller must abort.
+//
+// spec: §14 Workspace Plan Schema (uploadRef field note); §14.1
+// WorkspacePlan Schema Versioning (Plan binding).
+func (s *Server) resolveSubmittedPlan(w http.ResponseWriter, r *http.Request, rawPlan json.RawMessage, tenantID, bindSessionID string) (
 	plan workspaceplan.Plan, storedJSON json.RawMessage, warnings []workspaceplan.Warning, ok bool,
 ) {
 	if len(rawPlan) == 0 || isJSONNull(rawPlan) {
@@ -46,6 +59,9 @@ func (s *Server) resolvePlanForCreate(w http.ResponseWriter, r *http.Request, ra
 	parsed, warns, err := workspaceplan.Parse(rawPlan)
 	if err != nil {
 		s.writeWorkspacePlanError(w, err)
+		return workspaceplan.Plan{}, nil, nil, false
+	}
+	if !s.validatePlanUploadRefs(w, tenantID, bindSessionID, parsed) {
 		return workspaceplan.Plan{}, nil, nil, false
 	}
 	storedJSON = rawPlan
