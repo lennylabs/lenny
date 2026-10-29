@@ -3362,17 +3362,22 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   and adds start-state tests; 0085's TEST-1 edits `start_pod_test.go`), and 0085's design reads the `/start`
   launch as running in `starting`, which 0105 introduces. Its unstaged defects are filed below, in the block for
   proposal 0085. The next change-proposal run is 0061, re-derived.
-- [ ] **Proposal 0061, re-derived** (Draft; owner decision 2026-10-28, part of v1; the next change-proposal run,
-  after 0085's approval): a conversation on the built-in
-  OpenAI-dialect adapters (`/v1/responses`, and `/v1/chat/completions` if a conversation identity can be defined)
-  is a session. It keeps its pod across turns and follows the same timeouts and TTLs as every other session (the
-  §6.2 idle timeout, `maxSessionAge`, and the per-state deadlines 0105 anchors), reaped by the watchdog sweeps,
-  with no separate pod-hold TTL. A continuation reaching another gateway replica forwards to the holder over
-  `CH-HOLDERFORWARD` (0101) rather than taking the cold path; the cold path with 0056 transcript rehydration stays
-  the correctness floor after the session ends. Open points for the run: the Chat Completions conversation
-  identity (or keeping that endpoint per-request in v1), concurrent turns on one conversation, warm/cold
-  equivalence, and coordination with the pinned-idle proposal. It follows 0105 and 0101, whose timers and
-  forwarding it uses.
+- [x] **Proposal 0061, re-derived**
+  (`proposals/0108_fix_proposal-0061-re-derived-plan-item-gateway-runtime-comms/`): approved 2026-10-29 as
+  proposal 0108, merge `4e5a94071`. An Open Responses conversation runs on one held session under the ordinary
+  §6.2 and §7.2 timeouts with no new TTL or knob: a warm turn stays on the holder, a warm turn that reaches
+  another replica forwards to it over `CH-HOLDERFORWARD` and fails closed when the forward fails, every other
+  continuation rehydrates cold, response ids take the form `<sessionId>.<n>`, and Chat Completions stays
+  single-shot in v1 (section 10.3, owner to confirm). It supersedes the legacy draft
+  `proposals/0061_draft_single-shot-adapter-pod-hold-idle-ttl.md`, and it closes no filed finding. Its
+  implementation is unblocked: 0101 and 0105, whose forwarding and timers it uses, are implemented, and 0106 is
+  implemented, so 0108's implementor merges the rows 0106 added to `terminal_writer_inventory_test.go` and
+  `terminal_context_internal_test.go`. 0107 is approved and not implemented, and the summary fixes no order
+  between them: whichever of 0107 and 0108 lands second merges `pkg/gateway/session/sessionstore` (with its
+  `memstore` and `pgstore`) and `terminal_writer_inventory_test.go`, names `serveCold` in place of
+  `handleCreate` among 0107 CODE-3's hookless writers, and gives `endHeldSession` the dispatch of the CODE-3
+  `lenny/cancel_session` row. Its unstaged defects are filed below, in the block for proposal 0108. The next
+  change-proposal run is the snapshot-restore proposal below, drafting as 0109.
 - [ ] **Snapshot restore at bind (F-7.1.34 restore half, High, with F-7.1.33 and F-4.5.21)** (new proposal,
   queued 2026-10-29 ahead of 0077 because a derived or replayed session still starts without its source's
   workspace): the copy half landed in `3be845f0b`. The restore needs an adapter contract change, because
@@ -3380,7 +3385,7 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   smallest option is restore chunks on a non-mid-session finalize, filled from `resolveResumeChunks` when the
   `created` row has `ParentWorkspaceRef`, restored before the plan's sources. The proposal also settles the
   silent empty result when the manifest does not resolve, legacy single-object snapshots, and F-7.1.33's
-  collision order. It follows 0108 as the next change-proposal.
+  collision order. It follows 0108 and is the next change-proposal run, drafting as proposal 0109.
 - [ ] **Proposal 0077, re-derived** (Draft; owner decision 2026-10-28): pre-materialize workspace content on a
   warm pod, starting with massive git repositories, and extensible to other content later. The owner wants the
   capability built. Settled direction: a pool-level template names a repository and ref; the adapter fills a
@@ -4172,6 +4177,33 @@ for 0085's RECORDS-1, so the §6.2 entry below takes F-6.2.33.
   check with `startingPrecondition` and keeps the delegated-child guard, so the merged tree keeps the guard. The
   delegated child's `created → running` edge is F-7.2.45, already filed.
 
+**Defects filed from proposal 0108's unstaged-defect list (2026-10-29).** Proposal 0108 (proposal 0061
+re-derived, approved 2026-10-29, merge `4e5a94071`, implementation pending) lists defects in the shipped tree
+that it does not stage. It has no records deliverable and closes no filed finding, so no Owner line moves to
+it, and the listed defects are filed now, because no defect is dropped. Each was re-confirmed against the tree
+at `4e5a94071`. Each new or annotated BUILD-GAPS entry says 0108's implementor updates the entry rather than
+filing a duplicate.
+
+- Direct-fix queue, after 0108's implementation, whose CODE-3 edits `forwardTarget`.
+  - [ ] **F-29.3.4** (Medium): a forwarded request whose re-read row is outside its kind's forward states
+    runs locally at a replica that may not hold `REG-COORDLEASE`, because `forwardTarget` tests the state gate
+    before the §29.3 **Forwarding.** rule-5 branch. The fix applies the rule-5 branch first for every kind and
+    makes the REST and MCP not-delivered DLQ hold conditional on a `running` or `input_required` row, as
+    rule 6 states. 0108 reorders the branch for its own kind only.
+- Proposal routing: a session-owner authorization proposal (new, unwritten), after 0108's implementation,
+  which rewrites the Open Responses read and resolution paths.
+  - [ ] **F-15.1.55** (High, existing, annotated): session-create paths take the owner from the request.
+    0108's first listed defect, the client-asserted `user` field on the built-in adapters, is this finding's
+    adapter face, so it carries a note rather than a new entry.
+  - [ ] **F-10.2.30** (Medium, new): a `user`-role caller can read every session in its tenant, because
+    `handleGet` and `handleList` check the permission and then read tenant-scoped. §10.2 restricts `user` to
+    its own sessions unless a tenant-admin grants access, and no section defines the grant, so the rule needs
+    the proposal pipeline. 0108 SPEC-2 paragraph B scopes `GET /v1/responses/{id}` to the tenant to match.
+  - [ ] **F-15.1.54** (Medium, existing, annotated): the `GET /v1/responses/{id}` face of F-10.2.30. Its
+    suggested direct fix copies the `GET /v1/sessions/{id}` check, which does not exist, so it moves to the
+    same proposal. The completeness-pass entry for F-15.1.54 above routes with it.
+- Not filed: none. Every listed defect is filed or annotated.
+
 **Test-harness direct fixes (2026-10-27).** The unit tier reported a package timeout for
 `pkg/gateway/podlifecycle/podsession` whenever the host was loaded, which hid the results of every
 other test in that binary.
@@ -4347,7 +4379,8 @@ Four findings were missing, and one entry is new:
 - [ ] **F-15.1.54** (Medium): `GET /v1/responses/{id}` returns any tenant session's metadata to any caller
   in the tenant. It was found by the P5 dossier and is outside P5's scope. First confirm the §15.1 and §13
   read-authorization rule: a direct fix with a tier-9 test if the specification states it, otherwise a
-  small proposal. It is independent of the R-steps.
+  small proposal. It is independent of the R-steps. Routed on 2026-10-29 to the session-owner authorization
+  proposal with F-10.2.30 and F-15.1.55 (the block for proposal 0108 above).
 - [ ] **TEST-GAPS T-10.3.15** (Medium, filed 2026-10-28): the Kind install runs no `CH-HOLDERFORWARD`
   listener, because the e2e overlay runs `global.devMode: true` with `mtls.enabled: false` and §10.3 NET-072
   disables the forward in that configuration, so no tier-5 test exercises a forward and an off-holder
@@ -4565,6 +4598,14 @@ Answered on 2026-10-01 for the later phases:
     terminal session) by giving persisted-row seams no retry, and its §15.1 `SETUP_COMMAND_FAILED` edit is
     disjoint from the finalize precondition row 0082 edited. 0082's guarded finalize exits and its
     `start_pod_test.go` fixtures stand, and 0085's TEST-1 applies against them.
+- Proposal 0108, 2026-10-29 (owner to confirm): Chat Completions stays single-shot in v1. The owner's
+  2026-10-28 decision made a conversation on the built-in OpenAI-dialect adapters a session, covering
+  `/v1/chat/completions` if a conversation identity can be defined. Proposal 0108 (decision 1) finds that the
+  dialect carries no conversation identity: it is stateless, the client resends the history on every request,
+  and no identifier is on the wire, so there is no rehydration cost to save. Chat Completions therefore keeps
+  the **Built-in adapter single-shot compute model.** in v1, and a Chat Completions conversation identity is a
+  follow-up proposal. This narrows the 2026-10-28 decision to Open Responses, so the owner confirms it
+  (section 10.5).
 
 ### 10.4 Related work outside this track
 
@@ -4573,8 +4614,10 @@ order above and can run whenever capacity allows. Draft proposals 0072 and 0080 
 after their open items were filed in BUILD-GAPS and routed in section 10.2 ("Audit of unfinished proposals
 0060 and above"). Proposals 0086 and 0085 are no longer independent: 0086 was widened to take F-5.1.23 and
 the reopened F-7.5.3 and was approved on 2026-10-28 (merge `153a7e23b`), and 0085 was approved on 2026-10-29
-(merge `f5151ba18`), with its implementation queued after 0105's. The next change-proposal run is 0061,
-re-derived (section 10.2, "Queue after P4b").
+(merge `f5151ba18`), with its implementation queued after 0105's. Proposal 0061, re-derived, was approved on
+2026-10-29 as proposal 0108 (merge `4e5a94071`), and its implementation is unblocked. The next change-proposal
+run is the snapshot-restore proposal (the F-7.1.34 restore half), drafting as 0109 (section 10.2, "Queue after
+P4b").
 
 The final verification of proposal 0079 (2026-10-03) recorded these conditions, each of which also holds
 on the base commit and none of which is yet filed in BUILD-GAPS:
@@ -4607,6 +4650,9 @@ recorded here.
 
 - Proposal 0084's attribution option and the fence generation floor were decided on 2026-10-28 (section 10.3).
 - Proposal 0061 was decided on 2026-10-28: part of v1, as a session (section 10.3 and "Queue after P4b").
+- Owner to confirm (recorded 2026-10-29): proposal 0108 keeps Chat Completions single-shot in v1, because the
+  dialect carries no conversation identity, which narrows the 2026-10-28 decision to Open Responses
+  (section 10.3).
 
 ### 10.6 Context and rationale for the proposal track
 
