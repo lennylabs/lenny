@@ -32,10 +32,11 @@ const (
 	// transition the session without waiting for the orphan-session
 	// reconciler (§10.1).
 	eventAdapterTerminating = "AdapterTerminating"
-	// eventFinalUsageReport is the final lifecycle-stream message, sent
-	// after in-flight ReportUsage calls have flushed, just before the stream
-	// closes. The gateway waits for it before running budget_return.lua
-	// (§8.3).
+	// eventFinalUsageReport is the per-session usage report the adapter
+	// sends for one session as it tears that session down, in the session's
+	// Shutdown (§4.7.1) or on a coordinator-loss hold timeout, after
+	// in-flight ReportUsage calls have flushed. The gateway waits for it
+	// before running budget_return.lua (§8.3).
 	eventFinalUsageReport = "FINAL_USAGE_REPORT"
 	// eventCheckpointBarrierAck is the §4.7 CheckpointBarrierAck
 	// event the adapter emits in response to a §10.1 graceful-drain
