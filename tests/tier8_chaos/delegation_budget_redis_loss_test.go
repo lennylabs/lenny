@@ -279,8 +279,9 @@ func (st *dlgLossStack) delegate(t *testing.T, r *dlgLossReplica, parent, runtim
 	return res.Child.ID
 }
 
-// dlgLossTree is a root with two delegated children, each with one delegated
-// child of its own, and the token slice each delegated node holds.
+// dlgLossTree is a root with two delegated children and two delegated
+// grandchildren, and the token slice each delegated node holds. Every slice
+// is distinct, so a budget return identifies its node by its token delta.
 type dlgLossTree struct {
 	root     string
 	children []string
@@ -292,18 +293,27 @@ func (tr dlgLossTree) nodes() []string {
 	return append(append([]string(nil), tr.children...), tr.grand...)
 }
 
+// buildTree delegates the tree through r. The tree-wide token pool is checked
+// against the delegating parent's maxTokenBudget, so a parent whose own slice
+// is already counted in that pool can admit no child with a token slice. The
+// first child therefore declares no token slice (no tokens-axis limit) and
+// delegates both grandchildren; the second child holds a finite slice. Every
+// delegated node still holds tree_size, tree_memory, and per-parent
+// reservations.
+//
+// spec: §8.2, §8.3 (BUDGET_KEYS_EXPIRED detection and tree cleanup)
 func (st *dlgLossStack) buildTree(t *testing.T, r *dlgLossReplica) dlgLossTree {
 	t.Helper()
 	tr := dlgLossTree{root: st.seedRoot(t), slices: map[string]int64{}}
-	for i := int64(0); i < 2; i++ {
-		c := st.delegate(t, r, tr.root, "worker-1", 5000+i)
+	for _, slice := range []int64{0, 5000} {
+		c := st.delegate(t, r, tr.root, "worker-1", slice)
 		tr.children = append(tr.children, c)
-		tr.slices[c] = 5000 + i
+		tr.slices[c] = slice
 	}
-	for i, c := range tr.children {
-		g := st.delegate(t, r, c, "worker-2", 3000+int64(i))
+	for _, slice := range []int64{3000, 3001} {
+		g := st.delegate(t, r, tr.children[0], "worker-2", slice)
 		tr.grand = append(tr.grand, g)
-		tr.slices[g] = 3000 + int64(i)
+		tr.slices[g] = slice
 	}
 	return tr
 }
@@ -608,11 +618,14 @@ func TestRedisOutageDuringABudgetReturn_spec_8_3(t *testing.T) {
 	a := st.replicas[0]
 	ctx := context.Background()
 	root := st.seedRoot(t)
-	child := st.delegate(t, a, root, "worker-1", 5000)
+	// The child declares no token slice so it can delegate a grandchild that
+	// holds one: the tree-wide token pool is checked against the delegating
+	// parent's maxTokenBudget (see buildTree).
+	child := st.delegate(t, a, root, "worker-1", 0)
 	grand := st.delegate(t, a, child, "worker-2", 3000)
 	before := st.budgetKeys(t, root)
-	if before["{"+root+"}:dlg:tree_size"] != "2" || before["{"+root+"}:dlg:tokens"] != "8000" {
-		t.Fatalf("budget keys before the outage = %v, want tree_size 2 and tokens 8000", before)
+	if before["{"+root+"}:dlg:tree_size"] != "2" || before["{"+root+"}:dlg:tokens"] != "3000" {
+		t.Fatalf("budget keys before the outage = %v, want tree_size 2 and tokens 3000", before)
 	}
 
 	a.enforcer.Record(ctx, ctx, dlgLossTenant, grand, 100, 100)
