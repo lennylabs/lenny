@@ -12,13 +12,14 @@
 
 Each case below is owned by the staged text it cites.
 
-- A continuation of a `suspended`, recovering, `awaiting_client_action`, or terminal session goes cold (SPEC-2 paragraph C). The superseded session is left to its ordinary timers, and while suspended it holds no pod and does not count toward §11.1 limits.
+- A continuation of a `suspended`, recovering, `awaiting_client_action`, or terminal session goes cold (SPEC-2 paragraph C). The superseded session is left to its ordinary timers (summary decision 3).
 - A crash after the reservation write and before the completion write leaves a not-completed newest response. Warm condition 2 then fails for every later continuation of that session, so every continuation goes cold, and the §6.2 timers reclaim the pod (SPEC-2 paragraph C, "A reserved response is never withdrawn").
 - An eviction and restore between the reservation and the completion write advances `recovery_generation`, so the completion write misses its condition and the turn fails with the native `500` (SPEC-2 paragraph D).
 - A `POST /v1/sessions/{id}/messages` delivery to a held session appends to the same transcript between turns. The next turn's end sequence bounds a prefix that includes it, so a cold rehydrate of that turn and the warm runtime see the same entries (SPEC-2 paragraphs B and C).
 - An erased ancestor session ends the context walk at the gap, and an erased session named by `previous_response_id` itself answers `404` (SPEC-2 paragraph C).
 - A session that SPEC-2 paragraph A releases at the end of its turn has every continuation served cold (warm condition 1).
 - A forward of a warm turn that is not delivered, or whose outcome is unknown, fails closed with `TARGET_NOT_READY` in the native envelope and is never enqueued in the DLQ (SPEC-3 row 3).
+- A response id issued before this change is a bare session id with no `.<n>` ordinal, so `GET /v1/responses/{id}` and `previous_response_id` answer the native `404` for it, and no fallback keeps it resolvable (SPEC-2 paragraph B).
 
 ## Staged edits
 
@@ -80,8 +81,9 @@ each response, its creation time, its end sequence (the highest transcript
 sequence number assigned to its turn's entries), the session's
 `recovery_generation` ([Section 4.2](04_system-components.md#42-session-manager))
 captured for its turn, and whether the turn completed. The session row also
-records the response id its first turn continued from, which is empty for the
-first session of a conversation. `GET /v1/responses/{id}` returns a completed
+records the runtime its creating request asked for, and the response id its
+first turn continued from, which is empty for the first session of a
+conversation. `GET /v1/responses/{id}` returns a completed
 response of a session in the caller's tenant and echoes its
 `previous_response_id`: the response with the preceding ordinal on the same
 session, or, for ordinal 1, the response the session's first turn continued
@@ -100,8 +102,8 @@ when all of the following hold on `S`'s row:
 1. `S` is `running`.
 2. `R` is `S`'s newest response and has completed.
 3. `S`'s `recovery_generation` equals the value recorded for `R`.
-4. `S`'s user, runtime, and environment equal those the request would create
-   its own session with.
+4. This request asks for the user, runtime, and environment that the request
+   which created `S` asked for.
 
 Before it dispatches a warm turn, the gateway reserves ordinal `n+1` on `S` with
 one write that takes effect only while conditions 1 through 4 still hold, and

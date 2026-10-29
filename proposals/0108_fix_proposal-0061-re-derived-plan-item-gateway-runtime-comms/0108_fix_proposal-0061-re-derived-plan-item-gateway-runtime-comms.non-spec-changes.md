@@ -5,13 +5,13 @@
 The normative rules are in spec-changes SPEC-2 (§15 **Open Responses conversation sessions.**) and SPEC-3 (§29.3 rows). This section maps them onto code.
 
 - `transcriptstore.Store.Append` returns the last Seq it assigned (CODE-1). That value is a response's end sequence.
-- `sessionstore.Session` gains `Responses []ConversationResponse` on the existing request-envelope jsonb bundle (CODE-2). No migration is needed.
+- `sessionstore.Session` gains `Responses` and `RequestedRuntimeRef` on the existing request-envelope jsonb bundle (CODE-2). No migration is needed.
 - `sessionserver` gains `ForwardKindResponsesTurn` and an exported `ForwardResponsesTurn`, and the holder-forward listener mounts `POST /v1/responses` (CODE-3).
 - The translator gains the response-id codec, an end-sequence-bounded rehydrate, a required transcript record, and a GET that answers only completed responses (CODE-4).
 - `handleCreate` splits into resolve, forward, serveWarm, and serveCold (CODE-5). The order is fixed: resolve (no store write, no bind), then forward, then reservation, then dispatch.
 - The Chat Completions handler (`OpenAIChatHandler.handleCreateCompletion` in `openai_chat.go`) is unchanged.
 
-The translator cannot import `sessionserver` (import cycle). Every sessionserver capability the translator needs is a consumer interface in the translator, implemented by an adapter type in `cmd/lenny-gateway/credentialsurface.go` beside `sessionSingleShotBinder`.
+The translator cannot import `sessionserver` (import cycle). Every sessionserver capability the translator needs is a consumer interface in the translator, wired in `cmd/lenny-gateway/credentialsurface.go` beside `sessionSingleShotBinder`.
 
 ## Staged code changes
 
@@ -36,11 +36,11 @@ Targets:
 - `pkg/gateway/environment/translator/continuity.go` (`record` consumes the value under CODE-4).
 - The consumer interface `Transcripts` in `tests/testinfra/lifecyclefence/stores.go` and its caller in `tests/testinfra/lifecyclefence/world.go`.
 - The fake `appendFailTranscripts` in `pkg/gateway/environment/translator/open_responses_test.go`.
-- Every test call site that uses `err :=` or `_ =` with `Append`: `cmd/lenny-gateway/stores_fence_wiring_test.go`, `pkg/gateway/environment/translator/continuity_test.go`, `pkg/gateway/session/sessionstore/memstore/create_with_transcript_test.go`, `pkg/gateway/sessionserver/creation_fence_test.go`, `pkg/gateway/sessionserver/messages_list_test.go`, `pkg/gateway/sessionserver/replay_test.go`, `pkg/gateway/sessionserver/taskrecord_test.go`, `pkg/gateway/storage/sqlitestore/stores_roundtrip_test.go`, `tests/tier2_component/stores/sessionstore_create_with_transcript_test.go`, and `tests/tier7a_load_local/replay_transcript_erasure_race_test.go`.
+- Every test call site that uses `err :=` or `_ =` with `Append`: `cmd/lenny-gateway/stores_fence_wiring_test.go`, `pkg/gateway/environment/transcriptstore/transcriptstore_test.go`, `pkg/gateway/environment/translator/continuity_test.go`, `pkg/gateway/session/sessionstore/memstore/create_with_transcript_test.go`, `pkg/gateway/sessionserver/creation_fence_test.go`, `pkg/gateway/sessionserver/messages_list_test.go`, `pkg/gateway/sessionserver/replay_test.go`, `pkg/gateway/sessionserver/taskrecord_test.go`, `pkg/gateway/sessionserver/taskresult_internal_test.go`, `pkg/gateway/storage/sqlitestore/stores_roundtrip_test.go`, `tests/tier2_component/stores/sessionstore_create_with_transcript_test.go`, `tests/tier2_component/stores/transcriptstore_test.go`, and `tests/tier7a_load_local/replay_transcript_erasure_race_test.go`.
 
 Do not read the end sequence with `Store.Page` or `Get` after the append: that races a concurrent REST append to the same bucket. Do not add a second `AppendReturningSeq` method beside `Append`.
 
-### CODE-2 · sessionstore: per-response records on the request-envelope bundle
+### CODE-2 · sessionstore: per-response records and the requested runtime ref on the request-envelope bundle
 
 Targets: `pkg/gateway/session/sessionstore/sessionstore.go`, `pkg/gateway/session/sessionstore/pgstore/pgstore.go`, and `pkg/gateway/session/sessionstore/memstore/memstore.go`.
 
@@ -56,18 +56,19 @@ type ConversationResponse struct {
 ```
 
 - `Session` gains `Responses []ConversationResponse`. The ordinal of `Responses[i]` is `i+1`.
-- pgstore: add `Responses` to `storedEnvelope` and `requestEnvelopeArg` with json `responses,omitempty`, include it in the all-empty NULL check, and copy it in `applyStoredEnvelope`.
+- `Session` gains `RequestedRuntimeRef string`: the runtime ref the Open Responses request that created the session passed to `BindSingleShot`. `RuntimeRef` is the value after §4.8 PreRoute and §10.7 experiment routing rewrite it. Its doc comment cites §15 (Open Responses conversation sessions).
+- pgstore: add `Responses` (json `responses,omitempty`) and `RequestedRuntimeRef` (json `requestedRuntimeRef,omitempty`) to `storedEnvelope` and `requestEnvelopeArg`, include both in the all-empty NULL check, and copy both in `applyStoredEnvelope`.
 - memstore clones the slice on every read and write, so a caller cannot alias stored state.
 - Rewrite the `ContinuationParentID` doc comment: it is the response id (`<sessionId>.<n>`) that this session's first turn continued from, empty for a conversation's first session, and distinct from `ParentSessionID`, which belongs to delegation. Cite §15 (Open Responses conversation sessions).
 
 **IMPLEMENTOR'S CHOICE:** the Go type of `RecoveryGeneration`. It matches the type of `Session.RecoveryGeneration` exactly, so the warm condition compares without conversion.
 
-### CODE-3 · sessionserver: ForwardKindResponsesTurn with caller-rendered refusal; listener mounts /v1/responses
+### CODE-3 · sessionserver: ForwardKindResponsesTurn with a caller-supplied refusal renderer; listener mounts /v1/responses
 
 Targets: `pkg/gateway/sessionserver/holder_forward.go`, `cmd/lenny-gateway/holder_forward_listener.go` (`holderForwardInner` and its caller), and the `cmd/lenny-gateway` call site that passes the responses handler (`w.responsesHandler`).
 
 1. Add `ForwardKindResponsesTurn` to the `ForwardKind` consts and to `forwardStates` gated on `{session.StateRunning: true}`.
-2. `refuseForward`: for `ForwardKindResponsesTurn`, call `idemmw.DoNotStore(ctx)` and return without writing, on both `ForwardNotDelivered` and `ForwardUnknown`. This keeps the §11.5 no-store obligation of §29.3 **Forwarding.** rules 6 and 7 inside sessionserver while the caller renders the native envelope.
+2. `refuseForward`: for `ForwardKindResponsesTurn`, call `idemmw.DoNotStore(ctx)` and then the caller's `refuse(w, string(row.State))` in place of `writeError`, on both `ForwardNotDelivered` and `ForwardUnknown`. How `refuse` reaches `refuseForward` is the implementor's choice; the existing `forwardToHolder` callers do not change.
 3. Add the exported production wrapper:
 
    ```go
@@ -75,16 +76,17 @@ Targets: `pkg/gateway/sessionserver/holder_forward.go`, `cmd/lenny-gateway/holde
    // session's coordinating replica. The caller calls it on every warm-eligible
    // request, including one where Forwarded(ctx) is true: forwardTarget applies
    // §29.3 Forwarding rule 4 (never dials again) and rule 5 (ForwardNotDelivered
-   // when this replica does not hold REG-COORDLEASE). On ForwardNotDelivered
-   // and ForwardUnknown nothing is written, and the caller writes the native
-   // 409 and returns.
+   // when this replica does not hold REG-COORDLEASE). refuse writes a
+   // not-delivered or unknown refusal, and is called only before any byte of
+   // the coordinator's response is written; a coordinator body that fails
+   // after its status is relayed stays truncated, as copyForwardResponse
+   // leaves it. The caller returns on every outcome other than ForwardLocal.
    // spec: §29.3 (Interactive message send) Forwarding; §15 (Open Responses conversation sessions)
-   func (s *Server) ForwardResponsesTurn(w http.ResponseWriter, r *http.Request, row sessionstore.Session, body []byte) ForwardOutcome
+   func (s *Server) ForwardResponsesTurn(w http.ResponseWriter, r *http.Request, row sessionstore.Session, body []byte, refuse func(w http.ResponseWriter, currentState string)) ForwardOutcome
    ```
 
    It calls `forwardToHolder` with `bytes.NewReader(body)`, because `handleCreate` has already read the request body.
-4. Update the `forwardToHolder` doc comment so the caller-renders exception names `ForwardKindResponsesTurn` for both refusal outcomes beside `ForwardKindMessageNoReplyTo` not-delivered.
-5. `holderForwardInner` takes the responses handler as a third argument and mounts `"POST /v1/responses"` on it. `GET /v1/responses/{id}` is not mounted, because it reads stores only.
+4. `holderForwardInner` takes the responses handler as a third argument and mounts `"POST /v1/responses"` on it. `GET /v1/responses/{id}` is not mounted, because it reads stores only.
 
 ### CODE-4 · translator: response id, Seq-bounded rehydrate, required record, GET
 
@@ -97,21 +99,21 @@ Targets: `pkg/gateway/environment/translator/responseid.go` (new), `pkg/gateway/
    - Each hop reads S's transcript entries with `Seq <= S.Responses[n-1].EndSeq`, prepends them, then continues at `S.ContinuationParentID` parsed the same way. An empty `ContinuationParentID` ends the walk.
    - A later hop that misses (erased session, unparsable parent, out-of-range or not-completed ordinal) stops the walk at that gap and returns what it has.
    - The visited guard is keyed by session id.
-   - Export a resolve step that returns the parsed `(S row, n)` for CODE-5, so the handler reads the row once for both the warm check and the 404 decision.
+   - Export the first hop as the resolve step, returning the parsed `(S row, n)` or `errContinuationNotFound`, for CODE-5 step 1 and item 6.
 4. `record(ctx, tenantID, sessionID, msgs, out) (endSeq uint64, err error)` appends the turn's input and output and returns `Append`'s last Seq. It is required on this path: CODE-5 treats an error as a post-delivery failure.
 5. Rewrite the `continuity` type and `record` doc comments, which describe single-turn buckets and a best-effort write, to describe the end-sequence-bounded per-session prefix and the required record. Cite §15 (Open Responses conversation sessions).
-6. `handleGet` parses the id, does a tenant-scoped `Get`, and returns the native `404` when the id is unparsable, the session is missing, the ordinal is out of range, or the response is not completed. It returns `status: "completed"` with `id = formatResponseID(S, n)` and `previous_response_id` equal to `formatResponseID(S, n-1)` for `n > 1` or `S.ContinuationParentID` for `n == 1`.
+6. `handleGet` resolves the id through item 3's resolve step with the caller's tenant and returns the native `404` on `errContinuationNotFound`. It returns `status: "completed"` with `id = formatResponseID(S, n)` and `previous_response_id` equal to `formatResponseID(S, n-1)` for `n > 1` or `S.ContinuationParentID` for `n == 1`.
 7. Delete `mapStateToResponsesStatus` unless another caller remains.
 
 ### CODE-5 · translator: handleCreate holds the session and routes warm, forward, or cold
 
-Targets: `pkg/gateway/environment/translator/open_responses.go` (`handleCreate` split into resolve, serveWarm, and serveCold; `OpenResponsesOptions.HolderForwarder`), `pkg/gateway/environment/translator/openai_chat.go` (`endHeldSession` beside `releaseSingleShot`; `OpenAIErrorBody`), `pkg/gateway/environment/translator/singleshot.go` (consumer interface `HolderForwarder`; binder return value), and `cmd/lenny-gateway/credentialsurface.go` (adapter over `*sessionserver.Server` implementing `translator.HolderForwarder`, wired beside `sessionSingleShotBinder`).
+Targets: `pkg/gateway/environment/translator/open_responses.go` (`handleCreate` split into resolve, serveWarm, and serveCold; `endHeldSession`; `OpenResponsesOptions.HolderForwarder` and `OpenResponsesOptions.Terminal`), `pkg/gateway/environment/translator/openai_chat.go` (`OpenAIErrorBody`), `pkg/gateway/environment/translator/singleshot.go` (consumer interfaces `HolderForwarder` and `SessionTerminal`; binder return value), `cmd/lenny-gateway/credentialsurface.go` (adapter over `*sessionserver.Server` implementing `translator.HolderForwarder`, wired beside `sessionSingleShotBinder`, and the `*sessionserver.Server` passed as `Terminal`), and `pkg/gateway/sessionserver/terminal_writer_inventory_test.go` and `terminal_context_internal_test.go` (the `open_responses.go` row names `serveCold` in place of `handleCreate`; add `open_responses.go endHeldSession` with claim `endHeldSession`, driven by `afterTerminalWriteDriver`).
 
 Steps, in this order:
 
 1. **Resolve.** Normalize input (`400` on failure) and, when `previous_response_id` is set, resolve it through CODE-4's resolve step. A not-found answers the native `404`. No bind, no store write, and no forward happen before this point.
-2. **Warm eligibility.** Evaluate SPEC-2's warm conditions 1 through 4 on the resolved row against the request's `req.User`, runtime ref, and environment. A request with no `previous_response_id`, or one that fails any condition, goes to step 6.
-3. **Forward.** Call `HolderForwarder.ForwardResponsesTurn(w, r, row, body)` on every warm-eligible request, whether or not `sessionserver.Forwarded(ctx)` is true. On `ForwardDelivered` return. On `ForwardNotDelivered` or `ForwardUnknown`, write `409` with `writeOpenAIErrorWithCode` code `TARGET_NOT_READY` and `current_state` set to `string(row.State)`, and return; never fall through to serveWarm or serveCold. On `ForwardLocal` continue.
+2. **Warm eligibility.** Evaluate SPEC-2's warm conditions 1 through 4 on the resolved row, comparing `req.User` with `row.UserID`, the request's environment with `row.Environment`, and its runtime ref with `row.RequestedRuntimeRef`. Never compare with `row.RuntimeRef`, which session creation rewrites. A request with no `previous_response_id`, or one that fails any condition, goes to step 6.
+3. **Forward.** Call `HolderForwarder.ForwardResponsesTurn(w, r, row, body, refuse)` on every warm-eligible request, whether or not `sessionserver.Forwarded(ctx)` is true, where `refuse` writes `409` with `writeOpenAIErrorWithCode` code `TARGET_NOT_READY` and `current_state` set to the state it is given. On `ForwardLocal` continue. On any other outcome return without writing, and never fall through to serveWarm or serveCold. The consumer interface `HolderForwarder` in `singleshot.go` and the `cmd/lenny-gateway` adapter carry the same parameter.
 4. **Native `currentState`.** `OpenAIErrorBody` gains `CurrentState string \`json:"current_state,omitempty"\``. This is the field that carries §29.3's `currentState` in the native envelope. `writeOpenAIErrorWithCode` (or a sibling writer) sets it.
 5. **serveWarm.**
    - Reservation: one `sessionstore.Update` whose mutator re-checks conditions 1 through 4 under the row lock and appends `{CreatedAt: now, RecoveryGeneration: s.RecoveryGeneration, Completed: false}`, capturing that generation as `resGen`. A failed re-check returns a sentinel error, writes nothing, and sends the request to step 6.
@@ -121,14 +123,13 @@ Steps, in this order:
    - Respond with id `formatResponseID(S, n+1)` and `previous_response_id` the request's.
 6. **serveCold.**
    - Bind through `BindSingleShot`. Extend `SingleShotBinder.BindSingleShot` to return the new session's `RecoveryGeneration` (`bindGen`) and a `hold` bool along with the session id. `sessionSingleShotBinder` sets `hold` only when SPEC-2 paragraph A holds the session. It takes continuity from the create response and resolves the runtime through `runtimecapoverride.ResolveForTenant` (as `requireInjectionSupported` resolves it, with the binder given `w.runtimes` and `w.capOverrides`). A resolve error or not-found sets `hold = false`. The no-op binder returns `hold = false`. The `openai_chat.go` call site ignores `hold`. Update every other implementer and caller of the changed signature: `stubSingleShotBinder` (`openai_chat_test.go`), `ssSingleShotBinder` (`tests/tier2_component/translators/openai_singleshot_lifecycle_test.go`), `singleShotBinder` (`tests/tier7a_load_local/scenarios/singleshot_admission_ordering/scenario.go`), the callers in `singleshot_test.go`, and the `sessionSingleShotBinder` literals in `credentialsurface_singleshot_test.go` and `caller_check_wiring_test.go`, which also need `runtimes` and `capOverrides`. Each stub returns the `hold` value its test expects, because a stub returning `false` silently turns a held-session test into a release test.
-   - Arm the deferred `releaseSingleShot` with `disp = failed`.
    - Dispatch `exec.Send(prior + new input)`, where `prior` is the CODE-4 rehydrate of `previous_response_id` (empty for a root request).
-   - Record and commit as in step 5, except that the commit appends `{CreatedAt, EndSeq, RecoveryGeneration: bindGen, Completed: true}` as ordinal 1 and sets `ContinuationParentID = previous_response_id`, conditioned on `s.RecoveryGeneration == bindGen`.
-   - Hold or release: when `hold` is false, write `completed` (the existing completion write) and let the deferred release run with `disp = completed`. Otherwise disarm the deferred release so the session stays `running` with its pod and lease.
+   - Record and commit as in step 5, except that the commit appends `{CreatedAt, EndSeq, RecoveryGeneration: bindGen, Completed: true}` as ordinal 1 and sets `ContinuationParentID = previous_response_id` and `RequestedRuntimeRef` to the runtime ref passed to `BindSingleShot`, conditioned on `s.RecoveryGeneration == bindGen`.
+   - Hold or release: when `hold` is false, write `completed` (the existing completion write) and call `releaseSingleShot` with the completed disposition. Otherwise return with the session `running`, holding its pod and lease.
    - Respond with id `formatResponseID(newSession, 1)`.
-7. **One release owner per exit.** The deferred `releaseSingleShot` stays armed until `Send` returns. On a `Send` error in serveCold, the deferred release alone ends the session: the handler writes the `failed` row and returns. `endHeldSession` is called only for a failure after a successful `Send` (or for any warm `Send` failure after delivery), and it disarms any armed deferred release first. No path releases twice.
-8. `endHeldSession(ctx, tenantID, sessionID)` writes `failed` with `MarkTerminated` and calls `releaseSingleShot` with the failed disposition, on the same detached timeout-bounded context `releaseSingleShot` uses.
-9. Always wire the `cmd/lenny-gateway` forwarder adapter. There is no nil-forwarder mode: `forwardToHolder` already returns `ForwardLocal` through `coordinatesEverySession()` and `ForwardNotDelivered` when no forward client exists.
+7. **One failure exit.** Every serveCold failure after `BindSingleShot` returns, including a `Send` error, calls `endHeldSession` and answers `500`. `endHeldSession` is the only release on a failed exit.
+8. `endHeldSession(ctx, tenantID, sessionID)`, an `OpenResponsesHandler` method, opens `Terminal.BeginTerminal(sessionID)` and holds the claim until it returns. It writes `failed` with `MarkTerminated` in one `Update` that returns `sessionstore.ErrSuperseded` on a terminal row, on a context detached from the request and bounded by the release timeout. On an applied write it calls `Terminal.AfterTerminalWrite(ctx, from, updated, nil)` inline, never `OnSessionTerminal` (paragraph D releases before the response returns). The hook releases the pod and lease, so `endHeldSession` calls no `releaseSingleShot`. `OpenResponsesOptions.Terminal` takes the consumer interface `SessionTerminal`, the method set of `mcptools.Terminal`, which `*sessionserver.Server` satisfies.
+9. Always wire the `cmd/lenny-gateway` forwarder adapter, and pass the `*sessionserver.Server` as `Terminal`. There is no nil-forwarder or nil-`Terminal` mode: `forwardToHolder` already returns `ForwardLocal` through `coordinatesEverySession()` and `ForwardNotDelivered` when no forward client exists.
 10. Retarget the `// spec: §15 built-in adapter single-shot compute model` citations in `continuity.go`, `open_responses.go`, `open_responses_test.go`, and `tests/tier3_contract/rest_sessions/openapi_document_test.go` to `§15 (Open Responses conversation sessions)` wherever they describe held-session or lineage behavior. Citations that describe the creation gates, atomicity, or 503 mapping keep the single-shot label. Chat-path citations in `openai_chat.go` and `singleshot.go` keep the single-shot label.
 
 The warm path writes no `last_agent_activity_at` stamp (SPEC-2 paragraph D).
@@ -214,29 +215,31 @@ Every test carries a `// spec:` annotation, and every tier-2-and-up test carries
 
 ### TEST-1 · tests across the reached tiers
 
-Targets: `pkg/gateway/environment/translator/open_responses_test.go`, `continuity_test.go`, and a new `responseid_test.go`; `pkg/gateway/environment/transcriptstore` tests; `tests/tier2_component/stores/transcriptstore_test.go`; `pkg/gateway/session/sessionstore` memstore and pgstore tests; `pkg/gateway/sessionserver/holder_forward_test.go` and `holder_forward_sites_test.go`; `cmd/lenny-gateway` inner-mux and forwarder-adapter tests; `tests/tier3_contract/rest_openai_responses`; `tests/tier4_integration`; `tests/tier7a_load_local`; `tests/tier9_security`; `tests/tier11_docs` where page checks live. The existing single-shot assertions for Open Responses in these files are rewritten; `openai_chat_test.go` stays as the Chat Completions regression.
+Targets: `pkg/gateway/environment/translator/open_responses_test.go`, `continuity_test.go`, and a new `responseid_test.go`; `pkg/gateway/environment/transcriptstore` tests; `tests/tier2_component/stores/transcriptstore_test.go`; `tests/tier2_component/translators/openai_singleshot_lifecycle_test.go`; `pkg/gateway/session/sessionstore` memstore and pgstore tests; `pkg/gateway/sessionserver/holder_forward_test.go` and `holder_forward_sites_test.go`; `cmd/lenny-gateway` inner-mux and forwarder-adapter tests; `tests/tier3_contract/rest_openai_responses`; `tests/tier4_integration`; `tests/tier7a_load_local`; `tests/tier8_chaos` and its `tests/testinfra/lifecycleharness` mux route; `tests/tier9_security`; `tests/tier11_docs` where page checks live. The existing single-shot assertions for Open Responses in these files are rewritten; `openai_chat_test.go` stays as the Chat Completions regression.
 
 **Tier 1 (unit).**
 
 - `transcriptstore` Memory: successive appends return contiguous last-seqs; an empty append returns 0. `// spec: §15.1, §15 (Open Responses conversation sessions)`
 - `responseid`: table over `S.1`, `S.42`, no separator, empty prefix, `S.0`, `S.-1`, `S.x`, `S.1.2` (prefix `S.1`, ordinal 2), and a non-UUID prefix (parses; `Get` decides). `// spec: §15 (Open Responses conversation sessions)` paragraph B.
-- sessionstore round-trip of `Responses` with nil, one, and many entries, and memstore copy isolation (mutating a returned slice does not change the stored row).
+- sessionstore round-trip of `Responses` and `RequestedRuntimeRef` with nil, one, and many entries, and memstore copy isolation (mutating a returned slice does not change the stored row).
 - `handleGet`: table over completed, not completed, out of range, unknown, cross-tenant, and malformed ids; ordinal 1 echoes `ContinuationParentID`, ordinal `n>1` echoes `S.(n-1)`. Paragraph B.
-- Resolution precedes claim: an unknown, cross-tenant, malformed, or not-completed `previous_response_id` returns the native `404` with zero `BindSingleShot` calls and zero forwarder calls. Paragraph C.
+- Resolution precedes claim: each `404` id of the `handleGet` table, sent as `previous_response_id`, returns the native `404` with zero `BindSingleShot` calls and zero forwarder calls. Paragraph C.
 - Warm conditions: table that breaks each of conditions 1 through 4 in turn (state `suspended`, `resume_pending`, `awaiting_client_action`, `completed`; `n < len`; head not completed; generation advanced; different user, runtime, environment) and asserts each goes cold with a new session whose `ContinuationParentID` is the request's id. The discriminating assertion is the bind count: 0 for warm, 1 for cold. Paragraph C rules 1-4.
+- Rewritten runtime: a binder whose created row carries a `RuntimeRef` different from the request's runtime ref, as §10.7 experiment routing writes it, holds the session; the next continuation of the head with the same `model` goes warm. The discriminating assertion is bind count 0. Paragraph C rule 4.
 - Reservation re-check: a mutator run against a row changed between read and Update (head advanced) writes nothing and the request goes cold.
 - Executor refusal before delivery: `ErrNotBound` and `SealedError{Delivered: 0}` go cold in the same request; the reservation stays incomplete; a later continuation of the old head goes cold.
-- Post-delivery failure: table over `Send` error after partial delivery, `record` error, commit error, and a generation advanced between `Send` and commit. Each answers `500`, leaves the response not completed, writes the session `failed`, and releases the pod exactly once (count release calls). Paragraph D.
+- Failure exit: table over a serveCold `Send` error, a warm `Send` error after partial delivery, a `record` error, a commit error, and a generation advanced between `Send` and commit. Each answers `500`, leaves the response not completed, writes the session `failed`, calls `AfterTerminalWrite` once, and makes no executor release of its own (the discriminating assertion). When a concurrent terminate has already ended the row as the turn fails, `endHeldSession` writes nothing, calls its claim's end once, and makes no `AfterTerminalWrite` call (the discriminating assertion); the row keeps the other writer's state and the handler still answers `500`. Paragraph D, CODE-5 steps 7 and 8.
 - Release: a cold turn on a binder that returns `hold = false` writes `completed` and releases; the next continuation goes cold. Paragraph A.
 - Hold: a successful cold turn on a binder that returns `hold = true` leaves the row `running`, does not release, and returns id `S.1`; a warm continuation returns `S.2`.
 - Rehydrate: prefix cut at `EndSeq` with REST entries interleaved between turns (entries after `S.1`'s end and before `S.2`'s end appear in the rehydrate of `S.2` and not of `S.1`); visited guard; later-hop gap stop.
-- Forwarding §29.3 rule 1: when the forwarder reports `ForwardDelivered`, `ForwardNotDelivered`, or `ForwardUnknown`, no `sessionstore.Update` is called. Not-delivered and unknown write `409` `TARGET_NOT_READY` with `current_state` in the native envelope.
+- Forwarding §29.3 rule 1: when the forwarder reports `ForwardDelivered`, `ForwardNotDelivered`, or `ForwardUnknown`, no `sessionstore.Update` is called. The `refuse` the handler passes writes `409` `TARGET_NOT_READY` with `current_state` in the native envelope, and the handler writes nothing on any outcome other than `ForwardLocal`: a stub that writes a `200` status and returns `ForwardUnknown` without calling `refuse` leaves the response exactly as the stub wrote it.
 - Forwarding §29.3 rule 4: a request carrying `sessionserver.WithForwarded(ctx)` on the coordinator calls `ForwardResponsesTurn`, gets `ForwardLocal`, and proceeds to serveWarm without a second dial.
-- `sessionserver`: `ForwardResponsesTurn` on a forwarded request at a non-holder returns `ForwardNotDelivered`, writes nothing, and sets `DoNotStore`; at the holder it returns `ForwardLocal` without dialing; an unknown outcome writes nothing and sets `DoNotStore`. `// spec: §29.3 (Interactive message send) Forwarding rules 4-7, §11.5`
+- `sessionserver`: `ForwardResponsesTurn` on a forwarded request at a non-holder returns `ForwardNotDelivered`, calls `refuse` once, and sets `DoNotStore`; at the holder it returns `ForwardLocal` without dialing; a coordinator body that fails after its status is relayed returns `ForwardUnknown`, does not call `refuse`, writes no second status, and sets `DoNotStore`. `// spec: §29.3 (Interactive message send) Forwarding rules 4-7, §11.5`
+- `sessionserver`: `CreateAndStartService` on a context carrying `WithForwarded` is refused with `RATE_LIMITED` once the per-runtime admission limit is exhausted, as the unmarked create is. SPEC-3 row 3. `// spec: §29.3 (Interactive message send) Forwarding rule 4, §11.1`
 - `cmd/lenny-gateway`: the inner mux routes `POST /v1/responses` to the responses handler and does not route `GET /v1/responses/{id}`.
 - `sessionSingleShotBinder` hold: table over continuity `none`, a `one_shot` runtime, a `multi_turn` runtime whose tenant override sets injection false, a resolve error, and a not-found, each returning `hold = false`, and continuity `platform` with a `multi_turn` injection runtime returning `true`. Paragraph A.
 
-**Tier 2 (component).** `tests/tier2_component/stores/transcriptstore_test.go`: the pgstore return equals the stored `MAX(seq)`; a failed transaction returns `(0, err)`. pgstore sessionstore `Update` round-trip of `Responses`.
+**Tier 2 (component).** `tests/tier2_component/stores/transcriptstore_test.go`: the pgstore return equals the stored `MAX(seq)`; a failed transaction returns `(0, err)`. pgstore sessionstore `Update` round-trip of `Responses` and `RequestedRuntimeRef`. `tests/tier2_component/translators/openai_singleshot_lifecycle_test.go` over a real `sessionserver.Server`: a message sent through `POST /v1/sessions/{id}/messages` to a held session while its warm turn is in flight is queued; when that turn's `Send` then fails after delivery, the row is `failed`, the queued message is drained as §7.2 **Inbox drain on terminal transition:** states, and the executor releases the binding once. `// spec: §15 (Open Responses conversation sessions) paragraph D, §7.2 (Interactive Session Model)`
 
 **Tier 3 (contract).** `tests/tier3_contract/rest_openai_responses`: response id format `<uuid>.<n>`; GET body fields and `previous_response_id` echo; native `404` and `409` envelopes, including `error.code` `TARGET_NOT_READY` and `error.current_state`; `500` envelope on post-delivery failure.
 
@@ -251,7 +254,14 @@ Targets: `pkg/gateway/environment/translator/open_responses_test.go`, `continuit
 **Tier 7a (load, local).**
 
 - Concurrent `transcriptstore` appends to one session return disjoint, strictly ordered last-seqs, and each equals the highest Seq among that call's own entries.
-- Randomized invariant checker: random interleavings of warm continuations, forks, concurrent continuations of the same head, REST message deliveries, injected executor refusals, injected post-delivery failures, injected ancestor erasure, and injected head-row erasure. Invariants: at most one completed response per `(S, n)`; for every completed response whose lineage is intact, rehydrate equals the runtime input history the turn saw; a lineage with an erased ancestor gives the truncated history; an erased head gives `404`; no pod is released twice; every failed turn left its session `failed`.
+- Randomized invariant checker: random interleavings of warm continuations, forks, concurrent continuations of the same head, REST message deliveries, injected executor refusals, injected post-delivery failures, injected ancestor erasure, concurrent session terminates, and injected head-row erasure. Invariants: at most one completed response per `(S, n)`; for every completed response whose lineage is intact, rehydrate equals the runtime input history the turn saw; a lineage with an erased ancestor gives the truncated history; an erased head gives `404`; no pod is released twice; every failed turn left its session terminal; no session emitted more than one `session_complete`.
+
+**Tier 8 (chaos).** `tests/tier8_chaos`, with two replicas on `lifecycleharness`. Extend the harness inner mux to route `POST /v1/responses` to an Open Responses handler wired with the replica's `Server` as `Terminal`, a binder that returns `hold = true`, and a forwarder over `Server.ForwardResponsesTurn`. The `cmd/lenny-gateway` adapters are in package `main`, so the harness cannot import them. Each test carries `// spec: §15 (Open Responses conversation sessions)` or `§29.3 (Interactive message send) Forwarding`.
+
+- Coordinator crash mid-turn: crash the coordinating replica after a warm turn's reservation is in the row and before the runtime answers. After `RunToQuiescence`, the reserved response is not completed, and a continuation of the last completed response goes cold with `ContinuationParentID` set. After `SuspendIdle` on the adopting replica, the old session holds no pod, and `Check` passes. Paragraph C, "A reserved response is never withdrawn".
+- Restore between turns: a §7.3 restore of a held session (a `runtime_crash` report) makes the next continuation go cold with `ContinuationParentID` set. Paragraph C condition 3.
+- Restore mid-turn: the same restore between the reservation and the completion write answers `500` and leaves the session `failed`. Paragraph D.
+- Coordinator crash after a forwarded read: when the coordinator crashes after reading a forwarded `POST /v1/responses` (`SetForwardFault`), the serving replica answers `409` `TARGET_NOT_READY` in the native envelope. No DLQ entry exists, the row gains no reservation, and the runtime never receives the input. SPEC-3 row 3.
 
 **Tier 9 (security).**
 
@@ -284,5 +294,5 @@ Targets: `pkg/gateway/environment/translator/open_responses_test.go`, `continuit
 - cmd/lenny-gateway/credentialsurface.go
 - cmd/lenny-gateway/holder_forward_listener.go and the call site passing the responses handler
 - tests/testinfra/lifecyclefence/stores.go and world.go
-- the test files CODE-1 and TEST-1 name
+- the test files CODE-1, CODE-5, and TEST-1 name
 - docs/api/open-responses.md

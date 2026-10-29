@@ -8,7 +8,7 @@
 
 - §15: the single-shot paragraph narrows to Chat Completions and points to a new paragraph, **Open Responses conversation sessions.**, which owns the held session, response identity, warm conditions, cold path, and failure rule (SPEC-1, SPEC-2).
 - §29.3: the adapter off-holder row splits so a warm turn on another replica's held session is a forwarding row under the existing **Forwarding.** rules (SPEC-3).
-- Stores: transcript `Append` returns the last assigned Seq, and the session row carries per-response records on the existing request-envelope bundle (CODE-1, CODE-2).
+- Stores: transcript `Append` returns the last assigned Seq, and the session row carries per-response records and the creating request's runtime ref on the existing request-envelope bundle (CODE-1, CODE-2).
 - Gateway: a new holder-forward kind and listener route, and an Open Responses handler that routes each request warm, forwarded, or cold (CODE-3, CODE-4, CODE-5).
 - Docs: the Open Responses API page describes the held session (DOCS-1).
 
@@ -35,7 +35,6 @@
 - Ordering in `handleCreate`: resolve, then forward, then reserve, then dispatch. A store write before the forward decision breaks §29.3 rule 1 (CODE-5 step 3).
 - Call `ForwardResponsesTurn` even when `Forwarded(ctx)` is true. Skipping it on the coordinator bypasses rule 5, and a replica that lost `REG-COORDLEASE` would then create a cold session, which is an effect rule 5 forbids.
 - Capture `recovery_generation` where SPEC-2 paragraph D states, never at commit. Capturing it at commit reopens the eviction hole decision 6 closes.
-- The cold path has two candidate release owners. The deferred `releaseSingleShot` owns failures through `Send`; `endHeldSession` owns failures after it and disarms the deferred release first (CODE-5 step 7).
 - pgstore `Append` returns `maxSeq` only after the transaction commits.
 - Do not validate the response-id prefix as a UUID in the translator. Existing fixtures inject non-UUID ids through `IDFunc`, and the store already maps a malformed id to not-found.
 - CODE-1 changes an interface signature with many test callers and one consumer interface in `tests/testinfra/lifecyclefence`; the target list names them.
@@ -55,9 +54,9 @@
 
 - A Chat Completions conversation identity (for example a history hash). The dialect is stateless with no identity on the wire and no rehydration cost; it is a follow-up proposal per problem item 1.
 - A separate pod-hold TTL or idle knob (the legacy 0061 draft design). The owner decision of 2026-10-28 rules it out.
-- Resuming an idle-suspended conversation through §7.2 delivery path 6. For a podless suspended session path 6 holds the message and answers `queued`, which the synchronous dialect cannot return. A synchronous variant would need a new wait-for-resume surface, and the cold path already answers correctly.
-- Making adapter sessions non-idle-suspendable so they expire at the idle bound. It needs a new marker and a new §6.2 clause and departs from the owner's "same timeouts as every other session". A suspended session holds no pod and does not count toward §11.1.
-- Terminating the superseded session when a continuation forks or goes cold. It adds a rule and a write for a session that, once suspended, holds no pod or quota. A still-running superseded session idle-suspends on its own, and a terminal write from a non-coordinator replica conflicts with the §29.3 terminate row.
+- Resuming an idle-suspended conversation through §7.2 delivery path 6 (decision 3). A synchronous variant would need a new wait-for-resume surface, and the cold path already answers correctly.
+- Making adapter sessions non-idle-suspendable so they expire at the idle bound. It needs a new marker and a new §6.2 clause and departs from the owner's "same timeouts as every other session" (decision 3).
+- Terminating the superseded session when a continuation forks or goes cold. It adds a rule and a write for a session decision 3 already accounts for. A still-running superseded session idle-suspends on its own, and a terminal write from a non-coordinator replica conflicts with the §29.3 terminate row.
 - Routing warm turns through the `POST /v1/sessions/{id}/messages` delivery core. Its inbox, DLQ, and `queued` outcomes cannot be expressed synchronously and could later deliver a turn the client never saw.
 - A response id equal to the §15.4 message id or `session_messages.id`. A lookup by id alone needs a new tenant-scoped index, a tool-only or failed turn writes no assistant entry, and the identity would be lossy.
 - A response id of `<session>.<transcriptSeq>` with no per-response record. GET could not echo `previous_response_id`, because nothing marks where the previous turn ended.
@@ -77,7 +76,7 @@
 - Requiring `recovery_generation == 0` for the warm path. Recording the generation per response is equally safe.
 - Requiring that the transcript hold no entry after the head, or forbidding session-route message injection into conversation sessions. Injection through `/v1/sessions/{id}/messages` is same-tenant traffic outside the response lineage, and a later cold rehydrate includes interleaved entries inside the next turn's end-sequence bound.
 - Leaving transcript recording best-effort on the Open Responses path (decision 8).
-- Leaving a failed warm session to the timers without ending it. The warm turn runs on the coordinator, so writing `failed` and releasing frees the pod immediately through the existing pattern.
+- Leaving a failed warm session to the timers without ending it. The warm turn runs on the coordinator, so `endHeldSession` ends it at once through the post-terminal hook (CODE-5 step 8).
 - A `DELETE /v1/responses/{id}` conversation end. Open Responses DELETE removes a stored response rather than ending a conversation, so the route keeps its `405`. Terminate, idle suspension, and `maxSessionAge` end a session.
 - Edits to §6.2, §7.2, §12.8, or §5.2. Each already governs an ordinary session.
 - Staging anything for the unwritten pinned-idle inventory proposal or for recycling settings. A held pod is claimed and outside §5.2 pinned idle inventory until its release.
@@ -85,8 +84,7 @@
 
 ## Open decisions for human to make
 
-1. **Outcome of a held turn that hits the request timeout.** The Chat Completions paragraph (SPEC-1) names request timeout as a release trigger, but the Open Responses failure rule (SPEC-2 paragraph D) names only a failed transcript append, a failed completion write, and a failed dispatch. When an Open Responses turn on a held session times out on the client deadline, should the gateway end the session with the `failed` disposition and release its pod, or leave the session `running` so that idle suspension or `maxSessionAge` reclaims the pod later? The reliability review judged the gap a cost in pod capacity rather than a correctness failure and did not file it as a defect. The spec loop derived no recommendation; the open-decisions-and-impact-review phase supplies one.
-2. **Response ids issued before this change.** Today a response id is the bare session id. Under the new `<sessionId>.<n>` format (SPEC-2 paragraph B) a stored pre-upgrade id is malformed, so `GET /v1/responses/{id}` and a continuation through `previous_response_id` answer `404` after the upgrade. Should the proposal accept and state that break, or keep the old ids resolvable? The review found no compatibility promise before v1. The spec loop derived no recommendation; the open-decisions-and-impact-review phase supplies one.
+No decisions are open.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -102,7 +100,9 @@
 | 0059 (`previous_response_id` continuation) | Implemented | Replaces its single-turn-per-session transcript storage and its response-id-equals-session-id identity | Nothing; the record stands |
 | 0101 (CH-HOLDERFORWARD) | Implemented | Adds one forward kind and one listener route under its rules | Nothing |
 | 0105 (per-state deadlines and watchdog sweeps) | Implemented | Held adapter sessions fall under its deadlines and sweeps unchanged | Nothing |
+| 0106 (delegation-tree membership and lifecycle) | Approved | Both edit rows of `terminal_writer_inventory_test.go` and `terminal_context_internal_test.go` (0106 CODE-B, CODE-C, and CODE-E, 0108 CODE-5) | A textual merge by whichever proposal lands second |
 | 0079 (recycled-pod runtime start, §5.2 interim pinned-idle rule) | Implemented | A held adapter pod is claimed and meets the interim rule at its release | Nothing |
+| 0107 (delegation-tree budget lifecycle) | Approved (2026-10-28, status file `approved-date`) | Leaves every 0107 deliverable with its subject. The two proposals edit different sections of spec/28 and spec/29: 0107 SPEC-10 edits §28.5.2 and §29.4, and 0108 edits §28.5.4 (SPEC-4) and §29.3 (SPEC-3). CODE-5 moves the Open Responses terminal writer from `handleCreate` to `serveCold`, which still runs no post-terminal hook, and adds `endHeldSession`, which runs `AfterTerminalWrite` with nil signals inline under its own claim (CODE-5 step 8). Both proposals edit `pkg/gateway/session/sessionstore` with its `memstore` and `pgstore` (0107 CODE-8, 0108 CODE-2) and `terminal_writer_inventory_test.go` (0107 CODE-2, 0108 CODE-5) | Whichever proposal lands second merges those files, names `serveCold` in place of `handleCreate` among 0107 CODE-3's hookless writers, and gives `endHeldSession` the dispatch of the CODE-3 `lenny/cancel_session` row |
 | Pinned-idle inventory proposal | Not yet written | Held adapter sessions are claimed pods for as long as they are held | Count a held adapter session as a claimed pod, as any session |
 
 ## Deliverable index
@@ -112,9 +112,9 @@
 - SPEC-3 — spec/29_communication-scenarios.md — split the §29.3 adapter off-holder row and edit the lead-in clause.
 - SPEC-4 — spec/28_communication-channels.md — add the §15 link to the §28.5.4 `CH-HOLDERFORWARD` card's **Messages.** bullet.
 - CODE-1 — pkg/gateway/environment/transcriptstore — `Append` returns the last assigned Seq.
-- CODE-2 — pkg/gateway/session/sessionstore — `Session.Responses` on the request-envelope bundle.
+- CODE-2 — pkg/gateway/session/sessionstore — `Session.Responses` and `Session.RequestedRuntimeRef` on the request-envelope bundle.
 - CODE-3 — pkg/gateway/sessionserver/holder_forward.go and cmd/lenny-gateway/holder_forward_listener.go — `ForwardKindResponsesTurn` and the `POST /v1/responses` listener route.
 - CODE-4 — pkg/gateway/environment/translator (responseid.go, continuity.go, open_responses.go) — response-id codec, Seq-bounded rehydrate, required record, and GET.
 - CODE-5 — pkg/gateway/environment/translator (open_responses.go, openai_chat.go, singleshot.go) and cmd/lenny-gateway/credentialsurface.go — warm, forward, and cold routing in `handleCreate`.
 - DOCS-1 — docs/api/open-responses.md — describe the held conversation session.
-- TEST-1 — tests across tiers 1, 2, 3, 4, 7a, 9, and 11 (non-spec-changes `## Testing`) — cross-tier cases for SPEC-2 and SPEC-3.
+- TEST-1 — tests across tiers 1, 2, 3, 4, 7a, 8, 9, and 11 (non-spec-changes `## Testing`) — cross-tier cases for SPEC-2 and SPEC-3.
