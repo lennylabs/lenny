@@ -390,3 +390,46 @@ func TestCloseCancelsEveryWaitAndRefusesRegistration_spec_7_2(t *testing.T) {
 		t.Errorf("Consumed = %d, want 1 (a refused registration consumes no round)", r.Consumed("s1"))
 	}
 }
+
+// TestAnsweredCountsOnlyResolve_spec_16_1 pins the per-session answered
+// count the §8.8 deadlock detector reads to attribute a cleared deadlock to
+// the §16.1 `client_input` resolution: only Resolve increments it; Cancel,
+// Close, a Resolve that finds no request, and another session's answers do
+// not; ForgetSession drops it.
+//
+// spec: §16.1 (Metrics), §8.8 (Subtree deadlock detection)
+func TestAnsweredCountsOnlyResolve_spec_16_1(t *testing.T) {
+	r := inputwait.NewRegistry()
+	for _, id := range []string{"req-1", "req-2", "req-3"} {
+		if _, err := r.Register("sess-a", id, nil); err != nil {
+			t.Fatalf("Register %s: %v", id, err)
+		}
+	}
+	if _, err := r.Register("sess-b", "req-1", nil); err != nil {
+		t.Fatalf("Register sess-b: %v", err)
+	}
+	if got := r.Answered("sess-a"); got != 0 {
+		t.Fatalf("Answered before any answer = %d, want 0", got)
+	}
+	if err := r.Resolve("sess-a", "req-1", "x"); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	r.Cancel("sess-a", "req-2")
+	if err := r.Resolve("sess-a", "req-missing", "x"); err == nil {
+		t.Fatal("Resolve of an absent request succeeded")
+	}
+	if got := r.Answered("sess-a"); got != 1 {
+		t.Errorf("Answered after one Resolve and one Cancel = %d, want 1", got)
+	}
+	r.Close()
+	if got := r.Answered("sess-a"); got != 1 {
+		t.Errorf("Answered after Close = %d, want 1", got)
+	}
+	if got := r.Answered("sess-b"); got != 0 {
+		t.Errorf("sess-b Answered = %d, want 0", got)
+	}
+	r.ForgetSession("sess-a")
+	if got := r.Answered("sess-a"); got != 0 {
+		t.Errorf("Answered after ForgetSession = %d, want 0", got)
+	}
+}

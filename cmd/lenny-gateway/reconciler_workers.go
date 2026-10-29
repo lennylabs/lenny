@@ -117,16 +117,8 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 	// blocked tasks with DEADLOCK_TIMEOUT through deadlockFail. Disabled
 	// when the timeout is zero. spec: §8.8. F-8.8.6.
 	if w.deadlockManager != nil {
-		deadlockLookup := func(ctx context.Context, tenantID, sessionID string) (session.State, bool) {
-			row, err := w.sessions.Get(ctx, tenantID, sessionID)
-			if err != nil {
-				// Row gone (reclaimed) — the detector treats it as settled.
-				return "", false
-			}
-			return row.State, true
-		}
 		deadlockDetector := deadlock.NewDetector(w.deadlockManager, w.deadlockTracker, w.inputWaits,
-			deadlockLookup, w.deadlockFail)
+			deadlockNodeLookup(w.sessions), w.deadlockFail)
 		go deadlockDetector.Run(w.watchdogCtx, 10*time.Second)
 		log.Printf("lenny-gateway: §8.8 subtree deadlock detector enabled (maxDeadlockWaitSeconds=%d)",
 			*maxDeadlockWaitSeconds)
@@ -330,4 +322,20 @@ func (w *gatewayWiring) waitStillPending(sessionID string) bool {
 		return false
 	}
 	return len(w.inputWaits.PendingDetailsForSession(sessionID)) > 0
+}
+
+// deadlockNodeLookup reads the §8.8 detector's view of a session from its
+// row: the state, and the pool the row bound to (PoolRef), which labels the
+// deadlock metrics by the deadlocked root's pool. A missing row reports
+// ok=false, which the detector treats as settled.
+//
+// spec: §8.8 (Subtree deadlock detection), §16.1 (Metrics)
+func deadlockNodeLookup(sessions sessionstore.Store) deadlock.NodeLookup {
+	return func(ctx context.Context, tenantID, sessionID string) (deadlock.NodeInfo, bool) {
+		row, err := sessions.Get(ctx, tenantID, sessionID)
+		if err != nil {
+			return deadlock.NodeInfo{}, false
+		}
+		return deadlock.NodeInfo{State: row.State, Pool: row.PoolRef}, true
+	}
 }

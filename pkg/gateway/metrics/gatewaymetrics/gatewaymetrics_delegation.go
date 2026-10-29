@@ -113,23 +113,23 @@ func newDelegationMetrics(reg *prometheus.Registry) (delegationMetrics, error) {
 	// F-8.8.6.
 	delegationDeadlockDetected, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_delegation_deadlock_detected_total",
-		Help: "Subtree deadlock detections (§8.8 heuristic), by tenant.",
-	}, []string{"tenant_id"})
+		Help: "Subtree deadlock detections (§8.8 heuristic), by the deadlocked root's pool.",
+	}, []string{"pool"})
 	if err != nil {
 		return m, err
 	}
 	delegationDeadlockResolution, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_delegation_deadlock_resolution_total",
-		Help: "Subtree deadlock resolutions by resolution (resolved | timeout).",
-	}, []string{"resolution"})
+		Help: "Subtree deadlock resolutions by pool and resolution (client_input | child_cancel | timeout).",
+	}, []string{"pool", "resolution"})
 	if err != nil {
 		return m, err
 	}
 	delegationDeadlockDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
 		Name:    "lenny_delegation_deadlock_duration_seconds",
-		Help:    "Time from §8.8 deadlock detection to resolution, by resolution outcome.",
+		Help:    "Time from §8.8 deadlock detection to resolution, by the deadlocked root's pool.",
 		Buckets: []float64{1, 5, 15, 30, 60, 120, 300},
-	}, []string{"resolution"})
+	}, []string{"pool"})
 	if err != nil {
 		return m, err
 	}

@@ -4019,11 +4019,16 @@ items is budget-related, so none goes to P4b.
     `maxOrphanTasksPerTenant` fallback. The specification already requires the evaluation on every terminal
     write, and the fix is F-7.2.35's single terminal-signal set, so it rides with that finding.
 - Direct-fix queue; 0106, which edited the same Manager, is implemented, so the fix is unblocked.
-  - [ ] **F-8.8.22** (Low): the deadlock Manager records `resolution="resolved"`, which §16.1 does not list,
+  - [x] **F-8.8.22** (Low): the deadlock Manager records `resolution="resolved"`, which §16.1 does not list,
     and the detection, resolution, and duration metrics are labelled by tenant or resolution rather than by
-    `pool`. Classify the cleared deadlock as `client_input` or `child_cancel` and add the `pool` label. A
-    clearing cause outside the listed values goes through the proposal pipeline.
+    `pool`. The detector now classifies a cleared deadlock as `client_input` or `child_cancel`, and all
+    three metrics carry the deadlocked root's pool (2026-10-29, `fix/direct-after-0106`).
 - Proposal routing.
+  - [ ] **F-8.8.23** (Low, filed 2026-10-29 from F-8.8.22): §16.1 lists no resolution for a deadlock that
+    clears without an answer, a cancel, or a timeout, as when a blocked child ends on its own, so the
+    detector records no resolution or duration for it. Adding a value or stating the omission is a
+    specification choice. It rides with the next proposal that edits §16.1's delegation metrics or the §8.8
+    deadlock detector.
   - [ ] **F-4.2.17** (Low): `ResumeEligibleUntil` is stamped as `CreatedAt` plus the resume window, returned
     to clients as `resumeEligibleUntil`, and enforced by nothing, and since 0106 deleted
     `remainingResumeWindow` nothing reads it. Deleting or defining the field is a specification choice. It

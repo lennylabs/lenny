@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log"
 	"math/rand"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,19 +27,22 @@ import (
 type deadlockMetrics struct {
 	mu          sync.Mutex
 	detected    int
+	pools       []string
 	resolutions []string
 	durations   []float64
 }
 
-func (m *deadlockMetrics) IncDelegationDeadlockDetected(string) {
+func (m *deadlockMetrics) IncDelegationDeadlockDetected(pool string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.detected++
+	m.pools = append(m.pools, pool)
 }
 
-func (m *deadlockMetrics) ObserveDelegationDeadlockResolution(resolution string, seconds float64) {
+func (m *deadlockMetrics) ObserveDelegationDeadlockResolution(pool, resolution string, seconds float64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.pools = append(m.pools, pool)
 	m.resolutions = append(m.resolutions, resolution)
 	m.durations = append(m.durations, seconds)
 }
@@ -205,6 +209,9 @@ func newDeadlockScenario(t *testing.T, wrap func(w *gatewayWiring) deadlock.Fail
 	mem := memstore.New()
 	seedInState(t, mem, "p", session.StateRunning)
 	seedInState(t, mem, "c", session.StateRunning)
+	if _, err := mem.Update(context.Background(), "acme", "p", func(s *sessionstore.Session) error { s.PoolRef = "pool-root"; return nil }); err != nil {
+		t.Fatalf("set root pool: %v", err)
+	}
 	sc := &deadlockScenario{store: &mutatorProbeStore{Store: mem}, waits: inputwait.NewRegistry(), metrics: &deadlockMetrics{}}
 	sc.waits.SetClock(func() time.Time { return deadlockBase })
 	if _, err := sc.waits.Register("c", "r1", nil); err != nil {
@@ -213,14 +220,7 @@ func newDeadlockScenario(t *testing.T, wrap func(w *gatewayWiring) deadlock.Fail
 	tracker := deadlock.NewAwaitTracker()
 	t.Cleanup(tracker.Begin("acme", "p", []string{"c"}))
 	sc.wiring = deadlockFailWiring(t, sc.store, sc.waits)
-	lookup := func(ctx context.Context, tenantID, id string) (session.State, bool) {
-		row, err := mem.Get(ctx, tenantID, id)
-		if err != nil {
-			return "", false
-		}
-		return row.State, true
-	}
-	sc.det = deadlock.NewDetector(deadlock.NewManager(120*time.Second, sc.metrics), tracker, sc.waits, lookup, wrap(sc.wiring))
+	sc.det = deadlock.NewDetector(deadlock.NewManager(120*time.Second, sc.metrics), tracker, sc.waits, deadlockNodeLookup(mem), wrap(sc.wiring))
 	return sc
 }
 
@@ -230,10 +230,10 @@ var deadlockBase = time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
 // detector over a wait served on the gateway-edge endpoint, which leaves the
 // blocked task's row running. At willTimeoutAt the task is failed with
 // DEADLOCK_TIMEOUT and the `timeout` resolution is recorded once, measured
-// from the first detection. A state gate on input_required would leave this
-// task live.
+// from the first detection, and the detection and the resolution carry the
+// root's pool. A state gate on input_required would leave this task live.
 //
-// spec: §8.8 (Subtree deadlock detection), §16.1
+// spec: §8.8 (Subtree deadlock detection), §16.1 (Metrics)
 func TestDeadlockTimeoutFailsEdgeServedWaitOnRunningRow_spec_8_8(t *testing.T) {
 	sc := newDeadlockScenario(t, func(w *gatewayWiring) deadlock.FailFunc { return w.deadlockFail })
 	ctx := context.Background()
@@ -248,6 +248,11 @@ func TestDeadlockTimeoutFailsEdgeServedWaitOnRunningRow_spec_8_8(t *testing.T) {
 	}
 	if len(sc.metrics.resolutions) != 1 || sc.metrics.resolutions[0] != "timeout" || sc.metrics.durations[0] != 125 {
 		t.Errorf("resolutions = %v durations = %v, want [timeout] [125]", sc.metrics.resolutions, sc.metrics.durations)
+	}
+	// The detection and the resolution carry the root's PoolRef, which the
+	// production node lookup reads from the row (§16.1).
+	if want := []string{"pool-root", "pool-root"}; !reflect.DeepEqual(sc.metrics.pools, want) {
+		t.Errorf("pool labels = %v, want %v", sc.metrics.pools, want)
 	}
 }
 
@@ -273,6 +278,66 @@ func TestDeadlockTimeoutSkipsWaitAnsweredAfterSnapshot_spec_8_8(t *testing.T) {
 	}
 	if len(sc.metrics.resolutions) != 0 {
 		t.Errorf("resolutions = %v, want none for a refused write", sc.metrics.resolutions)
+	}
+}
+
+// TestDeadlockClearanceResolutionCarriesRootPool_spec_16_1 clears the
+// detected subtree before its timeout over the production node lookup and
+// the live registry: an answer to the blocked task's wait records
+// `client_input`, a cancelled blocked child records `child_cancel`, and a
+// child that leaves its wait without either records no resolution. Each
+// recorded resolution carries the root's PoolRef and the
+// detection-to-clearing latency.
+//
+// spec: §16.1 (Metrics), §8.8 (Subtree deadlock detection)
+func TestDeadlockClearanceResolutionCarriesRootPool_spec_16_1(t *testing.T) {
+	cases := []struct {
+		name  string
+		clear func(t *testing.T, sc *deadlockScenario)
+		want  []string
+	}{
+		{name: "answered", want: []string{deadlock.ResolutionClientInput}, clear: func(t *testing.T, sc *deadlockScenario) {
+			if err := sc.waits.Resolve("c", "r1", "yes"); err != nil {
+				t.Fatalf("resolve: %v", err)
+			}
+		}},
+		{name: "child cancelled", want: []string{deadlock.ResolutionChildCancel}, clear: func(t *testing.T, sc *deadlockScenario) {
+			sc.waits.Cancel("c", "r1")
+			if _, err := sc.store.Store.Update(context.Background(), "acme", "c", func(s *sessionstore.Session) error {
+				s.State = session.StateCancelled
+				return nil
+			}); err != nil {
+				t.Fatalf("cancel c: %v", err)
+			}
+		}},
+		{name: "wait left unanswered", clear: func(_ *testing.T, sc *deadlockScenario) {
+			sc.waits.Cancel("c", "r1")
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sc := newDeadlockScenario(t, func(w *gatewayWiring) deadlock.FailFunc { return w.deadlockFail })
+			ctx := context.Background()
+			sc.det.RunOnce(ctx, deadlockBase)
+			tc.clear(t, sc)
+			sc.det.RunOnce(ctx, deadlockBase.Add(30*time.Second))
+			if !reflect.DeepEqual(sc.metrics.resolutions, tc.want) {
+				t.Fatalf("resolutions = %v, want %v", sc.metrics.resolutions, tc.want)
+			}
+			wantPools := []string{"pool-root"}
+			if len(tc.want) == 1 {
+				wantPools = append(wantPools, "pool-root")
+				if sc.metrics.durations[0] != 30 {
+					t.Errorf("duration = %v, want 30", sc.metrics.durations[0])
+				}
+			}
+			if !reflect.DeepEqual(sc.metrics.pools, wantPools) {
+				t.Errorf("pool labels = %v, want %v", sc.metrics.pools, wantPools)
+			}
+			if _, ok := sc.det.Manager().Event("p"); ok {
+				t.Error("Event(p) still active after the subtree cleared")
+			}
+		})
 	}
 }
 
