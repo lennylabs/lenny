@@ -139,12 +139,18 @@ func ValidTransitions() []Transition {
 
 // anyStateTerminalTargets are the terminal states the §7.2 "Terminal writes
 // from any non-terminal state." paragraph reaches from every non-terminal
-// state.
-var anyStateTerminalTargets = []State{Failed, Expired}
+// state: operator force-terminate writes failed; budget, credential-lease,
+// or LLM fallback exhaustion and a perChildMaxAge expiry write expired; and
+// orphan cleanup writes cancelled (under a terminal cancel_all parent) or
+// expired.
+//
+// spec: §7.2 (Terminal writes from any non-terminal state); §8.10 (Orphan cleanup)
+var anyStateTerminalTargets = []State{Failed, Expired, Cancelled}
 
-// appendAnyStateTerminalEdges adds the → failed and → expired edge from
-// every non-terminal state that edges does not already list, in All()
-// order, so the result holds each edge once.
+// appendAnyStateTerminalEdges adds the → failed, → expired, and → cancelled
+// edge from every non-terminal state that edges does not already list, in
+// All() order, so the result holds each edge once. The → cancelled edge is
+// orphan cleanup's write over an orphan of any non-terminal state.
 func appendAnyStateTerminalEdges(edges []Transition) []Transition {
 	listed := make(map[Transition]bool, len(edges))
 	for _, e := range edges {
