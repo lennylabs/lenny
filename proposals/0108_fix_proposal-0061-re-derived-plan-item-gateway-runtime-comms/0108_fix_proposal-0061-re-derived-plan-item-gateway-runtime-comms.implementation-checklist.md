@@ -12,7 +12,7 @@
       Tiers 0, 1, 2, 7a. Depends on: S1
 - [ ] **S5 · code** — CODE-2. Per-response records and the requested runtime ref on the session request-envelope bundle.
       Tiers 0, 1, 2. Depends on: S1
-- [ ] **S6 · code** — CODE-3. `ForwardKindResponsesTurn`, `ForwardResponsesTurn`, and the listener route.
+- [ ] **S6 · code** — CODE-3. `ForwardKindResponsesTurn`, the `forwardTarget` order, `ForwardResponsesTurn`, and the listener route.
       Tiers 0, 1, 4. Depends on: S2, S3
 - [ ] **S7 · code** — CODE-4. Response-id codec, Seq-bounded rehydrate, required record, and GET.
       Tiers 0, 1, 3, 9. Depends on: S1, S4, S5

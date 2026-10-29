@@ -33,7 +33,7 @@
 **Watch out for.**
 
 - Ordering in `handleCreate`: resolve, then forward, then reserve, then dispatch. A store write before the forward decision breaks §29.3 rule 1 (CODE-5 step 3).
-- Call `ForwardResponsesTurn` even when `Forwarded(ctx)` is true. Skipping it on the coordinator bypasses rule 5, and a replica that lost `REG-COORDLEASE` would then create a cold session, which is an effect rule 5 forbids.
+- Call `ForwardResponsesTurn` on every forwarded request, whatever its warm verdict (CODE-5 step 3). Skipping it bypasses rule 5, and a replica that lost `REG-COORDLEASE` would then create a cold session, which is an effect rule 5 forbids.
 - Capture `recovery_generation` where SPEC-2 paragraph D states, never at commit. Capturing it at commit reopens the eviction hole decision 6 closes.
 - pgstore `Append` returns `maxSeq` only after the transaction commits.
 - Do not validate the response-id prefix as a UUID in the translator. Existing fixtures inject non-UUID ids through `IDFunc`, and the store already maps a malformed id to not-found.
@@ -90,6 +90,7 @@ No decisions are open.
 
 - **Client-asserted session owner on the built-in adapters.** `CreateAndStartService` uses `req.UserID` as given (`pkg/gateway/sessionserver/create_and_start.go`), and the Open Responses adapter fills it from the request body's `user` field (`pkg/gateway/environment/translator/open_responses.go`, `handleCreate`). A client can therefore attribute a session to any user id within its tenant. The fix belongs to the adapter authentication model and touches the Chat Completions path equally, so it is out of scope here. File it in BUILD-GAPS.
 - **No per-session-owner check for `user`-role reads.** §10.2 limits a `user`-role caller to its own sessions, but session reads check the permission and then read tenant-scoped only (`handleGet` in `pkg/gateway/sessionserver/session_read.go`). SPEC-2 paragraph B and CODE-4 scope `GET /v1/responses/{id}` and `previous_response_id` resolution to the tenant to match, so the gap covers the staged spec text as well as the code. On the built-in adapters the check depends on the owner fix above, because the stored owner is client-asserted. File it in BUILD-GAPS.
+- **Forwarded requests on a row outside the kind's forward states run locally.** `forwardTarget` (`pkg/gateway/sessionserver/holder_forward.go`) tests `forwardGated` before the `Forwarded(ctx)` branch for every existing kind, so a forwarded request whose re-read row is outside that kind's forward states runs at a non-holder, against §29.3 Forwarding rule 5. Reordering alone does not fix it: the REST and MCP message callers hold every not-delivered `ForwardKindMessageNoReplyTo` in the DLQ without checking the row state, and rule 6 holds only for a `running` or `input_required` session. File it in BUILD-GAPS.
 
 ## Impacts on other proposals
 
@@ -98,7 +99,7 @@ No decisions are open.
 | 0061 (`proposals/0061_draft_single-shot-adapter-pod-hold-idle-ttl.md`) | Draft (legacy, unconverged) | Supersedes it; its sticky-pod-with-own-TTL design is replaced by the owner decision | Be retired as superseded by 0108 |
 | 0057 (single-shot pod binding) | Implemented | Narrows its §15 single-shot paragraph to Chat Completions | Nothing; the record stands |
 | 0059 (`previous_response_id` continuation) | Implemented | Replaces its single-turn-per-session transcript storage and its response-id-equals-session-id identity | Nothing; the record stands |
-| 0101 (CH-HOLDERFORWARD) | Implemented | Adds one forward kind and one listener route under its rules | Nothing |
+| 0101 (CH-HOLDERFORWARD) | Implemented | Adds one forward kind and one listener route under its rules, and applies `forwardTarget`'s rule-5 check ahead of its state gate for that kind | Nothing |
 | 0105 (per-state deadlines and watchdog sweeps) | Implemented | Held adapter sessions fall under its deadlines and sweeps unchanged | Nothing |
 | 0106 (delegation-tree membership and lifecycle) | Approved | Both edit rows of `terminal_writer_inventory_test.go` and `terminal_context_internal_test.go` (0106 CODE-B, CODE-C, and CODE-E, 0108 CODE-5) | A textual merge by whichever proposal lands second |
 | 0079 (recycled-pod runtime start, §5.2 interim pinned-idle rule) | Implemented | A held adapter pod is claimed and meets the interim rule at its release | Nothing |
