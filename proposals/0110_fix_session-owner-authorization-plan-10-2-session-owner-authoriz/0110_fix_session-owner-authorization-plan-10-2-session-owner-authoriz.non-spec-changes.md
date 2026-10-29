@@ -66,7 +66,7 @@ Targets: `pkg/gateway/sessionserver/rbac_gate.go`, `pkg/gateway/sessionserver/ro
 3. `route_table.go`: build two variants of each closure. `readID` and `manageID` compose `requireSessionPermission(perm, requireSessionAccess(act, next))`, with `act` false for `readID` and true for `manageID`. Mount them on every pattern that contains `{id}` and is wrapped by `read` or `manage` today. Keep the existing `read` and `manage` for `POST /v1/sessions`, the environment-session create routes, `POST /v1/sessions/start`, and `GET /v1/sessions`. Leave `POST /v1/sessions/{id}/eval` (`evalWrite`), `GET /v1/sessions/{id}/usage`, and `GET /v1/blobs/{ref...}` untouched. The tool-use, elicitation, and memory routes are inside the wrapper, and there is no exemption list.
 4. `requireSessionAccess(act bool, next http.HandlerFunc) http.HandlerFunc` runs in this order:
    1. `ownerFromPrincipal` (CODE-1 step 1). On error it writes the `401` and returns.
-   2. `s.store.Get(ctx, s.resolveTenant(r), r.PathValue("id"))`. When it returns any error, including `sessionstore.ErrNotFound`, it re-reads with `s.readPrimary`, and substeps 3 and 4 decide on that result.
+   2. `s.store.Get(getCtx, s.resolveTenant(r), r.PathValue("id"))`, where `getCtx` is `context.WithTimeout(ctx, …)` of the bound `s.readPrimary` applies (`s.primaryReadTimeout`, or `sessionstore.DefaultPrimaryReadTimeout` when that is zero). When it returns any error, including `sessionstore.ErrNotFound` and the timeout, it re-reads with `s.readPrimary` under the request `ctx`, and substeps 3 and 4 decide on that result.
    3. On `sessionstore.ErrNotFound`, or when `!s.SessionAccessible(ctx, row, act)`, it writes `404 RESOURCE_NOT_FOUND` with message `"session not found"`, byte-identical to `handleGet`'s miss.
    4. On any other store error it writes `500 INTERNAL_ERROR`, matching `handleGet`.
    5. Otherwise it calls `next`.
@@ -184,7 +184,7 @@ Every test carries `// spec: §10.2 (Session ownership)`, plus the section of an
    - bob/`tenant-viewer` on a manage route receives the unchanged `403 FORBIDDEN`.
    - A no-principal request, or an empty `Subject` that passes the permission gate, receives `401 UNAUTHORIZED`.
    - Every other refusal receives a `404` body byte-identical to a missing id.
-   - A handler spy records zero calls on every refusal. When `Get` fails, one case per CODE-2 step 4 outcome on the primary re-read (store error, `ErrNotFound`, and alice's row), driven on alice's `POST /{id}/start` and `/resume` by alice and by bob/`user`, asserts the response and handler-call count that outcome gives.
+   - A handler spy records zero calls on every refusal. When `Get` fails, or blocks until its context ends (a fake embedding `*memstore.Store` that overrides only `Get`), one case per CODE-2 step 4 outcome on the primary re-read (store error, `ErrNotFound`, and alice's row), driven on alice's `POST /{id}/start` and `/resume` by alice and by bob/`user`, asserts the response and handler-call count that outcome gives.
 
    The discriminating assertion is that role-less single-tenant bob receives `404` on alice's row. It fails if the bypass reuses `sessionPermissionGranted`.
 2. **Coverage guard** (tier 1, `route_owner_coverage_test.go`). Every `/v1/sessions/{id}` pattern except eval and `/usage` answers `404` to bob/`user` on alice's row, so a route mounted outside the wrappers fails the test. The tool-use, elicitation, and memory routes return `RESOURCE_NOT_FOUND` from the wrapper for a missing session and for a foreign one.
