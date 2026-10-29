@@ -3294,13 +3294,25 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
 - [x] **Proposal 0107** (P4b): approved 2026-10-28 (merge `290de6e8d`). The next change-proposal run is
   the widened 0086 below.
 
-- [ ] **Proposal 0086, widened** (Draft): the finalize-time `WorkspacePlan` bind, widened on 2026-10-28 to
-  take BUILD-GAPS F-5.1.23 (§5.1 places setup at pod warm-up, once per pod, against every other site and the
-  code) and reopened F-7.5.3 (runtime `workspaceDefaults` reach no session; F-5.1.6 carries a note). Both
-  turn on the same rule for when a session's plan binds and is pinned, so the defaults composition belongs in
-  the same proposal. The note at the top of its summary file states the widened scope. It is the next
-  change-proposal after 0107, and its implementation follows the implementations of 0105 and 0106.
-- [ ] **Proposal 0085** (Draft): the §6.2 pre-attached retry scope. It follows 0086, because both edit the
+- [x] **Proposal 0086, widened**
+  (`proposals/0086_fix_the-gateway-accepts-a-workspaceplan-in-the-body-of/`): approved 2026-10-28, merge
+  `153a7e23b`. The finalize-time `WorkspacePlan` bind, widened on 2026-10-28 to take BUILD-GAPS F-5.1.23
+  (§5.1 places setup at pod warm-up, once per pod, against every other site and the code) and reopened
+  F-7.5.3 (runtime `workspaceDefaults` reach no session; F-5.1.6 carries a note). Design: a session binds one
+  workspace plan, at creation or at finalize, and the `uploadRef` scope check covers every client-submitted
+  plan; the runtime's `workspaceDefaults` compose into the bound plan when it binds and are pinned there; a
+  store failure while composing is answered `503 SERVICE_UNAVAILABLE`; and setup commands run per session
+  after materialization, stated so that 0077's warm-time mode adds a clause. Owner decisions taken under
+  delegation on 2026-10-28 are in section 10.3. Its implementation closes F-5.1.23 and F-7.5.3, whose
+  BUILD-GAPS owner lines were re-pointed to 0086 with their checklist steps on 2026-10-28 (0086 has no REC-1
+  record item). Its implementation follows 0105's: its impact table orders it after 0105, which edits
+  `pkg/gateway/mcpfabric/delegation/service.go`. The summary places it nowhere relative to 0106 and 0107, so
+  the plan keeps it after 0106's implementation as set on 2026-10-28; 0107 also edits
+  `delegation/service.go`, `finalize.go`, and `create.go`, and whichever of 0086 and 0107 lands second
+  locates its targets by symbol and quoted text. Its unstaged defects are filed below, in the block for
+  proposal 0086. The next change-proposal run is 0085.
+- [ ] **Proposal 0085** (Draft): the §6.2 pre-attached retry scope. It is the next change-proposal run, after
+  0086's approval. It follows 0086, because both edit the
   §6.2 setup-failure wording. Its RECORDS-1 files a finding as F-6.2.27, which collides with the existing
   OPEN F-6.2.27 (the `idle → draining` trigger list); a note in its summary file requires renumbering to the
   next free identifier at filing.
@@ -3609,7 +3621,9 @@ T-25.4.18 (with T-25.4.20) and is not refiled. The rest are filed in BUILD-GAPS 
   - [ ] **Upload route proposal** (not yet written): **F-15.1.57** (Low). §15.1 and the §29.3 matrix name
     `POST /v1/sessions/{id}/upload` for the mid-session upload, while the code serves it on
     `/upload-to-session`. It also takes F-29.3.3 (re-routed 2026-10-28), since both edit the §29.3
-    off-holder matrix.
+    off-holder matrix. Widened 2026-10-28: F-15.1.57 also carries the §15.1 `/upload` row's `running`
+    admission, which `admitUpload` refuses (proposal 0086 decision D2); the proposal drops `running` from
+    the row or gives the endpoint a consumer.
   - [ ] **Channel register completeness proposal** (not yet written): **F-28.3.1** (Low). The credential
     revocation, mTLS deny list, credential renewal, and EventBus Redis pub/sub fan-outs appear in no §28
     register.
@@ -4000,6 +4014,47 @@ F-11.2.34.
     the specification does not state for a terminal session; it rides with the next proposal that edits the
     §4.9 proxy admission.
 
+**Defects filed from proposal 0086's unstaged-defect list (2026-10-28).** Proposal 0086 (approved
+2026-10-28, merge `153a7e23b`, implementation pending) lists defects in the shipped tree that it does not
+stage. 0086 carries no REC-1 record item, so they are filed now, ahead of its implementation, because no
+defect is dropped. Each was re-confirmed against the tree at `153a7e23b`, and each new BUILD-GAPS entry says
+0086's implementor updates the entry rather than filing a duplicate. One item was already tracked and is not
+refiled: the §15.1 `/upload` precondition row admitting `running` is annotated on F-15.1.57 (0086 decision
+D2), which stays with the upload route proposal.
+
+- Direct-fix queue, after 0086's implementation, which edits the same files.
+  - [ ] **F-7.4.21** (Medium): `handleFinalize` does not verify the `uploadToken`, while §7.4 requires every
+    finalize request to carry it. Verify it before the precondition check, as `admitUpload` does.
+  - [ ] **F-7.5.15** (Medium): `enforceSetupCommandPolicy` admits a plan on every runtime read error. Answer a
+    transient read with `503 SERVICE_UNAVAILABLE`, as 0086's defaults composition does, after 0086's S14.
+  - [ ] **F-7.5.16** (Medium): at creation the setup-command policy is read from the requested runtime rather
+    than the routed one. Run the check against the runtime the row records after routing; if that needs an
+    ordering the specification does not state, it goes to a proposal.
+  - [ ] **F-16.1.8** (Medium): `lenny_warmpool_warmup_failure_total` has no warm-up emitter and only the
+    `error_type` label, so `PoolScaleoutBlockedByQuota` never fires. Emit it from the warm-pool controller
+    with the §16.1 labels, after 0086's S8 and S12.
+  - [ ] **F-15.2.29** (Low): per-session MCP tool schemas are hand-written against §15.2.1 item 4. Add a
+    path-parameter rename option to `mcpschemagen` and generate them.
+  - [ ] **F-12.6.27** and **F-12.6.28** (Low, behavior-free refactors): remove `ClaimOpts.RequiresDemotion`
+    and `PodSpec.WorkspacePlan` with the Sandbox `spec.workspacePlan` field, after 0086's S2 removes both
+    from the specification.
+- Proposal routing.
+  - [ ] Its own proposal, after 0086's implementation: **F-7.1.33** (Medium, the specification does not state
+    how a derived or replayed session's copied snapshot composes with the plan it binds at finalize, and no
+    finalize path restores the snapshot). F-4.5.21 can ride with it.
+  - [ ] Its own proposal, after 0086's implementation: **F-4.5.22** (Low, an upload blob expires 7 days after
+    it is stored, and the specification states no retention for a blob a bound plan names).
+  - [ ] Its own proposal, or the next proposal that edits §28.5.3: **F-4.5.23** (Low, the emitted
+    `lenny-blob://` URI has four segments, while §28.5.3 states three).
+  - [ ] The next proposal that edits §24.17 or §26.2: **F-26.2.10** (Low, the CLI attaches over the SSE event
+    stream, while §26.2 and §24.17 say MCP).
+  - [ ] The next proposal that edits the §15.1 workspace-plan catalog rows: **F-14.1.36** (Low, plan intake
+    returns `WORKSPACE_PLAN_SCHEMA_UNSUPPORTED`, which §15.1 and §14.1 place only on read-back).
+  - [ ] The next proposal that edits the §6.2 `finalizing` row: **F-5.1.24** (Low, the setup timeout has two
+    names and two defaults across §6.2 and §5.1).
+  - [ ] Any text-corrections proposal, or the next one that edits §26.3: **F-26.3.11** (Low, §26.3 bootstrap
+    step 1 names an `INIT` pod state that §6.2 does not define).
+
 **Test-harness direct fixes (2026-10-27).** The unit tier reported a package timeout for
 `pkg/gateway/podlifecycle/podsession` whenever the host was loaded, which hid the results of every
 other test in that binary.
@@ -4335,15 +4390,20 @@ Answered on 2026-10-01 for the later phases:
   - Proposal 0107 decision C: the delegated child's budget-return quiescence wait starts at the terminal
     transition and runs concurrently with the release, firing on `FINAL_USAGE_REPORT`, stream close, or
     `delegation.usageQuiescenceTimeoutSeconds` from the terminal transition, whichever comes first.
+  - Proposal 0086, decided under the owner's delegation: D1 Option A (a runtime's default setup commands,
+    including a derived runtime's, are exempt from `setupCommandPolicy` and `maxCommands`); D2 Option A (the
+    choice for the §15.1 `/upload` `running` row goes to the next proposal that edits §15.1 or mid-session
+    upload, F-15.1.57); and a store failure while composing workspace defaults returns `503
+    SERVICE_UNAVAILABLE` with `Retry-After`.
 
 ### 10.4 Related work outside this track
 
 BUILD-GAPS F-10.3.26 (admission webhooks never reload a renewed serving certificate) is independent of the
 order above and can run whenever capacity allows. Draft proposals 0072 and 0080 were retired on 2026-10-28
 after their open items were filed in BUILD-GAPS and routed in section 10.2 ("Audit of unfinished proposals
-0060 and above"). Draft proposals 0086 and 0085 are no longer independent: 0086 is widened to take F-5.1.23
-and the reopened F-7.5.3 and is queued as the next change-proposal after P4b, and 0085 follows it (section
-10.2, "Queue after P4b").
+0060 and above"). Proposals 0086 and 0085 are no longer independent: 0086 was widened to take F-5.1.23 and
+the reopened F-7.5.3 and was approved on 2026-10-28 (merge `153a7e23b`), and 0085 is the next change-proposal
+run (section 10.2, "Queue after P4b").
 
 The final verification of proposal 0079 (2026-10-03) recorded these conditions, each of which also holds
 on the base commit and none of which is yet filed in BUILD-GAPS:
