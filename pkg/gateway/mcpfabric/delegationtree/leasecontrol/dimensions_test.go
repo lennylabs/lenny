@@ -9,12 +9,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 )
 
-// dimsTreeConfig registers a tree with non-zero current values and
-// generous ceilings on every §8.6 extendable dimension, so a
+// dimsTree registers a tree with non-zero current values and
+// generous ceilings on every §8.6 extendable dimension (the
+// fileExportLimits components have no lease field, so their base is
+// zero), so a
 // test can exercise the new children / parallel-children / tree-size /
 // fileExportLimits dimensions end to end. F-8.6.1.
-func dimsTreeConfig() leasecontrol.TreeConfig {
-	return leasecontrol.TreeConfig{
+func dimsTree() treeConfig {
+	return treeConfig{
 		TenantID:                     "acme",
 		CurrentTokenBudget:           100_000,
 		DeploymentBase:               500_000,
@@ -27,9 +29,7 @@ func dimsTreeConfig() leasecontrol.TreeConfig {
 		EffectiveMaxParallelChildren: 5,
 		CurrentTreeSize:              3,
 		EffectiveMaxTreeSize:         20,
-		CurrentFileExportFiles:       4,
 		EffectiveMaxFileExportFiles:  16,
-		CurrentFileExportBytes:       1_000,
 		EffectiveMaxFileExportBytes:  10_000,
 	}
 }
@@ -39,11 +39,12 @@ func dimsTreeConfig() leasecontrol.TreeConfig {
 // is requestable on the wire and grantable by the gateway, alongside
 // tokens and seconds. F-8.6.1.
 func TestExtendLeaseAllDimensionsGranted_Spec8_6_643(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", dimsTreeConfig())
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", dimsTree())
 	svc := newService(t, budgets, nil)
 
 	resp, err := svc.ExtendLease(context.Background(), leasecontrol.ExtendRequest{
+		TenantID:  "acme",
 		SessionID: "root-1",
 		Requested: leasecontrol.Dimensions{
 			Tokens:           50_000,
@@ -79,7 +80,7 @@ func TestExtendLeaseAllDimensionsGranted_Spec8_6_643(t *testing.T) {
 	}
 	want := leasecontrol.Dimensions{
 		Tokens: 150_000, Seconds: 1_800, Children: 5,
-		ParallelChildren: 3, TreeSize: 8, FileExportFiles: 8, FileExportBytes: 3_000,
+		ParallelChildren: 3, TreeSize: 8, FileExportFiles: 4, FileExportBytes: 2_000,
 	}
 	if tb.Current != want {
 		t.Errorf("post-grant current = %+v, want %+v", tb.Current, want)
@@ -90,13 +91,14 @@ func TestExtendLeaseAllDimensionsGranted_Spec8_6_643(t *testing.T) {
 // at its ceiling reports CEILING_REACHED for itself while the others
 // still grant, so the response is PARTIALLY_GRANTED. F-8.6.1; F-8.6.11.
 func TestExtendLeaseDimensionsIndependent_Spec8_6_643(t *testing.T) {
-	cfg := dimsTreeConfig()
+	cfg := dimsTree()
 	cfg.CurrentChildren = 10 // already at EffectiveMaxChildren=10: no headroom
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", cfg)
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", cfg)
 	svc := newService(t, budgets, nil)
 
 	resp, err := svc.ExtendLease(context.Background(), leasecontrol.ExtendRequest{
+		TenantID:  "acme",
 		SessionID: "root-1",
 		Requested: leasecontrol.Dimensions{
 			Children: 2, // hits the children ceiling → zero grant
@@ -121,13 +123,14 @@ func TestExtendLeaseDimensionsIndependent_Spec8_6_643(t *testing.T) {
 // its ceiling reports CEILING_REACHED for the whole response (the
 // adapter MUST treat it as terminal). F-8.6.1.
 func TestExtendLeaseSingleDimensionCeiling_Spec8_6_643(t *testing.T) {
-	cfg := dimsTreeConfig()
+	cfg := dimsTree()
 	cfg.CurrentTreeSize = 20 // == EffectiveMaxTreeSize: no headroom
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", cfg)
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", cfg)
 	svc := newService(t, budgets, nil)
 
 	resp, err := svc.ExtendLease(context.Background(), leasecontrol.ExtendRequest{
+		TenantID:  "acme",
 		SessionID: "root-1",
 		Requested: leasecontrol.Dimensions{TreeSize: 4},
 	})
@@ -148,14 +151,15 @@ func TestExtendLeaseSingleDimensionCeiling_Spec8_6_643(t *testing.T) {
 // max children cannot extend past 4 even when the tree ceiling is 10.
 // F-8.6.1; F-8.6.15.
 func TestExtendLeaseParentCeilingOnNewDimension_Spec8_6_648(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", dimsTreeConfig())
-	budgets.AddSession("child-2", "root-1", "acme")
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", dimsTree())
+	budgets.seedChild("child-2", "root-1", "acme")
 	// Parent lease granted at most 4 children; current is 2 → headroom 2.
-	budgets.SetParentLease("child-2", leasecontrol.SessionLease{ChildrenCeiling: 4})
+	budgets.seedParentLease("child-2", parentLease{ChildrenCeiling: 4})
 	svc := newService(t, budgets, nil)
 
 	resp, err := svc.ExtendLease(context.Background(), leasecontrol.ExtendRequest{
+		TenantID:  "acme",
 		SessionID: "child-2",
 		Requested: leasecontrol.Dimensions{Children: 5}, // capped by parent ceiling (4) to a grant of 2
 	})
@@ -173,16 +177,17 @@ func TestExtendLeaseParentCeilingOnNewDimension_Spec8_6_648(t *testing.T) {
 // spec: §8.6 — the audit record carries every requested and
 // granted dimension, not just tokens. F-8.6.1.
 func TestExtendLeaseAuditCarriesAllDimensions_Spec8_6_743(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", dimsTreeConfig())
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", dimsTree())
 	rec := &recordingAuditor{}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: budgets, Tenants: budgets, Auditing: rec, Elicitor: autoApproveElicitor{},
+		Budgets: budgets, Auditing: rec, Elicitor: autoApproveElicitor{},
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
 	if _, err := svc.ExtendLease(context.Background(), leasecontrol.ExtendRequest{
+		TenantID:  "acme",
 		SessionID: "root-1",
 		Requested: leasecontrol.Dimensions{Children: 3, TreeSize: 5},
 	}); err != nil {

@@ -31,7 +31,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/export"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/fileexport"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
@@ -253,6 +252,28 @@ type TreeBudgetReserver interface {
 	Return(ctx context.Context, r treebudget.Reservation) error
 }
 
+// TreeGrantReader reads the cumulative §8.6 token extension grant recorded on
+// a delegation tree's delegation_tree_budget row: the ext_tokens value
+// leasecontrol.DenialStore.Grants returns, zero for a tree with no row. The
+// reservation adds it to the parent's finite token cap, so a granted
+// extension raises the ceiling of every later delegation in the tree. The
+// gateway adapts its DenialStore to this interface.
+//
+// spec: §8.3, §8.6 (Extension state)
+type TreeGrantReader interface {
+	TreeTokenGrant(ctx context.Context, tenantID, rootSessionID string) (int64, error)
+}
+
+// BudgetKeysExpiredHandler runs the §8.3 BUDGET_KEYS_EXPIRED tree cleanup for
+// the tree rooted at rootSessionID. The session server implements it. The
+// delegation service calls it only on a reservation detection: a second
+// absent-sentinel result for a tree that already holds a delegated session.
+//
+// spec: §8.3 (BUDGET_KEYS_EXPIRED detection and tree cleanup)
+type BudgetKeysExpiredHandler interface {
+	HandleBudgetKeysExpired(ctx context.Context, tenantID, rootSessionID string)
+}
+
 // Service creates child sessions from a delegation request.
 type Service struct {
 	store            sessionstore.Store
@@ -300,6 +321,14 @@ type Service struct {
 	// the Redis-backed gate (in-process minimal path). F-8.2.18 /
 	// F-8.2.12 / F-8.1.1.
 	treeBudget TreeBudgetReserver
+	// treeGrants reads the tree's cumulative §8.6 token extension grant for
+	// the reservation's token cap. Nil reads no grant, which is the posture
+	// of a gateway that serves no lease extension.
+	treeGrants TreeGrantReader
+	// keysExpired runs the §8.3 BUDGET_KEYS_EXPIRED tree cleanup on a
+	// reservation detection. Nil skips the cleanup; the delegation still
+	// fails with ErrBudgetKeysExpired.
+	keysExpired BudgetKeysExpiredHandler
 	// maxActiveChildrenPerUser is the §11.1 per-user
 	// active-delegated-children admission cap: the maximum count of live
 	// (non-terminal) delegated children a single user may hold across all
@@ -309,16 +338,6 @@ type Service struct {
 	// unlimited. Operator-tunable via the gateway Helm value
 	// `gateway.delegation.maxActiveChildrenPerUser`. F-11.1.4.
 	maxActiveChildrenPerUser int
-	// leaseRegistrar, when set, registers every admitted child session
-	// with the §8.6 lease-extension budget source so a later in-process
-	// budget-exhaustion extension (the gateway LLM Proxy's ExtendForBudget
-	// trigger) from the child resolves its tree instead of failing
-	// ErrSessionNotFound. The child is added to its root's tree and its
-	// per-extension ceiling is capped at the parent's own granted lease
-	// (§8.6). Nil leaves extension state unregistered (the
-	// in-process minimal gateway with no GatewayControl listener).
-	// F-15.3.5.
-	leaseRegistrar LeaseChildRegistrar
 	// sessionObjects deletes the file-export objects written under a
 	// child ID whose delegation is refused or fails before its insert.
 	// Nil keeps the reservation, so the owner's erasure reaches them.
@@ -330,38 +349,6 @@ type Service struct {
 // implement it. spec: §12.8 (Lifecycle fence and drain).
 type SessionObjectDeleter interface {
 	DeleteBySession(ctx context.Context, tenantID, sessionID string) (int, error)
-}
-
-// LeaseChildRegistrar registers a delegated child session with the §8.6
-// lease-extension budget source. *leasecontrol.MemoryBudgetSource
-// satisfies it. The delegation Service calls AddSession to bind the
-// child to its root's extension tree and SetParentLease to cap the
-// child's per-extension grant at the parent's own lease (§8.6). F-15.3.5.
-// spec: §8.6
-type LeaseChildRegistrar interface {
-	AddSession(sessionID, rootSessionID, tenantID string)
-	SetParentLease(sessionID string, parent leasecontrol.SessionLease)
-}
-
-// parentLeaseCeiling projects a parent session's granted §8.2
-// DelegationLease onto the §8.6 SessionLease ceiling its
-// children inherit: a child can never extend a dimension beyond what
-// the parent's lease itself granted. A root parent carries no granted
-// lease (nil), which yields the zero ceiling (no per-parent cap; the
-// tree's effective-max ceiling still applies). F-15.3.5.
-// spec: §8.6
-func parentLeaseCeiling(parent sessionstore.Session) leasecontrol.SessionLease {
-	l := parent.DelegationLease
-	if l == nil {
-		return leasecontrol.SessionLease{}
-	}
-	return leasecontrol.SessionLease{
-		TokenCeiling:            l.MaxTokenBudget,
-		MaxAgeCeiling:           int64(l.PerChildMaxAge),
-		ChildrenCeiling:         int64(l.MaxChildrenTotal),
-		ParallelChildrenCeiling: int64(l.MaxParallelChildren),
-		TreeSizeCeiling:         int64(l.MaxTreeSize),
-	}
 }
 
 // Options configures a Service.
@@ -467,6 +454,20 @@ type Options struct {
 	// F-8.1.1.
 	TreeBudgetReserver TreeBudgetReserver
 
+	// TreeGrants, when set, supplies the tree's cumulative §8.6 token
+	// extension grant from the delegation_tree_budget row. A reservation
+	// whose parent carries a finite token cap reads it and reserves against
+	// the cap plus the grant; a read error fails the delegation closed with
+	// ErrBudgetUnavailable. Nil reads no grant. spec: §8.3, §8.6 (Extension
+	// state).
+	TreeGrants TreeGrantReader
+
+	// BudgetKeysExpired, when set, runs the §8.3 BUDGET_KEYS_EXPIRED tree
+	// cleanup when a reservation detects the tree's budget keys expired.
+	// Nil skips the cleanup. spec: §8.3 (BUDGET_KEYS_EXPIRED detection and
+	// tree cleanup).
+	BudgetKeysExpired BudgetKeysExpiredHandler
+
 	// MaxActiveChildrenPerUser is the §11.1 per-user
 	// active-delegated-children admission cap. Before reserving tree
 	// budget, Delegate counts the owning user's live (non-terminal)
@@ -475,14 +476,6 @@ type Options struct {
 	// the scope unlimited. Operator-tunable via the gateway Helm value
 	// `gateway.delegation.maxActiveChildrenPerUser`. F-11.1.4.
 	MaxActiveChildrenPerUser int
-
-	// LeaseRegistrar, when set, registers every admitted child session
-	// with the §8.6 lease-extension budget source (AddSession +
-	// SetParentLease) so an in-process budget-exhaustion extension (the
-	// gateway LLM Proxy's ExtendForBudget trigger) from the child resolves
-	// its tree instead of failing ErrSessionNotFound. Nil leaves
-	// extension state unregistered. F-15.3.5.
-	LeaseRegistrar LeaseChildRegistrar
 
 	// InterceptorCooldown, when set, resolves the §8.3 SEC-013 fail-policy
 	// weakening cooldown for the interceptor named by a policy's
@@ -560,8 +553,9 @@ func NewService(store sessionstore.Store, opts Options) *Service {
 		exportMat:                    opts.ExportMaterializer,
 		exportScanResolver:           opts.ExportScanChainResolver,
 		treeBudget:                   opts.TreeBudgetReserver,
+		treeGrants:                   opts.TreeGrants,
+		keysExpired:                  opts.BudgetKeysExpired,
 		maxActiveChildrenPerUser:     opts.MaxActiveChildrenPerUser,
-		leaseRegistrar:               opts.LeaseRegistrar,
 		sessionObjects:               opts.SessionObjects,
 	}
 }
@@ -624,6 +618,15 @@ var (
 	// surfaces this as the retryable DELEGATION_BUDGET_UNAVAILABLE
 	// rather than admitting an unbudgeted delegation. spec: §12.4. F-8.2.18.
 	ErrBudgetUnavailable = errors.New("delegation: tree budget counters unavailable (§12.4 fail-closed)")
+
+	// ErrBudgetKeysExpired — the reservation detected that the tree's
+	// budget keys expired: the tree-wide sentinel was absent on two
+	// reservation attempts while the SessionStore holds a delegated session
+	// under the root. The tree's accounting state is irrecoverable, so the
+	// §8.5 handler surfaces the permanent INVALID_STATE_TRANSITION and no
+	// reservation is made. spec: §8.3 (BUDGET_KEYS_EXPIRED detection and
+	// tree cleanup).
+	ErrBudgetKeysExpired = errors.New("delegation: tree budget keys expired (§8.3 BUDGET_KEYS_EXPIRED)")
 )
 
 // InterceptorWeakeningCooldownError reports a §8.3 rejection:
@@ -1180,16 +1183,6 @@ func (s *Service) insertChildSession(ctx context.Context, tenantID string, req R
 	if err := s.commitChild(ctx, child, reserved); err != nil {
 		return Result{}, err
 	}
-	// §8.6: register the committed child with the lease-extension
-	// budget source so an in-process budget-exhaustion extension (the
-	// gateway LLM Proxy's ExtendForBudget trigger) from the child resolves
-	// its tree (AddSession) and is capped at the parent's own granted lease
-	// (SetParentLease). Done after the row commits so a registered child
-	// always has a persisted backing row. F-15.3.5.
-	if s.leaseRegistrar != nil {
-		s.leaseRegistrar.AddSession(child.ID, rootSessionID, tenantID)
-		s.leaseRegistrar.SetParentLease(child.ID, parentLeaseCeiling(parent))
-	}
 	// §8.2 / §16.1: observe the admitted child's depth onto
 	// the `lenny_delegation_depth` histogram. Depth is invariant once
 	// admitted, so sampling at admission and at session completion
@@ -1210,7 +1203,7 @@ func (s *Service) insertChildSession(ctx context.Context, tenantID string, req R
 // later step before the commit fails. The gates run in this order so an
 // over-limit delegation consumes no §12.4 counter state.
 //
-// spec: §8.2; §11.1; §12.4.
+// spec: §8.2; §8.3; §11.1; §12.4.
 // F-8.2.2, F-8.2.18, F-8.2.12, F-8.1.1, F-11.1.4.
 func (s *Service) reserveTreeBudget(ctx context.Context, tenantID string, req Request, parent sessionstore.Session, rootSessionID string, resvOut **treebudget.Reservation) error {
 	// §8.2: validate the caller's requested lease_slice
@@ -1264,12 +1257,19 @@ func (s *Service) reserveTreeBudget(ctx context.Context, tenantID string, req Re
 	// token pool. A cap breach rejects with *treebudget.BudgetExhaustedError
 	// (mapped to BUDGET_EXHAUSTED); a Redis outage fails closed with
 	// ErrBudgetUnavailable (mapped to the retryable
-	// DELEGATION_BUDGET_UNAVAILABLE per §12.4). The reservation
+	// DELEGATION_BUDGET_UNAVAILABLE per §12.4). An absent tree-wide sentinel
+	// is resolved by reserveDetectingExpiry under §8.3: a first reservation
+	// creates the tree's keys, and a reservation detection fails with
+	// ErrBudgetKeysExpired. The reservation
 	// is threaded back to Delegate through resvOut so its deferred release
 	// returns the slice if any later step in the insert fails. F-8.2.18 /
 	// F-8.2.12 / F-8.1.1.
 	if s.treeBudget == nil {
 		return nil
+	}
+	tokenCap, err := s.treeTokenCap(ctx, tenantID, rootSessionID, parentSlice.MaxTokenBudget)
+	if err != nil {
+		return err
 	}
 	memCap := parentSlice.MaxTreeMemoryBytes
 	if memCap == 0 {
@@ -1289,21 +1289,95 @@ func (s *Service) reserveTreeBudget(ctx context.Context, tenantID string, req Re
 		ParallelChildrenDelta: 1,
 		ChildrenTotalCap:      int64(parentSlice.MaxChildrenTotal),
 		ChildrenTotalDelta:    1,
-		TokenCap:              parentSlice.MaxTokenBudget,
+		TokenCap:              tokenCap,
 		TokenDelta:            req.LeaseSlice.MaxTokenBudget,
 	}
-	if _, err := s.treeBudget.Reserve(ctx, reservation); err != nil {
+	if err := s.reserveDetectingExpiry(ctx, tenantID, reservation); err != nil {
 		var bx *treebudget.BudgetExhaustedError
 		if errors.As(err, &bx) {
 			return &lease.BudgetExceededError{Violations: []string{bx.Error()}}
 		}
 		if errors.Is(err, treebudget.ErrBudgetUnavailable) {
-			return ErrBudgetUnavailable
+			return fmt.Errorf("%w: %v", ErrBudgetUnavailable, err)
 		}
 		return err
 	}
 	*resvOut = &reservation
 	return nil
+}
+
+// treeTokenCap returns the tokens-axis cap for a reservation: the parent's
+// finite maxTokenBudget plus the tree's cumulative §8.6 token extension grant
+// from the delegation_tree_budget row. A zero base means no limit, so the
+// grant is not read and the cap stays zero. A grant read error fails the
+// delegation closed with ErrBudgetUnavailable before any counter is touched.
+//
+// spec: §8.3 (BUDGET_KEYS_EXPIRED detection and tree cleanup), §8.6
+// (Extension state)
+func (s *Service) treeTokenCap(ctx context.Context, tenantID, rootSessionID string, base int64) (int64, error) {
+	if base <= 0 || s.treeGrants == nil {
+		return base, nil
+	}
+	grant, err := s.treeGrants.TreeTokenGrant(ctx, tenantID, rootSessionID)
+	if err != nil {
+		return 0, fmt.Errorf("%w: read tree extension grants: %v", ErrBudgetUnavailable, err)
+	}
+	return base + grant, nil
+}
+
+// reserveDetectingExpiry reserves r against the tree budget and decides what
+// an absent tree-wide sentinel means. The first attempt is never marked as
+// the tree's first reservation. When it meets ErrBudgetKeysExpired, the root's
+// sessions are read: a tree that holds no delegated session is at its first
+// reservation, and the retry is marked so the script creates the tree-wide
+// keys. Otherwise the reserve is retried once unmarked, because a concurrent
+// first delegation may have created the sentinel after the first attempt and
+// commits its child row only after that. Only a second ErrBudgetKeysExpired
+// is a reservation detection: it runs the tree cleanup and returns
+// ErrBudgetKeysExpired. A SessionStore read error fails closed with
+// ErrBudgetUnavailable, and no attempt writes a key before the decision.
+//
+// spec: §8.3 (BUDGET_KEYS_EXPIRED detection and tree cleanup)
+func (s *Service) reserveDetectingExpiry(ctx context.Context, tenantID string, r treebudget.Reservation) error {
+	_, err := s.treeBudget.Reserve(ctx, r)
+	if !errors.Is(err, treebudget.ErrBudgetKeysExpired) {
+		return err
+	}
+	first, err := s.isFirstReservation(ctx, tenantID, r.RootSessionID)
+	if err != nil {
+		return fmt.Errorf("%w: read tree sessions: %v", ErrBudgetUnavailable, err)
+	}
+	r.CreateTree = first
+	_, err = s.treeBudget.Reserve(ctx, r)
+	if first || !errors.Is(err, treebudget.ErrBudgetKeysExpired) {
+		return err
+	}
+	if s.keysExpired != nil {
+		s.keysExpired.HandleBudgetKeysExpired(ctx, tenantID, r.RootSessionID)
+	}
+	return ErrBudgetKeysExpired
+}
+
+// isFirstReservation reports whether the tree rooted at rootSessionID holds no
+// delegated session. A delegated session is one with DelegationDepth > 0,
+// the test CreationMarkers.IsDelegatedChild records; ParentSessionID and
+// RootSessionID do not classify one, because derive and replay rows carry a
+// parent and an inherited root. The reserve precedes the child-row insert and
+// only erasure deletes session rows, so a tree with no delegated row has made
+// no reservation.
+//
+// spec: §8.3 (BUDGET_KEYS_EXPIRED detection and tree cleanup)
+func (s *Service) isFirstReservation(ctx context.Context, tenantID, rootSessionID string) (bool, error) {
+	rows, err := s.store.ListByRoot(ctx, tenantID, rootSessionID)
+	if err != nil {
+		return false, err
+	}
+	for _, row := range rows {
+		if row.DelegationDepth > 0 {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // credentialOriginID resolves the credential-origin session id stamped on

@@ -142,7 +142,10 @@ func TestEraserBuildersListEveryStoreInEveryPosture_spec_12_8(t *testing.T) {
 				return nil
 			},
 			wantNilTenant: []string{"delegation_budget", "experiment_sticky", "leases", "semantic_cache", "session_message_queues"},
-			wantNilUser:   []string{"delegation_budget", "experiment_sticky", "leases", "semantic_cache", "session_message_queues"},
+			// The user path deletes the delegation_tree_budget rows through
+			// Postgres even without Redis, because the §8.6 denial store
+			// writes those rows whenever Postgres is configured.
+			wantNilUser: []string{"experiment_sticky", "leases", "semantic_cache", "session_message_queues"},
 		},
 		{
 			// --memory-enabled=false leaves w.memories nil; both paths list

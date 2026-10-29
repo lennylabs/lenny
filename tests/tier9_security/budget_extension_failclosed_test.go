@@ -14,8 +14,12 @@
 // paths" rule applied to the token-budget boundary.
 //
 // The suite enumerates the deny paths §8.6 names:
-//   - transport error (the underlying dispatch cannot run): the tenant
-//     resolver errors, so ExtendForBudget cannot even locate the tree.
+//   - a missing tenant: the caller threads no tenant, so the dispatch
+//     cannot read the session rows and refuses the request.
+//   - a foreign tenant: the request carries globex for an acme session,
+//     so the per-request row read misses under globex.
+//   - a terminal requester: the session row is terminal, so the source
+//     returns ErrSessionTerminal and no grant or elicitation follows.
 //   - CEILING_REACHED (zero grant against a tree already at its ceiling).
 //   - REJECTED (a fresh in-episode user denial): the elicitor returns
 //     false for the in-flight request, so ExtendLease resolves
@@ -48,22 +52,43 @@ package tier9_security_test
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
-// grantRecordingSource wraps a MemoryBudgetSource and records every
-// ApplyGrant call so the test can assert the ceiling was never breached
-// on a grant path and no grant ran at all on a deny path. It is the
-// security probe: a silent grant on a deny path, or a grant that raised
-// the budget past the effective ceiling, is a leak the recorder catches.
+// tier9Sessions is the in-memory session reader the store-backed source
+// reads its rows from.
+type tier9Sessions struct {
+	mu   sync.Mutex
+	rows map[string]sessionstore.Session
+}
+
+func (s *tier9Sessions) Get(_ context.Context, tenantID, id string) (sessionstore.Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.rows[id]
+	if !ok || r.TenantID != tenantID {
+		return sessionstore.Session{}, sessionstore.ErrNotFound
+	}
+	return r, nil
+}
+
+// grantRecordingSource wraps the store-backed budget source and records
+// every ApplyGrant call so the test can assert the ceiling was never
+// breached on a grant path and no grant ran at all on a deny path. It is
+// the security probe: a silent grant on a deny path, or a grant that
+// raised the budget past the effective ceiling, is a leak the recorder
+// catches.
 type grantRecordingSource struct {
-	inner *leasecontrol.MemoryBudgetSource
+	sessions *tier9Sessions
+	denials  *leasecontrol.MemoryDenialStore
+	inner    *leasecontrol.StoreBudgetSource
 
 	mu     sync.Mutex
 	grants []grantCall
@@ -76,14 +101,39 @@ type grantCall struct {
 }
 
 func newGrantRecordingSource() *grantRecordingSource {
-	return &grantRecordingSource{inner: leasecontrol.NewMemoryBudgetSource()}
+	s := &grantRecordingSource{
+		sessions: &tier9Sessions{rows: map[string]sessionstore.Session{}},
+		denials:  leasecontrol.NewMemoryDenialStore(nil),
+	}
+	s.inner = s.newInner(leasecontrol.ExtensionConfig{})
+	return s
+}
+
+func (s *grantRecordingSource) newInner(cfg leasecontrol.ExtensionConfig) *leasecontrol.StoreBudgetSource {
+	inner, err := leasecontrol.NewStoreBudgetSource(s.sessions, s.denials, cfg)
+	if err != nil {
+		panic(err)
+	}
+	return inner
+}
+
+// registerRoot writes the root row with a granted token budget of base
+// under tenant and serves the tree with cfg.
+func (s *grantRecordingSource) registerRoot(root, tenant string, base int64, state session.State, cfg leasecontrol.ExtensionConfig) {
+	s.sessions.mu.Lock()
+	s.sessions.rows[root] = sessionstore.Session{
+		ID: root, TenantID: tenant, RootSessionID: root, State: state,
+		DelegationLease: &sessionstore.DelegationLease{MaxTokenBudget: base},
+	}
+	s.sessions.mu.Unlock()
+	s.inner = s.newInner(cfg)
 }
 
 func (s *grantRecordingSource) TreeBudget(ctx context.Context, tenantID, sessionID string) (leasecontrol.TreeBudget, error) {
 	return s.inner.TreeBudget(ctx, tenantID, sessionID)
 }
 
-func (s *grantRecordingSource) ApplyGrant(ctx context.Context, tenantID, rootSessionID, requestingSessionID string, granted leasecontrol.Dimensions) (leasecontrol.NewLimits, error) {
+func (s *grantRecordingSource) ApplyGrant(ctx context.Context, tenantID, rootSessionID, requestingSessionID string, granted leasecontrol.Dimensions) (leasecontrol.AppliedGrant, error) {
 	s.mu.Lock()
 	s.grants = append(s.grants, grantCall{rootSessionID: rootSessionID, requestingSessionID: requestingSessionID, granted: granted})
 	s.mu.Unlock()
@@ -98,8 +148,8 @@ func (s *grantRecordingSource) Deny(ctx context.Context, tenantID, rootSessionID
 	return s.inner.Deny(ctx, tenantID, rootSessionID, requestingSessionID)
 }
 
-func (s *grantRecordingSource) TenantOf(ctx context.Context, sessionID string) (string, error) {
-	return s.inner.TenantOf(ctx, sessionID)
+func (s *grantRecordingSource) ApprovalMode(ctx context.Context, tenantID, rootSessionID string) leasecontrol.ApprovalMode {
+	return s.inner.ApprovalMode(ctx, tenantID, rootSessionID)
 }
 
 // grantsWithPositiveTokens returns the recorded ApplyGrant calls that
@@ -116,13 +166,46 @@ func (s *grantRecordingSource) grantsWithPositiveTokens() []grantCall {
 	return out
 }
 
-// errTenants is a TenantResolver that always errors, standing in for the
-// §8.6 "transport fault, no session" path where the dispatch cannot even
-// resolve the tree. autoApproveElicitor would grant if it were ever
-// reached; it never is, because the resolve fails first.
-type errTenants struct{ err error }
+// tier9Reclaimer counts the episode's RaiseBudget calls, so a deny path
+// can assert the enforcer was never raised.
+type tier9Reclaimer struct {
+	mu     sync.Mutex
+	raises int
+}
 
-func (e errTenants) TenantOf(context.Context, string) (string, error) { return "", e.err }
+func (r *tier9Reclaimer) RaiseBudget(string, int64) {
+	r.mu.Lock()
+	r.raises++
+	r.mu.Unlock()
+}
+
+func (r *tier9Reclaimer) TerminateSession(string) {}
+
+func (r *tier9Reclaimer) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.raises
+}
+
+// countingElicitor approves every elicitation and counts them, so a deny
+// path that must present no elicitation can assert none was presented.
+type countingElicitor struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (e *countingElicitor) Elicit(context.Context, string, string) (bool, error) {
+	e.mu.Lock()
+	e.calls++
+	e.mu.Unlock()
+	return true, nil
+}
+
+func (e *countingElicitor) count() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.calls
+}
 
 // tier9AutoElicitor approves every elicitation. It exists so an
 // elicitation-mode tree resolves in-path without a human, isolating the
@@ -147,20 +230,19 @@ func (tier9RejectElicitor) Elicit(context.Context, string, string) (bool, error)
 // newExtendService builds a leasecontrol.Service over the recording
 // source with a background episode context (so no in-path cancellation
 // severs the dispatch) and an auto-approving elicitor.
-func newExtendService(t *testing.T, src *grantRecordingSource, tenants leasecontrol.TenantResolver) *leasecontrol.Service {
+func newExtendService(t *testing.T, src *grantRecordingSource) *leasecontrol.Service {
 	t.Helper()
-	return newExtendServiceWithElicitor(t, src, tenants, tier9AutoElicitor{})
+	return newExtendServiceWithElicitor(t, src, tier9AutoElicitor{})
 }
 
 // newExtendServiceWithElicitor builds a leasecontrol.Service over the
 // recording source with a background episode context and the given
 // elicitor, so a case can inject a rejecting elicitor to exercise the
 // fresh in-episode REJECTED path.
-func newExtendServiceWithElicitor(t *testing.T, src *grantRecordingSource, tenants leasecontrol.TenantResolver, elicitor leasecontrol.Elicitor) *leasecontrol.Service {
+func newExtendServiceWithElicitor(t *testing.T, src *grantRecordingSource, elicitor leasecontrol.Elicitor) *leasecontrol.Service {
 	t.Helper()
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets:        src,
-		Tenants:        tenants,
 		Elicitor:       elicitor,
 		EpisodeContext: context.Background,
 	})
@@ -172,8 +254,9 @@ func newExtendServiceWithElicitor(t *testing.T, src *grantRecordingSource, tenan
 
 // spec: 8.6, 11.2, 8.3
 // diagnosis: the §8.6 budget-exhaustion extension failed OPEN on a deny
-// path. A transport error, a tree already at its ceiling, a persisted
-// user rejection, an active cool-off, or an unknown session must all
+// path. A missing or foreign tenant, a terminal requester, a tree already
+// at its ceiling, a user rejection, an active cool-off, or an unknown
+// session must all
 // return a non-Granted Outcome and must apply no token grant. A failure
 // here means a proxy-mode session that reached its budget kept spending
 // tokens without a genuine grant, or the ceiling was raised past the
@@ -184,96 +267,78 @@ func TestExtensionDenyPathsFailClosed_F866(t *testing.T) {
 	const root = "root-1"
 	const tenant = "acme"
 
-	// The tree sits AT its effective ceiling (current == deployment base),
-	// so a fresh, extendable request grants zero: CEILING_REACHED. A tree
-	// with headroom is registered separately for the rejection/cool-off
-	// paths, which must deny for a reason other than the ceiling.
+	headroomCfg := func(mode leasecontrol.ApprovalMode) leasecontrol.ExtensionConfig {
+		return leasecontrol.ExtensionConfig{DeploymentBudget: 2_000_000, DeploymentMaxBudget: 4_000_000, ApprovalMode: mode}
+	}
+
+	// Each case builds its own tree so the deny reasons do not bleed
+	// across cases. tenant is the tenant the caller threads into
+	// ExtendForBudget. noElicit marks a case that must present no
+	// elicitation at all: the request is refused before consent.
 	type denyCase struct {
-		name string
-		// build returns the service, the recording source, the request
-		// context, and the session id the case drives. Each case registers
-		// its own tree so the deny reasons do not bleed across cases.
-		build func(t *testing.T) (*leasecontrol.Service, *grantRecordingSource, string)
+		name     string
+		tenant   string
+		noElicit bool
+		build    func(t *testing.T, src *grantRecordingSource) string
 	}
 
 	cases := []denyCase{
 		{
-			name: "transport_error_no_tree_resolvable",
-			build: func(t *testing.T) (*leasecontrol.Service, *grantRecordingSource, string) {
-				src := newGrantRecordingSource()
-				// The tree HAS headroom, so if the dispatch ever ran it would
-				// grant. It never runs: the tenant resolver errors first, the
-				// §8.6 "transport fault" fail-closed path.
-				src.inner.RegisterTree(root, leasecontrol.TreeConfig{
-					TenantID: tenant, CurrentTokenBudget: 100_000,
-					DeploymentBase: 2_000_000, DeploymentMax: 4_000_000,
-					ApprovalMode: leasecontrol.ApprovalModeAuto,
-				})
-				svc := newExtendService(t, src, errTenants{err: errors.New("tenant resolver unreachable")})
-				return svc, src, root
+			name: "missing_tenant_dispatch_refused", tenant: "", noElicit: true,
+			build: func(t *testing.T, src *grantRecordingSource) string {
+				// The tree HAS headroom, so the dispatch would grant if it ran.
+				// The caller threads no tenant, so the dispatch refuses it.
+				src.registerRoot(root, tenant, 100_000, session.StateRunning, headroomCfg(leasecontrol.ApprovalModeElicitation))
+				return root
 			},
 		},
 		{
-			name: "ceiling_reached_zero_headroom",
-			build: func(t *testing.T) (*leasecontrol.Service, *grantRecordingSource, string) {
-				src := newGrantRecordingSource()
-				src.inner.RegisterTree(root, leasecontrol.TreeConfig{
-					TenantID: tenant, CurrentTokenBudget: 500_000,
-					DeploymentBase: 500_000, DeploymentMax: 2_000_000,
-					ApprovalMode: leasecontrol.ApprovalModeAuto,
-				})
-				svc := newExtendService(t, src, src)
-				return svc, src, root
+			name: "foreign_tenant_reads_no_row", tenant: "globex", noElicit: true,
+			build: func(t *testing.T, src *grantRecordingSource) string {
+				// An acme session with headroom, requested under globex: the
+				// per-request row read runs under globex and misses.
+				src.registerRoot(root, tenant, 100_000, session.StateRunning, headroomCfg(leasecontrol.ApprovalModeElicitation))
+				return root
 			},
 		},
 		{
-			name: "rejected_fresh_user_denial_in_episode",
-			build: func(t *testing.T) (*leasecontrol.Service, *grantRecordingSource, string) {
-				src := newGrantRecordingSource()
-				// Elicitation mode, headroom available, NO prior denial: the
-				// request enters the elicitation path fresh and the user
-				// rejects it in flight. The coordinator marks the subtree
-				// extension-denied and ExtendLease resolves StatusRejected, the
-				// distinct §8.6 REJECTED terminal path — separate from
-				// the cool-off-active auto-reject below. A deny here is the
-				// live user rejection, not the ceiling (headroom exists) and
-				// not a persisted cool-off (none set).
-				src.inner.RegisterTree(root, leasecontrol.TreeConfig{
-					TenantID: tenant, CurrentTokenBudget: 100_000,
-					DeploymentBase: 2_000_000, DeploymentMax: 4_000_000,
-					ApprovalMode: leasecontrol.ApprovalModeElicitation,
-				})
-				svc := newExtendServiceWithElicitor(t, src, src, tier9RejectElicitor{})
-				return svc, src, root
+			name: "terminal_requester_no_grant", tenant: tenant, noElicit: true,
+			build: func(t *testing.T, src *grantRecordingSource) string {
+				// The tree has headroom but the requesting session is
+				// terminal: the source returns ErrSessionTerminal.
+				src.registerRoot(root, tenant, 100_000, session.StateCompleted, headroomCfg(leasecontrol.ApprovalModeElicitation))
+				return root
 			},
 		},
 		{
-			name: "cool_off_active_prior_rejection_persisted",
-			build: func(t *testing.T) (*leasecontrol.Service, *grantRecordingSource, string) {
-				src := newGrantRecordingSource()
-				src.inner.RegisterTree(root, leasecontrol.TreeConfig{
-					TenantID: tenant, CurrentTokenBudget: 100_000,
-					DeploymentBase: 2_000_000, DeploymentMax: 4_000_000,
-					ApprovalMode: leasecontrol.ApprovalModeElicitation,
-				})
+			name: "ceiling_reached_zero_headroom", tenant: tenant,
+			build: func(t *testing.T, src *grantRecordingSource) string {
+				// The tree sits AT its effective ceiling (current == deployment
+				// base), so a fresh request grants zero: CEILING_REACHED.
+				src.registerRoot(root, tenant, 500_000, session.StateRunning,
+					leasecontrol.ExtensionConfig{DeploymentBudget: 500_000, DeploymentMaxBudget: 2_000_000, ApprovalMode: leasecontrol.ApprovalModeAuto})
+				return root
+			},
+		},
+		{
+			name: "cool_off_active_prior_rejection_persisted", tenant: tenant, noElicit: true,
+			build: func(t *testing.T, src *grantRecordingSource) string {
 				// A prior user rejection persisted the extension-denied flag;
 				// the request is auto-rejected during the cool-off before the
-				// elicitor is ever consulted. §8.6. The tree HAS
-				// headroom, so a deny here is the active cool-off, not the
-				// ceiling. The auto-approving elicitor would grant if reached,
-				// so a deny proves the cool-off short-circuits it.
-				src.inner.MarkDenied(root)
-				svc := newExtendService(t, src, src)
-				return svc, src, root
+				// elicitor is ever consulted. §8.6. The tree HAS headroom, so a
+				// deny here is the active cool-off, not the ceiling.
+				src.registerRoot(root, tenant, 100_000, session.StateRunning, headroomCfg(leasecontrol.ApprovalModeElicitation))
+				if err := src.Deny(context.Background(), tenant, root, root); err != nil {
+					t.Fatalf("Deny: %v", err)
+				}
+				return root
 			},
 		},
 		{
-			name: "no_session_unknown_id",
-			build: func(t *testing.T) (*leasecontrol.Service, *grantRecordingSource, string) {
-				src := newGrantRecordingSource()
-				// No tree registered: the session id resolves to nothing.
-				svc := newExtendService(t, src, src)
-				return svc, src, "unknown-session"
+			name: "no_session_unknown_id", tenant: tenant, noElicit: true,
+			build: func(t *testing.T, src *grantRecordingSource) string {
+				// No row exists: the session id resolves to nothing.
+				return "unknown-session"
 			},
 		},
 	}
@@ -281,38 +346,68 @@ func TestExtensionDenyPathsFailClosed_F866(t *testing.T) {
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			svc, src, sid := tc.build(t)
+			src := newGrantRecordingSource()
+			sid := tc.build(t, src)
+			el := &countingElicitor{}
+			svc := newExtendServiceWithElicitor(t, src, el)
+			rec := &tier9Reclaimer{}
+			svc.SetReclaimer(rec)
 
-			reqCtx := context.Background()
-			// A generous in-path wait: auto/rejection/ceiling resolve
-			// immediately, so a Pending here would itself be a bug (nothing
-			// blocks). The deny paths must resolve Terminal, not Pending.
-			waitCtx := context.Background()
-			outcome, err := svc.ExtendForBudget(reqCtx, waitCtx, sid)
+			// A generous in-path wait: every case resolves immediately, so a
+			// Pending here would itself be a bug (nothing blocks).
+			outcome, err := svc.ExtendForBudget(context.Background(), context.Background(), tc.tenant, sid)
 
-			// Every deny path resolves Terminal. The transport-error and
-			// no-session paths additionally surface an error; the ceiling and
-			// rejection paths resolve Terminal with no error (a legitimate
-			// non-grant). None resolve Granted.
-			if outcome == leasecontrol.OutcomeGranted {
-				t.Fatalf("deny path %q resolved Granted (fail OPEN): a non-grant path silently granted tokens; err=%v", tc.name, err)
-			}
-			if outcome == leasecontrol.OutcomePending {
-				t.Fatalf("deny path %q resolved Pending: a resolvable deny must be Terminal, not left hanging; err=%v", tc.name, err)
-			}
 			if outcome != leasecontrol.OutcomeTerminal {
-				t.Fatalf("deny path %q outcome = %v, want Terminal (fail closed)", tc.name, outcome)
+				t.Fatalf("deny path %q outcome = %v, want Terminal (fail closed); err=%v", tc.name, outcome, err)
 			}
-
 			// The load-bearing security assertion: no token grant was ever
-			// applied on a deny path. The recorder captures every ApplyGrant;
-			// a silent grant on a rejected/ceiling/transport/no-session path
-			// is a budget leak.
+			// applied and the enforcer was never raised on a deny path.
 			if g := src.grantsWithPositiveTokens(); len(g) != 0 {
-				t.Fatalf("deny path %q applied a positive token grant (fail OPEN): %+v — an over-budget session gained tokens on a deny path", tc.name, g)
+				t.Fatalf("deny path %q applied a positive token grant (fail OPEN): %+v", tc.name, g)
+			}
+			if n := rec.count(); n != 0 {
+				t.Fatalf("deny path %q raised the enforcer %d times (fail OPEN)", tc.name, n)
+			}
+			if tc.noElicit && el.count() != 0 {
+				t.Fatalf("deny path %q presented %d elicitations, want none", tc.name, el.count())
 			}
 		})
 	}
+
+	// The fresh in-episode rejection: elicitation mode, headroom available,
+	// no prior denial. The user rejects the in-flight request, so the
+	// coordinator marks the subtree denied and ExtendLease resolves
+	// REJECTED with no grant.
+	t.Run("rejected_fresh_user_denial_in_episode", func(t *testing.T) {
+		src := newGrantRecordingSource()
+		src.registerRoot(root, tenant, 100_000, session.StateRunning, headroomCfg(leasecontrol.ApprovalModeElicitation))
+		svc := newExtendServiceWithElicitor(t, src, tier9RejectElicitor{})
+		outcome, err := svc.ExtendForBudget(context.Background(), context.Background(), tenant, root)
+		if outcome != leasecontrol.OutcomeTerminal {
+			t.Fatalf("rejected outcome = %v, want Terminal; err=%v", outcome, err)
+		}
+		if g := src.grantsWithPositiveTokens(); len(g) != 0 {
+			t.Fatalf("rejected path applied a positive token grant (fail OPEN): %+v", g)
+		}
+	})
+
+	// The direct dispatch with an empty TenantID is refused before any
+	// read, grant, or elicitation.
+	t.Run("dispatch_empty_tenant_refused", func(t *testing.T) {
+		src := newGrantRecordingSource()
+		src.registerRoot(root, tenant, 100_000, session.StateRunning, headroomCfg(leasecontrol.ApprovalModeElicitation))
+		el := &countingElicitor{}
+		svc := newExtendServiceWithElicitor(t, src, el)
+		_, err := svc.ExtendLease(context.Background(), leasecontrol.ExtendRequest{
+			SessionID: root, Requested: leasecontrol.Dimensions{Tokens: 1_000},
+		})
+		if err == nil {
+			t.Fatal("ExtendLease with an empty TenantID succeeded (fail OPEN)")
+		}
+		if len(src.grantsWithPositiveTokens()) != 0 || el.count() != 0 {
+			t.Fatalf("empty-tenant dispatch ran a grant or an elicitation: grants=%v elicitations=%d", src.grantsWithPositiveTokens(), el.count())
+		}
+	})
 }
 
 // spec: 8.6, 8.3
@@ -331,17 +426,14 @@ func TestExtensionGrantNeverExceedsCeiling_F866(t *testing.T) {
 	// 450K, so headroom is 50K. A request for far more than the headroom
 	// must be CAPPED to the 50K headroom (PARTIALLY_GRANTED), never
 	// granted in full.
-	src.inner.RegisterTree(root, leasecontrol.TreeConfig{
-		TenantID: tenant, CurrentTokenBudget: 450_000,
-		DeploymentBase: 500_000, DeploymentMax: 2_000_000,
-		ApprovalMode: leasecontrol.ApprovalModeAuto,
-	})
-	svc := newExtendService(t, src, src)
+	src.registerRoot(root, tenant, 450_000, session.StateRunning,
+		leasecontrol.ExtensionConfig{DeploymentBudget: 500_000, DeploymentMaxBudget: 2_000_000, ApprovalMode: leasecontrol.ApprovalModeAuto})
+	svc := newExtendService(t, src)
 
 	// ExtendForBudget requests the token dimension only (as the in-path
 	// trigger does). A grant lands, so the outcome is Granted, but the
 	// applied grant must not exceed the 50K headroom.
-	outcome, err := svc.ExtendForBudget(context.Background(), context.Background(), root)
+	outcome, err := svc.ExtendForBudget(context.Background(), context.Background(), tenant, root)
 	if err != nil {
 		t.Fatalf("ExtendForBudget: %v", err)
 	}

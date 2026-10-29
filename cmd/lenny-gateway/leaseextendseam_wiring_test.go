@@ -7,8 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
 // These tests pin the proposal 0023 S6 wiring seam that connects the §11.2
@@ -38,31 +41,47 @@ func (r *recordingTerminator) TerminateSession(sessionID, _ /*reason*/ string) {
 	r.terminated = append(r.terminated, sessionID)
 }
 
-// autoExtendService builds a real leasecontrol.Service in auto mode with a
-// single registered tree keyed on rootSessionID, and returns the service and
-// its budget source. Auto mode resolves an extension synchronously with no
-// elicitor, so ExtendForBudget grants up to the ceiling within the caller's
-// in-path wait. When approvalMode is elicitation and no elicitor is wired the
-// extension fails closed (no way to obtain consent), which the seam maps to
-// Terminal.
-func autoExtendService(t *testing.T, rootSessionID string, mode leasecontrol.ApprovalMode) (*leasecontrol.Service, *leasecontrol.MemoryBudgetSource) {
+// storeBackedExtendService builds a real leasecontrol.Service over the
+// store-backed budget source: a memstore session store holding the root row
+// rootSessionID under acme, and a MemoryDenialStore. Auto mode resolves an
+// extension synchronously with no elicitor, so ExtendForBudget grants up to
+// the ceiling within the caller's in-path wait. When approvalMode is
+// elicitation and no elicitor is wired the extension fails closed (no way to
+// obtain consent), which the seam maps to Terminal.
+func storeBackedExtendService(t *testing.T, rootSessionID string, mode leasecontrol.ApprovalMode, el leasecontrol.Elicitor) *leasecontrol.Service {
 	t.Helper()
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree(rootSessionID, leasecontrol.TreeConfig{
-		TenantID:           "acme",
-		CurrentTokenBudget: 100_000,
-		DeploymentBase:     500_000,
-		DeploymentMax:      2_000_000,
-		ApprovalMode:       mode,
+	sessions := memstore.New()
+	if err := sessions.Create(context.Background(), sessionstore.Session{
+		ID: rootSessionID, TenantID: "acme", UserID: "alice@acme.com", State: session.StateRunning,
+		DelegationLease: &sessionstore.DelegationLease{MaxTokenBudget: 100_000},
+	}); err != nil {
+		t.Fatalf("seed root row: %v", err)
+	}
+	budgets, err := leasecontrol.NewStoreBudgetSource(sessions, leasecontrol.NewMemoryDenialStore(nil), leasecontrol.ExtensionConfig{
+		DeploymentBudget:    500_000,
+		DeploymentMaxBudget: 2_000_000,
+		ApprovalMode:        mode,
 	})
-	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: budgets,
-		Tenants: budgets,
-	})
+	if err != nil {
+		t.Fatalf("NewStoreBudgetSource: %v", err)
+	}
+	svc, err := leasecontrol.NewService(leasecontrol.Options{Budgets: budgets, Elicitor: el})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
-	return svc, budgets
+	return svc
+}
+
+// emptyLeaseBudgets returns a store-backed budget source over an empty
+// session store, for wiring tests that need a BudgetSource but resolve no
+// session through it.
+func emptyLeaseBudgets(t *testing.T) *leasecontrol.StoreBudgetSource {
+	t.Helper()
+	budgets, err := leasecontrol.NewStoreBudgetSource(memstore.New(), leasecontrol.NewMemoryDenialStore(nil), leasecontrol.ExtensionConfig{})
+	if err != nil {
+		t.Fatalf("NewStoreBudgetSource: %v", err)
+	}
+	return budgets
 }
 
 // TestLeaseExtendSeamGrantedContinuesSession proves the S6 wiring drives the
@@ -72,7 +91,7 @@ func autoExtendService(t *testing.T, rootSessionID string, mode leasecontrol.App
 // nil seam, so this exhaustion would have been Terminal and the session
 // terminated — this test would fail against that code.
 func TestLeaseExtendSeamGrantedContinuesSession_spec_8_6_line_629(t *testing.T) {
-	svc, _ := autoExtendService(t, "s_grant", leasecontrol.ApprovalModeAuto)
+	svc := storeBackedExtendService(t, "s_grant", leasecontrol.ApprovalModeAuto, nil)
 	term := &recordingTerminator{}
 	enforcer := sessionbudget.New(term, nil, nil)
 	// Wire exactly as buildControlServer does.
@@ -122,7 +141,7 @@ func TestLeaseExtendSeamGrantedContinuesSession_spec_8_6_line_629(t *testing.T) 
 // path from the wired-and-granted path, so the Granted test above is not
 // trivially satisfied by a stub that always grants.
 func TestLeaseExtendSeamTerminalFailsClosed_spec_8_6_line_712(t *testing.T) {
-	svc, _ := autoExtendService(t, "s_deny", leasecontrol.ApprovalModeElicitation)
+	svc := storeBackedExtendService(t, "s_deny", leasecontrol.ApprovalModeElicitation, nil)
 	term := &recordingTerminator{}
 	enforcer := sessionbudget.New(term, nil, nil)
 	enforcer.SetExtendOnExhaustion(leaseExtendSeam(svc))
@@ -174,18 +193,7 @@ func TestLeaseExtendSeamPendingDeniesWithoutTerminating_spec_8_6_line_629(t *tes
 	// An elicitation-mode tree with a blocking elicitor: the elicitation stays
 	// unresolved until the test releases it, so the in-path wait deadline
 	// elapses first and ExtendForBudget returns Pending.
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("s_pend", leasecontrol.TreeConfig{
-		TenantID:           "acme",
-		CurrentTokenBudget: 100_000,
-		DeploymentBase:     500_000,
-		DeploymentMax:      2_000_000,
-		ApprovalMode:       leasecontrol.ApprovalModeElicitation,
-	})
-	svc, err := leasecontrol.NewService(leasecontrol.Options{Budgets: budgets, Tenants: budgets, Elicitor: el})
-	if err != nil {
-		t.Fatalf("NewService: %v", err)
-	}
+	svc := storeBackedExtendService(t, "s_pend", leasecontrol.ApprovalModeElicitation, el)
 	term := &recordingTerminator{}
 	enforcer := sessionbudget.New(term, nil, nil)
 	enforcer.SetExtendOnExhaustion(leaseExtendSeam(svc))
@@ -228,6 +236,37 @@ func TestLeaseExtendSeamPendingDeniesWithoutTerminating_spec_8_6_line_629(t *tes
 	}
 	if len(term.terminated) != 0 {
 		t.Fatalf("a granted out-of-band resolution must not terminate the session, terminated=%v", term.terminated)
+	}
+}
+
+// TestLeaseExtendSeamThreadsTenant_spec_8_6 proves the seam threads the
+// tenant the enforcer holds into ExtendRequest.TenantID: the source reads the
+// session rows under that tenant, so the acme session is granted under acme,
+// and the same session id recorded under globex finds no row and fails
+// closed to Terminal with no grant.
+//
+// spec: §8.6 (Extension state)
+func TestLeaseExtendSeamThreadsTenant_spec_8_6(t *testing.T) {
+	svc := storeBackedExtendService(t, "s_tenant", leasecontrol.ApprovalModeAuto, nil)
+	term := &recordingTerminator{}
+	enforcer := sessionbudget.New(term, nil, nil)
+	enforcer.SetExtendOnExhaustion(leaseExtendSeam(svc))
+	svc.SetReclaimer(enforcer)
+	ctx := context.Background()
+
+	if _, outcome := enforcer.Record(ctx, ctx, "globex", "s_tenant", 200, 250); outcome != sessionbudget.Terminal {
+		t.Fatalf("a session recorded under another tenant must fail closed, got %v", outcome)
+	}
+	if len(term.terminated) != 1 {
+		t.Fatalf("the cross-tenant exhaustion must terminate, terminated=%v", term.terminated)
+	}
+
+	svc2 := storeBackedExtendService(t, "s_tenant2", leasecontrol.ApprovalModeAuto, nil)
+	enforcer2 := sessionbudget.New(&recordingTerminator{}, nil, nil)
+	enforcer2.SetExtendOnExhaustion(leaseExtendSeam(svc2))
+	svc2.SetReclaimer(enforcer2)
+	if _, outcome := enforcer2.Record(ctx, ctx, "acme", "s_tenant2", 200, 250); outcome != sessionbudget.Granted {
+		t.Fatalf("the session recorded under its own tenant must be granted, got %v", outcome)
 	}
 }
 

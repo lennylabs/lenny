@@ -520,6 +520,24 @@ func (s *Store) ListStaleTerminalSessions(_ context.Context, ids []string, termi
 	return stale, nil
 }
 
+// ListAbsentSessions implements Store: the identifiers in ids with no row,
+// across tenants. Create accepts an identifier that is not a UUID, so the
+// row map alone decides absence: an identifier the store holds a row for is
+// never reported absent, whatever its spelling, because the budget state
+// sweep forgets every identifier this returns.
+// spec: §11.2, §10.1.1.
+func (s *Store) ListAbsentSessions(_ context.Context, ids []string) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var absent []string
+	for _, id := range ids {
+		if _, ok := s.sessions[id]; !ok {
+			absent = append(absent, id)
+		}
+	}
+	return absent, nil
+}
+
 // ReserveSlotUnderLock implements Store — the §12.4 Redis-outage capacity
 // gate. It serializes the count-and-decide for podID under a per-pod mutex
 // (the in-memory analogue of the Postgres per-pod advisory xact lock) so two

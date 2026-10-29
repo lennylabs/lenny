@@ -125,6 +125,7 @@ func (w *gatewayWiring) buildLLMProxy(
 		panic(fmt.Sprintf("wire token-usage anomaly detector: %v", err))
 	}
 	llmProxyUsage.setAnomalyObserver(tokenAnomaly)
+	w.tokenAnomaly = tokenAnomaly
 	// spec: §4.9 — the credentialPolicy Fallback Flow.
 	// The Controller holds each session's rotation budget and per-provider
 	// fallback chain; the rotator mints a replacement from the chain's

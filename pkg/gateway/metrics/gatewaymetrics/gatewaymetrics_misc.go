@@ -44,6 +44,12 @@ type miscMetrics struct {
 	// the §8.6 elicitation flow drives. Emitted from leasecontrol.Service
 	// on every ExtendLease decision. F-8.6.13.
 	delegationLeaseExtension *prometheus.CounterVec
+	// delegationBudgetKeysExpired is the §16.1
+	// lenny_delegation_budget_keys_expired_total counter, labelled by `pool`
+	// (the tree root's pool) and `tenant_id`. The §8.3 tree cleanup
+	// increments it once per BUDGET_KEYS_EXPIRED reservation detection, and
+	// the §16.5 DelegationBudgetKeysExpired alert fires on any increment.
+	delegationBudgetKeysExpired *prometheus.CounterVec
 	// exportFileScans is the §16.1 counter for per-file
 	// PreExportMaterialization scan outcomes on the §8.7 delegation
 	// file-export path. Labels: pool, tenant_id, policy_name,
@@ -159,6 +165,15 @@ func newMiscMetrics(reg *prometheus.Registry) (miscMetrics, error) {
 	if err != nil {
 		return m, err
 	}
+	// §16.1 / §8.3 — one increment per BUDGET_KEYS_EXPIRED reservation
+	// detection, labelled by the tree root's pool and the tenant.
+	delegationBudgetKeysExpired, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_delegation_budget_keys_expired_total",
+		Help: "§8.3 BUDGET_KEYS_EXPIRED reservation detections by root pool and tenant (§16.1).",
+	}, []string{"pool", "tenant_id"})
+	if err != nil {
+		return m, err
+	}
 	// §16.1 — per-file PreExportMaterialization scan outcomes on
 	// the §8.7 delegation file-export path. F-8.7.10.
 	exportFileScans, err := metrics.NewCounter(prometheus.CounterOpts{
@@ -267,6 +282,7 @@ func newMiscMetrics(reg *prometheus.Registry) (miscMetrics, error) {
 		statelessConcurrentActive,
 		sessionReuseCount,
 		delegationLeaseExtension,
+		delegationBudgetKeysExpired,
 		exportFileScans,
 		exportFileScanDuration,
 		interceptorMTLSHandshake,
@@ -281,6 +297,7 @@ func newMiscMetrics(reg *prometheus.Registry) (miscMetrics, error) {
 	m.statelessConcurrentActive = statelessConcurrentActive
 	m.sessionReuseCount = sessionReuseCount
 	m.delegationLeaseExtension = delegationLeaseExtension
+	m.delegationBudgetKeysExpired = delegationBudgetKeysExpired
 	m.exportFileScans = exportFileScans
 	m.exportFileScanDuration = exportFileScanDuration
 	m.interceptorMTLSHandshake = interceptorMTLSHandshake

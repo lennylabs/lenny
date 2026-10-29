@@ -217,6 +217,12 @@ func (w *gatewayWiring) buildStartupGates() {
 	}); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
+	if err := validateBudgetStateSweepInterval(*f.budgetStateSweepInterval); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
+	if err := validateUsageQuiescenceTimeout(*f.delegationUsageQuiescenceTimeoutSeconds, *f.workspaceSealMaxDurationSeconds); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
 
 	// spec: §4.2 — LENNY_POOLER_MODE must be one of the two
 	// documented values. The trigger-level guard runs regardless of
@@ -359,6 +365,26 @@ func validateSlotReaperFlags(c slotReaperSettings) error {
 	if c.terminalAge < floor {
 		return fmt.Errorf("--slot-reaper-terminal-age (%s) must be at least %s, one second more than the largest of --max-finalizing-state-timeout-seconds (%ds), --max-resuming-seconds (%ds), and the terminal pipeline budget (%s: --workspace-seal-max-duration-seconds %ds plus --stream-failure-report-timeout %s) (§5.2)",
 			c.terminalAge, floor, finalizing, resuming, budget, seal, budget-time.Duration(seal)*time.Second)
+	}
+	return nil
+}
+
+// validateUsageQuiescenceTimeout refuses a usage quiescence timeout in
+// effect that is not less than the seal window in effect. The timeout in
+// effect is resolved as the session server resolves
+// Options.UsageQuiescenceTimeout (a non-positive value selects the §11.3
+// default of 5 s), and the seal window as the session server resolves
+// --workspace-seal-max-duration-seconds. Holding the timeout below the seal
+// window keeps a delegated child's budget return, which waits that long from
+// the terminal transition, inside the terminal pipeline budget.
+// spec: §7.1 (Terminal pipeline context), §8.3 (Return on completion), §8.3
+// (Usage quiescence before budget return), §11.3
+func validateUsageQuiescenceTimeout(quiescenceSeconds, sealSeconds int) error {
+	timeout := sessionserver.UsageQuiescenceTimeoutFor(time.Duration(quiescenceSeconds) * time.Second)
+	seal := time.Duration(sealSecondsInEffect(sealSeconds)) * time.Second
+	if timeout >= seal {
+		return fmt.Errorf("the usage quiescence timeout in effect (%s, --delegation-usage-quiescence-timeout-seconds %d) must be less than the seal window in effect (%s, --workspace-seal-max-duration-seconds %d) (§8.3)",
+			timeout, quiescenceSeconds, seal, sealSeconds)
 	}
 	return nil
 }

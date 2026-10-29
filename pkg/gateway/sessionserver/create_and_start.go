@@ -522,11 +522,6 @@ func (s *Server) mintClaimStartPersist(w http.ResponseWriter, r *http.Request, r
 		return level, "", false
 	}
 	s.recordSessionCreated(r.Context(), *row)
-	// §8.6: register the root tree's lease-extension budget so a later
-	// in-process budget-exhaustion extension (the gateway LLM Proxy's
-	// ExtendForBudget trigger) resolves it instead of ErrSessionNotFound.
-	// F-15.3.5.
-	s.registerLeaseTree(*row)
 	// The coordination lease was already acquired above, ahead of the
 	// running-commit, so the binding publishes unconditionally here rather
 	// than routing back through registerBinding's self-renew acquire. Gating

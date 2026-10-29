@@ -490,6 +490,10 @@ func (c *countingStore) ListStaleTerminalSessions(ctx context.Context, ids []str
 	return c.inner.ListStaleTerminalSessions(ctx, ids, before)
 }
 
+func (c *countingStore) ListAbsentSessions(ctx context.Context, ids []string) ([]string, error) {
+	return c.inner.ListAbsentSessions(ctx, ids)
+}
+
 func (c *countingStore) ReserveSlotUnderLock(ctx context.Context, podID string, maxConcurrent int32) (int32, bool, error) {
 	return c.inner.ReserveSlotUnderLock(ctx, podID, maxConcurrent)
 }

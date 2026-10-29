@@ -304,6 +304,9 @@ func TestFailSessionEmitsTerminalLifecycle_spec_7_2_2(t *testing.T) {
 	srv := New(store, Options{DevTenantHeader: true, Events: bus, LifecycleAuditSink: sink})
 
 	srv.failSession(context.Background(), "acme", "s")
+	if err := srv.WaitTerminalWork(context.Background()); err != nil {
+		t.Fatalf("WaitTerminalWork: %v", err)
+	}
 
 	if got := sseEventsOfType(bus, "s", "status_change"); len(got) != 1 {
 		t.Errorf("failSession status_change count = %d, want 1", len(got))

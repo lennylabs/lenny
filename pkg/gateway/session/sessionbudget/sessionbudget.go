@@ -143,6 +143,13 @@ type counter struct {
 	// being terminated, which the single exhausted flag could not
 	// represent. spec: §8.6; proposal 0023 S4.
 	deny bool
+	// terminating records that the session is being terminated for budget
+	// exhaustion: TerminateSession or Record's terminal branch set it, and
+	// nothing clears it before the terminal pipeline forgets the counter.
+	// RaiseBudget leaves deny set while it is true, so a deferred grant
+	// fanned out to a session mid-terminate cannot reopen Allow for a
+	// session that is ending. spec: §8.6, §11.2
+	terminating bool
 }
 
 // New returns an Enforcer that terminates over-budget sessions through
@@ -271,7 +278,7 @@ func (e *Enforcer) Record(reqCtx, waitCtx context.Context, tenantID, sessionID s
 		e.setDeny(sessionID)
 	default:
 		// Terminal, or a nil seam / non-extendable path. Deny and terminate.
-		e.setDeny(sessionID)
+		e.setTerminating(sessionID)
 		if e.terminate != nil {
 			// Run the terminator outside the lock: it resolves the session
 			// store and runs the terminal pipeline, which must not block the
@@ -299,6 +306,19 @@ func (e *Enforcer) setDeny(sessionID string) {
 	e.mu.Unlock()
 }
 
+// setTerminating sets sessionID's deny flag and its terminating flag under
+// one lock acquisition, so no RaiseBudget can interleave between them and
+// clear the deny of a session that is being terminated. A session dropped by
+// a concurrent Forget is a no-op. spec: §8.6, §11.2
+func (e *Enforcer) setTerminating(sessionID string) {
+	e.mu.Lock()
+	if c := e.sessions[sessionID]; c != nil {
+		c.deny = true
+		c.terminating = true
+	}
+	e.mu.Unlock()
+}
+
 // RaiseBudget raises sessionID's budget by delta and clears its deny
 // flag so the pre-flight Allow gate admits its next request. It also
 // clears the exhausted flag so a later exhaustion of the raised budget is
@@ -308,13 +328,17 @@ func (e *Enforcer) setDeny(sessionID string) {
 // extension: by the in-path seam on an in-path Granted outcome, and by the
 // per-tree episode's completion fan-out (through the SessionReclaimer)
 // once per joined session on a deferred grant after a Pending outcome.
-// Raising an unknown or already-forgotten session is a no-op. spec: §8.6; proposal 0023 S4.
+// Raising an unknown or already-forgotten session is a no-op. A session
+// whose terminating flag is set keeps its deny flag and its exhausted flag:
+// TerminateSession or Record's terminal branch has already committed it to
+// termination, so a grant that arrives during the terminate does not let
+// Allow admit its next request. spec: §8.6, §11.2
 func (e *Enforcer) RaiseBudget(sessionID string, delta int64) {
 	if sessionID == "" {
 		return
 	}
 	e.mu.Lock()
-	if c := e.sessions[sessionID]; c != nil {
+	if c := e.sessions[sessionID]; c != nil && !c.terminating {
 		if delta > 0 {
 			c.budget += delta
 		}
@@ -330,13 +354,15 @@ func (e *Enforcer) RaiseBudget(sessionID string, delta int64) {
 // deny flag and delegates to the wired Terminator with
 // ReasonBudgetExhausted, so the Enforcer structurally satisfies
 // leasecontrol.SessionReclaimer and can be passed directly to
-// Service.SetReclaimer (proposal 0023 S6). A nil Terminator or an empty
-// sessionID is a no-op on the terminator. spec: §8.6.
+// Service.SetReclaimer (proposal 0023 S6). It also sets the terminating
+// flag, so a RaiseBudget racing the terminate leaves deny set. A nil
+// Terminator or an empty sessionID is a no-op on the terminator.
+// spec: §8.6, §11.2
 func (e *Enforcer) TerminateSession(sessionID string) {
 	if sessionID == "" {
 		return
 	}
-	e.setDeny(sessionID)
+	e.setTerminating(sessionID)
 	if e.terminate != nil {
 		e.terminate.TerminateSession(sessionID, ReasonBudgetExhausted)
 	}
@@ -369,4 +395,23 @@ func (e *Enforcer) Forget(sessionID string) {
 	e.mu.Lock()
 	delete(e.sessions, sessionID)
 	e.mu.Unlock()
+}
+
+// TrackedSessions returns the ids of the sessions the enforcer holds a
+// counter for, in no particular order. The per-replica budget state sweep
+// resolves them against the session store and forgets each one whose row is
+// terminal or absent, which reclaims a counter the terminal pipeline on
+// another replica could not reach.
+// spec: §11.2, §10.1.1.
+func (e *Enforcer) TrackedSessions() []string {
+	if e == nil {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	ids := make([]string, 0, len(e.sessions))
+	for id := range e.sessions {
+		ids = append(ids, id)
+	}
+	return ids
 }

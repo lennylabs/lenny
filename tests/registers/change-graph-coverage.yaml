@@ -178,7 +178,6 @@ prefixes:
   - pkg/gateway/mcpfabric/delegationtree/resultrollup/
   - pkg/gateway/mcpfabric/delegationtree/treearchive/
   - pkg/gateway/mcpfabric/delegationtree/treearchive/pgstore/
-  - pkg/gateway/mcpfabric/delegationtree/treebudget/
   - pkg/gateway/mcpfabric/delegationtree/treerecovery/
   - pkg/gateway/mcpfabric/elicitationfloor/
   - pkg/gateway/mcpfabric/mcpschemagen/
@@ -240,7 +239,6 @@ prefixes:
   - pkg/gateway/session/recycle/
   - pkg/gateway/session/routingcache/
   - pkg/gateway/session/sessionage/
-  - pkg/gateway/session/sessionbudget/
   - pkg/gateway/session/sessioncallback/
   - pkg/gateway/session/sessioncheckpointmeta/
   - pkg/gateway/session/sessioncheckpointmeta/pgstore/

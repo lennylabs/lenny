@@ -14,12 +14,24 @@ import (
 // BeginTerminal opens a terminal-writer claim for the session on this
 // replica and returns the idempotent function that ends it. It never blocks.
 // Every terminal writer whose path runs the post-terminal hook calls it
-// before its terminal Update and calls the returned end on every path after
-// the Update returns: after the hook when the write applied, and at once on
-// an error or a not-applied sentinel. While a claim is open the terminal
-// binding release defers, so on the writer's replica a release triggered by
-// the coordination Sweeper never precedes the hook's seal, drain, and
-// terminal signals.
+// before its terminal Update. A writer's claim covers the span from before
+// that Update until its hook returns:
+//
+//   - An inline writer runs the hook before it returns and ends the claim
+//     when it returns.
+//   - A detached writer, which runs the hook on a goroutine it does not wait
+//     for, defers the claim's end inside that goroutine, and calls end at
+//     once when its write does not apply.
+//   - OnSessionTerminal receives a row its caller wrote under the caller's
+//     own claim. It opens a claim of its own before it starts the hook's
+//     goroutine and defers that claim's end inside the goroutine; the caller
+//     ends its own claim on its own path.
+//
+// The claim record counts claims per session, so WaitTerminalWork and the
+// terminal binding release see a detached hook as in progress until it
+// returns. While a claim is open the terminal binding release defers, so on
+// the writer's replica a release triggered by the coordination Sweeper
+// never precedes the hook's seal, drain, and terminal signals.
 //
 // The §11.4 full_revoke cancel writes also hold a claim, and they run no
 // post-terminal hook. Each opens its claim before its cancel write and holds
@@ -28,8 +40,9 @@ import (
 // pre-running session's binding first and leave the reclaim to delete by
 // name a claim the release had just patched to recycling.
 //
-// spec: §7.2 (Interactive Session Model), §10.1.5 (Stale Replica Behavior),
-// §11.4 (User Invalidation)
+// spec: §7.1 (Terminal pipeline context), §7.2 (Interactive Session Model),
+// §10.1.5 (Stale Replica Behavior), §10.1.7 (Terminal pipelines at process
+// exit.), §11.4 (User Invalidation)
 func (s *Server) BeginTerminal(sessionID string) (end func()) {
 	return s.terminalClaims.open(sessionID)
 }
@@ -58,7 +71,17 @@ func (s *Server) BeginTerminal(sessionID string) (end func()) {
 //     (releaseAfterTerminal): a pre-running claim by name, otherwise the
 //     executor's binding with the failed disposition after a failed seal
 //     and the disposition of the row's state otherwise.
-//  7. Expire the pending elicitations the session's pod raised.
+//  7. Forget the session's per-session budget state (budgetForget): the
+//     §11.2 enforcer, usage recorder, and anomaly detector entries.
+//  8. Join the §8.3 budget return of a delegated child. At hook entry,
+//     before step 1, the hook starts the return on a goroutine for a row
+//     treeBudgetReturnAdmitted admits; the return waits for usage
+//     quiescence and returns the child's reservation on its recorded root
+//     (returnTreeBudget). The release does not wait for it, so a release
+//     whose adapter Shutdown does not return delays the return by no more
+//     than the usage quiescence timeout, and the hook joins it here, under
+//     the writer's terminal claim.
+//  9. Expire the pending elicitations the session's pod raised.
 //
 // Every step is best-effort and none fails the terminal write. The hook
 // writes no row except failWorkspaceSeal's relabel. It returns the row the
@@ -71,9 +94,9 @@ func (s *Server) BeginTerminal(sessionID string) (end func()) {
 // writer passes an unbounded context into it.
 //
 // spec: §7.1 (Normal Flow), §7.1 (Terminal pipeline context), §7.2
-// (Interactive Session Model), §7.3 (Resume driver), §9.2 (Elicitation
-// Chain), §10.1.5 (Stale Replica Behavior), §29.4 (Interrupt, terminate, and
-// delete)
+// (Interactive Session Model), §7.3 (Resume driver), §8.3 (Return on
+// completion), §9.2 (Elicitation Chain), §10.1.5 (Stale Replica Behavior),
+// §29.4 (Interrupt, terminate, and delete)
 func (s *Server) AfterTerminalWrite(ctx context.Context, fromState session.State, sess sessionstore.Session,
 	signals func(context.Context, sessionstore.Session),
 ) sessionstore.Session {
@@ -89,6 +112,7 @@ func (s *Server) AfterTerminalWrite(ctx context.Context, fromState session.State
 func (s *Server) afterTerminalWrite(ctx context.Context, fromState session.State, sess sessionstore.Session,
 	signals func(context.Context, sessionstore.Session),
 ) sessionstore.Session {
+	joinReturn := s.startTreeBudgetReturn(ctx, sess)
 	s.CancelResumeAttempt(sess.ID)
 	s.settleStaleBinding(fromState, sess)
 	// spec: §7.1 (Seal-and-export invariant) — a failed seal releases with
@@ -114,10 +138,44 @@ func (s *Server) afterTerminalWrite(ctx context.Context, fromState session.State
 		signals(ctx, sess)
 	}
 	s.releaseAfterTerminal(ctx, fromState, sess, releaseDisposition(sess.State, sealFailed))
+	s.forgetBudgetState(sess.ID)
+	joinReturn()
 	// spec: §9.2 (Elicitation Chain) — last, after the pod release, so the
 	// runtime on the released pod cannot raise again after the expiry.
 	s.expireRaisedElicitations(ctx, sess)
 	return sess
+}
+
+// startTreeBudgetReturn is the post-terminal hook's return step. For a row
+// treeBudgetReturnAdmitted admits, it starts returnTreeBudget on a goroutine
+// over the hook's terminal context and returns the function that waits for
+// it; any other row starts nothing and gets a join that returns at once. The
+// wait, the subtree token read, and the Return share the terminal context
+// and have no timeout of their own.
+//
+// spec: §7.1 (Terminal pipeline context), §8.3 (Return on completion)
+func (s *Server) startTreeBudgetReturn(ctx context.Context, sess sessionstore.Session) (join func()) {
+	if !s.treeBudgetReturnAdmitted(sess) {
+		return func() {}
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.returnTreeBudget(ctx, sess)
+	}()
+	return func() { <-done }
+}
+
+// forgetBudgetState is the post-terminal hook's forget step. It drops the
+// session's §11.2 mid-session budget accounting (the composed forget of the
+// enforcer, the usage recorder, and the anomaly detector) once per applied
+// terminal write, whichever writer committed it, so every hook-path writer
+// reclaims the entry rather than only the funnel writers. A nil hook is a
+// no-op. spec: §8.6, §11.2
+func (s *Server) forgetBudgetState(sessionID string) {
+	if s.budgetForget != nil {
+		s.budgetForget(sessionID)
+	}
 }
 
 // releaseDisposition is the executor disposition the post-terminal hook

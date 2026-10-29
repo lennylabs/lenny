@@ -53,7 +53,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/operability/recommendations"
@@ -349,14 +348,6 @@ type Router struct {
 	// §15.1 DELETE …/extension-denial admin endpoint. Nil leaves
 	// the endpoint unregistered.
 	leaseDenials LeaseDenialClearer
-
-	// tenantResolver maps a delegation tree's root session id to its
-	// owning tenant. handleClearExtensionDenial uses it to confine a
-	// non-platform-admin caller to its own tenant before the clear, so a
-	// tenant-admin cannot clear another tenant's extension-denial row
-	// given an opaque session UUID (§10.2). Nil fails closed: a
-	// non-platform-admin caller is rejected.
-	tenantResolver leasecontrol.TenantResolver
 
 	// quotaReconciler backs the §15.1 POST
 	// /v1/admin/quota/reconcile endpoint. The route is always registered

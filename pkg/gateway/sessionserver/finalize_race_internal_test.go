@@ -49,6 +49,9 @@ func TestFailSessionWritesNothingOverATerminalRow_spec_7_2(t *testing.T) {
 	bus := sessionevents.NewBus(16)
 	srv := New(store, Options{DevTenantHeader: true, Events: bus})
 	srv.failSession(context.Background(), "acme", "s")
+	if err := srv.WaitTerminalWork(context.Background()); err != nil {
+		t.Fatalf("WaitTerminalWork: %v", err)
+	}
 
 	after, _ := store.Get(context.Background(), "acme", "s")
 	if after.State != session.StateCancelled || !after.UpdatedAt.Equal(before.UpdatedAt) {

@@ -576,7 +576,7 @@ func criticalAlerts() []Rule {
 			Expr:        `lenny_delegation_budget_keys_expired_total > 0`,
 			Severity:    SeverityCritical,
 			Summary:     "Delegation budget keys expired while tree active",
-			Description: "A Lua script returned BUDGET_KEYS_EXPIRED, indicating the delegation budget keys for a root session have expired while the tree was still active. The gateway initiates tree cleanup (cascade cancel + root to failed).",
+			Description: "A BUDGET_KEYS_EXPIRED detection: a delegate_task reservation found the tree-wide sentinel key absent on its retry, indicating the delegation budget keys for a root session have expired while the tree was still active. TTL may be configured too short or the explicit compliance purge ran prematurely.",
 			// spec: §17.7 — slug matches docs/runbooks/delegation-budget-recovery.md.
 			RunbookURL: runbook("delegation-budget-recovery"),
 			SpecRef:    "§16.5",

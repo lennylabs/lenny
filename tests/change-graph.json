@@ -158,6 +158,9 @@
     "tests/tier2_component/tokensigning/": {
       "component": ["tests/tier2_component/tokensigning/..."]
     },
+    "tests/tier2_component/treebudget/": {
+      "component": ["tests/tier2_component/treebudget/..."]
+    },
     "tests/tier2_component/translators/": {
       "component": ["tests/tier2_component/translators/..."]
     },
@@ -169,6 +172,9 @@
     },
     "tests/tier3_contract/holderforward/": {
       "contract": ["tests/tier3_contract/holderforward/..."]
+    },
+    "tests/tier3_contract/lease_elicit_dismissal/": {
+      "contract": ["tests/tier3_contract/lease_elicit_dismissal/..."]
     },
     "tests/tier3_contract/adapter_artifact_scope/": {
       "contract": ["tests/tier3_contract/adapter_artifact_scope/..."]
@@ -220,6 +226,9 @@
     },
     "tests/tier3_contract/admin_conflict_codes/": {
       "contract": ["tests/tier3_contract/admin_conflict_codes/..."]
+    },
+    "tests/tier3_contract/admin_extension_denial/": {
+      "contract": ["tests/tier3_contract/admin_extension_denial/..."]
     },
     "tests/tier3_contract/admin_impersonation/": {
       "contract": ["tests/tier3_contract/admin_impersonation/..."]
@@ -775,9 +784,18 @@
       "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/rest_mcp/..."],
       "integration": ["tests/tier4_integration/session_lifecycle_test.go"]
     },
+    "pkg/gateway/session/budgetstate": {
+      "unit": ["pkg/gateway/session/budgetstate/...", "cmd/lenny-gateway/..."],
+      "load_local": ["tests/tier7a_load_local/budget_state_sweep_interleaving_test.go"]
+    },
+    "pkg/gateway/session/sessionbudget": {
+      "unit": ["pkg/gateway/session/sessionbudget/..."],
+      "load_local": ["tests/tier7a_load_local/enforcer_terminate_deny_race_test.go", "tests/tier7a_load_local/scenarios/raisebudget_enforcer_race/...", "tests/tier7a_load_local/scenarios/budget_gate_deny_flag_race/..."]
+    },
     "pkg/gateway/session/sessionstore": {
       "unit": ["pkg/gateway/session/sessionstore/..."],
-      "contract": ["tests/tier3_contract/rest_sessions/..."]
+      "contract": ["tests/tier3_contract/rest_sessions/..."],
+      "integration": ["tests/tier4_integration/absent_sessions_pgstore_test.go"]
     },
     "pkg/gateway/sessionserver": {
       "unit": ["pkg/gateway/sessionserver/...", "tests/testinfra/lifecyclefence/..."],
@@ -1351,6 +1369,20 @@
       "contract": ["tests/tier3_contract/rest_mcp_consistency/...", "tests/tier3_contract/multiprotocol_journey/..."],
       "integration": ["tests/tier4_integration/gateway_require_auth_test.go"],
       "security": ["tests/tier9_security/unauthenticated_tenant_access_test.go"]
+    },
+    "pkg/gateway/mcpfabric/delegationtree/treebudget": {
+      "unit": ["pkg/gateway/mcpfabric/delegationtree/treebudget/...", "pkg/gateway/mcpfabric/delegation/..."],
+      "component": ["tests/tier2_component/treebudget/..."],
+      "contract": ["tests/tier3_contract/rest_mcp_consistency/delegate_budget_error_parity_test.go"],
+      "integration": ["tests/tier4_integration/delegation_budget_keys_expired_test.go"],
+      "load_local": ["tests/tier7a_load_local/budget_sentinel_interleaving_test.go"],
+      "chaos": ["tests/tier8_chaos/delegation_budget_datastore_outage_test.go"]
+    },
+    "pkg/gateway/mcpfabric/delegationtree/leasecontrol/leaseelicit": {
+      "unit": ["pkg/gateway/mcpfabric/delegationtree/leasecontrol/...", "cmd/lenny-gateway/..."],
+      "contract": ["tests/tier3_contract/lease_elicit_dismissal/..."],
+      "integration": ["tests/tier4_integration/lease_elicit_requester_terminal_test.go"],
+      "load_local": ["tests/tier7a_load_local/lease_elicit_driver_end_interleaving_test.go"]
     },
     "pkg/gateway/mcpfabric/playground": {
       "unit": ["pkg/gateway/mcpfabric/playground/..."],

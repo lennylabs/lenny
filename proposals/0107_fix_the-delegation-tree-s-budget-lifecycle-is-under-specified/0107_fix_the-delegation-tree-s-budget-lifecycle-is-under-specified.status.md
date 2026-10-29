@@ -2,15 +2,15 @@
 proposal: 0107_fix_the-delegation-tree-s-budget-lifecycle-is-under-specified
 title: Delegation tree budget lifecycle is under-specified
 kind: fix
-status: Approved
+status: Implemented
 drafted-date: 2026-10-27
 drafted-by: change-proposal
 reviewed-date: 2026-10-28
 reviewed-by: jaf
 approved-date: 2026-10-28
 approved-by: jaf
-implemented-date: 
-implemented-by: 
+implemented-date: 2026-10-29
+implemented-by: jaf
 ---
 
 ## Review history

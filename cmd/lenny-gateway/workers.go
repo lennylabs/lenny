@@ -144,6 +144,10 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 		}(w.connectorStateStore)
 	}
 
+	// spec: §11.2, §10.1.1 — the per-replica budget state sweep runs on
+	// every replica, because each replica holds its own per-session state.
+	go w.budgetStateSweep.Run(w.watchdogCtx)
+
 	w.startReconcilerWorkers()
 	// ----- §25.11 ArtifactStore cross-region replication -----
 	// The §12.5 / §25.11 ArtifactStore replication controller

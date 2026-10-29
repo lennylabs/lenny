@@ -16,6 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectortools"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol/leaseelicit"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
@@ -56,7 +57,7 @@ func (w *gatewayWiring) buildControlServer(
 	mtlsDeny *mtlsdenylist.DenyList,
 	connectorAuthorizer *connectorauthz.Authorizer,
 	connectorInvoker *connectorinvoke.Invoker,
-	leaseBudgets *leasecontrol.MemoryBudgetSource,
+	leaseBudgets *leasecontrol.StoreBudgetSource,
 	sessionSrv *sessionserver.Server,
 ) {
 	f := w.f
@@ -108,13 +109,13 @@ func (w *gatewayWiring) buildControlServer(
 	// the GatewayControl listener is enabled. F-8.6.2.
 	var leaseElicit leasecontrol.Elicitor
 	if *grpcAddr != "" {
-		leaseElicit = &leaseElicitor{
-			sessions:     w.sessions,
-			interactions: w.interactions,
-			publish:      func(s, et, d string, n time.Time) { w.eventBus.Publish(s, et, d, n) },
-			clock:        clockinject.Now,
-			idgen:        func() string { var b [16]byte; _, _ = rand.Read(b[:]); return fmt.Sprintf("lease-elicit-%x", b[:]) },
-		}
+		leaseElicit = leaseelicit.New(leaseelicit.Config{
+			Sessions:     w.sessions,
+			Interactions: w.interactions,
+			Publish:      func(s, et, d string, n time.Time) { w.eventBus.Publish(s, et, d, n) },
+			Clock:        clockinject.Now,
+			IDGen:        func() string { var b [16]byte; _, _ = rand.Read(b[:]); return fmt.Sprintf("lease-elicit-%x", b[:]) },
+		})
 	}
 	// §9.1 — the bridge forwards a type:agent runtime's
 	// intra-pod platform tool calls (over GatewayControl) to the same
@@ -127,16 +128,6 @@ func (w *gatewayWiring) buildControlServer(
 	// connectorinvoke surface, which dials the external endpoint with the
 	// gateway-held credential. F-9.1.2.
 	connectorToolBridge := connectortools.New(w.sessions, w.connectors, connectorAuthorizer, connectorInvoker)
-	// §8.6 — bridge a GRANTED token-budget extension onto the §8.2
-	// per-tree delegation budget counter so the next delegate_task admission
-	// is gated against the raised pool (F-8.6.3). Only the concrete
-	// *treebudget.Reserver satisfies the granter; pass a nil interface (not a
-	// typed-nil pointer) on the Postgres-only/no-Redis path so the Service's
-	// nil-granter branch is taken.
-	var leaseTreeGranter leasecontrol.TreeBudgetGranter
-	if w.treeBudgetConcrete != nil {
-		leaseTreeGranter = w.treeBudgetConcrete
-	}
 	// §4.7 — the adapter's per-slot and whole-pod scrub reports reach the
 	// gateway recycle-counter writes, the unhealthy-threshold drain ledger,
 	// and the §6.2 recycle disposition through the ScrubReporter. It
@@ -159,7 +150,7 @@ func (w *gatewayWiring) buildControlServer(
 			log.Fatalf("lenny-gateway: §4.7 scrub-report service: %v", err)
 		}
 	}
-	gatewayCtrlSrv, gatewayCtrlLis, leaseControlSvc, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, leaseElicit, w.rateLimiter, *leaseAutoMaxPerMin, platformToolBridge, connectorToolBridge, leaseTreeGranter, scrubReports, w.replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, *saTokenAudience, w.saTokenVerifier, mtlsDeny, inputWaitRecoveryDeps{sessions: w.sessions, waits: w.inputWaits, events: w.eventBus})
+	gatewayCtrlSrv, gatewayCtrlLis, leaseControlSvc, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, leaseElicit, w.rateLimiter, *leaseAutoMaxPerMin, platformToolBridge, connectorToolBridge, scrubReports, w.replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, *saTokenAudience, w.saTokenVerifier, mtlsDeny, inputWaitRecoveryDeps{sessions: w.sessions, waits: w.inputWaits, events: w.eventBus})
 	if err != nil {
 		log.Fatalf("lenny-gateway: §8.6 GatewayControl listen: %v", err)
 	}
@@ -289,13 +280,15 @@ func (w *gatewayWiring) buildControlServer(
 // packages stay decoupled with no import cycle. The extension does not
 // carry a budget/consumed amount: budget exhaustion asks for as much
 // headroom as the §8.6 ceiling allows, which ExtendForBudget derives from
-// the tree budget, so the seam ignores those parameters. A dispatch error
+// the tree budget, so the seam ignores those parameters. The seam threads
+// the tenant the enforcer holds into the dispatch, which reads the session
+// rows under it (§8.6 Extension state). A dispatch error
 // fails closed to Terminal: an unresolvable or errored extension denies
 // and terminates the session rather than silently granting tokens. spec:
 // §8.6; proposal 0023 S6.
 func leaseExtendSeam(svc *leasecontrol.Service) sessionbudget.ExtendOnExhaustion {
-	return func(reqCtx, waitCtx context.Context, _, sessionID string, _, _ int64) sessionbudget.Outcome {
-		outcome, err := svc.ExtendForBudget(reqCtx, waitCtx, sessionID)
+	return func(reqCtx, waitCtx context.Context, tenantID, sessionID string, _, _ int64) sessionbudget.Outcome {
+		outcome, err := svc.ExtendForBudget(reqCtx, waitCtx, tenantID, sessionID)
 		if err != nil {
 			// Fail closed: a transport fault, an unresolvable session, or a
 			// missing tree budget denies and terminates (§8.6 fail-closed

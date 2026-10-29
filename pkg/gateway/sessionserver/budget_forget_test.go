@@ -34,6 +34,9 @@ func TestTerminalPipelineForgetsBudgetAccounting_spec_11_2(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	srv.OnSessionTerminal(ctx, session.StateRunning, row)
+	if err := srv.WaitTerminalWork(context.Background()); err != nil {
+		t.Fatalf("WaitTerminalWork: %v", err)
+	}
 
 	if len(forgotten) != 1 || forgotten[0] != "s_1" {
 		t.Fatalf("BudgetForget calls = %v, want [s_1]", forgotten)
@@ -53,4 +56,7 @@ func TestTerminalPipelineNilBudgetForgetIsSafe_spec_11_2(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	srv.OnSessionTerminal(ctx, session.StateRunning, row) // must not panic
+	if err := srv.WaitTerminalWork(context.Background()); err != nil {
+		t.Fatalf("WaitTerminalWork: %v", err)
+	}
 }

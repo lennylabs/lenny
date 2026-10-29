@@ -1173,6 +1173,48 @@ func (s *Store) ListStaleTerminalSessions(ctx context.Context, ids []string, ter
 	return stale, nil
 }
 
+// ListAbsentSessions implements Store: the per-replica budget state sweep's
+// cross-tenant primary-key read. It reads which of the UUID identifiers have
+// a row and returns every other identifier in its original spelling. An
+// identifier that does not parse as a UUID can name no row, so it is absent
+// without a query.
+// spec: §11.2, §10.1.1.
+func (s *Store) ListAbsentSessions(ctx context.Context, ids []string) ([]string, error) {
+	keys := uuidIdentifiers(ids)
+	var present []string
+	if len(keys) > 0 {
+		err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+			var qErr error
+			present, qErr = collectStrings(ctx, tx,
+				`SELECT id::text FROM sessions WHERE id = ANY($1::uuid[])`, keys)
+			return qErr
+		})
+		if err != nil {
+			return nil, fmt.Errorf("pgstore: list absent sessions: %w", err)
+		}
+	}
+	return absentIdentifiers(ids, present), nil
+}
+
+// absentIdentifiers returns the members of ids that name none of present,
+// comparing UUIDs in canonical form so a differently cased spelling of a
+// present row is not reported absent.
+func absentIdentifiers(ids, present []string) []string {
+	found := make(map[uuid.UUID]bool, len(present))
+	for _, id := range present {
+		if u, err := uuid.Parse(id); err == nil {
+			found[u] = true
+		}
+	}
+	var absent []string
+	for _, id := range ids {
+		if u, err := uuid.Parse(id); err != nil || !found[u] {
+			absent = append(absent, id)
+		}
+	}
+	return absent
+}
+
 // uuidIdentifiers returns the members of ids that parse as UUIDs, in their
 // original spelling.
 func uuidIdentifiers(ids []string) []string {

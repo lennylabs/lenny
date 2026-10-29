@@ -52,8 +52,11 @@ type budgetSessionTerminator struct {
 //
 // The terminal claim opens here, synchronously, before the goroutine starts,
 // so a shutdown that races the goroutine already sees the claim and waits
-// for it. The goroutine ends the claim after the terminal pipeline, or at
-// once on a lookup error, a refusal, or a write error.
+// for it. The goroutine ends the claim when onTerminal (the session server's
+// OnSessionTerminal) returns, or at once on a lookup error, a refusal, or a
+// write error. OnSessionTerminal starts the terminal pipeline detached under
+// a claim of its own, so the pipeline outlives this claim and the shutdown
+// wait still sees it.
 // spec: §11.2; §7.1 (Terminal pipeline context); §7.2 (Interactive Session
 // Model).
 func (t *budgetSessionTerminator) TerminateSession(sessionID, reason string) {

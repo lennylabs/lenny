@@ -415,10 +415,8 @@ func newScrubServiceWithTracker(t *testing.T, cl client.Client, counters *memsto
 	if err != nil {
 		t.Fatalf("newScrubReportService: %v", err)
 	}
-	budgets := leasecontrol.NewMemoryBudgetSource()
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets:      budgets,
-		Tenants:      budgets,
+		Budgets:      emptyLeaseBudgets(t),
 		ScrubReports: scrubReports,
 	})
 	if err != nil {

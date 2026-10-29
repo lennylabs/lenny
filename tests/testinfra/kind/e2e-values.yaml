@@ -166,8 +166,12 @@ gateway:
   # retries for the full maxWorkspaceSealDurationSeconds window
   # (compiled-in default 300s), so a broken object store would hold every
   # terminated session's pod for five minutes. Shortening the window to
-  # the backoff floor (5s: one attempt, no retry) keeps a tier-5 or tier-9
-  # test that claims and terminates a real session prompt. A seal that
+  # 6s (one attempt and one retry) keeps a tier-5 or tier-9 test that
+  # claims and terminates a real session prompt. 6s is the shortest window
+  # the gateway admits at the default 5s usage quiescence timeout: the
+  # gateway refuses to start when the seal window is not greater than that
+  # timeout, which a delegated child's §8.3 budget return waits inside the
+  # terminal pipeline. A seal that
   # fails inside the window relabels the session failed with
   # workspace_seal_timeout and releases the pod with the failed
   # disposition, which retires the pod even on a recycling pool. A test
@@ -176,7 +180,7 @@ gateway:
   # when the host disk under the Kind nodes is nearly full. This is the
   # e2e harness overlay only; production deployments keep the chart's
   # 300s default.
-  workspaceSealMaxDurationSeconds: 5
+  workspaceSealMaxDurationSeconds: 6
 
 ops:
   image:

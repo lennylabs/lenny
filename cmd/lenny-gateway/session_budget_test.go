@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -280,6 +281,14 @@ func TestBudgetTerminatorHookOutlastsTheTerminateTimeout_spec_7_1(t *testing.T) 
 	case <-time.After(10 * time.Second):
 		t.Fatal("the terminal claim did not close")
 	}
+	// spec: §7.1 (Terminal pipeline context) — OnSessionTerminal runs the
+	// pipeline detached under the session server's own claim, which
+	// outlives the terminator's; wait for the hook's claim.
+	wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := srv.WaitTerminalWork(wctx); err != nil {
+		t.Fatalf("WaitTerminalWork: %v", err)
+	}
 	sealer.mu.Lock()
 	deadline, hasDL := sealer.deadline, sealer.hasDL
 	sealer.mu.Unlock()
@@ -293,8 +302,10 @@ func TestBudgetTerminatorHookOutlastsTheTerminateTimeout_spec_7_1(t *testing.T) 
 	if limit := entered.Add(srv.TerminalPipelineBudget() + time.Second); deadline.After(limit) {
 		t.Errorf("seal deadline %v after entry exceeds the terminal pipeline budget %v", deadline.Sub(entered), srv.TerminalPipelineBudget())
 	}
-	if got := ev.list(); len(got) != 3 || got[0] != "open" || got[1] != "seal" || got[2] != "end" {
-		t.Errorf("events = %v, want [open seal end]", got)
+	// The terminator's claim ends when OnSessionTerminal returns, which
+	// races the detached seal, so only the set is fixed.
+	if got := ev.list(); len(got) != 3 || got[0] != "open" || !slices.Contains(got, "seal") || !slices.Contains(got, "end") {
+		t.Errorf("events = %v, want open followed by seal and end in either order", got)
 	}
 }
 

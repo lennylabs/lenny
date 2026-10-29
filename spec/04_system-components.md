@@ -785,7 +785,7 @@ Rules 11 through 15 state no refusal, and rule 10's refusal is on the request's 
 | `LEASE_REJECTED`       | Runtime cannot use the assigned credential (incompatible provider, etc.) |
 | `CheckpointBarrierAck` | Acknowledges `CheckpointBarrier` after quiescence and after the gateway-driven `Checkpoint` stream terminates. Fields: `barrier_id`, `checkpoint_ref` (the gateway-minted `checkpoint_id`). See [Section 10.1](10_gateway-internals.md#101-horizontal-scaling). |
 | `AdapterTerminating`   | Adapter's self-initiated terminal notification (e.g., coordinator-loss hold timeout). Fields: `session_id`, `reason` (`coordinator_lost`, etc.). Allows the gateway to transition the session immediately without waiting for the orphan-session reconciler. See [Section 10.1](10_gateway-internals.md#101-horizontal-scaling). |
-| `FINAL_USAGE_REPORT`   | Final lifecycle-stream message pushed by the child's adapter once all in-flight `ReportUsage` gateway pulls have settled, just before the stream closes. Gateway waits for this (or stream close, whichever comes first) before running `budget_return.lua`. See [Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease). |
+| `FINAL_USAGE_REPORT`   | Pushed by the child's adapter for one session once all in-flight `ReportUsage` gateway pulls have settled. Fields: `session_id`. Gateway waits for this (or stream close, whichever comes first) before running `budget_return.lua`. See [Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease). |
 
 #### 4.7.4 Adapter ↔ Runtime Protocol (Intra-Pod)
 

@@ -50,9 +50,11 @@ var ErrDrainIncomplete = errors.New("session drain incomplete")
 // forced terminal transition to each non-terminal session, and continues
 // past a session whose transition fails, recording its id in Failed. A
 // session that no longer exists has nothing to drain. Each transition
-// runs on a context detached from ctx's cancellation, so a caller's
-// deadline stops the drain between sessions and never inside one
-// session's terminal pipeline; when ctx has ended before the next
+// runs on a context detached from ctx's cancellation and starts this
+// replica's terminal pipeline for the session, which runs detached; the
+// drain does not wait for that pipeline and moves to the next session.
+// A caller's deadline stops the drain between sessions and never inside
+// one session's transition; when ctx has ended before the next
 // session, the drain publishes what it transitioned and returns the
 // partial result and ctx's error, wrapped. A second primary listing then verifies the scope and records
 // every non-terminal id not already in Failed in Remaining. A listing
@@ -65,9 +67,9 @@ var ErrDrainIncomplete = errors.New("session drain incomplete")
 //   - A nil error means every row of the scope is terminal on the
 //     primary when the verifying listing ran.
 //   - A nil error does not mean the scope's pods are released. The
-//     transition writes the terminal state on the session row and runs
+//     transition writes the terminal state on the session row and starts
 //     this replica's terminal pipeline, whose post-terminal hook releases
-//     the bindings this replica holds. After its transitions the drain
+//     the bindings this replica holds after the drain has moved on. After its transitions the drain
 //     publishes the identifiers of the sessions it moved to a terminal
 //     state through pods, the binding-release fan-out (CH-BINDRELEASE),
 //     and each peer replica's subscriber releases the bindings of those

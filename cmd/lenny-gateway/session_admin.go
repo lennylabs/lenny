@@ -50,8 +50,12 @@ func (a sessionAdminAdapter) GetByID(ctx context.Context, id string) (sessionsto
 // its state, false, and nil (idempotent). The pre-force state is captured
 // inside the mutate so it reflects the state at commit time, and the
 // forced write records the Terminated fact. It opens the terminal claim
-// before the write and ends it after the terminal pipeline, or at once on
-// a refusal or error. The forced write is gateway-decided, so it runs
+// before the write and ends it when onTerminal (the session server's
+// OnSessionTerminal) returns, or at once on a refusal or error.
+// OnSessionTerminal starts the terminal pipeline detached under a claim of
+// its own and returns without waiting for it, so a drain moves to its next
+// session while this one's pipeline runs. The forced write is
+// gateway-decided, so it runs
 // detached from the caller's cancellation: an admin request that ends
 // before the write commits does not strand the session, and the post-terminal
 // hook bounds its own context. spec: §24.11; §7.2 (Interactive Session

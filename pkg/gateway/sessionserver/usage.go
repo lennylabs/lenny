@@ -6,9 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"log/slog"
 	"net/http"
 	"net/netip"
 	"strings"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
@@ -242,19 +244,41 @@ func terminalSessionEvent(st session.State) (et events.EventType, severity strin
 	}
 }
 
-// OnSessionTerminal is the watchdog / orphancleanup TerminalHook that
-// runs the full terminal-side-effects pipeline (workspace seal, executor
-// release — which drains the pod and releases concurrent-mode slots per
-// §5.2 — audit, SSE, billing, archive). It adapts the private
-// recordSessionCompleted so the watchdog and the orphan reconciler, when they
-// force a session terminal, emit the same signals exactly once as a session
-// terminated by REST. fromState is the session's pre-terminal state, which the
-// writer read on the row it forced terminal; the terminal pod-release path
-// keys off it so a maxSessionAge-expired running session is released through
-// the §6.2 executor recycle path rather than the by-name reclaim (§4.6).
-// spec: §5.2; §6.2; §11.7; §7.2. Closes F-5.2.26.
+// OnSessionTerminal is the TerminalHook of the writers that force a session
+// terminal and go on to end further sessions: the watchdog, the orphan
+// reconciler and orphan cleanup, the deadlock detector, the admin adapters
+// behind the §24.11 force-terminate and the §12.8 drains, the §11.2 budget
+// terminator, and the §8.3 BUDGET_KEYS_EXPIRED root write. It runs the
+// funnel's terminal pipeline (recordSessionCompleted: the workspace seal,
+// the drain, the terminal events and signals, the pod release, the budget
+// forget and return, audit, SSE, billing, and archive), so these writers
+// emit the same signals exactly once as a session terminated by REST.
+//
+// The pipeline runs detached: OnSessionTerminal opens a terminal claim of
+// its own for the session, starts the pipeline on a goroutine over a context
+// detached from ctx's cancellation, defers that claim's end inside the
+// goroutine, and returns without waiting. One session's pipeline, which can
+// last the seal window and for a delegated child joins the usage quiescence
+// wait, therefore does not delay the caller's next session. The caller wrote
+// the row under its own claim and ends that claim on its own path when
+// OnSessionTerminal returns; the claim opened here keeps WaitTerminalWork
+// and the terminal binding release seeing the pipeline as in progress until
+// it returns.
+//
+// fromState is the session's pre-terminal state, which the writer read on
+// the row it forced terminal; the terminal pod-release path keys off it so a
+// maxSessionAge-expired running session is released through the §6.2
+// executor recycle path rather than the by-name reclaim (§4.6).
+//
+// spec: §7.1 (Terminal pipeline context), §10.1.7 (Terminal pipelines at
+// process exit.), §5.2, §6.2, §11.7, §7.2
 func (s *Server) OnSessionTerminal(ctx context.Context, fromState session.State, sess sessionstore.Session) {
-	s.recordSessionCompleted(ctx, fromState, sess)
+	end := s.BeginTerminal(sess.ID)
+	hctx := context.WithoutCancel(ctx)
+	go func() {
+		defer end()
+		s.recordSessionCompleted(hctx, fromState, sess)
+	}()
 }
 
 // OnSessionExpiredFromAwaitingClientAction is the watchdog's
@@ -313,8 +337,8 @@ func (s *Server) OnSessionExpired(_ context.Context, sess sessionstore.Session, 
 // recordSessionCompleted is the terminal funnel of the funnel-path terminal
 // writers. It runs the post-terminal hook (AfterTerminalWrite) first, with
 // terminalSignals as the hook's signal tail, and then, on the row the hook
-// returned, the session-log close hook, the input-wait and budget forget, the
-// quota checkpoint, and the billing event. The seal precedes every terminal
+// returned, the session-log close hook, the input-wait forget, the quota
+// checkpoint, and the billing event. The seal precedes every terminal
 // signal, and the pod release follows the operational event, the callback,
 // the terminal lifecycle signals, and the archive, child-failed, watermark,
 // and cascade steps. All are best-effort: a failure never fails the
@@ -395,9 +419,10 @@ func (s *Server) terminalSignals(ctx context.Context, sess sessionstore.Session)
 	s.cascadeToChildren(ctx, sess)
 }
 
-// afterTerminalRelease runs the funnel's steps that follow the pod release:
-// the session-log close hook, the input-wait and budget forget, the quota
-// checkpoint, and the billing event. spec: §4.4; §8.8; §11.2; §10.6.
+// afterTerminalRelease runs the funnel's steps that follow the post-terminal
+// hook: the session-log close hook, the input-wait forget, the quota
+// checkpoint, and the billing event. The budget forget is a step of the hook
+// body itself (forgetBudgetState). spec: §4.4; §8.8; §11.2; §10.6.
 func (s *Server) afterTerminalRelease(ctx context.Context, sess sessionstore.Session) {
 	// §4.4: best-effort session-log close-hook. The hook
 	// persists the session log it is handed as the
@@ -418,12 +443,6 @@ func (s *Server) afterTerminalRelease(ctx context.Context, sess sessionstore.Ses
 	// whose rows are gone. F-8.8.10.
 	if s.inputWaits != nil {
 		s.inputWaits.ForgetSession(sess.ID)
-	}
-	// spec: §11.2 — drop the settled session's mid-session token-budget
-	// accounting from the §4.9 LLM-proxy enforcer so the per-session map
-	// does not retain an entry for a session whose row is gone.
-	if s.budgetForget != nil {
-		s.budgetForget(sess.ID)
 	}
 	// spec: §11.2 — on session completion the final cumulative
 	// token usage is written to Postgres as the authoritative value so a
@@ -555,9 +574,11 @@ func (s *Server) terminalReclaimPreRunning(ctx context.Context, fromState sessio
 }
 
 // archiveSettledChild records a terminal child session in the §8.10
-// session_tree_archive. A session with no parent is the tree root and
-// is not archived. Archiving is best-effort: a failure never fails the
-// transition that triggered it.
+// session_tree_archive under its recorded root. A session with no parent is
+// the tree root and is not archived. Archiving is best-effort: a failure
+// never fails the transition that triggered it. The archive returns no
+// budget; the post-terminal hook's return step does (returnTreeBudget).
+// spec: §8.10, §8.3 (Return on completion)
 func (s *Server) archiveSettledChild(ctx context.Context, sess sessionstore.Session) {
 	if s.treeArchive == nil || sess.ParentSessionID == "" {
 		return
@@ -570,52 +591,137 @@ func (s *Server) archiveSettledChild(ctx context.Context, sess sessionstore.Sess
 	// a newer replica knows a later schema therefore cannot silently
 	// rewrite a record an older replica created. F-8.8.11.
 	existingVer := 0
-	alreadyArchived := false
 	if prev, err := s.treeArchive.GetByNode(ctx, sess.TenantID, sess.ID); err == nil {
-		alreadyArchived = true
 		var prevResult sessionrecord.Result
 		if json.Unmarshal([]byte(prev.Result), &prevResult) == nil {
 			existingVer = prevResult.SchemaVersion
 		}
 	}
-	root := s.treeRoot(ctx, sess)
 	result, _ := json.Marshal(s.materializeTaskResult(ctx, sess, existingVer))
 	_ = s.treeArchive.Archive(ctx, treearchive.ArchivedNode{
 		TenantID:        sess.TenantID,
-		RootSessionID:   root,
+		RootSessionID:   sess.RootSessionID,
 		NodeSessionID:   sess.ID,
 		ParentSessionID: sess.ParentSessionID,
 		State:           string(sess.State),
 		Result:          string(result),
 		SettledAt:       s.clock(),
 	})
-	// spec: §8.2 — completed-subtree offload returns the §12.4
-	// tree budget the node held: maxTreeMemoryBytes (the node's in-memory
-	// footprint moves to Postgres) and the parent's parallel_children
-	// slot (the child stopped running). Guarded on the first archive so a
-	// re-archive on cascade does not double-return; the returnScript also
-	// clamps at zero as a backstop.
-	if !alreadyArchived {
-		s.returnTreeBudget(ctx, sess, root)
+}
+
+// DefaultUsageQuiescenceTimeout is the §11.3 default of
+// delegation.usageQuiescenceTimeoutSeconds, which a non-positive
+// Options.UsageQuiescenceTimeout selects.
+const DefaultUsageQuiescenceTimeout = 5 * time.Second
+
+// UsageQuiescenceTimeoutFor resolves the usage quiescence timeout in effect
+// for a configured value: the value when positive, and the §11.3 default
+// otherwise. The server and the startup check resolve it the same way.
+// spec: §11.3, §8.3 (Usage quiescence before budget return)
+func UsageQuiescenceTimeoutFor(v time.Duration) time.Duration {
+	if v <= 0 {
+		return DefaultUsageQuiescenceTimeout
+	}
+	return v
+}
+
+// treeBudgetReturnAdmitted reports whether the post-terminal hook runs the
+// §8.3 budget return for the row it received. It admits a delegated child
+// (DelegationDepth > 0) on a server with a TreeBudgetReturner. A delegated
+// row whose recorded root is its own id, which is how an empty root column
+// reads back, is logged and skipped, because its return would address the
+// child's own key set.
+// spec: §8.3 (Return on completion), §7.1 (Terminal pipeline context)
+func (s *Server) treeBudgetReturnAdmitted(sess sessionstore.Session) bool {
+	if s.treeBudgetReturner == nil || sess.DelegationDepth == 0 {
+		return false
+	}
+	if sess.RootSessionID == "" || sess.RootSessionID == sess.ID {
+		slog.Warn("sessionserver: delegated child records no distinct tree root; budget return skipped",
+			"session_id", sess.ID, "tenant_id", sess.TenantID, "root_session_id", sess.RootSessionID)
+		return false
+	}
+	return true
+}
+
+// returnTreeBudget is the post-terminal hook's §8.3 budget return for an
+// admitted delegated child. It waits for usage quiescence
+// (awaitUsageQuiescence), reads the subtree's consumption, and returns the
+// child's reservation on its recorded root: one tree_size unit, the
+// per-node tree_memory share, the parent's parallel_children slot, and the
+// unused tokens max(0, slice − subtree consumption), where the slice is the
+// child's granted MaxTokenBudget. A consumption read error credits no
+// tokens and still returns the other three deltas.
+//
+// A context that ends during the wait skips the read and the Return, and
+// nothing retries them. A Return error, ErrBudgetKeysExpired included, is
+// logged and leaves the reservation counted; a return that finds the
+// sentinel absent is not a detection, so it calls no cleanup and counts no
+// metric.
+//
+// spec: §7.1 (Terminal pipeline context), §8.3 (Return on completion), §8.3
+// (Usage quiescence before budget return)
+func (s *Server) returnTreeBudget(ctx context.Context, sess sessionstore.Session) {
+	if !s.awaitUsageQuiescence(ctx, sess.TerminatedAt) {
+		slog.Warn("sessionserver: terminal pipeline ended before the budget return",
+			"session_id", sess.ID, "root_session_id", sess.RootSessionID, "error", ctx.Err())
+		return
+	}
+	r := treebudget.Reservation{
+		RootSessionID:         sess.RootSessionID,
+		ParentSessionID:       sess.ParentSessionID,
+		TreeSizeDelta:         1,
+		TreeMemoryDelta:       treebudget.PerNodeMemoryBytes,
+		ParallelChildrenDelta: 1,
+		TokenDelta:            s.unusedTokens(ctx, sess),
+	}
+	if err := s.treeBudgetReturner.Return(ctx, r); err != nil {
+		slog.Warn("sessionserver: delegation tree budget return failed; the reservation stays counted",
+			"session_id", sess.ID, "root_session_id", sess.RootSessionID, "error", err)
 	}
 }
 
-// returnTreeBudget releases the §12.4 budget a settled child consumed.
-// It decrements the tree's maxTreeMemoryBytes counter by the per-node
-// footprint and the per-parent parallel_children counter by one. Best
-// effort: a return failure leaks budget conservatively (the §12.4 TTL
-// reclaims it) and never fails the transition that triggered it.
-// spec: §8.2; §12.4.
-func (s *Server) returnTreeBudget(ctx context.Context, sess sessionstore.Session, rootSessionID string) {
-	if s.treeBudgetReturner == nil {
-		return
+// unusedTokens is the token credit of a child's budget return:
+// max(0, slice − subtree consumption). A zero slice, or a consumption read
+// that fails, credits zero.
+// spec: §8.3 (Return on completion)
+func (s *Server) unusedTokens(ctx context.Context, sess sessionstore.Session) int64 {
+	if sess.DelegationLease == nil || sess.DelegationLease.MaxTokenBudget <= 0 {
+		return 0
 	}
-	_ = s.treeBudgetReturner.Return(ctx, treebudget.Reservation{
-		RootSessionID:         rootSessionID,
-		ParentSessionID:       sess.ParentSessionID,
-		TreeMemoryDelta:       treebudget.PerNodeMemoryBytes,
-		ParallelChildrenDelta: 1,
-	})
+	used, err := s.taskUsage.SubtreeTokens(ctx, sess)
+	if err != nil {
+		slog.Warn("sessionserver: subtree token read failed; the budget return credits no tokens",
+			"session_id", sess.ID, "root_session_id", sess.RootSessionID, "error", err)
+		return 0
+	}
+	return max(0, sess.DelegationLease.MaxTokenBudget-used)
+}
+
+// awaitUsageQuiescence waits until terminatedAt plus the usage quiescence
+// timeout on the server clock, through the server's timer seam. A zero
+// terminatedAt counts the timeout from the call, and a point already passed
+// waits not at all. The gateway has no consumer of the child's final usage
+// report, so the wait always ends at the timeout. It reports false when ctx
+// ends first.
+// spec: §8.3 (Usage quiescence before budget return)
+func (s *Server) awaitUsageQuiescence(ctx context.Context, terminatedAt time.Time) bool {
+	wait := UsageQuiescenceTimeoutFor(s.usageQuiescenceTimeout)
+	if !terminatedAt.IsZero() {
+		wait -= s.clock().Sub(terminatedAt)
+	}
+	timer := s.quiescenceTimer
+	if timer == nil {
+		timer = time.After
+	}
+	if wait > 0 {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-timer(wait):
+		}
+	}
+	return ctx.Err() == nil
 }
 
 // observeTreeHighWatermark records the §8.3 per-tree
@@ -758,7 +864,7 @@ func (s *Server) cascadeToChildren(ctx context.Context, sess sessionstore.Sessio
 					continue
 				}
 				seen[cur.ID] = true
-				updated, applied := s.cancelCascadedChild(ctx, sess.TenantID, cur)
+				updated, applied := s.cancelNodeGuarded(ctx, sess.TenantID, cur)
 				if applied && s.effectiveCascade(ctx, updated) == session.CascadeCancelAll {
 					next = append(next, cur.ID)
 				}
@@ -787,19 +893,22 @@ func (s *Server) effectiveCascade(ctx context.Context, sess sessionstore.Session
 	return session.CascadeCancelAll
 }
 
-// cancelCascadedChild makes the hook-path terminal write for one descendant
-// the cascade reached and returns the row that write committed and whether
-// it applied. An already-terminal row is skipped: its own cascade ran when it
+// cancelNodeGuarded makes the hook-path terminal write that cancels one
+// delegation node and returns the row that write committed and whether it
+// applied. cascadeToChildren calls it for each descendant it reaches, and the
+// §8.3 BUDGET_KEYS_EXPIRED cleanup calls it for each node of the root's tree.
+// An already-terminal row is skipped: its own terminal pipeline ran when it
 // settled.
 //
-// spec: §7.2, §8.10 — the claim opens before the Update, the write applies
-// only over a non-terminal locked row and records the Terminated fact, and
-// the post-terminal hook (cancel, seal, drain, the terminal events, the
-// archive, and the pod release with the cancelled disposition) runs on a
-// goroutine on a detached context, so one descendant's seal window does not
-// delay the next. A descendant another writer already ended reports false,
-// so its policy is not evaluated and none of its children are queued.
-func (s *Server) cancelCascadedChild(ctx context.Context, tenantID string, cur sessionstore.Session) (sessionstore.Session, bool) {
+// spec: §7.2, §8.10, §8.3 — the claim opens before the Update, the write
+// applies only over a non-terminal locked row and records the Terminated
+// fact, and the post-terminal hook (cancel, seal, drain, the terminal events,
+// the archive, the pod release with the cancelled disposition, and a
+// delegated child's budget return) runs on a
+// goroutine on a detached context, so one node's seal window does not delay
+// the next. A node another writer already ended reports false, so the
+// cascade evaluates no policy for it and queues none of its children.
+func (s *Server) cancelNodeGuarded(ctx context.Context, tenantID string, cur sessionstore.Session) (sessionstore.Session, bool) {
 	if session.IsTerminal(cur.State) {
 		return sessionstore.Session{}, false
 	}

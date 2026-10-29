@@ -165,3 +165,41 @@ func TestDelegationBudgetStoreContract(t *testing.T) {
 		t.Fatalf("tenant2 row wrongly removed by tenant1 DeleteByTenant")
 	}
 }
+
+// spec: 12.8 (Compliance Interfaces)
+// diagnosis: DeleteByRoot removed a row other than the named tree's row in
+// the named tenant, or left that row behind, so the §12.8 user erasure
+// either keeps an erased user's tree budget state or deletes another tree's.
+func TestDelegationBudgetStoreDeleteByRoot(t *testing.T) {
+	t.Parallel()
+	_, pg := startStore(t)
+	store := delegationbudgetpg.New(pg.Pool)
+	ctx := context.Background()
+	tenant, other := freshTenant(t, ctx, pg), freshTenant(t, ctx, pg)
+	if err := store.Write(ctx, []delegationbudget.Checkpoint{
+		{TenantID: tenant, RootSessionID: "root-a", TreeSize: 1},
+		{TenantID: tenant, RootSessionID: "root-b", TreeSize: 1},
+		{TenantID: other, RootSessionID: "root-a", TreeSize: 1},
+	}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if n, err := store.DeleteByRoot(ctx, tenant, "root-a"); err != nil || n != 1 {
+		t.Fatalf("DeleteByRoot = (%d, %v), want (1, nil)", n, err)
+	}
+	if n, err := store.DeleteByRoot(ctx, tenant, "root-a"); err != nil || n != 0 {
+		t.Fatalf("repeated DeleteByRoot = (%d, %v), want (0, nil)", n, err)
+	}
+	rows, err := store.ListActive(ctx)
+	if err != nil {
+		t.Fatalf("list active: %v", err)
+	}
+	if _, ok := findCheckpoint(rows, tenant, "root-a"); ok {
+		t.Fatalf("deleted row survived")
+	}
+	if _, ok := findCheckpoint(rows, tenant, "root-b"); !ok {
+		t.Fatalf("sibling tree row removed")
+	}
+	if _, ok := findCheckpoint(rows, other, "root-a"); !ok {
+		t.Fatalf("other tenant's row under the same root id removed")
+	}
+}

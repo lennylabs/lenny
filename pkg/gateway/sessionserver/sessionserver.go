@@ -299,14 +299,12 @@ type Server struct {
 	treeArchive              treearchive.Store
 	taskUsage                *resultrollup.Builder
 	treeBudgetReturner       TreeBudgetReturner
-	// leaseRegistrar, when set, registers a newly created root session
-	// with the §8.6 lease-extension budget source so a later in-process
-	// budget-exhaustion extension (the gateway LLM Proxy's ExtendForBudget
-	// trigger) resolves the tree instead of failing ErrSessionNotFound.
-	// leaseExtDefaults carries the deployment-level configuration the root
-	// tree's budget ceiling is resolved from. F-15.3.5.
-	leaseRegistrar     LeaseTreeRegistrar
-	leaseExtDefaults   LeaseExtensionDefaults
+	// usageQuiescenceTimeout is the §8.3 usage quiescence wait before a
+	// delegated child's budget return, resolved by UsageQuiescenceTimeoutFor.
+	usageQuiescenceTimeout time.Duration
+	// quiescenceTimer is the timer seam of that wait; New defaults it to
+	// time.After.
+	quiescenceTimer    func(time.Duration) <-chan time.Time
 	quotaCheckpointer  QuotaFinalCheckpointer
 	hwmObserver        DelegationHighWatermarkObserver
 	hwmReader          DelegationHighWatermarkReader
@@ -644,6 +642,12 @@ type Server struct {
 	// expires a session on a platform expiry clock. Nil disables the
 	// emission. spec: §16.1 catalog; §16.1.1 reason vocabulary. F-11.3.7.
 	incSessionExpiry func(pool, reason string)
+
+	// incDelegationBudgetKeysExpired, when set, increments the §16.1
+	// lenny_delegation_budget_keys_expired_total{pool, tenant_id} counter
+	// once per §8.3 BUDGET_KEYS_EXPIRED reservation detection. Nil drops the
+	// increment. spec: §16.1, §8.3.
+	incDelegationBudgetKeysExpired func(pool, tenantID string)
 
 	// incWarmpoolWarmupFailure, when set, increments the §16.1
 	// lenny_warmpool_warmup_failure_total{error_type} counter for one
@@ -1338,16 +1342,18 @@ type Options struct {
 	// the decrement (developer mode without Redis-backed counters).
 	TreeBudgetReturner TreeBudgetReturner
 
-	// LeaseRegistrar, when set, registers each newly created root session
-	// with the §8.6 lease-extension budget source (RegisterTree) so an
-	// in-process budget-exhaustion extension (the gateway LLM Proxy's
-	// ExtendForBudget trigger) from the root or its delegated descendants
-	// resolves the tree instead of failing ErrSessionNotFound. Nil leaves
-	// the tree unregistered (the in-process gateway with no GatewayControl
-	// listener). LeaseExtensionDefaults supplies the §8.6 deployment-level
-	// ceiling the root tree is registered with. F-15.3.5.
-	LeaseRegistrar         LeaseTreeRegistrar
-	LeaseExtensionDefaults LeaseExtensionDefaults
+	// UsageQuiescenceTimeout is the §11.3
+	// delegation.usageQuiescenceTimeoutSeconds: how long after a delegated
+	// child's terminal transition the post-terminal hook waits before it
+	// returns the child's tree budget. A non-positive value selects the
+	// §11.3 default of 5 s (DefaultUsageQuiescenceTimeout).
+	// spec: §8.3 (Usage quiescence before budget return), §11.3
+	UsageQuiescenceTimeout time.Duration
+
+	// UsageQuiescenceTimer is the timer seam of that wait: it returns a
+	// channel that delivers once the duration has elapsed. Nil uses
+	// time.After. A test drives the wait without real delay through it.
+	UsageQuiescenceTimer func(time.Duration) <-chan time.Time
 
 	// QuotaCheckpointer, when set, persists the §11.2 final
 	// token-usage checkpoint for the session's (tenant, user) when the
@@ -1650,6 +1656,12 @@ type Options struct {
 	// spec: §16.1 catalog; §16.1.1. F-11.3.7.
 	IncSessionExpiry func(pool, reason string)
 
+	// IncDelegationBudgetKeysExpired, when set, increments the §16.1
+	// lenny_delegation_budget_keys_expired_total{pool, tenant_id} counter on
+	// every HandleBudgetKeysExpired call, with the tree root's pool. Nil
+	// drops the increment. spec: §16.1, §8.3.
+	IncDelegationBudgetKeysExpired func(pool, tenantID string)
+
 	// IncWarmpoolWarmupFailure, when set, increments the §16.1
 	// lenny_warmpool_warmup_failure_total{error_type} counter for a
 	// warm-pool startup failure. error_type is the §7.3
@@ -1743,8 +1755,8 @@ func New(store sessionstore.Store, opts Options) *Server {
 		treeArchive:                opts.TreeArchive,
 		taskUsage:                  opts.TaskUsage,
 		treeBudgetReturner:         opts.TreeBudgetReturner,
-		leaseRegistrar:             opts.LeaseRegistrar,
-		leaseExtDefaults:           opts.LeaseExtensionDefaults,
+		usageQuiescenceTimeout:     UsageQuiescenceTimeoutFor(opts.UsageQuiescenceTimeout),
+		quiescenceTimer:            opts.UsageQuiescenceTimer,
 		quotaCheckpointer:          opts.QuotaCheckpointer,
 		hwmReader:                  opts.HighWatermarkReader,
 		hwmObserver:                opts.HighWatermarkObserver,
@@ -1791,6 +1803,10 @@ func New(store sessionstore.Store, opts Options) *Server {
 		incSessionResumeAttempt:    opts.IncSessionResumeAttempt,
 		incSessionRetry:            opts.IncSessionRetry,
 		incSessionExpiry:           opts.IncSessionExpiry,
+
+		// spec: §16.1, §8.3 — the BUDGET_KEYS_EXPIRED cleanup's detection counter.
+		incDelegationBudgetKeysExpired: opts.IncDelegationBudgetKeysExpired,
+
 		incWarmpoolWarmupFailure:   opts.IncWarmpoolWarmupFailure,
 		incInjectionGateFailClosed: opts.IncInjectionGateFailClosed,
 		uploadTokenTTL:             opts.UploadTokenTTL,
@@ -1849,6 +1865,9 @@ func New(store sessionstore.Store, opts Options) *Server {
 	}
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }
+	}
+	if s.quiescenceTimer == nil {
+		s.quiescenceTimer = time.After
 	}
 	if s.coordLeaseTTL <= 0 {
 		// spec: §10.1 — the at-bind lease TTL must exceed the coordination

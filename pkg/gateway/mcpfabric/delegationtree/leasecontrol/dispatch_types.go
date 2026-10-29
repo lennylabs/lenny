@@ -67,8 +67,13 @@ func (s ExtendStatus) String() string {
 // replaces the deleted adapterv1.ExtendLeaseRequest proto message.
 // F-8.6.1.
 type ExtendRequest struct {
+	// TenantID is the requesting session's tenant, threaded from the
+	// caller that already holds it. The dispatch reads the session rows
+	// under it, and an empty TenantID is rejected. spec: §8.6 (Extension
+	// state).
+	TenantID string
 	// SessionID is the requesting session; the dispatch resolves its tree
-	// and tenant from it. An empty SessionID is rejected.
+	// from it. An empty SessionID is rejected.
 	SessionID string
 	// Requested carries every §8.6 extendable dimension the
 	// caller asks to raise. A zero on a dimension indicates the caller

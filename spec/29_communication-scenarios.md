@@ -799,10 +799,10 @@ the session to be `running`, which is the only state the interrupt endpoint's pr
 
 15. On a session end of a delegation child session, triggered by `POST /v1/sessions/{id}/terminate`, by
     `DELETE /v1/sessions/{id}`, or by an expiry timer: `adapter` → `gateway`, `CH-ADAPTEREVENTS`,
-    `pod-to-gateway`. The child's adapter pushes `FINAL_USAGE_REPORT` once every in-flight `ReportUsage`
-    pull has settled, as the final message before the stream closes, and the gateway waits for it or for
-    the stream close, whichever comes first, before it returns the child's delegation budget (§28.5.2
-    `CH-ADAPTEREVENTS`, [§4.7](04_system-components.md#47-runtime-adapter),
+    `pod-to-gateway`. The child's adapter pushes `FINAL_USAGE_REPORT` once every in-flight `ReportUsage` pull
+    has settled, and the gateway waits for it or for the stream close, whichever comes first, before it
+    returns the child's delegation budget (§28.5.2 `CH-ADAPTEREVENTS`,
+    [§4.7](04_system-components.md#47-runtime-adapter),
     [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)).
 
 16. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or

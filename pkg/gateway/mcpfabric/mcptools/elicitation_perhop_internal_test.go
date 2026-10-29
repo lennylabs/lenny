@@ -102,6 +102,10 @@ func (s *slowAncestorStore) ListStaleTerminalSessions(context.Context, []string,
 	panic("unused")
 }
 
+func (s *slowAncestorStore) ListAbsentSessions(context.Context, []string) ([]string, error) {
+	panic("unused")
+}
+
 func (s *slowAncestorStore) ReserveSlotUnderLock(context.Context, string, int32) (int32, bool, error) {
 	panic("unused")
 }

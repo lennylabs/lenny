@@ -104,19 +104,19 @@ type SessionReclaimer interface {
 // resolution after a Pending return, the episode's per-session fan-out
 // raises or terminates the session through the SessionReclaimer.
 // spec: §8.6; proposal 0023 S3.
-func (s *Service) ExtendForBudget(reqCtx, waitCtx context.Context, sessionID string) (Outcome, error) {
+func (s *Service) ExtendForBudget(reqCtx, waitCtx context.Context, tenantID, sessionID string) (Outcome, error) {
 	if sessionID == "" {
 		return OutcomeTerminal, errors.New("leasecontrol: ExtendForBudget requires a session id")
+	}
+	// spec: §8.6 (Extension state) — the caller threads the tenant it
+	// holds; a request without one is refused, fail closed.
+	if tenantID == "" {
+		return OutcomeTerminal, errors.New("leasecontrol: ExtendForBudget requires a tenant id")
 	}
 	if s.episodes == nil {
 		return OutcomeTerminal, errors.New("leasecontrol: ExtendForBudget requires an initialized episode manager")
 	}
 
-	tenantID, err := s.tenants.TenantOf(reqCtx, sessionID)
-	if err != nil {
-		// Fail closed: an unresolvable session cannot be extended.
-		return OutcomeTerminal, fmt.Errorf("leasecontrol: ExtendForBudget resolve tenant for %s: %w", sessionID, err)
-	}
 	budget, err := s.budgets.TreeBudget(reqCtx, tenantID, sessionID)
 	if err != nil {
 		return OutcomeTerminal, fmt.Errorf("leasecontrol: ExtendForBudget load tree budget for %s: %w", sessionID, err)
@@ -129,7 +129,7 @@ func (s *Service) ExtendForBudget(reqCtx, waitCtx context.Context, sessionID str
 	// session extends up to but never past its ceiling. spec: §8.6.
 	requested := Dimensions{Tokens: budget.EffectiveMax.Tokens}
 
-	mem := s.episodes.join(budget.RootSessionID, sessionID, requested)
+	mem := s.episodes.join(tenantID, budget.RootSessionID, sessionID, requested)
 
 	// Block on this session's resolution up to the caller's in-path wait.
 	select {
@@ -284,6 +284,9 @@ type member struct {
 	// sessionID identifies the joined session so the episode goroutine can
 	// dispatch and resolve it. It is immutable after the member is created.
 	sessionID string
+	// tenantID is the joined session's tenant, carried into its
+	// ExtendLease dispatch. It is immutable after the member is created.
+	tenantID  string
 	requested Dimensions
 	// result delivers the session's resolution to its in-path caller. It
 	// is buffered (size 1) so the fan-out never blocks on a detached
@@ -393,7 +396,7 @@ func (m *episodeManager) currentReclaimer() SessionReclaimer {
 // this member with the rest of its batch concurrently, so a mid-episode
 // joiner still overlaps with the in-flight elicitation and batches onto
 // the one tc.pending prompt (§8.6).
-func (m *episodeManager) join(rootSessionID, sessionID string, requested Dimensions) *member {
+func (m *episodeManager) join(tenantID, rootSessionID, sessionID string, requested Dimensions) *member {
 	for {
 		m.mu.Lock()
 		ep := m.trees[rootSessionID]
@@ -430,7 +433,7 @@ func (m *episodeManager) join(rootSessionID, sessionID string, requested Dimensi
 		}
 		mem := ep.members[sessionID]
 		if mem == nil {
-			mem = &member{sessionID: sessionID, requested: requested, result: make(chan sessionResult, 1)}
+			mem = &member{sessionID: sessionID, tenantID: tenantID, requested: requested, result: make(chan sessionResult, 1)}
 			ep.members[sessionID] = mem
 			// Queue the member for the episode goroutine to dispatch, and wake
 			// the goroutine if it is parked. Dispatching immediately (rather
@@ -489,7 +492,7 @@ func (m *episodeManager) runEpisode(ep *episode) {
 		// overlaps any in-flight elicitation and batches onto the one prompt.
 		for _, mem := range batch {
 			go func(mem *member) {
-				res := m.dispatchOne(ctx, mem.sessionID, mem.requested)
+				res := m.dispatchOne(ctx, mem.tenantID, mem.sessionID, mem.requested)
 				ep.mu.Lock()
 				ep.resolved[mem.sessionID] = res
 				ep.inFlight--
@@ -544,8 +547,8 @@ func (m *episodeManager) finish(ep *episode) {
 // concurrent second session batches onto the same prompt, §8.6), while the grant math and terminal outcome are computed per
 // session against that session's own budget.Current and requested
 // amounts.
-func (m *episodeManager) dispatchOne(ctx context.Context, sessionID string, requested Dimensions) sessionResult {
-	resp, err := m.svc.ExtendLease(ctx, ExtendRequest{SessionID: sessionID, Requested: requested})
+func (m *episodeManager) dispatchOne(ctx context.Context, tenantID, sessionID string, requested Dimensions) sessionResult {
+	resp, err := m.svc.ExtendLease(ctx, ExtendRequest{TenantID: tenantID, SessionID: sessionID, Requested: requested})
 	if err != nil {
 		return sessionResult{err: err}
 	}

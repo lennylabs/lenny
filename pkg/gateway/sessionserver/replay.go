@@ -223,9 +223,6 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// spec: §8.6 — the replayed root registers its lease-extension budget,
-	// as the plain create paths do, so an in-process extension resolves it.
-	s.registerLeaseTree(replayed)
 
 	resp := ReplayResponse{
 		SessionResponse: toResponse(replayed),

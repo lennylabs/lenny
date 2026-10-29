@@ -49,10 +49,9 @@ func (f *fakeConnectorTools) CallConnectorTool(_ context.Context, sessionID, con
 
 func newServiceWithConnectors(t *testing.T, ct leasecontrol.ConnectorToolService) *leasecontrol.Service {
 	t.Helper()
-	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets := newMemBudget()
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets:        budgets,
-		Tenants:        budgets,
 		ConnectorTools: ct,
 	})
 	if err != nil {

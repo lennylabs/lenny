@@ -60,7 +60,6 @@ func (w *gatewayWiring) buildMCPSurface(
 	auditSink admin.AuditSink,
 	auditAppender policy.AuditAppender,
 	policyAuditSink *policy.AuditSink,
-	childLeaseRegistrar delegation.LeaseChildRegistrar,
 	maxInputResolver *maxInputSizeResolverHolder,
 	environments environmentstore.Store,
 	resolvedNoEnvPolicy string,
@@ -155,12 +154,12 @@ func (w *gatewayWiring) buildMCPSurface(
 		ExportMaterializer:      exportMaterializer,
 		ExportScanChainResolver: exportScanResolver,
 		TreeBudgetReserver:      w.treeBudgetReserver,
-		// §8.6: register each admitted child with the lease-
-		// extension budget source, capped at the parent's own lease, so a
-		// later in-process budget-exhaustion extension from the child (the
-		// gateway LLM Proxy's ExtendForBudget trigger) resolves its tree.
-		// F-15.3.5.
-		LeaseRegistrar: childLeaseRegistrar,
+		// §8.3 / §8.6 — the reservation's token cap adds the tree's
+		// cumulative extension grant from the delegation_tree_budget row,
+		// and a reservation detection runs the BUDGET_KEYS_EXPIRED tree
+		// cleanup on the session server.
+		TreeGrants:        treeGrantReader{denials: w.leaseDenials},
+		BudgetKeysExpired: sessionSrv,
 		// §11.1 — per-user active-delegated-children admission cap.
 		// Zero leaves the scope unlimited. F-11.1.4.
 		MaxActiveChildrenPerUser: *delegationMaxActiveChildrenPerUser,

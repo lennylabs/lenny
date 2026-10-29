@@ -109,6 +109,7 @@ type gatewayFlags struct {
 	slotReaperInterval                            *time.Duration
 	slotReaperRate                                *int
 	slotReaperTerminalAge                         *time.Duration
+	budgetStateSweepInterval                      *time.Duration
 	shutdownTimeout                               *time.Duration
 	deprecatedAPIVersionsCSV                      *string
 	recommendationsDisabledRules                  *string
@@ -587,6 +588,9 @@ func (f *gatewayFlags) registerStorageFlags() {
 	f.slotReaperTerminalAge = flag.Duration("slot-reaper-terminal-age",
 		envDuration("LENNY_SLOT_REAPER_TERMINAL_AGE", slotreaper.DefaultTerminalAge),
 		"§5.2 stale-slot reaper terminal age: the gateway's copy of claimOrphanTimeout. A slot set member is released once its session row has been terminal for longer than this. It must equal the controller's --claim-orphan-timeout, and it must be at least one second more than the largest of --max-finalizing-state-timeout-seconds, --max-resuming-seconds, and the §7.1 terminal pipeline budget, which is --workspace-seal-max-duration-seconds plus --stream-failure-report-timeout (the post-terminal slot activity invariant), which the gateway checks at startup. Default 15m. Override via LENNY_SLOT_REAPER_TERMINAL_AGE.")
+	f.budgetStateSweepInterval = flag.Duration("budget-state-sweep-interval",
+		envDuration("LENNY_BUDGET_STATE_SWEEP_INTERVAL", slotreaper.DefaultInterval),
+		"§11.2 per-replica budget state sweep cadence. Every replica resolves the session ids its budget enforcer, usage recorder, and token-usage anomaly detector track, and forgets the per-session state of each session whose row is terminal or absent. Must be positive. Default 60s. Override via LENNY_BUDGET_STATE_SWEEP_INTERVAL.")
 	f.shutdownTimeout = flag.Duration("shutdown-timeout", 5*time.Second, "graceful shutdown timeout")
 	// spec: §15.5 item 1 + docs/api/index.md — when a REST URL
 	// version prefix enters its 6-month sunset window, the gateway adds
@@ -1139,10 +1143,13 @@ func (f *gatewayFlags) registerArtifactFlags() {
 	// spec: §11.3 — delegation.usageQuiescenceTimeoutSeconds,
 	// operator-tunable. The §8.10 tree-recovery path waits this long after
 	// the last usage report before declaring the tree quiescent and
-	// progressing to drain. F-11.3.19.
+	// progressing to drain, and the §8.3 budget return of a delegated child
+	// waits this long after the child's terminal transition. The gateway
+	// refuses to start when the value in effect is not below the seal
+	// window in effect. F-11.3.19.
 	f.delegationUsageQuiescenceTimeoutSeconds = flag.Int("delegation-usage-quiescence-timeout-seconds",
 		envInt("LENNY_DELEGATION_USAGE_QUIESCENCE_TIMEOUT_SECONDS", 5),
-		"§11.3 delegation.usageQuiescenceTimeoutSeconds: the wall-clock window the §8.10 tree-recovery path waits after the last child usage report before declaring the delegation tree quiescent. Default 5s. Override via LENNY_DELEGATION_USAGE_QUIESCENCE_TIMEOUT_SECONDS.")
+		"§11.3 delegation.usageQuiescenceTimeoutSeconds: the wall-clock window the §8.10 tree-recovery path waits after the last child usage report before declaring the delegation tree quiescent, and the wall-clock window the §8.3 budget return of a delegated child waits after the child's terminal transition before it returns the child's reservation. Must be less than the seal window in effect (--workspace-seal-max-duration-seconds). Default 5s; a non-positive value selects the default. Override via LENNY_DELEGATION_USAGE_QUIESCENCE_TIMEOUT_SECONDS.")
 	// spec: §8.10 — operator-tunable per-level and
 	// whole-tree recovery deadlines. The default (120s / 600s) matches
 	// `maxLevelRecoverySeconds` / `maxTreeRecoverySeconds`. Deployers

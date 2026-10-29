@@ -29,7 +29,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionlogstore"
@@ -55,7 +54,6 @@ import (
 func (w *gatewayWiring) buildSessionServer(
 	gwMetrics *gatewaymetrics.Metrics,
 	activityStamper *sessionidle.Stamper,
-	sessionBudgetEnforcer *sessionbudget.Enforcer,
 	dsMonitor *dualstore.Monitor,
 	environments environmentstore.Store,
 	tenantAccess tenantaccessstore.Store,
@@ -69,8 +67,6 @@ func (w *gatewayWiring) buildSessionServer(
 	experimentProviders *experimentprovider.Cache,
 	usage usagestore.Store,
 	taskUsageBuilder *resultrollup.Builder,
-	sessionLeaseRegistrar sessionserver.LeaseTreeRegistrar,
-	leaseExtDefaults sessionserver.LeaseExtensionDefaults,
 	quotaCheckpointSvc *quotacheckpoint.Service,
 	policyChain *interceptor.Chain,
 	policyAuditSink *policy.AuditSink,
@@ -141,20 +137,21 @@ func (w *gatewayWiring) buildSessionServer(
 		partialCleaner.Objects = w.checkpointStore
 	}
 
+	// spec: §11.2, §10.1.1 — every replica sweeps the per-session budget
+	// state it holds for sessions that ended on another replica or were
+	// erased; startBackgroundWorkers runs it under the watchdog context.
+	w.budgetStateSweep = w.buildBudgetStateSweep(*w.f.budgetStateSweepInterval)
+
 	return sessionserver.New(w.sessions, sessionserver.Options{
 		// spec: §6.2 — stamp agent_output / tool_use events
 		// published on the session bus as idle-timer activity. F-11.3.7.
 		ActivityStamper: activityStamper,
 		// spec: §11.2 — drop a settled session's mid-session budget
 		// accounting so the enforcer's per-session map does not grow
-		// unbounded. The closure also clears the §8.6 recorder's accumulated
-		// grant delta for the session (proposal 0023 S3/S4); the recorder is
-		// constructed in a later build step, so w.proxyUsageRec is read at
-		// call time rather than captured now.
-		BudgetForget: func(sessionID string) {
-			sessionBudgetEnforcer.Forget(sessionID)
-			w.proxyUsageRec.forget(sessionID)
-		},
+		// unbounded. The composed forget also clears the §8.6 recorder's
+		// accumulated grant delta and the anomaly detector's accumulator; the
+		// per-replica budget state sweep calls the same forget.
+		BudgetForget: w.forgetBudgetState,
 		// spec: §8.10 — operator-tunable per-tenant orphan cap.
 		// The default (100) flows through the constructor when the flag
 		// is unset; an override surfaces both on the sessionserver
@@ -302,11 +299,9 @@ func (w *gatewayWiring) buildSessionServer(
 		TreeArchive:        w.treeArchive,
 		TaskUsage:          taskUsageBuilder,
 		TreeBudgetReturner: w.treeBudgetReserver,
-		// §8.6: register each root tree's lease-extension budget so a
-		// later in-process budget-exhaustion extension (the gateway LLM
-		// Proxy's ExtendForBudget trigger) resolves it. F-15.3.5.
-		LeaseRegistrar:         sessionLeaseRegistrar,
-		LeaseExtensionDefaults: leaseExtDefaults,
+		// spec: §8.3 (Usage quiescence before budget return), §11.3 — the
+		// wait before a delegated child's budget return.
+		UsageQuiescenceTimeout: time.Duration(*f.delegationUsageQuiescenceTimeoutSeconds) * time.Second,
 		QuotaCheckpointer:      quotaCheckpointSvc,
 		// spec: §6.2 (Pod State Machine) — the suspension release checkpoints
 		// the workspace before it releases a suspended session's pod; with no
@@ -447,6 +442,9 @@ func (w *gatewayWiring) buildSessionServer(
 		// reason the watchdog resolved (max_idle_time | max_session_age).
 		// F-11.3.7.
 		IncSessionExpiry: gwMetrics.IncSessionExpiry,
+		// spec: §16.1, §8.3 — the BUDGET_KEYS_EXPIRED tree cleanup counts
+		// each reservation detection under the tree root's pool.
+		IncDelegationBudgetKeysExpired: gwMetrics.IncDelegationBudgetKeysExpired,
 		// spec: §16.1, §7.3 — F-7.5.9. Increment the
 		// lenny_warmpool_warmup_failure_total{error_type=setup_command_failed}
 		// counter when a §7.5 setup command fails on the warm-pool side

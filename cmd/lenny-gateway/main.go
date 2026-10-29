@@ -161,8 +161,8 @@ func runGateway(f *gatewayFlags) {
 
 	// §4.2 session-server dependencies (the §4.1 Upload Handler gate, the §8.5
 	// request_input registry, the §10.7 sticky/provider caches, the §14
-	// completion webhook, the §11.2 budget enforcer, the §8.6 lease budget and
-	// registrars, the §6.2 activity stamper, and the §5.2/§6.2 slot health).
+	// completion webhook, the §11.2 budget enforcer, the §8.6 lease budget
+	// source, the §6.2 activity stamper, and the §5.2/§6.2 slot health).
 	w.buildSessionDeps()
 	inputWaits := w.inputWaits
 	sessionBudgetEnforcer := w.sessionBudgetEnforcer
@@ -174,11 +174,10 @@ func runGateway(f *gatewayFlags) {
 	// sessionserver interfaces); the returned server threads to the MCP
 	// fabric, the admin router, the HTTP surface, and the watchdog.
 	sessionSrv := w.buildSessionServer(
-		gwMetrics, activityStamper, sessionBudgetEnforcer, dsMonitor,
+		gwMetrics, activityStamper, dsMonitor,
 		environments, tenantAccess, opsEmitter, credentialPools, vcsCreds,
 		customRoles, resolvedNoEnvPolicy, auditSink, w.sessionStickyCache,
-		w.experimentProviders, usage, taskUsageBuilder, w.sessionLeaseRegistrar,
-		w.leaseExtDefaults, quotaCheckpointSvc, policyChain, policyAuditSink,
+		w.experimentProviders, usage, taskUsageBuilder, quotaCheckpointSvc, policyChain, policyAuditSink,
 		auditAppender, inputWaits, w.uploadSubsystem, w.uploadMetrics, slotHealth,
 		w.callbackValidator, w.callbackSeal, w.callbackDispatcher,
 	)
@@ -205,7 +204,7 @@ func runGateway(f *gatewayFlags) {
 	// deployment-config stores, the §8.2 delegation service, the §9.1 MCP
 	// server with every tool family, and the §15.2 SSE attach channel).
 	w.buildMCPSurface(gwMetrics, sessionSrv, policyChain, auditSink, auditAppender,
-		policyAuditSink, w.childLeaseRegistrar, w.maxInputResolver, environments,
+		policyAuditSink, w.maxInputResolver, environments,
 		resolvedNoEnvPolicy, inputWaits, activityStamper, taskUsageBuilder,
 		vcsCreds, elicitationFloorProvider)
 	mcpSrv := w.mcpSrv

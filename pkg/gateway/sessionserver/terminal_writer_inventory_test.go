@@ -32,7 +32,7 @@ type terminalWriter struct {
 // terminalWriterInventory is the terminal writer inventory as the code
 // spells it. A writer whose mutator lives in a helper names the helper:
 // writeTerminal is the shared mutator of failSession, failFinalizing,
-// failStarting, and cancelCascadedChild; cancelNode and cancelSession are
+// failStarting, cancelNodeGuarded, and failBudgetKeysExpired; cancelNode and cancelSession are
 // the mutators of cancelSubtree and the lenny/cancel_session handler;
 // endOrphan is sweepTenant's; failPreRunning is sweepPreRunning's,
 // expireAwaiting is sweepAwaitingClientAction's, expireMaxAge is
@@ -83,8 +83,14 @@ func storeWriteCall(n string) bool {
 }
 
 // writeTerminalCallers are the hook-path writers that write through
-// writeTerminal, each opening its claim before the call.
-var writeTerminalCallers = []string{"cancelCascadedChild", "failFinalizing", "failSession", "failStarting"}
+// writeTerminal, each opening its claim before the call: cancelNodeGuarded
+// is the per-node cancel of cascadeToChildren and of the §8.3
+// BUDGET_KEYS_EXPIRED cleanup, and failBudgetKeysExpired is that cleanup's
+// root write.
+var writeTerminalCallers = []string{"cancelNodeGuarded", "failBudgetKeysExpired", "failFinalizing", "failSession", "failStarting"}
+
+// writeTerminalCallerFiles are the files that hold the writeTerminal callers.
+var writeTerminalCallerFiles = []string{"session_terminal.go", "usage.go", "budget_keys_expired.go"}
 
 var terminalStateNames = map[string]bool{
 	"StateCompleted": true, "StateFailed": true, "StateCancelled": true, "StateExpired": true,
@@ -314,9 +320,12 @@ func TestTerminalWriterInventoryMatchesTheCode_spec_7_2(t *testing.T) {
 		}
 	}
 	for _, name := range writeTerminalCallers {
-		sf, ok := funcs["pkg/gateway/sessionserver/session_terminal.go "+name]
-		if !ok {
-			sf, ok = funcs["pkg/gateway/sessionserver/usage.go "+name]
+		var sf scannedFunc
+		ok := false
+		for _, file := range writeTerminalCallerFiles {
+			if sf, ok = funcs["pkg/gateway/sessionserver/"+file+" "+name]; ok {
+				break
+			}
 		}
 		if !ok {
 			t.Errorf("writeTerminal caller %s not found", name)
