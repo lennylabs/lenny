@@ -2987,7 +2987,10 @@
         "pkg/gateway/mcpfabric/delegationtree/deadlock/manager_test.go::TestDetectorRefusedFailRedetectsWithFreshDetectedAt_spec_8_8",
         "pkg/gateway/sessionserver/terminal_writer_inventory_test.go::TestTerminalWriterInventoryMatchesTheCode_spec_7_2",
         "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreeRecordsCloseTheirMembers_spec_8_10",
-        "tests/tier11_docs/delegation_tree_spec_map_currency_test.go::TestDelegationTreeTestsAreMappedUnderTheirSections_spec_17_2"
+        "tests/tier11_docs/delegation_tree_spec_map_currency_test.go::TestDelegationTreeTestsAreMappedUnderTheirSections_spec_17_2",
+        "cmd/lenny-gateway/deadlock_fail_test.go::TestDeadlockClearanceResolutionCarriesRootPool_spec_16_1",
+        "pkg/gateway/mcpfabric/delegationtree/deadlock/manager_test.go::TestManagerClearanceReturnedWhenNoLongerDetected_spec_16_1",
+        "pkg/gateway/mcpfabric/delegationtree/deadlock/manager_test.go::TestManagerTimeoutCarriesRootPool_spec_16_1"
       ],
       "packages": [
         "pkg/session/state"
@@ -6107,7 +6110,10 @@
         "pkg/gateway/sessionserver/derive_failure_audit_test.go::TestDeriveFailurePersistsAuditRow_spec_7_1_derive_rule_2",
         "pkg/gateway/sessionserver/finalize_race_internal_test.go::TestRecordPodClaimFailureKeepsArmPrecedence_spec_4_9",
         "pkg/gateway/sessionserver/lifecycle_internal_test.go::TestEmitTerminalLifecycleRecordsVariantMetrics_spec_10_7_1124",
-        "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreeFiledDefectsAreConfirmed_spec_8_10"
+        "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreeFiledDefectsAreConfirmed_spec_8_10",
+        "cmd/lenny-gateway/deadlock_fail_test.go::TestDeadlockClearanceResolutionCarriesRootPool_spec_16_1",
+        "pkg/gateway/mcpfabric/delegationtree/deadlock/manager_test.go::TestManagerClearanceReturnedWhenNoLongerDetected_spec_16_1",
+        "pkg/gateway/mcpfabric/delegationtree/deadlock/manager_test.go::TestManagerTimeoutCarriesRootPool_spec_16_1"
       ],
       "packages": [
         "pkg/observability/metrics",
