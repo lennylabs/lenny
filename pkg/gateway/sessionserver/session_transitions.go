@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -124,8 +125,14 @@ func (s *Server) handleTerminalWrite(w http.ResponseWriter, r *http.Request, end
 }
 
 // transitionStart: per §15.1, /start transitions ready → starting →
-// running; this is the starting → running commit.
-func transitionStart(row *sessionstore.Session) { row.State = session.StateRunning }
+// running; this is the starting → running commit. The idle clock restarts at
+// now, because §6.2 updates last_agent_activity_at on each entry to running,
+// so activity recorded before the launch does not count toward idleness.
+// spec: §15.1, §6.2 (maxClientIdleSeconds clock behavior across states).
+func transitionStart(row *sessionstore.Session, now time.Time) {
+	row.State = session.StateRunning
+	row.LastAgentActivityAt = now
+}
 
 // transitionInterrupt: per §15.1, /interrupt transitions running →
 // suspended.

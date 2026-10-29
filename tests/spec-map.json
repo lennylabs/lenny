@@ -1948,6 +1948,7 @@
       "title": "Pod State Machine",
       "spec_file": "spec/06_warm-pod-model.md",
       "tests": [
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartCommitRestartsTheIdleClock_spec_6_2",
         "tests/tier2_component/controllers/warmpool_terminated_adapter_test.go::TestWarmingPodWithTerminatedAdapterIsFailedReclaimedAndReplaced",
         "tests/tier2_component/controllers/warmpool_terminated_adapter_test.go::TestIdlePodWithTerminatedAdapterIsRetiredAndReplaced",
         "tests/tier2_component/controllers/warmpool_terminated_adapter_test.go::TestClaimedPodWithTerminatedAdapterGoesThroughReleasePath",
@@ -5334,6 +5335,7 @@
       "title": "REST API",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartCommitRestartsTheIdleClock_spec_6_2",
         "tests/tier11_docs/session_transition_doc_reconciliation_test.go::TestStartingFailedCatalogRowCreatesANewSession_spec_15_1",
         "tests/tier3_contract/sdks/go_client_test.go::TestGoClientStartMakesOneAttempt_spec_15_6",
         "tests/tier3_contract/sdks/python_client_test.go::TestPythonClientStartMakesOneAttempt_spec_15_6",

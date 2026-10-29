@@ -23,6 +23,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -828,5 +829,68 @@ func TestServiceModeStartTakesNoLease_spec_10_1_1(t *testing.T) {
 	}
 	if leases.acquires != 0 {
 		t.Errorf("lease acquires = %d, want 0 for a row that names no pod", leases.acquires)
+	}
+}
+
+// TestStartCommitRestartsTheIdleClock_spec_6_2 pins the idle clock on the
+// starting → running commit: the commit sets last_agent_activity_at to its
+// own instant, so qualifying activity recorded before /start (an LLM-proxy
+// call a setup command made through the lease assigned at finalize, while
+// the session waited in ready) does not count toward idleness once the
+// session is running.
+//
+// spec: §6.2 (maxClientIdleSeconds clock behavior across states), §15.1 (/start)
+// diagnosis: the starting → running commit set only the state, so the idle
+// sweep measured idleness from activity recorded before the launch and
+// idle-expired a session that had only just started.
+func TestStartCommitRestartsTheIdleClock_spec_6_2(t *testing.T) {
+	t.Parallel()
+	const idleSeconds = 600
+	idleCap := idleSeconds * time.Second
+	f := newStartFixture(t, "sess-idle-anchor")
+	commitAt := time.Now().UTC().Truncate(time.Microsecond)
+	stale := commitAt.Add(-2 * idleCap)
+	if _, err := f.store.Store.Update(context.Background(), startTestTenant, f.id, func(r *sessionstore.Session) error {
+		r.LastAgentActivityAt = stale
+		return nil
+	}); err != nil {
+		t.Fatalf("seed activity: %v", err)
+	}
+	opts := f.opts
+	opts.Clock = func() time.Time { return commitAt }
+	srv := sessionserver.New(f.store, opts)
+
+	rr := f.start(context.Background(), srv)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("/start = %d %s, want 200", rr.Code, rr.Body.String())
+	}
+	row := f.row(t)
+	if row.State != session.StateRunning {
+		t.Fatalf("row = %q, want running", row.State)
+	}
+	if !row.LastAgentActivityAt.Equal(commitAt) {
+		t.Fatalf("LastAgentActivityAt = %v, want the commit instant %v", row.LastAgentActivityAt, commitAt)
+	}
+
+	huge := watchdog.DefaultMaxSessionAgeSeconds * 100
+	w := watchdog.New(f.store, watchdog.StaticTenants{startTestTenant}, watchdog.Config{
+		MaxIdleSeconds:                 idleSeconds,
+		MaxSessionAgeSeconds:           huge,
+		MaxAwaitingClientActionSeconds: huge,
+		MaxSuspendedPodHoldSeconds:     huge,
+		MaxResumePendingSeconds:        huge,
+		MaxResumingSeconds:             huge,
+		MaxFinalizingSeconds:           huge,
+	}, nil)
+	res, err := w.Tick(context.Background(), commitAt.Add(idleCap-time.Second))
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if res.IdleExpirations != 0 || res.IdleSuspensions != 0 {
+		t.Fatalf("Tick idle expirations = %d, suspensions = %d, want neither inside the idle cap after the commit",
+			res.IdleExpirations, res.IdleSuspensions)
+	}
+	if got := f.row(t).State; got != session.StateRunning {
+		t.Errorf("row after Tick = %q, want running", got)
 	}
 }

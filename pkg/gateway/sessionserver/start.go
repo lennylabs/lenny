@@ -273,11 +273,12 @@ func (s *Server) commitStart(ctx context.Context, tenantID, id string) (sessions
 		return sessionstore.Session{}, err
 	}
 	defer unlock()
+	now := s.clock()
 	updated, err := s.store.Update(ctx, tenantID, id, func(row *sessionstore.Session) error {
 		if verr := startingPrecondition(row); verr != nil {
 			return verr
 		}
-		transitionStart(row)
+		transitionStart(row, now)
 		return nil
 	})
 	if err != nil {
