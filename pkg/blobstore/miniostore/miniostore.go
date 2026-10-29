@@ -149,6 +149,9 @@ var (
 	_ blobstore.Copier     = (*Store)(nil)
 	_ blobstore.Tombstoner = (*Store)(nil)
 	_ blobstore.Presigner  = (*Store)(nil)
+	// spec: §10.1.7 — the chunked checkpoint model needs every
+	// production backend to presign, list a chunk prefix, and delete by key.
+	_ blobstore.CheckpointStore = (*Store)(nil)
 )
 
 // New builds a MinIO-backed Store. It validates the configuration and
@@ -621,13 +624,11 @@ func (s *Store) statBlob(ctx context.Context, u blobstore.URI) (blobstore.BlobIn
 //
 // spec: §10.1.7 — list objects under chunk_object_key_prefix.
 func (s *Store) ListByPrefix(ctx context.Context, u blobstore.URI) ([]blobstore.BlobInfo, error) {
-	objType := u.ObjectType
-	if objType == "" {
-		objType = blobstore.ObjectTypeUpload
+	keyPrefix, sessPrefix, err := blobstore.PrefixListKeys(u)
+	if err != nil {
+		return nil, err
 	}
-	keyPrefix := objectKey(u)
-	sessPrefix := sessionPrefix(u.TenantID, objType, u.SessionID)
-	var out []blobstore.BlobInfo
+	out := []blobstore.BlobInfo{}
 	for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
 		Prefix:    keyPrefix,
 		Recursive: true,
@@ -642,18 +643,9 @@ func (s *Store) ListByPrefix(ctx context.Context, u blobstore.URI) ([]blobstore.
 		if tombstoned {
 			continue
 		}
-		partID := strings.TrimPrefix(obj.Key, sessPrefix)
-		out = append(out, blobstore.BlobInfo{
-			URI: blobstore.URI{
-				TenantID:   u.TenantID,
-				ObjectType: objType,
-				SessionID:  u.SessionID,
-				PartID:     partID,
-			},
-			Size:     obj.Size,
-			StoredAt: obj.LastModified,
-		})
+		out = append(out, blobstore.PrefixListEntry(u, sessPrefix, obj.Key, obj.Size, obj.LastModified))
 	}
+	blobstore.SortByPartID(out)
 	return out, nil
 }
 

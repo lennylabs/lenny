@@ -97,7 +97,7 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 	objectStore := w.objectStore
 	partialManifests := w.partialManifests
 	blobsCataloged := w.blobsCataloged
-	minioStore := w.minioStore
+	checkpointStore := w.checkpointStore
 	storageCounter := w.storageCounter
 	tenants := w.tenants
 
@@ -343,14 +343,17 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 		exec = executor.NewPodExecutor(podRegistry, podBinder)
 		// §10.1 / §13.2 — the checkpoint driver mints one presigned PUT
 		// capability per chunk against the resolved object store. The §13.2
-		// startup assertion above already failed boot unless that store
-		// implements Presigner whenever --agent-namespace is set, so the
-		// assertion holds on this path.
-		checkpointPresigner, _ := objectStore.(blobstore.Presigner)
+		// startup check already failed boot unless that store is a
+		// blobstore.CheckpointStore whenever --agent-namespace is set, so
+		// checkpointStore is non-nil on this path.
+		var checkpointPresigner blobstore.Presigner
+		if checkpointStore != nil {
+			checkpointPresigner = checkpointStore
+		}
 		// §12.5 — the confirmed-chunk artifact_store catalog (RecordPut) and
 		// the rotation-side chunk release (SoftDeleteRow / ListByPrefix +
-		// HardDeleteObject) run only against the durable Postgres+MinIO
-		// backends. A pod deployment without them leaves each interface field
+		// HardDeleteObject) run only against the durable Postgres catalog and a
+		// CheckpointStore backend (MinIO, S3, GCS, or Azure Blob). A pod deployment without them leaves each interface field
 		// nil rather than wrapping a nil concrete pointer, which the driver's
 		// nil guards then skip.
 		var checkpointChunkRecorder checkpointer.ChunkRecorder
@@ -360,8 +363,8 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			checkpointChunkCatalog = blobsCataloged
 		}
 		var checkpointChunkObjects checkpointer.ChunkObjectStore
-		if minioStore != nil {
-			checkpointChunkObjects = minioStore
+		if checkpointStore != nil {
+			checkpointChunkObjects = checkpointStore
 		}
 		checkpointSvc = &checkpointer.Checkpointer{
 			Sessions:       sessions,

@@ -198,6 +198,9 @@ var (
 	_ blobstore.Tombstoner = (*Store)(nil)
 	_ blobstore.Copier     = (*Store)(nil)
 	_ blobstore.Presigner  = (*Store)(nil)
+	// spec: §10.1.7 — the chunked checkpoint model needs every
+	// production backend to presign, list a chunk prefix, and delete by key.
+	_ blobstore.CheckpointStore = (*Store)(nil)
 )
 
 // New returns a Store. Returns an error when cfg.Bucket is empty or
