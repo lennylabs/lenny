@@ -3974,9 +3974,9 @@ stages neither, so F-7.2.43 is queued here and F-5.2.57 is re-routed in the 0100
     process, and the warning is sent from the listing without a re-read, so it can follow a terminal write.
     Record the warning on the row in a locked-row `Update` and send it only from the replica whose write
     applied. F-11.3.46 is the expiry-warning half of F-11.3.40.
-  - [ ] **F-15.4.5** (Low): `lenny/request_input` accepts a caller-supplied `requestId`, while §15.4 says the
-    gateway generates it. Drop the argument and always generate the value. It lands after 0105 and 0101,
-    which both edit the handler.
+  - [x] **F-15.4.5** (Low): `lenny/request_input` accepts a caller-supplied `requestId`, while §15.4 says the
+    gateway generates it. The tool schema no longer declares the argument, and the gateway always generates
+    the value (2026-10-29, `fix/direct-after-0106`).
 - Proposal routing.
   - [ ] Its own proposal, after 0105's implementation: **F-8.2.32** (Medium, a delegated child that omits
     `perChildMaxAge` is unbounded by it, because no `DelegationPolicy` default exists to store). It was routed

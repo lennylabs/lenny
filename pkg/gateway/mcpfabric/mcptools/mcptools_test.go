@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -166,17 +167,23 @@ func waitElicitation(t *testing.T, interactions interactionstore.Store, sessionI
 	t.Fatalf("elicitation %s was never recorded", id)
 }
 
-// waitPending blocks until a request is registered, or fails the test.
-func waitPending(t *testing.T, reg *inputwait.Registry, sessionID, requestID string) {
+// waitPending blocks until sessionID holds a pending request whose id is not
+// in seen, and returns that request id, or fails the test. The gateway
+// generates every lenny/request_input requestId (§15.4), so a test learns the
+// id from the registry rather than choosing it.
+func waitPending(t *testing.T, reg *inputwait.Registry, sessionID string, seen ...string) string {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if reg.Pending(sessionID, requestID) {
-			return
+		for _, id := range reg.PendingForSession(sessionID) {
+			if !slices.Contains(seen, id) {
+				return id
+			}
 		}
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatalf("request %s/%s never became pending", sessionID, requestID)
+	t.Fatalf("no new request became pending on %s", sessionID)
+	return ""
 }
 
 // newMCPForOutput builds the MCP server with a §15.1 event bus and
@@ -477,12 +484,12 @@ func TestSendMessageToolDeliveryReceiptOnInReplyTo(t *testing.T) {
 
 	go func() {
 		_ = call(t, h, "lenny/request_input",
-			`{"sessionId":"sess_i","requestId":"req-1","parts":[{"type":"text","text":"pick a color"}]}`)
+			`{"sessionId":"sess_i","parts":[{"type":"text","text":"pick a color"}]}`)
 	}()
-	waitPending(t, reg, "sess_i", "req-1")
+	req := waitPending(t, reg, "sess_i")
 
 	resp := call(t, h, "lenny/send_message",
-		`{"to":"sess_i","message":"blue","inReplyTo":"req-1","messageId":"msg_caller"}`)
+		fmt.Sprintf(`{"to":"sess_i","message":"blue","inReplyTo":%q,"messageId":"msg_caller"}`, req))
 	result, _ := resp["result"].(map[string]any)
 	content, _ := result["content"].([]any)
 	if len(content) < 1 {
@@ -503,8 +510,8 @@ func TestSendMessageToolDeliveryReceiptOnInReplyTo(t *testing.T) {
 	if envelope.DeliveryReceipt.MessageID != "msg_caller" {
 		t.Errorf("inReplyTo receipt messageId = %q, want the sender-supplied msg_caller", envelope.DeliveryReceipt.MessageID)
 	}
-	if envelope.Resolved != "req-1" {
-		t.Errorf("inReplyTo receipt `resolved` = %q, want req-1", envelope.Resolved)
+	if envelope.Resolved != req {
+		t.Errorf("inReplyTo receipt `resolved` = %q, want %q", envelope.Resolved, req)
 	}
 }
 
@@ -588,7 +595,7 @@ func TestRequestInputTimeoutSurfacesEnvelopeCode_spec_15_2_1_F_8_5_10(t *testing
 		ID: "sess_in", TenantID: "acme", State: session.StateRunning,
 	})
 	resp := call(t, srv.Handler(), "lenny/request_input",
-		`{"sessionId":"sess_in","requestId":"req-x","parts":[{"type":"text","text":"hi"}]}`)
+		`{"sessionId":"sess_in","parts":[{"type":"text","text":"hi"}]}`)
 	result, _ := resp["result"].(map[string]any)
 	env := readLennyErrorEnvelope(t, result)
 	if env["code"] != "REQUEST_INPUT_TIMEOUT" {
@@ -672,7 +679,7 @@ func TestRequestInputTimeoutCarriesExpiredAt_spec_11_3_238(t *testing.T) {
 		ID: "sess_t1", TenantID: "acme", State: session.StateRunning,
 	})
 	resp := call(t, srv.Handler(), "lenny/request_input",
-		`{"sessionId":"sess_t1","requestId":"req-t1","parts":[{"type":"text","text":"hi"}]}`)
+		`{"sessionId":"sess_t1","parts":[{"type":"text","text":"hi"}]}`)
 	result, _ := resp["result"].(map[string]any)
 	env := readLennyErrorEnvelope(t, result)
 	if env["code"] != "REQUEST_INPUT_TIMEOUT" {
@@ -682,8 +689,8 @@ func TestRequestInputTimeoutCarriesExpiredAt_spec_11_3_238(t *testing.T) {
 	if details == nil {
 		t.Fatalf("envelope.details missing: %+v", env)
 	}
-	if got := details["requestId"]; got != "req-t1" {
-		t.Errorf("details.requestId = %v, want req-t1", got)
+	if got, _ := details["requestId"].(string); !strings.HasPrefix(got, "req_") {
+		t.Errorf("details.requestId = %q, want the gateway-generated req_ value", got)
 	}
 	if _, ok := details["timeoutSeconds"]; !ok {
 		t.Errorf("details.timeoutSeconds missing: %+v", details)
@@ -961,14 +968,14 @@ func TestRequestInputResolvedByMessage(t *testing.T) {
 	got := make(chan map[string]any, 1)
 	go func() {
 		got <- call(t, h, "lenny/request_input",
-			`{"sessionId":"sess_i","requestId":"req-1","parts":[{"type":"text","text":"pick a color"}]}`)
+			`{"sessionId":"sess_i","parts":[{"type":"text","text":"pick a color"}]}`)
 	}()
-	waitPending(t, reg, "sess_i", "req-1")
+	req := waitPending(t, reg, "sess_i")
 
 	resp := call(t, h, "lenny/send_message",
-		`{"to":"sess_i","message":"blue","inReplyTo":"req-1"}`)
-	if text := resultText(t, resp); !strings.Contains(text, `"resolved":"req-1"`) {
-		t.Errorf("send_message inReplyTo result = %q, want resolved req-1", text)
+		fmt.Sprintf(`{"to":"sess_i","message":"blue","inReplyTo":%q}`, req))
+	if text := resultText(t, resp); !strings.Contains(text, `"resolved":"`+req+`"`) {
+		t.Errorf("send_message inReplyTo result = %q, want resolved %s", text, req)
 	}
 
 	select {
@@ -986,7 +993,7 @@ func TestRequestInputTimeout(t *testing.T) {
 	mkSession(t, store, "sess_i", session.StateRunning, "")
 
 	resp := call(t, srv.Handler(), "lenny/request_input",
-		`{"sessionId":"sess_i","requestId":"req-1","parts":[{"type":"text","text":"ask"}]}`)
+		`{"sessionId":"sess_i","parts":[{"type":"text","text":"ask"}]}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Fatalf("a timed-out request_input should be a tool error: %+v", resp)
@@ -1003,7 +1010,7 @@ func TestRequestInputRejectsTerminalSession(t *testing.T) {
 	mkSession(t, store, "sess_done", session.StateCompleted, "")
 
 	resp := call(t, srv.Handler(), "lenny/request_input",
-		`{"sessionId":"sess_done","requestId":"req-1","parts":[{"type":"text","text":"ask"}]}`)
+		`{"sessionId":"sess_done","parts":[{"type":"text","text":"ask"}]}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Errorf("request_input on a terminal session should be a tool error: %+v", resp)
@@ -1037,9 +1044,9 @@ func TestRequestInputPublishesElicitationRequestEvent_spec_7_2(t *testing.T) {
 	got := make(chan map[string]any, 1)
 	go func() {
 		got <- call(t, h, "lenny/request_input",
-			`{"sessionId":"sess_i","requestId":"req-1","parts":[{"type":"text","text":"pick a color"}]}`)
+			`{"sessionId":"sess_i","parts":[{"type":"text","text":"pick a color"}]}`)
 	}()
-	waitPending(t, reg, "sess_i", "req-1")
+	req := waitPending(t, reg, "sess_i")
 
 	hist := bus.History("sess_i", 0)
 	if len(hist) != 1 {
@@ -1051,7 +1058,7 @@ func TestRequestInputPublishesElicitationRequestEvent_spec_7_2(t *testing.T) {
 	// spec: §8.5 — the elicitation_request event payload now
 	// carries the structured `parts` array (F-8.5.12) rather than the
 	// legacy flat `prompt` string.
-	if !strings.Contains(hist[0].Data, "req-1") || !strings.Contains(hist[0].Data, "pick a color") {
+	if !strings.Contains(hist[0].Data, req) || !strings.Contains(hist[0].Data, "pick a color") {
 		t.Errorf("event data = %q, want it to carry the requestId + parts", hist[0].Data)
 	}
 	if !strings.Contains(hist[0].Data, `"parts"`) {
@@ -1059,7 +1066,7 @@ func TestRequestInputPublishesElicitationRequestEvent_spec_7_2(t *testing.T) {
 	}
 
 	// Unblock the goroutine so the test does not hang on teardown.
-	reg.Cancel("sess_i", "req-1")
+	reg.Cancel("sess_i", req)
 	select {
 	case <-got:
 	case <-time.After(2 * time.Second):
@@ -1090,7 +1097,7 @@ func TestRequestInputOneShotRejectsSecondCall_spec_8_8_869(t *testing.T) {
 	// timeout is what we want — it lets the call return so we can issue
 	// the second call. The Consumed counter has bumped to 1.
 	resp1 := call(t, srv.Handler(), "lenny/request_input",
-		`{"sessionId":"sess_os","requestId":"req-1","parts":[{"type":"text","text":"go?"}]}`)
+		`{"sessionId":"sess_os","parts":[{"type":"text","text":"go?"}]}`)
 	result1, _ := resp1["result"].(map[string]any)
 	env1 := readLennyErrorEnvelope(t, result1)
 	if env1["code"] != "REQUEST_INPUT_TIMEOUT" {
@@ -1102,7 +1109,7 @@ func TestRequestInputOneShotRejectsSecondCall_spec_8_8_869(t *testing.T) {
 	// Second call: rejected with ONE_SHOT_INPUT_EXHAUSTED — the channel
 	// is never allocated so the Consumed counter does NOT bump again.
 	resp2 := call(t, srv.Handler(), "lenny/request_input",
-		`{"sessionId":"sess_os","requestId":"req-2","parts":[{"type":"text","text":"again?"}]}`)
+		`{"sessionId":"sess_os","parts":[{"type":"text","text":"again?"}]}`)
 	result2, _ := resp2["result"].(map[string]any)
 	env2 := readLennyErrorEnvelope(t, result2)
 	if env2["code"] != "ONE_SHOT_INPUT_EXHAUSTED" {
@@ -1136,7 +1143,7 @@ func TestRequestInputMultiTurnAllowsRepeat_spec_8_8_869(t *testing.T) {
 		t.Fatalf("Create session: %v", err)
 	}
 	for i := 0; i < 2; i++ {
-		args := fmt.Sprintf(`{"sessionId":"sess_mt","requestId":"req-%d","parts":[{"type":"text","text":"q"}]}`, i)
+		args := `{"sessionId":"sess_mt","parts":[{"type":"text","text":"q"}]}`
 		resp := call(t, srv.Handler(), "lenny/request_input", args)
 		result, _ := resp["result"].(map[string]any)
 		env := readLennyErrorEnvelope(t, result)
@@ -1172,9 +1179,9 @@ func TestRequestInputOneShotStampsMaxInputRoundsOnEvent_spec_8_8_869(t *testing.
 	done := make(chan map[string]any, 1)
 	go func() {
 		done <- call(t, h, "lenny/request_input",
-			`{"sessionId":"sess_os2","requestId":"req-os2","parts":[{"type":"text","text":"pick"}]}`)
+			`{"sessionId":"sess_os2","parts":[{"type":"text","text":"pick"}]}`)
 	}()
-	waitPending(t, reg, "sess_os2", "req-os2")
+	req := waitPending(t, reg, "sess_os2")
 
 	hist := bus.History("sess_os2", 0)
 	if len(hist) != 1 {
@@ -1183,7 +1190,7 @@ func TestRequestInputOneShotStampsMaxInputRoundsOnEvent_spec_8_8_869(t *testing.
 	if !strings.Contains(hist[0].Data, `"maxInputRounds":1`) {
 		t.Errorf("event data = %q, want metadata.maxInputRounds:1 for one_shot runtime", hist[0].Data)
 	}
-	reg.Cancel("sess_os2", "req-os2")
+	reg.Cancel("sess_os2", req)
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
@@ -1411,13 +1418,13 @@ func TestRequestInputPerRuntimeTimeoutOverride(t *testing.T) {
 	got := make(chan map[string]any, 1)
 	go func() {
 		got <- call(t, h, "lenny/request_input",
-			`{"sessionId":"sess_r","requestId":"req-1","parts":[{"type":"text","text":"pick"}]}`)
+			`{"sessionId":"sess_r","parts":[{"type":"text","text":"pick"}]}`)
 	}()
-	waitPending(t, reg, "sess_r", "req-1")
+	req := waitPending(t, reg, "sess_r")
 	// Sleep well past the 40ms platform default to prove the per-runtime
 	// override (3600s) kept the request pending.
 	time.Sleep(200 * time.Millisecond)
-	call(t, h, "lenny/send_message", `{"to":"sess_r","message":"blue","inReplyTo":"req-1"}`)
+	call(t, h, "lenny/send_message", fmt.Sprintf(`{"to":"sess_r","message":"blue","inReplyTo":%q}`, req))
 
 	select {
 	case ri := <-got:

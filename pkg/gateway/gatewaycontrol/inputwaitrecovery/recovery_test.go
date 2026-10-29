@@ -270,17 +270,17 @@ func TestFailedExitWriteRearmsEveryConnection_spec_28_3(t *testing.T) {
 			other := srv.Dial(t, inputwaitrig.AgentURI("pod-a"))
 			ping(t, c, sessA)
 			ping(t, other, sessA2)
-			done := inputwaitrig.RequestInput(context.Background(), c, sessA, "req-1")
-			srv.WaitPending(t, sessA, "req-1")
+			done := inputwaitrig.RequestInput(context.Background(), c, sessA)
+			req1 := srv.WaitPending(t, sessA)
 			if tc.secondWait {
-				second := inputwaitrig.RequestInput(context.Background(), c, sessA, "req-2")
-				srv.WaitPending(t, sessA, "req-2")
-				defer func() { srv.Waits.Cancel(sessA, "req-2"); inputwaitrig.Await(t, second) }()
+				second := inputwaitrig.RequestInput(context.Background(), c, sessA)
+				req2 := srv.WaitPending(t, sessA, req1)
+				defer func() { srv.Waits.Cancel(sessA, req2); inputwaitrig.Await(t, second) }()
 				// The later wait's entry write named req-2's wait; point the row
 				// back at req-1's so req-1's exit write is the one that applies.
 				var first string
 				for _, p := range srv.Waits.PendingDetailsForSession(sessA) {
-					if p.RequestID == "req-1" {
+					if p.RequestID == req1 {
 						first = p.WaitID
 					}
 				}
@@ -292,7 +292,7 @@ func TestFailedExitWriteRearmsEveryConnection_spec_28_3(t *testing.T) {
 				store.setFail(nil)
 				return !tc.after, tc.after
 			})
-			_ = srv.Waits.Resolve(sessA, "req-1", "yes")
+			_ = srv.Waits.Resolve(sessA, req1, "yes")
 			inputwaitrig.Await(t, done)
 			if !tc.after && !tc.secondWait {
 				wantRow(t, store, sessA, session.StateInputRequired, "*")
@@ -317,12 +317,12 @@ func TestFailedExitWriteRearmsEveryConnection_spec_28_3(t *testing.T) {
 		srv := start(t, store)
 		c := srv.Dial(t, inputwaitrig.AgentURI("pod-a"))
 		ping(t, c, sessA)
-		done := inputwaitrig.RequestInput(context.Background(), c, sessA, "req-1")
-		srv.WaitPending(t, sessA, "req-1")
+		done := inputwaitrig.RequestInput(context.Background(), c, sessA)
+		req1 := srv.WaitPending(t, sessA)
 		if _, err := store.Update(context.Background(), "acme", sessA, func(s *sessionstore.Session) error { s.InputWaitID = "iw_other"; return nil }); err != nil {
 			t.Fatal(err)
 		}
-		_ = srv.Waits.Resolve(sessA, "req-1", "yes")
+		_ = srv.Waits.Resolve(sessA, req1, "yes")
 		inputwaitrig.Await(t, done)
 		ping(t, c, sessA)
 		wantRow(t, store, sessA, session.StateInputRequired, "iw_other")
@@ -340,8 +340,8 @@ func TestRecoveryOnAnotherReplicaAfterProcessExit_spec_28_3(t *testing.T) {
 	first := start(t, store)
 	c := first.Dial(t, inputwaitrig.AgentURI("pod-a"))
 	ping(t, c, sessA)
-	_ = inputwaitrig.RequestInput(context.Background(), c, sessA, "req-1")
-	first.WaitPending(t, sessA, "req-1")
+	_ = inputwaitrig.RequestInput(context.Background(), c, sessA)
+	first.WaitPending(t, sessA)
 	wantRow(t, store, sessA, session.StateInputRequired, "*")
 	first.Kill()
 	second := start(t, store)
@@ -367,11 +367,11 @@ func TestRecoveryKeepsAWaitPendingHere_spec_28_3(t *testing.T) {
 		srv := start(t, store)
 		old := srv.Dial(t, inputwaitrig.AgentURI("pod-a"))
 		ping(t, old, sessA)
-		done := inputwaitrig.RequestInput(context.Background(), old, sessA, "req-1")
-		srv.WaitPending(t, sessA, "req-1")
+		done := inputwaitrig.RequestInput(context.Background(), old, sessA)
+		req1 := srv.WaitPending(t, sessA)
 		ping(t, srv.Dial(t, inputwaitrig.AgentURI("pod-a")), sessA)
 		wantRow(t, store, sessA, session.StateInputRequired, "*")
-		_ = srv.Waits.Resolve(sessA, "req-1", "yes")
+		_ = srv.Waits.Resolve(sessA, req1, "yes")
 		inputwaitrig.Await(t, done)
 		wantRow(t, store, sessA, session.StateRunning, "*")
 	})
@@ -383,6 +383,7 @@ func TestRecoveryKeepsAWaitPendingHere_spec_28_3(t *testing.T) {
 		release := make(chan struct{})
 		var held atomic.Bool
 		var done <-chan inputwaitrig.Result
+		var req1 string // written before release closes
 		store.afterList = func() {
 			// Only the first run is held; the run the concurrent call's own
 			// dispatch triggers passes through.
@@ -390,9 +391,9 @@ func TestRecoveryKeepsAWaitPendingHere_spec_28_3(t *testing.T) {
 				return
 			}
 			func() {
-				done = inputwaitrig.RequestInput(context.Background(), c, sessA, "req-1")
+				done = inputwaitrig.RequestInput(context.Background(), c, sessA)
 				go func() {
-					srv.WaitPending(t, sessA, "req-1")
+					req1 = srv.WaitPending(t, sessA)
 					for rowOf(t, store, sessA).State != session.StateInputRequired {
 						time.Sleep(time.Millisecond)
 					}
@@ -403,23 +404,24 @@ func TestRecoveryKeepsAWaitPendingHere_spec_28_3(t *testing.T) {
 		}
 		ping(t, c, sessA)
 		wantRow(t, store, sessA, session.StateInputRequired, "*")
-		srv.Waits.Cancel(sessA, "req-1")
+		srv.Waits.Cancel(sessA, req1)
 		inputwaitrig.Await(t, done)
 		wantRow(t, store, sessA, session.StateRunning, "*")
 	})
 }
 
-// parkOnEarlierConnection recovers a first connection of pod-a, parks
-// req-1 on it, and returns the call's result channel. The row is then
-// input_required naming req-1's wait, which stays pending on srv.
-func parkOnEarlierConnection(t *testing.T, srv *inputwaitrig.Server, store sessionstore.Store) <-chan inputwaitrig.Result {
+// parkOnEarlierConnection recovers a first connection of pod-a, parks a
+// wait on it, and returns the call's result channel and the wait's
+// gateway-generated requestId. The row is then input_required naming that
+// wait, which stays pending on srv.
+func parkOnEarlierConnection(t *testing.T, srv *inputwaitrig.Server, store sessionstore.Store) (<-chan inputwaitrig.Result, string) {
 	t.Helper()
 	old := srv.Dial(t, inputwaitrig.AgentURI("pod-a"))
 	ping(t, old, sessA)
-	done := inputwaitrig.RequestInput(context.Background(), old, sessA, "req-1")
-	srv.WaitPending(t, sessA, "req-1")
+	done := inputwaitrig.RequestInput(context.Background(), old, sessA)
+	req := srv.WaitPending(t, sessA)
 	wantRow(t, store, sessA, session.StateInputRequired, "*")
-	return done
+	return done, req
 }
 
 // TestRearmDuringRecoveryLeavesConnectionUnrecovered_spec_28_3 pins the
@@ -440,7 +442,7 @@ func TestRearmDuringRecoveryLeavesConnectionUnrecovered_spec_28_3(t *testing.T) 
 		store := newStore(t)
 		seed(t, store, sessA, "pod-a", session.StateRunning, "")
 		srv := start(t, store)
-		done := parkOnEarlierConnection(t, srv, store)
+		done, req1 := parkOnEarlierConnection(t, srv, store)
 		c := srv.Dial(t, inputwaitrig.AgentURI("pod-a"))
 		var held atomic.Bool
 		store.setAfterUpdate(func(id string, err error) {
@@ -450,11 +452,11 @@ func TestRearmDuringRecoveryLeavesConnectionUnrecovered_spec_28_3(t *testing.T) 
 				return
 			}
 			store.failNextUpdateBeforeCommit()
-			_ = srv.Waits.Resolve(sessA, "req-1", "yes")
+			_ = srv.Waits.Resolve(sessA, req1, "yes")
 			select {
 			case <-done:
 			case <-time.After(5 * time.Second):
-				t.Error("req-1 did not return while the run was held")
+				t.Error("the parked wait did not return while the run was held")
 			}
 		})
 		ping(t, c, sessA)
@@ -470,12 +472,12 @@ func TestRearmDuringRecoveryLeavesConnectionUnrecovered_spec_28_3(t *testing.T) 
 		store := newStore(t)
 		seed(t, store, sessA, "pod-a", session.StateRunning, "")
 		srv := start(t, store)
-		done := parkOnEarlierConnection(t, srv, store)
+		done, req1 := parkOnEarlierConnection(t, srv, store)
 		c := srv.Dial(t, inputwaitrig.AgentURI("pod-a"))
 		ping(t, c, sessA)
 		wantRow(t, store, sessA, session.StateInputRequired, "*")
 		store.failNextUpdateBeforeCommit()
-		_ = srv.Waits.Resolve(sessA, "req-1", "yes")
+		_ = srv.Waits.Resolve(sessA, req1, "yes")
 		inputwaitrig.Await(t, done)
 		wantRow(t, store, sessA, session.StateInputRequired, "*")
 		ping(t, c, sessA)
@@ -526,8 +528,8 @@ func TestCloseEndsWaitsAndRestoresRows_spec_28_3(t *testing.T) {
 	seed(t, store, sessA, "pod-a", session.StateRunning, "")
 	srv := start(t, store)
 	c := srv.Dial(t, inputwaitrig.AgentURI("pod-a"))
-	done := inputwaitrig.RequestInput(context.Background(), c, sessA, "req-1")
-	srv.WaitPending(t, sessA, "req-1")
+	done := inputwaitrig.RequestInput(context.Background(), c, sessA)
+	srv.WaitPending(t, sessA)
 	srv.Waits.Close()
 	if res := inputwaitrig.Await(t, done); res.Err != nil || !res.Resp.GetIsError() {
 		t.Errorf("closed wait = %+v, want a cancellation tool error", res)
@@ -557,7 +559,7 @@ func TestStaleRowWithNoLaterCallEndsAtMaxSessionAge_spec_6_2(t *testing.T) {
 		}},
 		{name: "failed exit write", leave: func(t *testing.T, store *hookStore, srv *inputwaitrig.Server, done <-chan inputwaitrig.Result) {
 			store.failNextUpdateBeforeCommit()
-			_ = srv.Waits.Resolve(sessA, "req-1", "yes")
+			_ = srv.Waits.Resolve(sessA, srv.WaitPending(t, sessA), "yes")
 			inputwaitrig.Await(t, done)
 		}},
 	} {
@@ -567,8 +569,8 @@ func TestStaleRowWithNoLaterCallEndsAtMaxSessionAge_spec_6_2(t *testing.T) {
 			srv := start(t, store)
 			c := srv.Dial(t, inputwaitrig.AgentURI("pod-a"))
 			ping(t, c, sessA)
-			done := inputwaitrig.RequestInput(context.Background(), c, sessA, "req-1")
-			srv.WaitPending(t, sessA, "req-1")
+			done := inputwaitrig.RequestInput(context.Background(), c, sessA)
+			srv.WaitPending(t, sessA)
 			tc.leave(t, store, srv, done)
 			wantRow(t, store, sessA, session.StateInputRequired, "*")
 			expireByMaxSessionAge(t, store)
