@@ -434,17 +434,21 @@ func (s *FilesystemStore) Copy(src, dst URI) error {
 	if enc == "" {
 		enc = srcMeta.Encoding
 	}
+	// spec: §7.1, §15.1 — a destination that names no TTL keeps the
+	// source's, so a copied checkpoint chunk does not expire on write
+	// (copyTTL, BUILD-GAPS F-4.5.24).
+	ttl := copyTTL(dst.TTL, srcMeta.StoredAt, srcMeta.ExpiresAt)
 	return s.writeMeta(dstDir, fsMeta{
 		TenantID:   dst.TenantID,
 		ObjectType: string(objType),
 		SessionID:  dst.SessionID,
 		PartID:     dst.PartID,
-		TTLSeconds: int(dst.TTL.Seconds()),
+		TTLSeconds: int(ttl.Seconds()),
 		Encoding:   enc,
 		MimeType:   srcMeta.MimeType,
 		Size:       int64(len(body)),
 		StoredAt:   now,
-		ExpiresAt:  now.Add(dst.TTL),
+		ExpiresAt:  now.Add(ttl),
 	})
 }
 

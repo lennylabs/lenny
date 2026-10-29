@@ -441,9 +441,12 @@ type SessionExpiryNotifier interface {
 // resolved deadline (for the SSE payload) and remainingSeconds is the
 // active time left before it, the cap minus the session's active age.
 //
-// The notification is best-effort and fires at most once per session per
-// gateway process: a watchdog restart inside the window may re-warn, which
-// SSE clients tolerate as an advisory event.
+// The watchdog calls it at most once per session per deadline across every
+// gateway replica: the call follows the locked-row write that records the
+// deadline on the session row (Session.ExpiryWarnedCapSeconds), and only the
+// replica whose write applied makes it. The call is best-effort: a replica
+// that fails between the write and the call drops that warning rather than
+// sending it twice.
 //
 // spec: §11.3;
 // §15. F-11.3.5.
@@ -555,13 +558,6 @@ type Watchdog struct {
 	// pass's hooks; production observes the same work through the terminal
 	// claims each goroutine holds.
 	dispatched sync.WaitGroup
-
-	// warnedMu guards warned, the §11.3 expiry-warning dedup set.
-	warnedMu sync.Mutex
-	// warned holds the session ids the expiry-warning sweep has already
-	// signalled, so a session is warned at most once. Entries are pruned
-	// when the sweep observes the session reach a terminal state. F-11.3.5.
-	warned map[string]struct{}
 }
 
 // New returns a Watchdog. The clock argument is optional; pass nil to
@@ -1558,22 +1554,28 @@ func maxAgeExpirable(st session.State) bool {
 //
 // The sweep is a no-op unless the wired TerminalHook also implements
 // ExpiryWarningNotifier (the gateway sessionserver, which owns the SSE bus
-// and the per-session adapter binding). Each session is warned at most once:
-// the warned set dedups across ticks and is pruned when a session is observed
-// terminal, so the map stays bounded by the live session count.
+// and the per-session adapter binding).
 //
-// The warning fires while the session is still non-terminal; the actual
-// expiry is the later sweepMaxAge transition. The deadline is the same
-// most-restrictive-wins EffectiveAgeCap the maxSessionAge sweep applies,
-// compared with the same active age (sessionstore.ActiveAge), so a
-// per-runtime / per-session tighter cap warns at the right moment and time
-// spent paused does not move the warning earlier.
+// Every gateway replica runs this sweep over every row (§10.1.1 **Primary:**),
+// so the listing only selects candidates. claimExpiryWarning claims the
+// warning with a locked-row write that records the warned deadline on the
+// row, and only the replica whose write applied sends it. The warning
+// therefore goes out once per session per deadline across replicas and
+// gateway restarts, and it does not follow a terminal write, or a move out
+// of a counting state, that landed after the listing.
 //
-// Only a row whose age timer is running (sessionstore.SessionAgeCounts) is
-// warned; a paused row reaches the band only after it re-enters a counting
-// state.
+// The deadline is the same most-restrictive-wins EffectiveAgeCap the
+// maxSessionAge sweep applies, compared with the same active age
+// (sessionstore.ActiveAge), so a per-runtime or per-session tighter cap warns
+// at the right moment and time spent paused does not move the warning
+// earlier. Only a row whose age timer is running
+// (sessionstore.SessionAgeCounts) is warned; a paused row reaches the band
+// only after it re-enters a counting state. The warning fires while the
+// session is still non-terminal; the expiry is the later sweepMaxAge
+// transition.
 //
-// spec: §11.3; §6.2 (maxSessionAge timer behavior across states); §15. F-11.3.5.
+// spec: §11.3; §6.2 (maxSessionAge timer behavior across states); §10.1.1
+// (Primary:); §15. F-11.3.5, F-11.3.45, F-11.3.46.
 func (w *Watchdog) sweepExpiryWarning(ctx context.Context, tenant string, now time.Time, res *Result) error {
 	notifier, ok := w.terminal.(ExpiryWarningNotifier)
 	if !ok {
@@ -1585,60 +1587,102 @@ func (w *Watchdog) sweepExpiryWarning(ctx context.Context, tenant string, now ti
 	}
 	window := time.Duration(w.cfg.ExpiryWarningSeconds) * time.Second
 	platformCap := time.Duration(w.cfg.MaxSessionAgeSeconds) * time.Second
+	var errs []error
 	for _, row := range rows {
-		if session.IsTerminal(row.State) {
-			// Prune so the dedup set tracks only live sessions.
-			w.forgetWarned(row.ID)
+		ageCap := EffectiveAgeCap(ctx, w.ageResolver, platformCap, row)
+		if _, due := expiryWarningDue(row, ageCap, window, now); !due {
 			continue
 		}
-		if !sessionstore.SessionAgeCounts(row.State) {
-			// The age timer is paused or not yet started (suspended, the
-			// recovery states, and the pre-running states), so the deadline is
-			// not approaching: no age cap expires a suspended row, and a paused
-			// row's remaining time does not count down. Skipping it here keeps
-			// the single dedup entry for the warning that precedes the real
-			// expiry once the row re-enters a counting state.
+		claimed, remaining, applied, err := w.claimExpiryWarning(ctx, tenant, row.ID, ageCap, window, now)
+		if err != nil {
+			errs = append(errs, err)
 			continue
 		}
-		cap := EffectiveAgeCap(ctx, w.ageResolver, platformCap, row)
-		remaining := cap - sessionstore.ActiveAge(row, now)
-		// Only warn inside the [deadline-window, deadline) band. A session
-		// already past its deadline is left for sweepMaxAge; one further than
-		// the window away is not yet eligible.
-		if remaining <= 0 || remaining > window {
+		if !applied {
 			continue
 		}
-		if !w.markWarned(row.ID) {
-			continue
-		}
-		notifier.OnSessionExpiringSoon(ctx, row, int(cap.Seconds()), int(remaining.Seconds()))
+		notifier.OnSessionExpiringSoon(ctx, claimed, int(ageCap.Seconds()), int(remaining.Seconds()))
 		res.ExpiryWarnings++
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
-// markWarned records sessionID in the expiry-warning dedup set and reports
-// true when the session had not been warned before (so the caller fires the
-// warning exactly once). F-11.3.5.
-func (w *Watchdog) markWarned(sessionID string) bool {
-	w.warnedMu.Lock()
-	defer w.warnedMu.Unlock()
-	if w.warned == nil {
-		w.warned = map[string]struct{}{}
+// errExpiryWarningSuperseded is the sentinel the claimExpiryWarning mutator
+// returns when the locked row no longer calls for a warning: it is terminal,
+// its age timer is paused, its active age recomputed on the locked row is
+// outside the warning band, or the row already records a warning for this
+// deadline. Returning an error aborts the Update, so the row is not
+// rewritten and no warning is sent.
+// spec: §11.3; §10.1.1 (Primary:).
+var errExpiryWarningSuperseded = errors.New("watchdog: expiry warning superseded on the locked row")
+
+// claimExpiryWarning re-evaluates the warning on the locked session row and,
+// when the row still calls for one, records the warned deadline on it
+// (ExpiryWarnedCapSeconds) in the same write. Only the replica whose write
+// applied sends the warning: another replica's Update serializes behind the
+// first on the row lock, reads the recorded deadline, and is superseded.
+//
+// It returns the committed row, the remaining active time recomputed on the
+// locked row, and whether the write applied. A superseded or missing row
+// returns applied false and no error. Any other Update error is logged and
+// returned for the pass to collect, and the next pass evaluates the row
+// again.
+// spec: §11.3; §10.1.1 (Primary:). F-11.3.45, F-11.3.46.
+func (w *Watchdog) claimExpiryWarning(ctx context.Context, tenant, id string, ageCap, window time.Duration, now time.Time) (sessionstore.Session, time.Duration, bool, error) {
+	var remaining time.Duration
+	updated, err := w.store.Update(ctx, tenant, id, func(r *sessionstore.Session) error {
+		rem, due := expiryWarningDue(*r, ageCap, window, now)
+		if !due {
+			return errExpiryWarningSuperseded
+		}
+		remaining = rem
+		r.ExpiryWarnedCapSeconds = capSeconds(ageCap)
+		return nil
+	})
+	if superseded(err, errExpiryWarningSuperseded) {
+		return sessionstore.Session{}, 0, false, nil
 	}
-	if _, seen := w.warned[sessionID]; seen {
-		return false
+	if err != nil {
+		return sessionstore.Session{}, 0, false, rowError(tenant, id, "record a session expiry warning", err)
 	}
-	w.warned[sessionID] = struct{}{}
-	return true
+	return updated, remaining, true, nil
 }
 
-// forgetWarned drops sessionID from the dedup set once the sweep observes the
-// session reach a terminal state, keeping the set bounded by live sessions.
-func (w *Watchdog) forgetWarned(sessionID string) {
-	w.warnedMu.Lock()
-	defer w.warnedMu.Unlock()
-	delete(w.warned, sessionID)
+// expiryWarningDue reports whether row is due a §11.3 expiry warning for the
+// deadline ageCap at now, and the active time remaining before that deadline.
+// A row is due when it is non-terminal, its age timer runs
+// (sessionstore.SessionAgeCounts), its remaining active time is inside the
+// (0, window] band, and it does not already record a warning for this
+// deadline. A row already past its deadline is left for sweepMaxAge.
+//
+// The recorded deadline is the effective cap in whole seconds. A cap that
+// changes after a warning makes the row due again for the new deadline, while
+// repeated passes inside the same band, and a pause and resume that keep the
+// cap, do not.
+// spec: §11.3; §6.2 (maxSessionAge timer behavior across states).
+func expiryWarningDue(row sessionstore.Session, ageCap, window time.Duration, now time.Time) (time.Duration, bool) {
+	if session.IsTerminal(row.State) || !sessionstore.SessionAgeCounts(row.State) {
+		return 0, false
+	}
+	if row.ExpiryWarnedCapSeconds == capSeconds(ageCap) {
+		return 0, false
+	}
+	remaining := ageCap - sessionstore.ActiveAge(row, now)
+	if remaining <= 0 || remaining > window {
+		return 0, false
+	}
+	return remaining, true
+}
+
+// capSeconds is the whole-second value of an effective maxSessionAge cap, the
+// unit the session row records the warned deadline in. A positive cap under
+// one second rounds up to 1 so it never equals the zero "never warned" value.
+func capSeconds(ageCap time.Duration) int64 {
+	secs := int64(ageCap / time.Second)
+	if secs <= 0 && ageCap > 0 {
+		return 1
+	}
+	return secs
 }
 
 // EffectiveAgeCap resolves the §11.3 maxSessionAge cap for one row, applying

@@ -3980,11 +3980,14 @@ stages neither, so F-7.2.43 is queued here and F-5.2.57 is re-routed in the 0100
     stays open and leaves this queue: it needs an adapter contract change (a chunk field on
     `FinalizeWorkspaceRequest`) that no specification section states, so it moves to F-7.1.33's proposal
     below. F-4.5.24 (Low, direct fix) was filed from the same work.
-  - [ ] **F-11.3.45** (Low) and **F-11.3.46** (Low), one fix: every replica sends its own
+  - [x] **F-11.3.45** (Low) and **F-11.3.46** (Low), one fix: every replica sends its own
     `session_expiring_soon` and `DEADLINE_APPROACHING` for a session, because the warning's dedup set is per
     process, and the warning is sent from the listing without a re-read, so it can follow a terminal write.
     Record the warning on the row in a locked-row `Update` and send it only from the replica whose write
-    applied. F-11.3.46 is the expiry-warning half of F-11.3.40.
+    applied. F-11.3.46 is the expiry-warning half of F-11.3.40. Done on 2026-10-29 (`fix/direct-batch-2`):
+    the sweep claims each warning with a locked-row write that re-checks the band and records the warned
+    deadline in `sessions.expiry_warned_cap_seconds` (migration 0196), and only the replica whose write
+    applied sends it. Tier-1, tier-2, and tier-7a two-replica tests pin it.
   - [x] **F-15.4.5** (Low): `lenny/request_input` accepts a caller-supplied `requestId`, while §15.4 says the
     gateway generates it. The tool schema no longer declares the argument, and the gateway always generates
     the value (2026-10-29, `fix/direct-after-0106`).
@@ -4131,8 +4134,10 @@ D2), which stays with the upload route proposal.
     mechanism that restores the copied snapshot on the bind path of a `created` row, so the proposal states
     one (the smallest is a `restore_chunks` field on `FinalizeWorkspaceRequest` filled from
     `resolveResumeChunks`, restored before the plan's sources) along with the colliding-path order.
-  - [ ] Direct fix: **F-4.5.24** (Low, the memory and filesystem blob stores expire a copied checkpoint chunk
-    at once, because the chunk copy sets no TTL).
+  - [x] Direct fix: **F-4.5.24** (Low, the memory and filesystem blob stores expire a copied checkpoint chunk
+    at once, because the chunk copy sets no TTL). Done on 2026-10-29 (`fix/direct-batch-2`): a copy whose
+    destination names no TTL keeps the source's TTL from the copy's write, on both stores, and the derive and
+    replay chunk-copy test reads every copied chunk back on both stores.
   - [ ] Its own proposal, after 0086's implementation: **F-4.5.22** (Low, an upload blob expires 7 days after
     it is stored, and the specification states no retention for a blob a bound plan names).
   - [ ] Its own proposal, or the next proposal that edits §28.5.3: **F-4.5.23** (Low, the emitted
@@ -4439,10 +4444,12 @@ that left a recycle-pool pod claimed under `TestPodLifecycle` (T-17.4.42). Four 
   `classifyRow` checks the link first, so a non-linking gap is `broken` and only an intact-link gap is
   `gap_suspected`. Tier-1 table tests in `pkg/audit`, a paging list-handler test, and a tier-2 test over a
   private Postgres pin it.
-- [ ] **F-25.9.22** (Low, filed 2026-10-29 from F-25.9.21): a row deleted directly after a receipted GDPR
+- [x] **F-25.9.22** (Low, filed 2026-10-29 from F-25.9.21): a row deleted directly after a receipted GDPR
   redaction still reads `gap_suspected`, because `classifyRow`, `Verify`, and `prevHashLinks` skip the link
   check after a redacted predecessor although the redaction preserves the hash the successor links to. Direct
-  fix in `pkg/audit/chain.go` and `audit_query.go`.
+  fix in `pkg/audit/chain.go` and `audit_query.go`. Done on 2026-10-29 (`fix/direct-batch-2`): the link check
+  runs through redactions, so the row after the deletion is `broken`. Tier-1 table cases, a list-handler test,
+  and a tier-2 test over a private Postgres pin it.
 - [ ] **T-25.9.17** (Low): run the rewritten tier-8 `TestAuditChainGapDetection` on a cluster whose Postgres the
   run may write to. F-25.9.21 has landed. A dedicated cluster was not created on 2026-10-29 because of host disk
   headroom; the tier-2 counterpart passes.

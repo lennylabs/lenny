@@ -8747,6 +8747,11 @@ Counts: 3 High, 5 Medium, 2 Low, 1 Info.
 - **Dependencies:** The point-1/2/4/5 enforcement depends on the real per-runbook chaos scenarios (the fault-injection overlay from T-17.7.1). A structural point-3 check (flag runbook-map entries whose remediation is documented as kubectl-only, or whose bound test issues no API-driven remediation) is buildable today against `tests/testinfra/chaos`.
 - **Suggested test:** Extend `tests/testinfra/chaos/runbook_map_test.go` so the gate asserts more than slug existence: resolve each mapped test and, for runbooks whose remediation is API-executable, require the bound chaos test to drive the documented remediation through the admin API and assert return-to-healthy plus an audit-trail row, mirroring the §15.2 points 1-5 contract.
 
+### - [ ] T-17.7.12 — The tier-7a `low_resource_startup` scenario fails on host load rather than on a health-contract defect [Low] — OPEN
+- **Existing tests:** `tests/tier7a_load_local/scaffolds_test.go::TestScenarios/low_resource_startup` (`tests/tier7a_load_local/scenarios/low_resource_startup/scenario.go`).
+- **Gap:** A full `go test -tags load_local -race ./tests/tier7a_load_local/` run on 2026-10-29 (`fix/direct-batch-2`, a shared host running several agents' builds and tests) failed with "§17.7 violated: 4 slow healthz responses under CPU pressure", and the same scenario passed when run alone minutes later with no code change. The scenario times `/healthz` against a wall-clock bound, so contention from other processes on the host reads as a §17.7 violation, and the full suite run under `lenny-test --tier load_local` reported a package failure with every counted test passing. The red result carries no information about the code under test. Discovered while running tier 7a for F-11.3.45.
+- **Suggested test:** Make the scenario's pressure deterministic and its bound relative to it: generate the CPU pressure inside the scenario, measure a baseline `/healthz` latency on the same host in the same run, and assert the pressured latency against that baseline, or register the scenario in `tests/flake-budget.yaml` with the host-load precondition until it does.
+
 ## §17.8 Capacity Planning and Defaults <a id="t-17.8"></a>
 **Spec file:** `spec/17_deployment-topology.md`
 **Reviewed:** 2026-07-06

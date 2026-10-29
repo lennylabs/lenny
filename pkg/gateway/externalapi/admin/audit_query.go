@@ -519,7 +519,7 @@ func (r *Router) handleListAuditEvents(w http.ResponseWriter, req *http.Request)
 		ChainIntegrityReport: &report,
 		NextCursor:           nextCursor,
 	}
-	if gaps := gapWindows(rows, r.auditReceipts(req.Context(), tenant)); len(gaps) > 0 {
+	if gaps := gapWindows(rows); len(gaps) > 0 {
 		envelope.AuditMetadata = &AuditMetadata{SuspectedGaps: gaps}
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -672,29 +672,22 @@ func tallyIntegrity(report *ChainIntegrityReport, integrity audit.ChainIntegrity
 // prevHashLinks reports whether next's prev_hash links to prev in the
 // §11.7 hash chain, so the §25.9 gap-window attribution can tell a benign
 // nextval-rollback gap from a committed-row tamper. It is true when
-// next.PrevHash carries prev's link hash, or when prev was lawfully
-// redacted (its canonical bytes were rewritten in place, so next carries
-// a stale prev_hash the receipt authorizes). It is false when the
-// prev_hash does not link and prev holds no valid receipt, the
-// tamper-or-removal signal §25.9 classifies as broken. The
-// receipts map keys a lawful redaction by the predecessor's sequence
-// number; a nil map means no redaction is authorized.
+// next.PrevHash carries prev's link hash, prev's stored Hash. That holds
+// across a receipted GDPR redaction of prev as well: the redaction
+// rewrites only prev's payload columns and keeps its pre-redaction Hash,
+// which next's prev_hash still carries, so a redacted predecessor gets
+// no tolerance. A false result is the tamper-or-removal signal §25.9
+// classifies as broken, including a row removed directly after a
+// redaction (BUILD-GAPS F-25.9.22).
 //
 // This mirrors the link decision the §25.9 query-API classifier makes in
 // pkg/audit (Chain.classifyRow), which checks the link before the
 // sequence gap, so a gap this function rejects is the row the per-row
 // verdict reports broken.
 //
-// spec: §11.7 item 3 (prev_hash linkage); §25.9.
-func prevHashLinks(prev, next audit.Row, receipts map[uint64]audit.RedactionReceipt) bool {
-	if prev.Redacted {
-		rcpt, ok := receipts[prev.Seq]
-		if ok && rcpt.OriginalHash == prev.Hash && rcpt.Signature != "" {
-			// The predecessor's canonical bytes were lawfully rewritten,
-			// so next's stale prev_hash is the authorized consequence.
-			return true
-		}
-	}
+// spec: §11.7 item 3 (prev_hash linkage); §12.8 (OCSF dead-letter PII
+// redaction); §25.9.
+func prevHashLinks(prev, next audit.Row) bool {
 	return next.PrevHash == audit.LinkHash(prev)
 }
 
@@ -723,18 +716,19 @@ const gapReasonNextvalRollback = "nextval_rollback"
 // prev_hash does not link is the §25.9 tamper case rather than a
 // benign rollback, and it is not listed here as a suspected outage window;
 // the per-row chainIntegrity verdict carries the tamper signal instead.
-// The receipts map lets a lawful predecessor redaction still count as
-// linked, matching the chain classifier. The window spans the timestamps
-// of the rows bracketing the gap.
+// A receipted redaction of the row before the gap gets no tolerance,
+// because the redaction keeps the Hash its successor links to, matching
+// the chain classifier. The window spans the timestamps of the rows
+// bracketing the gap.
 //
 // spec: §25.9.
-func gapWindows(rows []audit.Row, receipts map[uint64]audit.RedactionReceipt) []AuditGapWindow {
+func gapWindows(rows []audit.Row) []AuditGapWindow {
 	var out []AuditGapWindow
 	for i := 1; i < len(rows); i++ {
 		if rows[i].Seq == rows[i-1].Seq+1 {
 			continue
 		}
-		if !prevHashLinks(rows[i-1], rows[i], receipts) {
+		if !prevHashLinks(rows[i-1], rows[i]) {
 			// A non-linking gap is the §25.9 tamper case, not a
 			// benign rollback and not an ops_postgres_outage_log outage. It
 			// is not attributed to an outage in the suspected-gap window
