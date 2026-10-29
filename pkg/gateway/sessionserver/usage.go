@@ -823,13 +823,16 @@ func (s *Server) cancelCascadedChild(ctx context.Context, tenantID string, cur s
 // an ancestor that is terminal or no longer exists, evaluated over one
 // listing of the tenant, so the cap, the active-orphan gauges, and the sweep
 // describe one set. The caller invokes this after a `detach`-policy session
-// has terminated, so that session's own children are already counted.
-// Best-effort: a store error reports "not over cap" so a transient failure
-// does not silently escalate detach to cancel_all.
+// has terminated, so that session's own children are already counted. The
+// listing reads the primary, as the cascade walk's does: the terminal write
+// the caller just committed is not yet on a lagging §12.3 read replica, and a
+// replica that still shows the session live hides its children from the
+// count. Best-effort: a store error reports "not over cap" so a transient
+// failure does not silently escalate detach to cancel_all.
 //
-// spec: §8.10 (Orphan cleanup).
+// spec: §8.10 (Orphan cleanup), §12.3 (Read replicas).
 func (s *Server) detachExceedsOrphanCap(ctx context.Context, tenantID string) bool {
-	all, err := s.store.List(ctx, tenantID, sessionstore.ListFilter{})
+	all, err := s.store.List(ctx, tenantID, sessionstore.ListFilter{Primary: true})
 	if err != nil {
 		return false
 	}

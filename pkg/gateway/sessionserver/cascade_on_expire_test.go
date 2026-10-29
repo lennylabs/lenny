@@ -314,17 +314,84 @@ func TestCascadeAppliesOrphanCapFallbackToEveryCancelledNode_spec_8_10(t *testin
 	}
 }
 
-// capCountErrorStore fails the replica listing the orphan-cap count reads,
-// while the primary listing the cascade walk reads still succeeds.
+// capCountErrorStore fails every listing taken after the watched session's
+// terminal write commits. The cascade walk's first listing precedes that
+// write and succeeds; the orphan-cap count for the watched session follows it
+// and fails.
 type capCountErrorStore struct {
 	sessionstore.Store
+
+	watch string
 }
 
 func (s capCountErrorStore) List(ctx context.Context, tenantID string, f sessionstore.ListFilter) ([]sessionstore.Session, error) {
-	if !f.Primary {
-		return nil, errors.New("replica unavailable")
+	row, err := s.Get(ctx, tenantID, s.watch)
+	if err == nil && session.IsTerminal(row.State) {
+		return nil, errors.New("store unavailable")
 	}
 	return s.Store.List(ctx, tenantID, f)
+}
+
+// staleReplicaListStore serves every listing without Primary from a snapshot
+// taken by freeze, as a §12.3 read replica that has not replicated the writes
+// since would. A listing with Primary set reads the current rows.
+type staleReplicaListStore struct {
+	sessionstore.Store
+
+	mu       sync.Mutex
+	snapshot []sessionstore.Session
+	frozen   bool
+}
+
+func (s *staleReplicaListStore) freeze(t *testing.T, tenantID string) {
+	t.Helper()
+	rows, err := s.Store.List(context.Background(), tenantID, sessionstore.ListFilter{Primary: true})
+	if err != nil {
+		t.Fatalf("snapshot replica: %v", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.snapshot, s.frozen = rows, true
+}
+
+func (s *staleReplicaListStore) List(ctx context.Context, tenantID string, f sessionstore.ListFilter) ([]sessionstore.Session, error) {
+	s.mu.Lock()
+	frozen, rows := s.frozen, append([]sessionstore.Session(nil), s.snapshot...)
+	s.mu.Unlock()
+	if f.Primary || !frozen {
+		return s.Store.List(ctx, tenantID, f)
+	}
+	return rows, nil
+}
+
+// spec: §8.10 (maxOrphanTasksPerTenant fallback), §12.3 (Read replicas)
+//
+// The orphan-cap count reads the primary. A cascade from a mid-tree session
+// under a live root cancels an over-cap `detach` descendant; a read replica
+// that has not replicated the cascade's terminal writes still shows that
+// descendant and the start session live, so a count taken from it sees no
+// orphan and lets the detach stand. Reading the primary, the count sees the
+// descendant's children as orphans, the fallback cancels them, and the
+// descendant gets its `orphan_cap_fallback` row.
+func TestOrphanCapCountReadsPrimaryPastReplicaLag_spec_8_10(t *testing.T) {
+	store := &staleReplicaListStore{Store: memstore.New()}
+	sink := &orphanCapAuditSink{}
+	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader: true, MaxOrphanTasksPerTenant: 1, LifecycleAuditSink: sink,
+	})
+	capNode(t, store, "live_root", "", 0, session.CascadeCancelAll)
+	capNode(t, store, "start", "live_root", 1, session.CascadeCancelAll)
+	capNode(t, store, "mid", "start", 2, session.CascadeDetach)
+	capNode(t, store, "leaf_a", "mid", 3, "")
+	capNode(t, store, "leaf_b", "mid", 3, "")
+	store.freeze(t, "acme")
+
+	terminateAndSettle(t, srv, "start")
+	assertStates(t, store.Store, map[string]session.State{
+		"live_root": session.StateRunning,
+		"mid":       session.StateCancelled, "leaf_a": session.StateCancelled, "leaf_b": session.StateCancelled,
+	})
+	assertFallbackAudit(t, sink, []string{"mid"})
 }
 
 // spec: §8.10 (maxOrphanTasksPerTenant fallback)
@@ -336,7 +403,7 @@ func (s capCountErrorStore) List(ctx context.Context, tenantID string, f session
 func TestOrphanCapCountErrorReportsNotOverCap_spec_8_10(t *testing.T) {
 	inner := memstore.New()
 	sink := &orphanCapAuditSink{}
-	srv := sessionserver.New(capCountErrorStore{Store: inner}, sessionserver.Options{
+	srv := sessionserver.New(capCountErrorStore{Store: inner, watch: "mid"}, sessionserver.Options{
 		DevTenantHeader: true, MaxOrphanTasksPerTenant: 1, LifecycleAuditSink: sink,
 	})
 	capNode(t, inner, "top", "", 0, session.CascadeCancelAll)
