@@ -31,9 +31,10 @@ import (
 // checks hold, as the records name it.
 const sessionTimersProposal = "proposals/0105_fix_the-per-state-session-deadlines-and-the-watchdog-sweeps/"
 
-// sessionTimersNoteLabel opens the resolution note the work added to each
-// finding it resolved.
-const sessionTimersNoteLabel = "**Resolution note (proposal 0105"
+// sessionTimersNoteLabel opens the resolution the work added to each finding
+// it resolved. The label read "**Resolution note" while the findings were
+// open and became the closed-entry "**Resolution" label when they closed.
+const sessionTimersNoteLabel = "**Resolution (proposal 0105"
 
 // sessionTimersResolved are the findings the work resolved.
 var sessionTimersResolved = []string{
