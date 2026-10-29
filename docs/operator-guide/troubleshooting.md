@@ -29,17 +29,17 @@ kubectl get sandboxwarmpools -A
 # Check for warmup failures
 kubectl logs -n lenny-system -l app=lenny-controller --tail=100 | grep warmup
 
-# Check the warmup failure reason
-# Query: rate(lenny_warmpool_warmup_failure_total[5m]) by (reason)
+# Check the warmup failure error type
+# Query: sum by (pool, error_type) (rate(lenny_warmpool_warmup_failure_total[5m]))
 ```
 
 **Common causes and resolution:**
 
 | Cause | Indicator | Resolution |
 |---|---|---|
-| Image pull errors | `reason: image_pull_error` in warmup failures | Verify image registry access, check ImagePullPolicy |
-| Resource quota exceeded | `reason: resource_quota_exceeded` | Increase `agentNamespaces[].resourceQuota.pods` |
-| Node pressure | `reason: node_pressure` | Add nodes, check node resource utilization |
+| Image pull errors | `error_type: image_pull_error` in warmup failures | Verify image registry access, check ImagePullPolicy |
+| Resource quota exceeded | `error_type: resource_quota_exceeded` | Increase `agentNamespaces[].resourceQuota.pods` |
+| Node pressure | `error_type: node_pressure` | Add nodes, check node resource utilization |
 | Insufficient minWarm | Low idle count before exhaustion | Increase `minWarm` or review scaling formula |
 
 The `setup_command_failed` value of the warm-up failure counter counts sessions whose [setup commands](../getting-started/concepts.md#setup-commands) fail after their pod is claimed, rather than pods that fail to reach `idle`, so it does not explain an empty pool. It still counts toward the `WarmPoolReplenishmentFailing` alert.

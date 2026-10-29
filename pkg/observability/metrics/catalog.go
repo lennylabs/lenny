@@ -223,7 +223,7 @@ var metricCatalog = []MetricSpec{
 	{"lenny_llm_proxy_p99_ttfb_seconds", TypeGauge, "Pre-computed P99 upstream time-to-first-byte for LLM Proxy"},
 	{"lenny_warmpool_pod_startup_duration_seconds", TypeHistogram, "Time from pod creation to the idle state"},
 	{"lenny_warmpool_replenishment_rate", TypeGauge, "Pods per minute entering the idle state by pool"},
-	{"lenny_warmpool_warmup_failure_total", TypeCounter, "Warm-up failures by error type"},
+	{"lenny_warmpool_warmup_failure_total", TypeCounter, "Warm-up and setup failures by pool, runtime class, and error type"},
 	{"lenny_warmpool_cold_start_total", TypeCounter, "Cold-start sessions served"},
 	{"lenny_warmpool_fill_duration_seconds", TypeHistogram, "Time from pool creation to reaching minWarm ready pods"},
 	{"lenny_warmpool_claims_total", TypeCounter, "Warm pod claims (idle to claimed transitions)"},
