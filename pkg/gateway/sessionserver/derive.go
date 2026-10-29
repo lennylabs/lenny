@@ -637,10 +637,13 @@ func derivedSnapshotPart(sourceSessionID string) string {
 // derive_failure audit row. It is a no-op unless
 // `gateway.persistDeriveFailureRows` is enabled. The row is created
 // directly in the terminal `failed` state (no intermediate visible
-// `created` state) carrying `failureClass = derive_failure`,
-// `parentSessionId = source.ID`, and the intended target isolation
-// profile; no workspace snapshot, pod, or credential lease is recorded
-// because none ever existed.
+// `created` state) carrying `failureClass = derive_failure` and the
+// intended target isolation profile. The row has no delegation parent: it is
+// not a node in the source's delegation tree (§15.1), so a ListByRoot of the
+// source's tree does not return it. When the source has a workspace snapshot,
+// the row records that snapshot's ref as `parent_workspace_ref`, which is
+// where its lineage lives (§4.5). No workspace snapshot of its own, pod, or
+// credential lease is recorded because none ever existed.
 //
 // The write is guarded by a §10.1 coordinator-handoff CAS fence inside the
 // INSERT transaction (CreateIfGeneration): the store reads the source's
