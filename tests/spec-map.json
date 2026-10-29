@@ -1847,7 +1847,8 @@
         "pkg/gateway/sessionserver/start_starting_state_test.go::TestServiceModeStartTakesNoLease_spec_10_1_1",
         "pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup_test.go::TestTickInvokesTerminalHook_spec_5_2_519",
         "pkg/gateway/mcpfabric/delegationtree/orphancleanup/terminal_stamp_test.go::TestOrphanCleanupStampsEachTerminalWriteWithItsOwnClockRead_spec_5_2",
-        "pkg/gateway/sessionserver/lifecycle_internal_test.go::TestEmitTerminalLifecycleRecordsVariantMetrics_spec_10_7_1124"
+        "pkg/gateway/sessionserver/lifecycle_internal_test.go::TestEmitTerminalLifecycleRecordsVariantMetrics_spec_10_7_1124",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestBindRunsEachSequentialSessionsSetupOnARecycledPod_spec_7_5"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -2758,7 +2759,9 @@
         "pkg/gateway/sessionserver/start_pod_test.go",
         "pkg/gateway/sessionserver/start_setup_output_internal_test.go::TestStartSetupOutputStoreErrorStillCommitsRunning_spec_7_5",
         "pkg/gateway/sessionserver/start_setup_output_internal_test.go::TestStartSetupOutputNothingToPersist_spec_7_5",
-        "pkg/gateway/sessionserver/finalize_race_internal_test.go::TestRecordPodClaimFailureKeepsArmPrecedence_spec_4_9"
+        "pkg/gateway/sessionserver/finalize_race_internal_test.go::TestRecordPodClaimFailureKeepsArmPrecedence_spec_4_9",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestBindRunsEachSequentialSessionsSetupOnARecycledPod_spec_7_5",
+        "pkg/gateway/podlifecycle/podsession/slotbinder_test.go::TestBindSlotRunsEachSessionsSetupOnASharedPod_spec_7_5"
       ],
       "packages": [
         "pkg/setup"
@@ -5444,7 +5447,8 @@
         "tests/tier3_contract/workspaceplan/sources_test.go::TestParserRejectsClientResolvedCommitSha",
         "tests/tier3_contract/workspaceplan/sources_test.go::TestParserSkipsUnknownSourceType",
         "pkg/adapter/staging_test.go",
-        "pkg/gateway/sessionserver/create_test.go"
+        "pkg/gateway/sessionserver/create_test.go",
+        "tests/tier9_security/upload_ref_scope_test.go::TestPlanCannotFetchAnotherSessionsUpload"
       ],
       "packages": [
         "pkg/workspaceplan"
@@ -5477,7 +5481,14 @@
         "pkg/gateway/sessionserver/workspace_defaults_bind_internal_test.go::TestDefaultsResolveFailureLeavesStateUnchanged_spec_14_1",
         "pkg/gateway/mcpfabric/delegation/workspace_defaults_test.go::TestDelegatedChildPlanComposesRuntimeDefaults_spec_14_1",
         "tests/tier4_integration/workspace_defaults_test.go::TestRuntimeDefaultsMaterializeAtFinalize_spec_14_1",
-        "tests/tier8_chaos/workspace_defaults_outage_test.go::TestWorkspaceDefaultsPostgresOutageFailsClosed_spec_14_1"
+        "tests/tier8_chaos/workspace_defaults_outage_test.go::TestWorkspaceDefaultsPostgresOutageFailsClosed_spec_14_1",
+        "pkg/gateway/sessionserver/finalize_plan_internal_test.go::TestFinalizeRejectsForeignUploadRef_spec_14_1",
+        "pkg/gateway/sessionserver/finalize_plan_internal_test.go::TestFinalizeNullPlanBindsNoPlan_spec_14_1",
+        "pkg/gateway/sessionserver/gitclone_pin_test.go::TestFinalizePinsGitCloneBranchRef_spec_14_1",
+        "pkg/gateway/sessionserver/gitclone_pin_test.go::TestFinalizeGitCloneRejectionBindsNothing_spec_14_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestBindStagesOnlyUploadsThePlanNames_spec_14_1",
+        "tests/tier3_contract/rest_mcp_consistency/finalize_plan_bind_parity_test.go::TestFinalizePlanBindRejectionParity",
+        "tests/tier9_security/upload_ref_scope_test.go::TestPlanCannotFetchAnotherSessionsUpload"
       ],
       "packages": [
         "pkg/workspaceplan"
@@ -5790,7 +5801,8 @@
         "tests/tier3_contract/rest_mcp_consistency/cap_refusal_parity_test.go::TestResumeCapRefusalParity_spec_15_2_1",
         "tests/tier3_contract/rest_pools/session_retries_removed_wire_test.go::TestGeneratedMCPSchemasOmitMaxSessionRetries",
         "tests/tier3_contract/rest_mcp_consistency/resume_interrupt_parity_test.go::TestResumeAndInterruptToolsMatchREST_spec_15_2_1",
-        "tests/tier3_contract/rest_mcp_consistency/resume_interrupt_parity_test.go::TestGoSDKMCPInterruptSessionReturnsTheRow_spec_15_2_1"
+        "tests/tier3_contract/rest_mcp_consistency/resume_interrupt_parity_test.go::TestGoSDKMCPInterruptSessionReturnsTheRow_spec_15_2_1",
+        "tests/tier3_contract/rest_mcp_consistency/finalize_plan_bind_parity_test.go::TestFinalizePlanBindRejectionParity"
       ],
       "packages": [
         "pkg/gateway/rest",

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -353,5 +354,120 @@ func TestCreateGitClonePublicSkipsAuthCheck(t *testing.T) {
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status %d, want 201 (a public gitClone needs no auth binding); body %s",
 			rr.Code, rr.Body.String())
+	}
+}
+
+// createPlanlessThenFinalize creates a session without a plan under id and
+// finalizes it with a body carrying plan, returning the finalize response.
+func createPlanlessThenFinalize(t *testing.T, h http.Handler, id string, plan json.RawMessage) *httptest.ResponseRecorder {
+	t.Helper()
+	if rr := createRequest(t, h, sessionserver.CreateSessionRequest{RuntimeRef: "echo"}); rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	body, err := json.Marshal(map[string]json.RawMessage{"workspacePlan": plan})
+	if err != nil {
+		t.Fatalf("marshal finalize body: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+id+"/finalize", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr
+}
+
+// spec: 14.1 (WorkspacePlan Schema Versioning), 14 (Workspace Plan Schema)
+//
+// A plan bound at finalize pins each gitClone ref when it binds, exactly
+// as a plan bound at creation does: the stored plan of a session created
+// without a plan carries the resolver's commit SHA after finalize.
+func TestFinalizePinsGitCloneBranchRef_spec_14_1(t *testing.T) {
+	const id = "sess_fin_pin"
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader: true,
+		IDFunc:          func() string { return id },
+		RefResolver:     &pinStubResolver{shas: map[string]string{"main": pinSHA}},
+	})
+	h := srv.Handler()
+	if rr := createPlanlessThenFinalize(t, h, id, gitClonePlanJSON("main")); rr.Code != http.StatusOK {
+		t.Fatalf("finalize: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	if got := storedPlanSource(t, h, id)["resolvedCommitSha"]; got != pinSHA {
+		t.Errorf("stored resolvedCommitSha = %v, want %q", got, pinSHA)
+	}
+}
+
+// spec: 14.1 (WorkspacePlan Schema Versioning), 14 (Workspace Plan Schema), 15.1
+//
+// A finalize-bound plan whose gitClone source fails the auth binding or
+// the ref pin is rejected with the create-time code, and the rejection
+// precedes the created → finalizing write: the row stays created and binds
+// no plan. The empty-plan assertion catches an ordering that persists the
+// plan before the resolver rejects it.
+func TestFinalizeGitCloneRejectionBindsNothing_spec_14_1(t *testing.T) {
+	cases := []struct {
+		name       string
+		resolver   workspaceplan.RefResolver
+		pools      bool
+		plan       json.RawMessage
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			name: "unresolvable ref",
+			resolver: &pinStubResolver{err: &workspaceplan.ResolveError{
+				Reason: workspaceplan.ResolveRefNotFound, Err: errors.New("ref not found"),
+			}},
+			plan:       gitClonePlanJSON("no-such-ref"),
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "GIT_CLONE_REF_UNRESOLVABLE",
+		},
+		{
+			name: "transient resolve failure",
+			resolver: &pinStubResolver{err: &workspaceplan.ResolveError{
+				Reason: workspaceplan.ResolveNetworkError, Err: errors.New("connection reset"),
+			}},
+			plan:       gitClonePlanJSON("main"),
+			wantStatus: http.StatusServiceUnavailable,
+			wantCode:   "GIT_CLONE_REF_RESOLVE_TRANSIENT",
+		},
+		{
+			name:       "auth host matches no pool",
+			pools:      true,
+			plan:       gitCloneAuthPlanJSON("git.acme.internal", pinSHA),
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "GIT_CLONE_AUTH_UNSUPPORTED_HOST",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			const id = "sess_fin_reject"
+			store := memstore.New()
+			opts := sessionserver.Options{
+				DevTenantHeader: true,
+				IDFunc:          func() string { return id },
+				RefResolver:     tc.resolver,
+			}
+			if tc.pools {
+				opts.CredentialPools = vcsPoolStore(t, githubPool("github-pool", "github.com"))
+			}
+			rr := createPlanlessThenFinalize(t, sessionserver.New(store, opts).Handler(), id, tc.plan)
+			if rr.Code != tc.wantStatus {
+				t.Fatalf("finalize: status %d, want %d; body %s", rr.Code, tc.wantStatus, rr.Body.String())
+			}
+			if body := rr.Body.String(); !strings.Contains(body, tc.wantCode) {
+				t.Errorf("body = %s, want %s", body, tc.wantCode)
+			}
+			row, err := store.Get(context.Background(), "acme", id)
+			if err != nil {
+				t.Fatalf("get: %v", err)
+			}
+			if row.State != session.StateCreated {
+				t.Errorf("state = %q, want created after the rejected finalize", row.State)
+			}
+			if len(row.WorkspacePlan) != 0 {
+				t.Errorf("stored plan = %s, want none after the rejected finalize", row.WorkspacePlan)
+			}
+		})
 	}
 }
