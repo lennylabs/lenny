@@ -123,3 +123,30 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 	}
 	return deleted, nil
 }
+
+// DeleteByRoot removes the delegation_tree_budget row of one root session
+// within tenantID, which carries the tree's counter checkpoint, its §8.6
+// denial and cool-off, and its cumulative extension grants. The DELETE runs
+// under the tenant's RLS transaction and names the tenant in its predicate,
+// so a call under another tenant deletes nothing. The returned count is the
+// rows removed; a root with no row, or a session id that is not a root, is a
+// no-op returning (0, nil).
+//
+// spec: §12.8 (Compliance Interfaces: DeleteByUser dependency-ordered
+// deletion sequence).
+func (s *Store) DeleteByRoot(ctx context.Context, tenantID, rootSessionID string) (int, error) {
+	var deleted int
+	if err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM delegation_tree_budget WHERE tenant_id = $1 AND root_session_id = $2`,
+			tenantID, rootSessionID)
+		if err != nil {
+			return err
+		}
+		deleted = int(tag.RowsAffected())
+		return nil
+	}); err != nil {
+		return 0, fmt.Errorf("delegationbudget/pgstore: delete tree %q of tenant %q: %w", rootSessionID, tenantID, err)
+	}
+	return deleted, nil
+}

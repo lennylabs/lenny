@@ -42,6 +42,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken/k8ssecret"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/semanticcache"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
+	delegationbudgetpg "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationbudget/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/elicitationfloor"
@@ -1157,16 +1158,7 @@ func (w *gatewayWiring) buildSessionScopedErasers() []erasure.SessionEraser {
 	if w.evals != nil {
 		evals = w.evals.DeleteBySession
 	}
-	// §12.8 step 16: purge the tree-wide Redis delegation-budget keys
-	// ({root_session_id}:dlg:*) for each of the user's root sessions before
-	// SessionStore deletion makes the root ids irrecoverable. PurgeRoot
-	// no-ops on a non-root session id.
-	if w.treeBudgetConcrete != nil {
-		tb := w.treeBudgetConcrete
-		budget = func(ctx context.Context, _ string, sessionID string) (int, error) {
-			return tb.PurgeRoot(ctx, sessionID)
-		}
-	}
+	budget = w.delegationBudgetSessionEraser()
 	checkpoints := w.checkpointSessionErasers()
 	return append([]erasure.SessionEraser{
 		{Name: "coordination_mirror", DeleteBySession: mirror},
@@ -1179,6 +1171,65 @@ func (w *gatewayWiring) buildSessionScopedErasers() []erasure.SessionEraser {
 		erasure.SessionEraser{Name: "eval_results", DeleteBySession: evals},
 		erasure.SessionEraser{Name: "delegation_budget", DeleteBySession: budget},
 	)...)
+}
+
+// rootRowDeleter deletes the delegation_tree_budget row of one root session
+// within a tenant. *delegationbudgetpg.Store satisfies it.
+type rootRowDeleter interface {
+	DeleteByRoot(ctx context.Context, tenantID, rootSessionID string) (int, error)
+}
+
+// delegationBudgetSessionEraser returns the §12.8 step 16 eraser over the
+// gateway's backends: the tree-wide Redis keys through the tree budget when
+// Redis is configured, and the delegation_tree_budget row through Postgres
+// when Postgres is configured. It is nil when neither backend is configured.
+//
+// spec: §12.8 (Compliance Interfaces: DeleteByUser dependency-ordered
+// deletion sequence).
+func (w *gatewayWiring) delegationBudgetSessionEraser() erasure.DeleteBySessionFunc {
+	var keys rootPurger
+	if w.treeBudgetConcrete != nil {
+		keys = w.treeBudgetConcrete
+	}
+	var rows rootRowDeleter
+	if w.pgPool != nil {
+		rows = delegationbudgetpg.New(w.pgPool)
+	}
+	return delegationBudgetRootEraser(keys, rows)
+}
+
+// delegationBudgetRootEraser erases one session's delegation budget state
+// before SessionStore deletion makes the root ids irrecoverable: it purges
+// the tree-wide keys ({root_session_id}:dlg:*) and then deletes the root's
+// delegation_tree_budget row under the tenant it receives, and fails the step
+// on either error. A non-root session id owns neither, so both calls are
+// no-ops for it. A nil keys or rows skips that backend; both nil returns nil
+// so the orchestrator lists the store as absent.
+//
+// spec: §12.8 (Compliance Interfaces: DeleteByUser dependency-ordered
+// deletion sequence).
+func delegationBudgetRootEraser(keys rootPurger, rows rootRowDeleter) erasure.DeleteBySessionFunc {
+	if keys == nil && rows == nil {
+		return nil
+	}
+	return func(ctx context.Context, tenantID, sessionID string) (int, error) {
+		total := 0
+		if keys != nil {
+			n, err := keys.PurgeRoot(ctx, sessionID)
+			total += n
+			if err != nil {
+				return total, fmt.Errorf("purge delegation budget keys of %s: %w", sessionID, err)
+			}
+		}
+		if rows != nil {
+			n, err := rows.DeleteByRoot(ctx, tenantID, sessionID)
+			total += n
+			if err != nil {
+				return total, fmt.Errorf("delete delegation budget row of %s: %w", sessionID, err)
+			}
+		}
+		return total, nil
+	}
 }
 
 // checkpointSessionErasers returns the session-scoped erasers for the
