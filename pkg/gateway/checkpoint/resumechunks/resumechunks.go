@@ -66,8 +66,10 @@ type Presigner interface {
 // ChunkLister lists every object under a checkpoint's chunk prefix. The
 // prefix is the object key of u (its PartID names the checkpoint segment
 // with a trailing slash). The returned BlobInfos carry the full object URI
-// (with PartID = "{checkpoint_id}/chunk-{n}.{enc}") and Size, in the
-// store's native lexicographic list order. miniostore.Store satisfies it.
+// (with PartID = "{checkpoint_id}/chunk-{n}.{enc}") and Size, in
+// ascending lexicographic key order. Every blobstore.CheckpointStore
+// (the MinIO, S3, GCS, and Azure Blob stores) satisfies it through
+// blobstore.PrefixLister.
 type ChunkLister interface {
 	ListByPrefix(ctx context.Context, u blobstore.URI) ([]blobstore.BlobInfo, error)
 }
