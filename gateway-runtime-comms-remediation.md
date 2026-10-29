@@ -3386,6 +3386,12 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   `created` row has `ParentWorkspaceRef`, restored before the plan's sources. The proposal also settles the
   silent empty result when the manifest does not resolve, legacy single-object snapshots, and F-7.1.33's
   collision order. It follows 0108 and is the next change-proposal run, drafting as proposal 0109.
+- [ ] **Session-owner authorization proposal (new; F-15.1.55 High, F-10.2.30, F-15.1.54)** (queued 2026-10-29
+  after the snapshot-restore proposal and ahead of 0077, because F-15.1.55 lets a built-in adapter client assert
+  the session owner): define the §10.2 per-owner check on `user`-role session reads and the "explicit grant" it
+  promises, bind the adapter session owner to the authenticated principal, and cover `GET /v1/sessions/{id}`,
+  `GET /v1/sessions`, and `GET /v1/responses/{id}`. It may draft before 0108's implementation; its code steps
+  land after 0108's, which edit the Open Responses handlers.
 - [ ] **Proposal 0077, re-derived** (Draft; owner decision 2026-10-28): pre-materialize workspace content on a
   warm pod, starting with massive git repositories, and extensible to other content later. The owner wants the
   capability built. Settled direction: a pool-level template names a repository and ref; the adapter fills a
