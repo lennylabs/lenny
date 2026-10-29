@@ -62,6 +62,7 @@ func TestDerive_LockHeldThenReleased_spec_7_1_92(t *testing.T) {
 	newSourceSession(t, store)
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader: true,
+		Blobs:           sourceSnapshotBlobs(t),
 		IDFunc:          func() string { return "sess_d" },
 		DeriveLock:      derivelock.NewMemory(time.Second),
 	})
@@ -77,6 +78,7 @@ func TestDerive_LockHeldThenReleased_spec_7_1_92(t *testing.T) {
 	// was released after the first), not contend.
 	srv2 := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader: true,
+		Blobs:           sourceSnapshotBlobs(t),
 		IDFunc:          func() string { return "sess_d2" },
 		DeriveLock:      derivelock.NewMemory(50 * time.Millisecond),
 	})

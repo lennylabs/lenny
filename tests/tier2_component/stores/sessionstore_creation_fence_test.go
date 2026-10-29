@@ -401,6 +401,11 @@ func TestSessionStoreCreationFenceSerializesWithMarkerWriters_spec_12_8(t *testi
 			// transaction blocked, or the pool's cleanup waits forever.
 			t.Cleanup(gate.release)
 			row := e.row("alice")
+			// CreateWithTranscript consumes a reservation, so the ID is
+			// reserved first, as the replay handler reserves it.
+			if err := e.sessions.Reserve(ctx, e.tenant, row.UserID, row.ID, false); err != nil {
+				t.Fatalf("reserve replay ID: %v", err)
+			}
 			createDone := make(chan error, 1)
 			go func() { createDone <- e.sessions.CreateWithTranscript(ctx, row, src.ID) }()
 			<-gate.entered // the fence holds its FOR SHARE locks in the open insert transaction

@@ -52,6 +52,11 @@ func TestMemoryPostureSessionStoreFencesAndCopies_spec_12_8(t *testing.T) {
 		ID: "sess_replay", TenantID: "acme", UserID: "alice@acme.com",
 		State: session.StateCreated, CreatedAt: now, UpdatedAt: now,
 	}
+	// CreateWithTranscript consumes the ID reservation the replay handler
+	// takes before it copies the source snapshot (§12.8).
+	if err := w.sessions.Reserve(ctx, row.TenantID, row.UserID, row.ID, false); err != nil {
+		t.Fatalf("reserve replay ID: %v", err)
+	}
 	if err := w.sessions.CreateWithTranscript(ctx, row, "sess_src"); err != nil {
 		t.Fatalf("CreateWithTranscript: %v", err)
 	}
