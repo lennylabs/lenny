@@ -3,7 +3,7 @@
 `lenny-ctl` is the official CLI for Lenny platform operators. It is a thin client over two complementary external surfaces ([§15](15_external-api-surface.md)) and carries near-zero business logic of its own:
 
 - **Admin / operator commands** (`lenny-ctl admin <resource> *`, where `<resource>` is `tenants`, `runtimes`, `pools`, `credential-pools`, `users`, and the other `/v1/admin/*` resources; plus the agent-operability commands in [§24.15](#2415-agent-operability-commands)) map 1:1 to the **REST** Admin API ([§15.1](15_external-api-surface.md#151-rest-api)).
-- **Session commands** (`lenny session *` — or equivalently `lenny-ctl session *`; see [§24.17](#2417-session-operations)) map to the **MCP** API ([§15.2](15_external-api-surface.md#152-mcp-api)). They use the Lenny Go client SDK under the hood so that the interactive streaming, elicitation, and delegation flows work through the same MCP path as any other client. The short form (`lenny session`) is preferred in developer-facing examples; the long form (`lenny-ctl session`) is preferred in operator runbooks.
+- **Session commands** (`lenny session *` — or equivalently `lenny-ctl session *`; see [§24.17](#2417-session-operations)) map to the **MCP** API ([§15.2](15_external-api-surface.md#152-mcp-api)), except where [§24.17](#2417-session-operations) names a REST mapping. They use the Lenny Go client SDK under the hood so that the interactive streaming, elicitation, and delegation flows work through the same MCP path as any other client. The short form (`lenny session`) is preferred in developer-facing examples; the long form (`lenny-ctl session`) is preferred in operator runbooks.
 
 Every command requires `LENNY_API_URL` (or `--api-url` flag) and a valid admin token (`LENNY_API_TOKEN` or `--token` flag), with the exceptions below. Minimum required role is noted per command group.
 
@@ -208,16 +208,16 @@ All commands support `--output json` for machine-readable output and `--quiet` t
 
 ### 24.17 Session Operations
 
-Session commands route through the **MCP** client SDK, not REST. They exercise the same code path that any other MCP client uses ([§15.2](15_external-api-surface.md#152-mcp-api)) — the CLI embeds the Lenny Go client SDK ([§15.6](15_external-api-surface.md#156-client-sdks)) and opens a full MCP session for the duration of the command.
+Session commands route through the **MCP** client SDK except where a row's mapping names REST endpoints; `lenny session new` with `--workspace` or `--file` stages the workspace over REST. They exercise the same code path that any other MCP client uses ([§15.2](15_external-api-surface.md#152-mcp-api)) — the CLI embeds the Lenny Go client SDK ([§15.6](15_external-api-surface.md#156-client-sdks)) and opens a full MCP session for the duration of the command.
 
 | Command | Description | API / SDK mapping | Min Role |
 |---------|-------------|------------------|----------|
-| `lenny session new --runtime <name> [--attach] [--workspace <dir>] [--file <path>]...` | Create a session against the specified runtime. When `--attach` is set (the default in interactive TTYs), the CLI opens an MCP stream and renders the session's output, elicitation prompts, and lifecycle transitions inline until the session terminates. | MCP `lenny/create_session` + stream | `user` |
+| `lenny session new --runtime <name> [--attach] [--workspace <dir>] [--file <path>]...` | Create a session against the specified runtime. When `--attach` is set (the default in interactive TTYs), the CLI opens an MCP stream and renders the session's output, elicitation prompts, and lifecycle transitions inline until the session terminates. | MCP `lenny/create_session` + stream; with `--workspace` or `--file`: REST `POST /v1/sessions`, `/upload` or `/upload-archive`, `/finalize` with a `workspacePlan`, and `/start` | `user` |
 | `lenny session attach <sessionId>` | Attach to an existing session and stream its output from the current cursor. Supports reconnect-with-cursor. | MCP connect + cursor resume | `user` (owner) |
 | `lenny session send <sessionId> <message>` | Send a user message to an existing session. If the CLI is not attached, the message is delivered and the CLI exits. | MCP `lenny/send_message` | `user` (owner) |
 | `lenny session interrupt <sessionId>` | Send an interrupt to a running session. | MCP `lenny/interrupt` | `user` (owner) |
 | `lenny session cancel <sessionId>` | Cancel a session cooperatively. | MCP `lenny/cancel_session` | `user` (owner) |
-| `lenny session list [--runtime <name>] [--status <status>]` | List the caller's sessions. This is the one session command that also works over REST for non-interactive callers. | `GET /v1/sessions` | `user` |
+| `lenny session list [--runtime <name>] [--status <status>]` | List the caller's sessions. | `GET /v1/sessions` | `user` |
 | `lenny session get <sessionId>` | Fetch a session's current state. | `GET /v1/sessions/{id}` | `user` (owner) |
 | `lenny session logs <sessionId> [--since <time>]` | Fetch session logs from the event store (paginated, streamable via SSE). | `GET /v1/sessions/{id}/logs` | `user` (owner) |
 
