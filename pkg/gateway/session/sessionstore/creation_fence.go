@@ -59,9 +59,10 @@ type CreationMarkers struct {
 	ErasureJobID string
 	// IsDelegatedChild is Session.DelegationDepth > 0. Only the delegation
 	// service writes a non-zero depth. ParentSessionID does not classify a
-	// row, because derive, the derive-failure audit row, and replay set it to
-	// the source session, and classifying by it would admit a soft-disabled
-	// owner's derive or replay.
+	// row: the parent_session_id foreign key is ON DELETE SET NULL, so a
+	// delegated child can lose its parent pointer while keeping its depth.
+	// Derive, the derive-failure audit row, and replay write no parent; they
+	// are roots and record lineage in ParentWorkspaceRef (§4.5).
 	IsDelegatedChild bool
 	// ParentSessionID is the delegated child's parent session. It names the
 	// parent in a DELEGATION_PARENT_REVOKED refusal.

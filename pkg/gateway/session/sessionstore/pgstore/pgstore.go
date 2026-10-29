@@ -298,9 +298,10 @@ func (s *Store) create(ctx context.Context, sess sessionstore.Session, before be
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid,
 		-- §8.9 root_session_id: caller-provided ($45) wins; otherwise
-		-- inherit the parent's root via subquery so derived/delegated
-		-- children share the parent's tree; otherwise default to own
-		-- id so a standalone session is its own root. F-8.9.8.
+		-- inherit the parent's root via subquery so delegated children
+		-- share the parent's tree; otherwise default to own id so a
+		-- standalone, derived, or replayed session (none of which
+		-- carries a parent) is its own root. F-8.9.8.
 		COALESCE(
 			NULLIF($45, '')::uuid,
 			(SELECT root_session_id FROM sessions

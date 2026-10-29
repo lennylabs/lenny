@@ -171,17 +171,20 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 
 	now := s.clock()
 	replayed := sessionstore.Session{
-		ID:                 s.idFn(),
-		TenantID:           tenantID,
-		UserID:             source.UserID,
-		State:              session.StateCreated,
-		CreatedAt:          now,
-		UpdatedAt:          now,
-		RuntimeRef:         req.TargetRuntime,
-		PoolRef:            req.TargetPool,
-		IsolationProfile:   target,
-		WorkspaceSnapshot:  copySnapshotRef(source.WorkspaceSnapshot, derivedSnapshotRef(tenantID, source.ID)),
-		ParentSessionID:    source.ID,
+		ID:                s.idFn(),
+		TenantID:          tenantID,
+		UserID:            source.UserID,
+		State:             session.StateCreated,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+		RuntimeRef:        req.TargetRuntime,
+		PoolRef:           req.TargetPool,
+		IsolationProfile:  target,
+		WorkspaceSnapshot: copySnapshotRef(source.WorkspaceSnapshot, derivedSnapshotRef(tenantID, source.ID)),
+		// spec: §15.1 (Session Replay Semantics), §12.8 step 16, §4.5
+		// (Workspace lineage) — a replayed session is a new root with no
+		// delegation parent; its lineage to the source is the
+		// parent_workspace_ref.
 		ParentWorkspaceRef: source.WorkspaceSnapshot.Ref,
 	}
 	if err := s.insertReplayed(r.Context(), replayed, source.ID, req.ReplayMode); err != nil {
@@ -196,11 +199,14 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	// spec: §8.6 — the replayed root registers its lease-extension budget,
+	// as the plain create paths do, so an in-process extension resolves it.
+	s.registerLeaseTree(replayed)
 
 	resp := ReplayResponse{
 		SessionResponse: toResponse(replayed),
 		ReplayMode:      string(req.ReplayMode),
-		ParentSessionID: replayed.ParentSessionID,
+		ParentSessionID: source.ID,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)

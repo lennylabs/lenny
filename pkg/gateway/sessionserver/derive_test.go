@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +16,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -407,8 +410,10 @@ func TestDeriveInheritsRuntimeAndUserAndPool(t *testing.T) {
 	if derived.PoolRef != "default-pool" {
 		t.Errorf("PoolRef inheritance: got %q, want default-pool", derived.PoolRef)
 	}
-	if derived.ParentSessionID != "sess_source" {
-		t.Errorf("ParentSessionID: got %q, want sess_source", derived.ParentSessionID)
+	// spec: §12.6 (StoreRouter) — a derived session is a new root, so it
+	// carries no delegation parent.
+	if derived.ParentSessionID != "" {
+		t.Errorf("ParentSessionID: got %q, want empty (a derived session is a root)", derived.ParentSessionID)
 	}
 	if derived.ParentWorkspaceRef != "/acme/workspace/sess_source/snap.tar.zst" {
 		t.Errorf("ParentWorkspaceRef: got %q", derived.ParentWorkspaceRef)
@@ -633,5 +638,209 @@ func TestDeriveCompletedSourceDuringSealWindow_spec_7_1(t *testing.T) {
 
 	if got := deriveSnapshotSource(t, srv, ids[1]); got != string(sessionstore.WorkspaceSnapshotSealed) {
 		t.Errorf("derive after the seal: workspaceSnapshotSource %q, want sealed", got)
+	}
+}
+
+// recordingLeaseRegistrar records the §8.6 lease-extension tree
+// registrations the gateway makes for a newly created root session.
+type recordingLeaseRegistrar struct{ roots []string }
+
+func (r *recordingLeaseRegistrar) RegisterTree(rootSessionID string, _ leasecontrol.TreeConfig) {
+	r.roots = append(r.roots, rootSessionID)
+}
+
+// insertFailingStore fails every insert of the row named failID with a
+// plain store error, so the handler answers 500 and has inserted nothing.
+type insertFailingStore struct {
+	sessionstore.Store
+	failID string
+}
+
+var errInsertFailed = errors.New("insert failed")
+
+func (s insertFailingStore) Create(ctx context.Context, row sessionstore.Session) error {
+	if row.ID == s.failID {
+		return errInsertFailed
+	}
+	return s.Store.Create(ctx, row)
+}
+
+func (s insertFailingStore) CreateReserved(ctx context.Context, row sessionstore.Session) error {
+	if row.ID == s.failID {
+		return errInsertFailed
+	}
+	return s.Store.CreateReserved(ctx, row)
+}
+
+func (s insertFailingStore) CreateWithTranscript(ctx context.Context, row sessionstore.Session, sourceID string) error {
+	if row.ID == s.failID {
+		return errInsertFailed
+	}
+	return s.Store.CreateWithTranscript(ctx, row, sourceID)
+}
+
+// rootPathCase is one session-creating path that copies from a source
+// session: derive or one of the replay modes.
+type rootPathCase struct {
+	name     string
+	sourceID string
+	snapRef  string
+	seed     func(t *testing.T, store sessionstore.Store)
+	call     func(t *testing.T, h http.Handler) *httptest.ResponseRecorder
+	// transcripts, when true, wires a transcript store into the store and
+	// the server, so a prompt_history replay inserts with the copy.
+	transcripts bool
+}
+
+func rootPathCases() []rootPathCase {
+	deriveRef := "/acme/workspace/sess_source/snap.tar.zst"
+	replayRef := "/acme/workspace/sess_src/snap"
+	replay := func(mode sessionserver.ReplayMode) func(t *testing.T, h http.Handler) *httptest.ResponseRecorder {
+		return func(t *testing.T, h http.Handler) *httptest.ResponseRecorder {
+			return replayReq(t, h, sessionserver.ReplayRequest{ReplayMode: mode, TargetRuntime: "gemini-cli"})
+		}
+	}
+	return []rootPathCase{
+		{
+			name: "derive from a terminal source", sourceID: "sess_source", snapRef: deriveRef,
+			seed: func(t *testing.T, store sessionstore.Store) { newSourceSession(t, store) },
+			call: func(t *testing.T, h http.Handler) *httptest.ResponseRecorder {
+				return deriveRequest(t, h, sessionserver.DeriveRequest{})
+			},
+		},
+		{
+			name: "derive with allowStale from a live source", sourceID: "sess_source", snapRef: deriveRef,
+			seed: func(t *testing.T, store sessionstore.Store) {
+				newSourceSession(t, store, func(s *sessionstore.Session) {
+					s.State = session.StateRunning
+					s.WorkspaceSnapshot.Source = sessionstore.WorkspaceSnapshotCheckpoint
+				})
+			},
+			call: func(t *testing.T, h http.Handler) *httptest.ResponseRecorder {
+				return deriveRequest(t, h, sessionserver.DeriveRequest{AllowStale: true})
+			},
+		},
+		{
+			name: "replay prompt_history", sourceID: "sess_src", snapRef: replayRef,
+			seed: func(t *testing.T, store sessionstore.Store) { seedTerminalSource(t, store) },
+			call: replay(sessionserver.ReplayPromptHistory),
+		},
+		{
+			name: "replay prompt_history with a transcript store", sourceID: "sess_src", snapRef: replayRef,
+			seed:        func(t *testing.T, store sessionstore.Store) { seedTerminalSource(t, store) },
+			transcripts: true,
+			call:        replay(sessionserver.ReplayPromptHistory),
+		},
+		{
+			name: "replay workspace_derive", sourceID: "sess_src", snapRef: replayRef,
+			seed: func(t *testing.T, store sessionstore.Store) { seedTerminalSource(t, store) },
+			call: replay(sessionserver.ReplayWorkspaceDerive),
+		},
+	}
+}
+
+// newStore returns the case's memory store and the transcript store wired
+// into it, nil when the case runs without one.
+func (c rootPathCase) newStore() (*memstore.Store, *transcriptstore.Memory) {
+	if !c.transcripts {
+		return memstore.New(), nil
+	}
+	transcripts := transcriptstore.NewMemory()
+	return memstore.New(memstore.WithTranscriptCopier(transcripts.CopySession)), transcripts
+}
+
+func newRootPathServer(store sessionstore.Store, transcripts *transcriptstore.Memory, reg *recordingLeaseRegistrar) http.Handler {
+	opts := sessionserver.Options{
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_new" },
+		LeaseRegistrar:  reg,
+	}
+	if transcripts != nil {
+		opts.Transcripts = transcripts
+	}
+	return sessionserver.New(store, opts).Handler()
+}
+
+// TestDeriveAndReplayCreateRoots_spec_12_6 pins that derive and every
+// replay mode create an independent root: the row carries no delegation
+// parent, is its own root_session_id, records its lineage in the parent
+// workspace reference, is absent from the source's tree, and is registered
+// once for lease extension. The response still echoes the source id.
+//
+// spec: §12.6 (StoreRouter), §15.1 (Session Replay Semantics), §12.8 step 16,
+// §4.5 (Workspace lineage), §8.6
+func TestDeriveAndReplayCreateRoots_spec_12_6(t *testing.T) {
+	for _, c := range rootPathCases() {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := context.Background()
+			store, transcripts := c.newStore()
+			c.seed(t, store)
+			reg := &recordingLeaseRegistrar{}
+
+			rr := c.call(t, newRootPathServer(store, transcripts, reg))
+			if rr.Code != http.StatusCreated {
+				t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
+			}
+			var resp struct {
+				ParentSessionID string `json:"parentSessionId"`
+			}
+			if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if resp.ParentSessionID != c.sourceID {
+				t.Errorf("response parentSessionId = %q, want the source %q", resp.ParentSessionID, c.sourceID)
+			}
+
+			row, err := store.Get(ctx, "acme", "sess_new")
+			if err != nil {
+				t.Fatalf("read new row: %v", err)
+			}
+			if row.ParentSessionID != "" {
+				t.Errorf("ParentSessionID = %q, want empty", row.ParentSessionID)
+			}
+			if row.RootSessionID != "sess_new" {
+				t.Errorf("RootSessionID = %q, want its own id sess_new", row.RootSessionID)
+			}
+			if row.ParentWorkspaceRef != c.snapRef {
+				t.Errorf("ParentWorkspaceRef = %q, want the source snapshot %q", row.ParentWorkspaceRef, c.snapRef)
+			}
+			tree, err := store.ListByRoot(ctx, "acme", c.sourceID)
+			if err != nil {
+				t.Fatalf("list source tree: %v", err)
+			}
+			for _, n := range tree {
+				if n.ID == "sess_new" {
+					t.Errorf("new session is a node in the source's tree")
+				}
+			}
+			// registerLeaseTree skips a row that carries a parent, so this
+			// discriminates a root from a row still written as a child.
+			if len(reg.roots) != 1 || reg.roots[0] != "sess_new" {
+				t.Errorf("lease registrations = %v, want [sess_new]", reg.roots)
+			}
+		})
+	}
+}
+
+// TestDeriveAndReplayInsertErrorRegistersNoLeaseTree_spec_8_6 pins that a
+// failed insert registers no lease-extension tree on derive or any replay
+// mode.
+//
+// spec: §8.6, §15.1 (Session Replay Semantics)
+func TestDeriveAndReplayInsertErrorRegistersNoLeaseTree_spec_8_6(t *testing.T) {
+	for _, c := range rootPathCases() {
+		t.Run(c.name, func(t *testing.T) {
+			mem, transcripts := c.newStore()
+			c.seed(t, mem)
+			reg := &recordingLeaseRegistrar{}
+
+			rr := c.call(t, newRootPathServer(insertFailingStore{Store: mem, failID: "sess_new"}, transcripts, reg))
+			if rr.Code != http.StatusInternalServerError {
+				t.Fatalf("status: got %d, want 500; body=%s", rr.Code, rr.Body.String())
+			}
+			if len(reg.roots) != 0 {
+				t.Errorf("lease registrations = %v, want none", reg.roots)
+			}
+		})
 	}
 }

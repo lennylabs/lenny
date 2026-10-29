@@ -235,3 +235,44 @@ func TestDeriveFailureFencedByAResumeEntry_spec_7_1(t *testing.T) {
 		t.Errorf("GET sess_df after the fence: got %d, want 404", got.Code)
 	}
 }
+
+// TestDeriveFailureAuditRowIsNoTreeNode_spec_15_1 pins that the
+// derive-failure audit row carries no delegation parent, keeps its lineage
+// to the source in the parent workspace reference, and is absent from the
+// source's tree.
+//
+// spec: §15.1 (Session Replay Semantics), §4.5 (Workspace lineage), §12.6 (StoreRouter)
+func TestDeriveFailureAuditRowIsNoTreeNode_spec_15_1(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	src := newSourceSession(t, store)
+	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:          true,
+		IDFunc:                   func() string { return "sess_df" },
+		Blobs:                    newFailingBlobs(),
+		PersistDeriveFailureRows: true,
+	})
+
+	if rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{}); rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("derive status: got %d, want 503; body=%s", rr.Code, rr.Body.String())
+	}
+	row, err := store.Get(ctx, "acme", "sess_df")
+	if err != nil {
+		t.Fatalf("read audit row: %v", err)
+	}
+	if row.ParentSessionID != "" {
+		t.Errorf("ParentSessionID = %q, want empty", row.ParentSessionID)
+	}
+	if row.ParentWorkspaceRef != src.WorkspaceSnapshot.Ref {
+		t.Errorf("ParentWorkspaceRef = %q, want the source snapshot %q", row.ParentWorkspaceRef, src.WorkspaceSnapshot.Ref)
+	}
+	tree, err := store.ListByRoot(ctx, "acme", src.ID)
+	if err != nil {
+		t.Fatalf("list source tree: %v", err)
+	}
+	for _, n := range tree {
+		if n.ID == "sess_df" {
+			t.Errorf("derive-failure audit row is a node in the source's tree")
+		}
+	}
+}
