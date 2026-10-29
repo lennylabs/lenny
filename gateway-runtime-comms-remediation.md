@@ -4370,14 +4370,22 @@ that left a recycle-pool pod claimed under `TestPodLifecycle` (T-17.4.42). Four 
   all three tests now read `chainIntegrityReport` and the per-row `unmapped.lenny_chain.integrity` through the
   shared `tests/testinfra/auditquery` decoder. The tier-9 and tier-5 tests pass on `lenny-e2e`. The tier-8 test
   was not run, because it writes to Postgres directly.
-- [ ] **F-25.9.21** (Medium, filed 2026-10-29 from T-25.9.16): the §25.9 per-row verdict classifies a deleted
+- [x] **F-25.9.21** (Medium, filed 2026-10-29 from T-25.9.16): the §25.9 per-row verdict classifies a deleted
   interior audit row `gap_suspected` instead of `broken`, because `classifyRow` checks sequence density before
-  the `prev_hash` link. A removed row therefore never raises the broken-chain signal. Direct fix in
-  `pkg/audit/chain.go`.
-- [ ] **T-25.9.17** (Low): run the rewritten tier-8 `TestAuditChainGapDetection` once F-25.9.21 lands, on a
-  cluster whose Postgres the run may write to.
-- [ ] **T-17.4.45** (Low): the tier-8 and tier-9 `kubectl run --attach` psql helpers can read an empty result
-  when kubectl loses the pod's output. Apply the tier-5 end-marker retry. A direct test fix.
+  the `prev_hash` link. A removed row therefore never raises the broken-chain signal. Fixed on `fix/f-25-9-21`:
+  `classifyRow` checks the link first, so a non-linking gap is `broken` and only an intact-link gap is
+  `gap_suspected`. Tier-1 table tests in `pkg/audit`, a paging list-handler test, and a tier-2 test over a
+  private Postgres pin it.
+- [ ] **F-25.9.22** (Low, filed 2026-10-29 from F-25.9.21): a row deleted directly after a receipted GDPR
+  redaction still reads `gap_suspected`, because `classifyRow`, `Verify`, and `prevHashLinks` skip the link
+  check after a redacted predecessor although the redaction preserves the hash the successor links to. Direct
+  fix in `pkg/audit/chain.go` and `audit_query.go`.
+- [ ] **T-25.9.17** (Low): run the rewritten tier-8 `TestAuditChainGapDetection` on a cluster whose Postgres the
+  run may write to. F-25.9.21 has landed. A dedicated cluster was not created on 2026-10-29 because of host disk
+  headroom; the tier-2 counterpart passes.
+- [x] **T-17.4.45** (Low): the tier-8 and tier-9 `kubectl run --attach` psql helpers can read an empty result
+  when kubectl loses the pod's output. Fixed on `fix/f-25-9-21`: the end-marker retry now lives in
+  `tests/testinfra/kind/psql.go`, and the tier-5, tier-8, and tier-9 helpers delegate to it.
 
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 
