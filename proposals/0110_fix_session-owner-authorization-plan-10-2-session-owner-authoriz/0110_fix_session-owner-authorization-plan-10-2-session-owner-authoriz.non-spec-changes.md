@@ -184,7 +184,7 @@ Every test carries `// spec: §10.2 (Session ownership)`, plus the section of an
    - bob/`tenant-viewer` on a manage route receives the unchanged `403 FORBIDDEN`.
    - A no-principal request, or an empty `Subject` that passes the permission gate, receives `401 UNAUTHORIZED`.
    - Every other refusal receives a `404` body byte-identical to a missing id.
-   - A handler spy records zero calls on every refusal. When `Get` and the primary re-read both fail, no handler runs and the response is `500`. When `Get` returns `ErrNotFound` or an error and the primary re-read returns alice's row, alice's `POST /{id}/start` and `/resume` reach the handler.
+   - A handler spy records zero calls on every refusal. When `Get` fails, one case per CODE-2 step 4 outcome on the primary re-read (store error, `ErrNotFound`, and alice's row), driven on alice's `POST /{id}/start` and `/resume` by alice and by bob/`user`, asserts the response and handler-call count that outcome gives.
 
    The discriminating assertion is that role-less single-tenant bob receives `404` on alice's row. It fails if the bypass reuses `sessionPermissionGranted`.
 2. **Coverage guard** (tier 1, `route_owner_coverage_test.go`). Every `/v1/sessions/{id}` pattern except eval and `/usage` answers `404` to bob/`user` on alice's row, so a route mounted outside the wrappers fails the test. The tool-use, elicitation, and memory routes return `RESOURCE_NOT_FOUND` from the wrapper for a missing session and for a foreign one.
