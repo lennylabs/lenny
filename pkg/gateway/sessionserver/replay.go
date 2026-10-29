@@ -170,8 +170,28 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := s.clock()
+	replayedID := s.idFn()
+	// spec: §12.8 (Lifecycle fence and drain) — reserve the new ID for the
+	// owner before any object is copied under it, as derive does, so the
+	// owner's erasure reaches the copy even when the insert never runs.
+	if !s.reserveDerivedSession(w, r, tenantID, source.UserID, replayedID) {
+		return
+	}
+	// spec: §15.1 (Session Replay Semantics) — under prompt_history the
+	// workspace is populated with the source's sealed final snapshot (or
+	// its last checkpoint), and workspace_derive is equivalent to derive.
+	// Both modes therefore copy the snapshot under the replayed session's
+	// own prefix, as §7.1 (Derive copy semantics) states for derive, and
+	// store the ref of the copy. A copy that cannot run fails the replay
+	// rather than storing a ref with no object behind it.
+	replayedRef, cerr := s.copyWorkspaceSnapshot(r.Context(), source, replayedID, now)
+	if cerr != nil {
+		s.undoDerivedWrites(r.Context(), tenantID, replayedID)
+		s.writeSnapshotCopyError(w, cerr, source.WorkspaceSnapshot.Ref)
+		return
+	}
 	replayed := sessionstore.Session{
-		ID:                s.idFn(),
+		ID:                replayedID,
 		TenantID:          tenantID,
 		UserID:            source.UserID,
 		State:             session.StateCreated,
@@ -180,7 +200,7 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 		RuntimeRef:        req.TargetRuntime,
 		PoolRef:           req.TargetPool,
 		IsolationProfile:  target,
-		WorkspaceSnapshot: copySnapshotRef(source.WorkspaceSnapshot, derivedSnapshotRef(tenantID, source.ID)),
+		WorkspaceSnapshot: copySnapshotRef(source.WorkspaceSnapshot, replayedRef),
 		// spec: §15.1 (Session Replay Semantics), §12.8 step 16, §4.5
 		// (Workspace lineage) — a replayed session is a new root with no
 		// delegation parent; its lineage to the source is the
@@ -189,10 +209,14 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.insertReplayed(r.Context(), replayed, source.ID, req.ReplayMode); err != nil {
 		// spec: §12.8 (Lifecycle fence and drain) — the fence over the
-		// tenant and the new owner refuses with 403. A transcript copy
-		// error rolls the row back with it and answers 500.
+		// tenant and the new owner, or a reservation the owner's erasure
+		// ended, undoes the snapshot copy, releases the reservation, and
+		// answers 403. Any other insert error, including a transcript copy
+		// error that rolls the row back, keeps the objects and the
+		// reservation, as derive does, and answers 500.
 		var ref *sessionstore.CreationRefusal
 		if errors.As(err, &ref) {
+			s.undoDerivedWrites(r.Context(), tenantID, replayedID)
 			s.writeCreationRefusal(w, ref)
 			return
 		}
@@ -213,15 +237,17 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// insertReplayed inserts the replayed session row. A prompt_history replay
-// with a transcript store wired copies the source transcript into the new
-// session in the insert transaction, under the creation fence, so the
-// copied entries exist only when the row committed and a copy error leaves
-// neither. Any other replay inserts the row alone.
+// insertReplayed inserts the replayed session row, whose ID was reserved
+// before the snapshot copy. A prompt_history replay with a transcript store
+// wired copies the source transcript into the new session in the insert
+// transaction, under the creation fence, so the copied entries exist only
+// when the row committed and a copy error leaves neither. Any other replay
+// inserts the row alone. Both inserts consume the reservation and refuse a
+// row whose reservation the owner's erasure ended.
 // spec: §12.8 (Lifecycle fence and drain), §15.1 (REST API).
 func (s *Server) insertReplayed(ctx context.Context, replayed sessionstore.Session, sourceID string, mode ReplayMode) error {
 	if mode == ReplayPromptHistory && s.transcripts != nil {
 		return s.store.CreateWithTranscript(ctx, replayed, sourceID)
 	}
-	return s.store.Create(ctx, replayed)
+	return s.store.CreateReserved(ctx, replayed)
 }

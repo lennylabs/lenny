@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"strings"
 	"testing"
 	"time"
@@ -64,6 +65,29 @@ func newSourceSession(t *testing.T, store sessionstore.Store, mods ...func(*sess
 	return row
 }
 
+// snapshotBlobs returns a blob store holding a workspace object for the
+// acme session sessionID under partID, which the path-form snapshot ref
+// /acme/workspace/{sessionID}/{partID} names. Derive and replay copy that
+// object and fail closed when it is absent.
+func snapshotBlobs(t *testing.T, sessionID, partID string) *blobstore.MemoryStore {
+	t.Helper()
+	blobs := blobstore.NewMemoryStore(nil)
+	uri := blobstore.URI{
+		TenantID: "acme", ObjectType: blobstore.ObjectTypeWorkspace,
+		SessionID: sessionID, PartID: partID, TTL: time.Hour,
+	}
+	if _, err := blobs.Put(uri, "application/x-tar", strings.NewReader("workspace-bytes")); err != nil {
+		t.Fatalf("seed source snapshot object: %v", err)
+	}
+	return blobs
+}
+
+// sourceSnapshotBlobs is snapshotBlobs for the ref newSourceSession seeds.
+func sourceSnapshotBlobs(t *testing.T) *blobstore.MemoryStore {
+	t.Helper()
+	return snapshotBlobs(t, "sess_source", "snap.tar.zst")
+}
+
 func deriveRequest(t *testing.T, h http.Handler, body sessionserver.DeriveRequest, mods ...func(*http.Request)) *httptest.ResponseRecorder {
 	t.Helper()
 	buf, _ := json.Marshal(body)
@@ -98,6 +122,7 @@ func TestDeriveHappyPathFromTerminal(t *testing.T) {
 	newSourceSession(t, store)
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader: true,
+		Blobs:           sourceSnapshotBlobs(t),
 		IDFunc:          func() string { return "sess_derived" },
 		Clock:           func() time.Time { return time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC) },
 	})
@@ -166,6 +191,7 @@ func TestDeriveNonTerminalWithAllowStaleSucceeds(t *testing.T) {
 	})
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader: true,
+		Blobs:           sourceSnapshotBlobs(t),
 		IDFunc:          func() string { return "sess_d2" },
 	})
 
@@ -306,6 +332,7 @@ func TestDeriveIsolationDowngradeWithAdminEmitsAuditAndSucceeds(t *testing.T) {
 	sink := &recordingSink{}
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader: true,
+		Blobs:           sourceSnapshotBlobs(t),
 		IDFunc:          func() string { return "sess_downgrade" },
 		DeriveAuditSink: sink,
 	})
@@ -389,6 +416,7 @@ func TestDeriveInheritsRuntimeAndUserAndPool(t *testing.T) {
 	newSourceSession(t, store)
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader: true,
+		Blobs:           sourceSnapshotBlobs(t),
 		IDFunc:          func() string { return "sess_inherit" },
 	})
 
@@ -430,6 +458,7 @@ func TestDeriveOverrideRuntime(t *testing.T) {
 	newSourceSession(t, store)
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader: true,
+		Blobs:           sourceSnapshotBlobs(t),
 		IDFunc:          func() string { return "sess_override" },
 	})
 	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{
@@ -452,6 +481,7 @@ func TestDeriveEqualIsolationSucceedsWithoutOverride(t *testing.T) {
 	})
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader: true,
+		Blobs:           sourceSnapshotBlobs(t),
 		IDFunc:          func() string { return "sess_eq" },
 	})
 	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{
@@ -469,6 +499,7 @@ func TestDeriveStrictlyStricterIsolationSucceeds(t *testing.T) {
 	})
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader: true,
+		Blobs:           sourceSnapshotBlobs(t),
 		IDFunc:          func() string { return "sess_stricter" },
 	})
 	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{
@@ -585,6 +616,7 @@ func TestDeriveTerminalSourceReportsRecordedSnapshotSource_spec_7_1(t *testing.T
 				})
 				srv := sessionserver.New(store, sessionserver.Options{
 					DevTenantHeader: true,
+					Blobs:           sourceSnapshotBlobs(t),
 					IDFunc:          func() string { return "sess_derived" },
 				})
 				if got := deriveSnapshotSource(t, srv, "sess_derived"); got != string(src) {
@@ -610,8 +642,19 @@ func TestDeriveCompletedSourceDuringSealWindow_spec_7_1(t *testing.T) {
 	})
 	ids := []string{"sess_derived_1", "sess_derived_2"}
 	next := 0
+	// Both the checkpoint and the sealed snapshot exist, so each derive
+	// copies the object its row names at the time.
+	blobs := sourceSnapshotBlobs(t)
+	ckpt := blobstore.URI{
+		TenantID: "acme", ObjectType: blobstore.ObjectTypeWorkspace,
+		SessionID: "sess_source", PartID: "ckpt.tar.zst", TTL: time.Hour,
+	}
+	if _, err := blobs.Put(ckpt, "application/x-tar", strings.NewReader("checkpoint-bytes")); err != nil {
+		t.Fatalf("seed checkpoint object: %v", err)
+	}
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader: true,
+		Blobs:           blobs,
 		IDFunc: func() string {
 			id := ids[next]
 			next++
@@ -749,9 +792,14 @@ func (c rootPathCase) newStore() (*memstore.Store, *transcriptstore.Memory) {
 	return memstore.New(memstore.WithTranscriptCopier(transcripts.CopySession)), transcripts
 }
 
-func newRootPathServer(store sessionstore.Store, transcripts *transcriptstore.Memory, reg *recordingLeaseRegistrar) http.Handler {
+// newRootPathServer wires a blob store that holds the case's source
+// snapshot object, because derive and replay copy it and fail closed when
+// the copy cannot run.
+func newRootPathServer(t *testing.T, c rootPathCase, store sessionstore.Store, transcripts *transcriptstore.Memory, reg *recordingLeaseRegistrar) http.Handler {
+	t.Helper()
 	opts := sessionserver.Options{
 		DevTenantHeader: true,
+		Blobs:           snapshotBlobs(t, c.sourceID, path.Base(c.snapRef)),
 		IDFunc:          func() string { return "sess_new" },
 		LeaseRegistrar:  reg,
 	}
@@ -777,7 +825,7 @@ func TestDeriveAndReplayCreateRoots_spec_12_6(t *testing.T) {
 			c.seed(t, store)
 			reg := &recordingLeaseRegistrar{}
 
-			rr := c.call(t, newRootPathServer(store, transcripts, reg))
+			rr := c.call(t, newRootPathServer(t, c, store, transcripts, reg))
 			if rr.Code != http.StatusCreated {
 				t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
 			}
@@ -834,7 +882,7 @@ func TestDeriveAndReplayInsertErrorRegistersNoLeaseTree_spec_8_6(t *testing.T) {
 			c.seed(t, mem)
 			reg := &recordingLeaseRegistrar{}
 
-			rr := c.call(t, newRootPathServer(insertFailingStore{Store: mem, failID: "sess_new"}, transcripts, reg))
+			rr := c.call(t, newRootPathServer(t, c, insertFailingStore{Store: mem, failID: "sess_new"}, transcripts, reg))
 			if rr.Code != http.StatusInternalServerError {
 				t.Fatalf("status: got %d, want 500; body=%s", rr.Code, rr.Body.String())
 			}

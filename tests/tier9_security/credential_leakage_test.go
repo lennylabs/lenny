@@ -5,10 +5,10 @@
 // Tier-9 TESTING.md §12.9.8 credential-leakage probe. Three adversarial checks
 // against a cred-shell-echo pod running on the Kind cluster:
 //
-//   - Environment: dump the runtime container's /proc/1/environ and
-//     assert no LLM-provider credential prefix appears. The
-//     cred-shell-echo image is the only test runtime that retains
-//     /bin/sh so the probe can read its environment from inside.
+//   - Environment: dump the environment the runtime container's
+//     processes receive and assert no LLM-provider credential prefix
+//     appears. The cred-shell-echo image is the only test runtime that
+//     retains /bin/sh so the probe can read the environment from inside.
 //   - Filesystem: list /run/lenny, the §4.7 credential mount, and
 //     assert the credential file (when present) is group-readable
 //     under the lenny-cred-readers GID and unreadable by anyone
@@ -111,24 +111,45 @@ func scanCredentialPrefix(body string) string {
 	return ""
 }
 
+// credEnvDumpScript prints the environment of the shell it runs in, then
+// the environment of every process in the container whose environ the
+// calling UID can read. It exits 0 when its own environment was read,
+// because an unreadable environ, such as the non-dumpable supervisor's,
+// is expected and skipped.
+const credEnvDumpScript = `cat /proc/self/environ || exit 1
+for f in /proc/[0-9]*/environ; do cat "$f" 2>/dev/null; done
+exit 0`
+
 // spec: 12.9.8
 // diagnosis: a TESTING.md §12.9.8 credential-leakage probe dumps the runtime
 // container's environment and asserts no LLM-provider credential
 // prefix surfaces. The cred-shell-echo runtime retains /bin/sh so the
-// probe can read /proc/1/environ from inside; an adversarial dump that
+// probe can read the environment from inside; an adversarial dump that
 // returns a known credential prefix breaches §13.1 by exposing
 // upstream secrets through the agent pod's environment.
+//
+// PID 1 of the runtime container is the §4.7.11 supervisor, which marks
+// itself non-dumpable, so its /proc/1/environ is owned by root and is
+// unreadable at the agent UID by design. The probe therefore reads the
+// environment of the shell it execs, which the container runtime gives
+// the container's configured environment, and the environment of every
+// other process in the container whose environ the agent UID can read,
+// such as a runtime process the supervisor started for a session.
 func TestCredentialLeakageEnvironment(t *testing.T) {
 	c := kind.InstallLenny(t)
 	pod := findCredShellPod(t, c)
 
-	env, err := execContainer(t, c, pod, "runtime", "cat", "/proc/1/environ")
+	env, err := execContainer(t, c, pod, "runtime", "sh", "-c", credEnvDumpScript)
 	if err != nil {
-		t.Skipf("TESTING.md §12.9.8 (env): could not read /proc/1/environ from cred-shell-echo pod %s: %v\noutput:\n%s",
+		t.Skipf("blocked: TESTING.md §12.9.8 (env): could not read the runtime container environment from cred-shell-echo pod %s; the route back is a cred-shell-echo pod whose runtime container accepts exec: %v\noutput:\n%s",
 			pod, err, env)
 	}
+	if !strings.Contains(env, "PATH=") {
+		t.Fatalf("TESTING.md §12.9.8 (env): the environment dump from cred-shell-echo pod %s carries no PATH entry, "+
+			"so the probe did not read an environment; output:\n%s", pod, env)
+	}
 	if hit := scanCredentialPrefix(env); hit != "" {
-		t.Errorf("TESTING.md §12.9.8 (env) FAIL: cred-shell-echo runtime container exposes a credential matching prefix %q in /proc/1/environ; "+
+		t.Errorf("TESTING.md §12.9.8 (env) FAIL: cred-shell-echo runtime container exposes a credential matching prefix %q in a process environment; "+
 			"upstream LLM credentials MUST NOT appear in the agent pod's environment", hit)
 	}
 }

@@ -60,6 +60,7 @@ func TestReplayWorkspaceDerive(t *testing.T) {
 	seedTerminalSource(t, store)
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader: true,
+		Blobs:           snapshotBlobs(t, "sess_src", "snap"),
 		IDFunc:          func() string { return "sess_replay" },
 	})
 	rr := replayReq(t, srv.Handler(), sessionserver.ReplayRequest{
@@ -88,6 +89,7 @@ func TestReplayPromptHistoryCopiesTranscript(t *testing.T) {
 
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader: true,
+		Blobs:           snapshotBlobs(t, "sess_src", "snap"),
 		IDFunc:          func() string { return "sess_replay" },
 		Transcripts:     transcripts,
 	})

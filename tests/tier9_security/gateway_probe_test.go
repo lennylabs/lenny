@@ -178,7 +178,12 @@ func gatewayRequest(t *testing.T, c *kind.Cluster, pod, gatewayIP, method, path 
 		sb.WriteString("'")
 	}
 	sb.WriteString(" -w '\\nLENNYPROBE status=%{http_code} exit=%{exitcode}\\n' ")
-	sb.WriteString(url)
+	// Single-quote the URL so a query string's `&` reaches curl rather
+	// than backgrounding it in the shell.
+	if strings.Contains(url, "'") {
+		t.Fatalf("gatewayRequest URL contains a single quote, which the shell-quoting cannot carry: %q", url)
+	}
+	sb.WriteString("'" + url + "'")
 	sb.WriteString(" 2>&1")
 	out, _ := c.KubectlOut(
 		t,

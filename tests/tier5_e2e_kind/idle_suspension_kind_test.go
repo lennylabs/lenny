@@ -202,6 +202,49 @@ func coordinationRow(t *testing.T, c *kind.Cluster, pgIP, sessionID string) (int
 	return n, strings.TrimSpace(replica)
 }
 
+// gatewayPodForReplica returns the gateway pod, from a `kubectl get pods -o
+// name` listing, that the coordination-lease mirror's replica identifier
+// names. The mirror names a replica as its pod name and an instance suffix.
+// It returns "" when no listed pod matches.
+func gatewayPodForReplica(listing, replica string) string {
+	for _, name := range strings.Fields(listing) {
+		pod := strings.TrimPrefix(name, "pod/")
+		if strings.HasPrefix(replica, pod+"-") || replica == pod {
+			return pod
+		}
+	}
+	return ""
+}
+
+// terminateOnCoordinator terminates a session through a port-forward to the
+// gateway pod that currently coordinates it. The Kind install runs no
+// CH-HOLDERFORWARD listener (TEST-GAPS T-10.3.15), so a terminate that lands
+// on another replica answers 409 TARGET_NOT_READY and leaves the session,
+// and the pod it holds, in place. A failure is reported as a test error,
+// because a session left holding its pod makes a later test that asserts the
+// pool's pods are idle fail. spec: 10.1.2 (Coordinator Handoff Protocol).
+func terminateOnCoordinator(t *testing.T, c *kind.Cluster, pgIP, tenant, sessionID string) {
+	t.Helper()
+	_, replica := coordinationRow(t, c, pgIP, sessionID)
+	out, err := c.KubectlOut(t, "-n", "lenny-system", "get", "pods", "-l", "lenny.dev/component=gateway", "-o", "name")
+	if err != nil {
+		t.Errorf("terminate %s: list gateway pods: %v", sessionID, err)
+		return
+	}
+	pod := gatewayPodForReplica(out, replica)
+	if pod == "" {
+		t.Errorf("terminate %s: no gateway pod in %q matches the coordinator %q", sessionID, out, replica)
+		return
+	}
+	d := sessiondriver.NewKeptForTarget(t, "pod/"+pod, sessiondriver.Options{HTTPTimeout: 30 * time.Second})
+	defer d.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Terminate(ctx, tenant, sessionID); err != nil {
+		t.Errorf("terminate %s on its coordinator %s: %v", sessionID, pod, err)
+	}
+}
+
 // spec: 10.1.2 (Coordinator Handoff Protocol), 6.2 (Pod State Machine)
 // diagnosis: when the gateway replica coordinating an interrupt-suspended
 // session that holds its pod was killed, no surviving replica adopted the
@@ -241,14 +284,7 @@ func TestHeldPodSuspendedAdopterFencesThePod_spec_10_1_2(t *testing.T) {
 	if replica == "" {
 		t.Fatalf("the coordination-lease mirror names no coordinator for %s", sess.ID)
 	}
-	// The mirror names the replica as its pod name and an instance suffix.
-	gatewayPod := ""
-	for _, name := range strings.Fields(out) {
-		pod := strings.TrimPrefix(name, "pod/")
-		if strings.HasPrefix(replica, pod+"-") || replica == pod {
-			gatewayPod = pod
-		}
-	}
+	gatewayPod := gatewayPodForReplica(out, replica)
 	if gatewayPod == "" {
 		t.Fatalf("no gateway pod in %q matches the coordinator %q", out, replica)
 	}
@@ -267,6 +303,14 @@ func TestHeldPodSuspendedAdopterFencesThePod_spec_10_1_2(t *testing.T) {
 		}
 		time.Sleep(3 * time.Second)
 	}
+	// The terminate startIdleSession registered goes through d, whose
+	// port-forward died with the killed replica, so it fails silently and
+	// the suspended session keeps holding its recycle-pool pod until the
+	// extended-suspension release fires about 15 minutes later. A later
+	// test that asserts the pool's pods are idle (TestPodLifecycle) then
+	// sees this pod claimed. Cleanups run last-in first-out, so this one
+	// runs before d's.
+	t.Cleanup(func() { terminateOnCoordinator(t, c, pgIP, tenant, sess.ID) })
 	// The driver's port-forward ended with the killed replica.
 	d2 := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 30 * time.Second})
 	got, err := d2.GetSession(ctx, tenant, sess.ID)

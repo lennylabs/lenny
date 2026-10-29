@@ -138,18 +138,28 @@ func runReplayErasureRound(t *testing.T, rng *rand.Rand, replays int) {
 	}
 	erasureDelay := time.Duration(rng.Intn(2000)) * time.Microsecond
 
+	// The replays' request-time checks and their ID reservations ran
+	// before the flag, as the replay handler reserves the ID before it
+	// copies the source snapshot; only the inserts race the erasure.
+	rows := make([]sessionstore.Session, replays)
+	for i := range rows {
+		src := sources[picks[i]]
+		rows[i] = sessionstore.Session{
+			ID: uuid.NewString(), TenantID: tenant, UserID: src.UserID,
+			ParentSessionID: src.ID, RuntimeRef: "echo", State: session.StateCreated,
+		}
+		if err := s.sessions.Reserve(ctx, tenant, rows[i].UserID, rows[i].ID, false); err != nil {
+			t.Fatalf("reserve replay ID: %v", err)
+		}
+	}
+
 	var wg sync.WaitGroup
 	for i := 0; i < replays; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			src := sources[picks[i]]
-			// The replay's request-time checks admitted it before the flag;
-			// only its insert races the erasure.
-			replay := sessionstore.Session{
-				ID: uuid.NewString(), TenantID: tenant, UserID: src.UserID,
-				ParentSessionID: src.ID, RuntimeRef: "echo", State: session.StateCreated,
-			}
+			replay := rows[i]
 			time.Sleep(delays[i])
 			outcomes[i] = outcome{id: replay.ID, err: s.sessions.CreateWithTranscript(ctx, replay, src.ID)}
 		}(i)

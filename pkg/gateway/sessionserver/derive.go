@@ -326,7 +326,6 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 
 	now := s.clock()
 	derivedID := s.idFn()
-	derivedRef := derivedSnapshotRef(tenantID, derivedID)
 	// spec: §12.8 (Lifecycle fence and drain) — reserve derivedID for its
 	// owner before any object is copied under it. The reservation runs the
 	// creation fence over the tenant and the new owner. Every error return
@@ -334,62 +333,18 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	if !s.reserveDerivedSession(w, r, tenantID, userID, derivedID) {
 		return
 	}
-	// spec: §10.1.7 / §7.1 derive — when the parent's checkpoint is a
-	// chunked manifest, derive copies every chunk under the parent's
-	// chunk_object_key_prefix into the derived session's own prefix and
-	// writes a derived manifest row, so the derived session owns a resumable
-	// and downloadable checkpoint with no object shared with the parent. The
-	// handler falls through to the legacy single-snapshot copy when the
-	// parent has no chunked manifest.
-	if newRef, handled, cerr := s.deriveChunkedCheckpoint(r.Context(), source, derivedID, now); handled {
-		if cerr != nil {
-			if errors.Is(cerr, blobstore.ErrNotFound) {
-				s.undoDerivedWrites(r.Context(), tenantID, derivedID)
-				s.persistDeriveFailure(r.Context(), source, derivedID, target, "derive_snapshot_unavailable")
-				s.writeError(w, http.StatusServiceUnavailable, "DERIVE_SNAPSHOT_UNAVAILABLE",
-					"parent workspace checkpoint chunk is absent in storage",
-					map[string]any{"snapshotRef": source.WorkspaceSnapshot.Ref})
-				return
-			}
-			s.undoDerivedWrites(r.Context(), tenantID, derivedID)
-			s.persistDeriveFailure(r.Context(), source, derivedID, target, "workspace_copy_failed")
-			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-				"workspace checkpoint copy failed: "+cerr.Error(), nil)
-			return
-		}
-		derivedRef = newRef
-	} else if _, ok := s.blobs.(blobstore.Copier); ok && source.WorkspaceSnapshot != nil && source.WorkspaceSnapshot.Ref != "" {
-		// spec: §4.5 ll. 311 — legacy single-object copy for a checkpoint
-		// that predates the chunked model. The copy runs through the
-		// tenant-scoped boundary; otherwise the ref-rewrite behavior (tests
-		// + the minimal gateway) applies.
-		srcURI, dstURI, ok := parseDeriveURIs(source.WorkspaceSnapshot.Ref, derivedRef, tenantID, source.ID, derivedID)
-		if ok {
-			// spec: §12.5 ll. 295 — run the snapshot copy through the
-			// tenant-scoped boundary so both the parent (src) and derived
-			// (dst) URIs are validated against the caller tenant at the
-			// store interface rather than trusted from the constructed URI.
-			scoped := blobstore.NewTenantScoped(tenantID, s.blobs)
-			if err := scoped.Copy(srcURI, dstURI); err != nil && !errors.Is(err, blobstore.ErrConflict) {
-				// spec: §7.1 derive rule 2 — the copy was attempted, so
-				// under the opt-in this failure persists a terminal
-				// derive_failure audit row before the error is returned.
-				// F-15.1.14.
-				if errors.Is(err, blobstore.ErrNotFound) {
-					s.undoDerivedWrites(r.Context(), tenantID, derivedID)
-					s.persistDeriveFailure(r.Context(), source, derivedID, target, "derive_snapshot_unavailable")
-					s.writeError(w, http.StatusServiceUnavailable, "DERIVE_SNAPSHOT_UNAVAILABLE",
-						"parent workspace snapshot object is absent in storage",
-						map[string]any{"snapshotRef": source.WorkspaceSnapshot.Ref})
-					return
-				}
-				s.undoDerivedWrites(r.Context(), tenantID, derivedID)
-				s.persistDeriveFailure(r.Context(), source, derivedID, target, "workspace_copy_failed")
-				s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-					"workspace snapshot copy failed: "+err.Error(), nil)
-				return
-			}
-		}
+	// spec: §7.1 (Derive copy semantics) — derive always copies the
+	// parent's snapshot into the derived session's own prefix, and the
+	// stored ref names the copied object. A copy that cannot run fails the
+	// derive rather than storing a ref with no object behind it. Under the
+	// opt-in, a failed copy persists the derive rule 2 derive_failure row
+	// (F-15.1.14).
+	derivedRef, cerr := s.copyWorkspaceSnapshot(r.Context(), source, derivedID, now)
+	if cerr != nil {
+		s.undoDerivedWrites(r.Context(), tenantID, derivedID)
+		s.persistDeriveFailure(r.Context(), source, derivedID, target, snapshotCopyFailureReason(cerr))
+		s.writeSnapshotCopyError(w, cerr, source.WorkspaceSnapshot.Ref)
+		return
 	}
 	// spec: §7.1 — resolve the derived session's pool-derived
 	// isolation level once so executionMode + scrubPolicy are persisted
@@ -556,13 +511,12 @@ func derivedChunkPrefix(tenantID, derivedSessionID, derivedCheckpointID string) 
 }
 
 // copySnapshotRef returns a §7.1 derived-snapshot reference at the
-// derived session's path, preserving the §4.5 ll. 311
-// content-addressed hash so the derived session can identify the
-// inherited workspace bytes. The minimal gateway elides the MinIO
-// copy and simply rewrites the ref; production wires the §4.5 ll.
-// 311 byte-copy via blobstore.Copier (see Server.deriveCopier).
+// derived session's path, preserving the §4.5 content-addressed hash so
+// the derived session can identify the inherited workspace bytes. newRef
+// is the ref copyWorkspaceSnapshot returned, which names the object the
+// copy wrote.
 //
-// spec: §4.5 ll. 311; §7.1 derive copy semantics.
+// spec: §4.5 (Artifact Store); §7.1 (Derive copy semantics).
 func copySnapshotRef(src *sessionstore.WorkspaceSnapshot, newRef string) *sessionstore.WorkspaceSnapshot {
 	if src == nil {
 		return nil
@@ -575,22 +529,15 @@ func copySnapshotRef(src *sessionstore.WorkspaceSnapshot, newRef string) *sessio
 	}
 }
 
-// derivedSnapshotRef computes the §4.5 MinIO path for a derived
-// snapshot under the derived session's own object prefix.
-func derivedSnapshotRef(tenantID, sourceSessionID string) string {
-	return fmt.Sprintf("/%s/workspace/derived-from-%s", tenantID, sourceSessionID)
-}
-
 // parseDeriveURIs builds the blobstore.URI pair the §4.5 ll. 311
 // Copy call needs. The parent's `Ref` may carry either a stored
 // `lenny-blob://...` URI or the historical MinIO path; this helper
 // resolves whichever form is present. Returns ok=false when the
-// reference can't be normalised to a workspace URI (an in-memory
-// gateway with no real object storage uses the path form and falls
-// through to the legacy ref-rewrite behavior).
+// reference can't be normalised to a URI in the caller's tenant; the
+// caller then fails the copy closed.
 //
-// spec: §4.5 ll. 311; §7.1 derive copy semantics.
-func parseDeriveURIs(parentRef, derivedRef, tenantID, sourceSessionID, derivedSessionID string) (src, dst blobstore.URI, ok bool) {
+// spec: §4.5 (Artifact Store); §7.1 (Derive copy semantics).
+func parseDeriveURIs(parentRef, tenantID, sourceSessionID, derivedSessionID string) (src, dst blobstore.URI, ok bool) {
 	if strings.HasPrefix(parentRef, blobstore.Scheme+"://") {
 		parsed, err := blobstore.ParseURI(parentRef)
 		if err != nil {

@@ -7511,6 +7511,7 @@
       "title": "Audit Log Query API",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
+        "tests/tier9_security/audit_integrity_test.go",
         "tests/tier3_contract/ocsf_audit/ocsf_schema_conformance_test.go::TestAdminAuditEventsListItemsSatisfyPublishedBaseEventSchema",
         "pkg/gateway/externalapi/admin/audit_query_test.go",
         "pkg/gateway/externalapi/admin/audit_query_filter_test.go::TestListAuditEventsCorrelatesLennyOpsOperationID_spec_25_9_3707",

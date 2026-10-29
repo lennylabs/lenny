@@ -3367,6 +3367,14 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   identity (or keeping that endpoint per-request in v1), concurrent turns on one conversation, warm/cold
   equivalence, and coordination with the pinned-idle proposal. It follows 0105 and 0101, whose timers and
   forwarding it uses.
+- [ ] **Snapshot restore at bind (F-7.1.34 restore half, High, with F-7.1.33 and F-4.5.21)** (new proposal,
+  queued 2026-10-29 ahead of 0077 because a derived or replayed session still starts without its source's
+  workspace): the copy half landed in `3be845f0b`. The restore needs an adapter contract change, because
+  `FinalizeWorkspaceRequest` carries no restore field and §4.7.1 and §7.1 name no restore at finalize. The
+  smallest option is restore chunks on a non-mid-session finalize, filled from `resolveResumeChunks` when the
+  `created` row has `ParentWorkspaceRef`, restored before the plan's sources. The proposal also settles the
+  silent empty result when the manifest does not resolve, legacy single-object snapshots, and F-7.1.33's
+  collision order. It follows 0108 as the next change-proposal.
 - [ ] **Proposal 0077, re-derived** (Draft; owner decision 2026-10-28): pre-materialize workspace content on a
   warm pod, starting with massive git repositories, and extensible to other content later. The owner wants the
   capability built. Settled direction: a pool-level template names a repository and ref; the adapter fills a
@@ -3943,13 +3951,18 @@ F-10.1.36 was already tracked and keeps its routing. F-5.2.57 and F-7.2.43 named
 stages neither, so F-7.2.43 is queued here and F-5.2.57 is re-routed in the 0100 block above.
 
 - Direct-fix queue, unblocked by 0105's implementation, which edited the same files.
-  - [ ] **F-7.1.34** (High): no bind path restores a derived or replayed session's copied workspace snapshot,
+  - [ ] **F-7.1.34** (High; copy half merged `3be845f0b` 2026-10-29, restore half routed to the snapshot-restore
+    proposal queued ahead of 0077): no bind path restores a derived or replayed session's copied workspace snapshot,
     so the session starts without its source's workspace, and a replay copies no snapshot at all. §7.1 and
     §15.1 already state that the snapshot is the starting workspace. Copy the replay snapshot as derive does,
     carry `WorkspaceSnapshot` through every bind path that binds a `created` row, and restore it before the
     plan's sources. It lands after 0105's implementation, which edits the sessionserver start and finalize
     files, and ahead of F-7.1.33's proposal, which settles the order on a colliding path. Split from F-7.1.33
-    on 2026-10-29.
+    on 2026-10-29. Partly done on 2026-10-29 (branch `fix/f-7-1-34`, commit `1bb4580cb`): replay copies the
+    snapshot as derive does, and both fail closed instead of storing a ref with no object. The restore half
+    stays open and leaves this queue: it needs an adapter contract change (a chunk field on
+    `FinalizeWorkspaceRequest`) that no specification section states, so it moves to F-7.1.33's proposal
+    below. F-4.5.24 (Low, direct fix) was filed from the same work.
   - [ ] **F-11.3.45** (Low) and **F-11.3.46** (Low), one fix: every replica sends its own
     `session_expiring_soon` and `DEADLINE_APPROACHING` for a session, because the warning's dedup set is per
     process, and the warning is sent from the listing without a re-read, so it can follow a terminal write.
@@ -4092,7 +4105,12 @@ D2), which stays with the upload route proposal.
   - [ ] Its own proposal, after 0086's implementation: **F-7.1.33** (Medium, the specification does not state
     how a derived or replayed session's copied snapshot composes with the plan it binds at finalize). The
     missing restore was split out on 2026-10-29 as F-7.1.34, a direct fix in the 0105 direct-fix queue.
-    F-4.5.21 can ride with it.
+    F-4.5.21 can ride with it. F-7.1.34's restore half (High) joins this proposal: the specification names no
+    mechanism that restores the copied snapshot on the bind path of a `created` row, so the proposal states
+    one (the smallest is a `restore_chunks` field on `FinalizeWorkspaceRequest` filled from
+    `resolveResumeChunks`, restored before the plan's sources) along with the colliding-path order.
+  - [ ] Direct fix: **F-4.5.24** (Low, the memory and filesystem blob stores expire a copied checkpoint chunk
+    at once, because the chunk copy sets no TTL).
   - [ ] Its own proposal, after 0086's implementation: **F-4.5.22** (Low, an upload blob expires 7 days after
     it is stored, and the specification states no retention for a blob a bound plan names).
   - [ ] Its own proposal, or the next proposal that edits §28.5.3: **F-4.5.23** (Low, the emitted
@@ -4332,6 +4350,46 @@ Four findings were missing, and one entry is new:
 
 The unticked queue lines in this section were checked in the other direction, and each still names at least
 one open finding. F-29.3.3 is re-routed above, because its named owner, proposal 0101, landed without it.
+
+**Filed from the tier-9 skip-cause investigation (2026-10-29).** Branch `fix/t9-skip-causes` from
+`bfadb2007` fixed the `cross_tenant_read` OCSF mapping (F-11.7.26), the `cred-shell-echo` image build
+(T-4.9.28), the elicitation-integrity probes' missing `If-Match` (T-17.4.41), and the held-pod test cleanup
+that left a recycle-pool pod claimed under `TestPodLifecycle` (T-17.4.42). Four items stay open:
+
+- [ ] **F-5.1.25** (Medium): the §5.1 observed-level check reads the MCP handshake flag once, and a
+  recycled kept-process pod's re-armed MCP surface has cleared it, so a Standard runtime is rejected with
+  `RUNTIME_LEVEL_UNDERPERFORMS` depending on which pod a replica's first assignment lands on. TEST-GAPS
+  T-5.2.16 has the same signature. It needs the proposal pipeline. Owner: proposal 0084 (per-generation
+  intra-pod MCP nonce), or the recycling follow-up proposal in Phase 3.
+- [ ] **F-25.9.20** (Medium): one untranslatable audit row makes the §25.9 audit-events listing return 500,
+  including the `dead_lettered` filter §11.7 says keeps the row queryable. A small §11.7 or §25.9 proposal
+  states the query rendering (the class 2004 translation-failure receipt), then a direct fix renders it.
+- [ ] **TEST-GAPS T-12.9.13** (Low): reinstall the Kind cluster from a commit that carries aa23f1043 and
+  738bdc797, then rerun `TestCredentialLeakage*` and `TestTenantIsolationCrossStore`. Both fixes need new
+  images, and the shared cluster was left at `bfadb2007`.
+- [ ] **TEST-GAPS T-17.4.43** (Low): `TestPodLifecycle` fails when a pool replaces a listed pod during its
+  walk. A direct test fix.
+- [x] **T-17.4.44** (Low, test infrastructure, filed 2026-10-29 by the kind reinstall): a reinstall leaves the
+  Postgres runtime rows and existing warm pods on the old runtime image, because the bootstrap Job skips existing
+  runtimes and the pool does not roll a pod whose Runtime CR image changed. Fixed in `install.sh` on
+  `fix/t-17-4-44-t-25-9-16`. On an upgrade it runs a one-off `lenny-ctl bootstrap --force-update` Job derived
+  from the release's bootstrap hook. After applying the Runtime CRs it deletes the idle warm pods whose runtime
+  image differs from their CR, using a resourceVersion precondition. The pool not rolling pods is §10.5 behavior,
+  so no product gap was filed. The next reinstall confirms the fix.
+- [x] **T-25.9.16** (Low, filed 2026-10-29): tier-9 `TestAuditChainContinuity`, tier-5 `audit_test.go`, and tier-8
+  `TestAuditChainGapDetection` still call the removed `/v1/admin/audit-events/verify` route. Fixed on
+  `fix/t-17-4-44-t-25-9-16`. F-25.9.10 removed the route, and §25.9 carries the verdict in the list response, so
+  all three tests now read `chainIntegrityReport` and the per-row `unmapped.lenny_chain.integrity` through the
+  shared `tests/testinfra/auditquery` decoder. The tier-9 and tier-5 tests pass on `lenny-e2e`. The tier-8 test
+  was not run, because it writes to Postgres directly.
+- [ ] **F-25.9.21** (Medium, filed 2026-10-29 from T-25.9.16): the §25.9 per-row verdict classifies a deleted
+  interior audit row `gap_suspected` instead of `broken`, because `classifyRow` checks sequence density before
+  the `prev_hash` link. A removed row therefore never raises the broken-chain signal. Direct fix in
+  `pkg/audit/chain.go`.
+- [ ] **T-25.9.17** (Low): run the rewritten tier-8 `TestAuditChainGapDetection` once F-25.9.21 lands, on a
+  cluster whose Postgres the run may write to.
+- [ ] **T-17.4.45** (Low): the tier-8 and tier-9 `kubectl run --attach` psql helpers can read an empty result
+  when kubectl loses the pod's output. Apply the tier-5 end-marker retry. A direct test fix.
 
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 

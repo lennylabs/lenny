@@ -385,6 +385,15 @@ func (erroringUsers) Get(context.Context, string, string) (userstore.User, error
 func deriveFixture(t *testing.T, users ...userstore.User) *fenceFixture {
 	t.Helper()
 	f := newFenceFixture(t, users...)
+	f.seedSourceWithSnapshot(t)
+	return f
+}
+
+// seedSourceWithSnapshot seeds the terminal source session over f.mem with
+// its legacy snapshot object in f.blobs, so a derive or a replay copies an
+// object under the new session's ID.
+func (f *fenceFixture) seedSourceWithSnapshot(t *testing.T) {
+	t.Helper()
 	src := blobstore.URI{
 		TenantID: "acme", ObjectType: blobstore.ObjectTypeWorkspace,
 		SessionID: "sess_source", PartID: "snap", TTL: time.Hour,
@@ -393,7 +402,6 @@ func deriveFixture(t *testing.T, users ...userstore.User) *fenceFixture {
 		t.Fatalf("seed parent blob: %v", err)
 	}
 	newSourceSession(t, f.mem, func(s *sessionstore.Session) { s.WorkspaceSnapshot.Ref = src.String() })
-	return f
 }
 
 func derivedObject() blobstore.URI {
@@ -841,7 +849,7 @@ func replayFixture(t *testing.T) (*fenceFixture, *transcriptstore.Memory, http.H
 		memstore.WithTranscriptCopier(transcripts.CopySession),
 	)
 	f.store.Store = f.mem
-	newSourceSession(t, f.mem)
+	f.seedSourceWithSnapshot(t)
 	if err := transcripts.Append(context.Background(), "acme", "sess_source",
 		transcriptstore.Entry{Role: "user", Content: "original prompt"}); err != nil {
 		t.Fatalf("seed transcript: %v", err)
@@ -849,7 +857,7 @@ func replayFixture(t *testing.T) (*fenceFixture, *transcriptstore.Memory, http.H
 	h := sessionserver.New(f.store, sessionserver.Options{
 		DevTenantHeader: true,
 		IDFunc:          func() string { return "sess_replay" },
-		Transcripts:     transcripts, Users: f.users, Tenants: f.tenants,
+		Transcripts:     transcripts, Users: f.users, Tenants: f.tenants, Blobs: f.blobs,
 	}).Handler()
 	return f, transcripts, h
 }
@@ -857,7 +865,7 @@ func replayFixture(t *testing.T) (*fenceFixture, *transcriptstore.Memory, http.H
 // TestReplayCopiesTranscriptInInsert_spec_12_8 pins the replay insert: a
 // prompt_history replay inserts through CreateWithTranscript with the
 // source's ID and makes no transcript write after the insert, a
-// workspace_derive replay inserts through Create, a copy error answers
+// workspace_derive replay inserts through CreateReserved, a copy error answers
 // 500 with no row, and a replay whose owner's flag commits after
 // admission is refused at the insert and leaves no transcript entry.
 // spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 15.1 (REST API)
@@ -885,8 +893,8 @@ func TestReplayCopiesTranscriptInInsert_spec_12_8(t *testing.T) {
 		if rr.Code != http.StatusCreated {
 			t.Fatalf("status = %d; body %s", rr.Code, rr.Body.String())
 		}
-		if f.store.callsOf("Create") != 1 || f.store.callsOf("CreateWithTranscript") != 0 {
-			t.Fatalf("insert calls = %v, want one Create", f.store.calls)
+		if f.store.callsOf("CreateReserved") != 1 || f.store.callsOf("CreateWithTranscript") != 0 {
+			t.Fatalf("insert calls = %v, want one CreateReserved", f.store.calls)
 		}
 		if entries, _ := transcripts.Get(context.Background(), "acme", "sess_replay"); len(entries) != 0 {
 			t.Errorf("a workspace_derive replay copied the transcript: %v", entries)

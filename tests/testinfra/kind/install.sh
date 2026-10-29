@@ -192,10 +192,12 @@ lenny-runtime-echo-embedded Dockerfile BINARY=runtimes/echo-embedded
 # capabilities.preConnect; the §6.3 startup_latency benchmark drives its
 # pool as the SDK-warm arm against the pod-warm echo pool.
 lenny-runtime-preconnect-echo Dockerfile BINARY=runtimes/preconnect-echo
-# TESTING.md §12.9.8 / §9.2 tier-9 probe runtimes. cred-shell-echo retains
-# /bin/sh for the credential-leakage probes; elicitation-echo raises §9.2
-# elicitations through the platform MCP fabric.
-lenny-runtime-cred-shell-echo Dockerfile BINARY=runtimes/cred-shell-echo
+# TESTING.md §12.9.8 / §9.2 tier-9 probe runtimes. cred-shell-echo builds
+# from its own Alpine Dockerfile, which retains /bin/sh, cat, and ls for the
+# credential-leakage probes' kubectl exec; the root distroless Dockerfile
+# carries none of them. elicitation-echo raises §9.2 elicitations through the
+# platform MCP fabric.
+lenny-runtime-cred-shell-echo cmd/runtimes/cred-shell-echo/Dockerfile
 lenny-runtime-elicitation-echo Dockerfile BINARY=runtimes/elicitation-echo
 # §5.2 sessionId dispatch-loop reference runtime. Backs
 # concurrent-echo-pool (sessionPolicy.maxConcurrentSessions > 1), the
@@ -1256,7 +1258,7 @@ bootstrap:
     # this runtime's single stdin/stdout dispatch loop keyed on sessionId.
     # capabilities.injection.supported is true (§5.1) to match the Runtime
     # CRD in agent-workload.yaml: each slot's echocore loop answers every
-    # inbound `message` frame, so the tier-5 harness can send several
+    # inbound message frame, so the tier-5 harness can send several
     # messages on each slot session.
     - name: echo-runtime-concurrent
       type: agent
@@ -1286,7 +1288,7 @@ bootstrap:
     # Test-only heartbeat-silence fixture runtimes (see IMAGE_SPECS and
     # agent-workload.yaml). They back only the heartbeat-silence pools
     # below. capabilities.injection.supported is true (§5.1) to match the
-    # Runtime CRDs: the wrapped echo loops answer every inbound `message`
+    # Runtime CRDs: the wrapped echo loops answer every inbound message
     # frame, so a session can carry several messages.
     - name: heartbeat-silence-echo-runtime
       type: agent
@@ -1734,8 +1736,10 @@ EOF
 # and helm 4 without depending on the chart's server-side-apply posture.
 # The generated bootstrap overlay is passed last so its bootstrap.runtimes
 # and bootstrap.pools lists win over the e2e-values.yaml bootstrap block.
+RELEASE_UPGRADED=0
 if helm status lenny -n lenny-system --kube-context "${KCTX}" >/dev/null 2>&1; then
   log "Helm release lenny is already installed in lenny-system; upgrading"
+  RELEASE_UPGRADED=1
   helm upgrade lenny "${CHART_DIR}" \
     -n lenny-system \
     --kube-context "${KCTX}" \
@@ -1794,10 +1798,70 @@ log "waiting for the lenny-system control-plane rollouts to complete"
 for deploy in $(kc -n lenny-system get deploy -l app.kubernetes.io/name=lenny -o name); do
   kc -n lenny-system rollout status "${deploy}" --timeout=300s
 done
+# A pod of a replaced ReplicaSet can still be terminating after its rollout
+# reports complete. `kubectl wait` resolves the selector once, so such a pod
+# matches, is deleted during the wait, and fails it with NotFound. Retry the
+# wait so it resolves the selector again without the deleted pod.
 log "waiting for the lenny-system control-plane pods to become Ready"
-kc -n lenny-system wait --for=condition=Ready pod \
-  -l app.kubernetes.io/name=lenny,lenny.dev/component!=coredns \
-  --timeout=300s
+for attempt in 1 2 3; do
+  if kc -n lenny-system wait --for=condition=Ready pod \
+    -l app.kubernetes.io/name=lenny,lenny.dev/component!=coredns \
+    --timeout=300s; then
+    break
+  fi
+  if [ "${attempt}" -eq 3 ]; then
+    echo "error: the lenny-system control-plane pods did not become Ready" >&2
+    exit 1
+  fi
+  log "the Ready wait failed (attempt ${attempt}); retrying once the replaced pods are gone"
+  sleep 5
+done
+
+# reinstall-sync holds the reinstall helpers (tests/testinfra/kind/reinstall):
+# the force-update bootstrap Job below and the idle warm-pod roll in Step 10.
+REINSTALL_SYNC_DIR="$(mktemp -d)"
+REINSTALL_SYNC="${REINSTALL_SYNC_DIR}/reinstall-sync"
+(cd "${REPO_ROOT}" && go build -o "${REINSTALL_SYNC}" ./tests/testinfra/kind/reinstall/cmd/reinstall-sync)
+
+# ---------------------------------------------------------------------
+# Step 9b: on an upgrade, re-apply the bootstrap seed with --force-update.
+#
+# The chart's post-upgrade lenny-bootstrap Job uses the §17.6
+# skip-by-default upsert, so a runtime row that already exists keeps its
+# previous image when the regenerated overlay names a new digest, and the
+# Postgres runtime rows then disagree with the Runtime CRs Step 10
+# applies. §17.6 makes `lenny-ctl bootstrap --force-update` the operator
+# action that applies changed seed values to existing resources. This step
+# derives a one-off copy of the release's rendered bootstrap Job (same
+# image, ConfigMap, auth, and NetworkPolicy labels) with that flag added,
+# runs it, and fails the install when it fails, so a reinstall never leaves
+# a runtime row on the previous image. A fresh install creates every row
+# from the overlay, so the step runs only on an upgrade.
+# ---------------------------------------------------------------------
+if [ "${RELEASE_UPGRADED}" = "1" ]; then
+  FORCE_JOB=lenny-e2e-bootstrap-force-update
+  log "re-applying the bootstrap seed with --force-update (Job ${FORCE_JOB})"
+  kc -n lenny-system delete job "${FORCE_JOB}" --ignore-not-found --wait=true
+  helm get hooks lenny -n lenny-system --kube-context "${KCTX}" |
+    "${REINSTALL_SYNC}" bootstrap-job --name "${FORCE_JOB}" |
+    kc apply -f -
+  force_status=""
+  for _ in $(seq 1 120); do
+    force_status="$(kc -n lenny-system get job "${FORCE_JOB}" \
+      -o 'jsonpath={.status.succeeded}/{.status.failed}' 2>/dev/null || true)"
+    case "${force_status}" in
+      1/*) break ;;
+      */[1-9]*) break ;;
+    esac
+    sleep 5
+  done
+  kc -n lenny-system logs "job/${FORCE_JOB}" --tail=200 || true
+  if [ "${force_status%%/*}" != "1" ]; then
+    echo "error: the --force-update bootstrap Job ${FORCE_JOB} did not succeed (succeeded/failed: ${force_status})" >&2
+    exit 1
+  fi
+  kc -n lenny-system delete job "${FORCE_JOB}" --wait=false
+fi
 
 # ---------------------------------------------------------------------
 # Step 10: apply the agent Runtime CRs and wait for the warm pods.
@@ -1830,6 +1894,68 @@ sed \
   -e "s|__SUPERVISE_PROBE_IMAGE__|${SUPERVISE_PROBE_IMAGE}|g" \
   "${AGENT_WORKLOAD_MANIFEST}" | kc apply -f -
 
+# Roll the idle warm pods whose runtime image is no longer the one their
+# Runtime CR names. The warm pool builds each new pod from the CR's
+# spec.image but leaves an existing idle pod alone when the CR changes,
+# because §10.5 routes a production runtime image change through the pool
+# upgrade state machine rather than an in-place roll. A reinstall has no
+# such upgrade to run, so without this step a test can claim a pod built
+# from the previous image. reinstall-sync selects only pods whose state
+# label and owning Sandbox phase are both idle, and each pod is deleted
+# with its listed resourceVersion as a precondition, so a pod claimed after
+# the listing (the claim relabels it) is refused with 409 rather than
+# deleted. The Sandbox reconciler retires the Sandbox of a deleted idle pod
+# and the pool replaces it from the current CR. A pod created from the old
+# CR before the apply above can still be warming; the loop waits for it to
+# reach idle and rolls it on a later pass.
+log "rolling idle warm pods whose runtime image differs from their Runtime CR"
+roll_list() {
+  kc -n lenny-agents get pods -l lenny.dev/managed=true -o json >"${REINSTALL_SYNC_DIR}/pods.json"
+  kc get runtimes.lenny.dev -o json >"${REINSTALL_SYNC_DIR}/runtimes.json"
+  kc -n lenny-agents get sandboxes.lenny.dev -o json >"${REINSTALL_SYNC_DIR}/sandboxes.json"
+  "${REINSTALL_SYNC}" stale-pods "$@" \
+    --pods "${REINSTALL_SYNC_DIR}/pods.json" \
+    --runtimes "${REINSTALL_SYNC_DIR}/runtimes.json" \
+    --sandboxes "${REINSTALL_SYNC_DIR}/sandboxes.json"
+}
+rolled=0
+stale_idle=""
+stale_warming=""
+for _ in $(seq 1 24); do
+  stale_idle="$(roll_list)"
+  stale_warming="$(roll_list --warming)"
+  if [ -z "${stale_idle}" ] && [ -z "${stale_warming}" ]; then
+    break
+  fi
+  while IFS=$'\t' read -r pod rv runtime image want; do
+    [ -n "${pod}" ] || continue
+    printf '{"kind":"DeleteOptions","apiVersion":"v1","preconditions":{"resourceVersion":"%s"}}' "${rv}" \
+      >"${REINSTALL_SYNC_DIR}/delete-options.json"
+    if kc delete --raw "/api/v1/namespaces/lenny-agents/pods/${pod}" \
+      -f "${REINSTALL_SYNC_DIR}/delete-options.json" >/dev/null; then
+      log "deleted idle pod ${pod} (runtime ${runtime}: ${image} -> ${want})"
+      rolled=$((rolled + 1))
+    else
+      log "left pod ${pod} in place: it changed since it was listed"
+    fi
+  done <<<"${stale_idle}"
+  sleep 5
+done
+# Re-list once so a pass that deleted pods and then ran out of iterations
+# is judged on the pods that remain rather than the ones it deleted.
+stale_idle="$(roll_list)"
+stale_warming="$(roll_list --warming)"
+if [ -n "${stale_idle}" ]; then
+  printf '%s\n' "${stale_idle}" >&2
+  echo "error: idle warm pods still run a runtime image other than their Runtime CR's" >&2
+  exit 1
+fi
+if [ -n "${stale_warming}" ]; then
+  log "WARNING: warming pods on a previous runtime image did not reach idle; they are not rolled:"
+  printf '%s\n' "${stale_warming}"
+fi
+log "rolled ${rolled} idle warm pod(s) onto their Runtime CR image"
+
 # The pools reach Postgres only after the post-install lenny-bootstrap Job
 # runs, and the PoolScalingController then reconciles them into CRDs and
 # the warm pods are created and pass their readiness probe. That whole
@@ -1861,6 +1987,7 @@ if [ "${ready:-0}" -lt 2 ]; then
   exit 1
 fi
 log "${ready} warm agent pod(s) Ready"
+rm -rf "${REINSTALL_SYNC_DIR}"
 
 log "Lenny is installed on the ${CLUSTER} Kind cluster."
 log "Run the tier-5 e2e suite with:"
