@@ -6,7 +6,8 @@
 // recovers each level deepest-first, bounding each level by
 // maxLevelRecoverySeconds and the whole traversal by
 // maxTreeRecoverySeconds. A node not recovered within its budget is
-// marked terminally failed and the traversal continues upward.
+// recorded as failed and the traversal continues upward; the caller marks
+// it terminally failed only while it is still in resume_pending.
 //
 // The traversal is pure: the caller injects the per-node recovery
 // action and the clock, so the ordering and deadline rules are
@@ -54,8 +55,8 @@ type Outcome int
 const (
 	// OutcomeRecovered — the node was reattached successfully.
 	OutcomeRecovered Outcome = iota
-	// OutcomeFailed — the node could not be recovered and is marked
-	// terminally failed.
+	// OutcomeFailed — the node could not be recovered. The caller marks
+	// it terminally failed only while it is still in resume_pending.
 	OutcomeFailed
 )
 

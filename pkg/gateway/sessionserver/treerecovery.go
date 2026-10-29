@@ -116,11 +116,11 @@ func (s *Server) nodeNeedsRecovery(node sessionstore.Session) bool {
 
 // recoverDelegationTree runs the §8.10 bottom-up recovery for the tree
 // rooted at rootID. The resume driver's commit tail calls it after a node of
-// the tree resumed, so the tree's resume_pending descendants are driven and
-// brought to a known state (recovered, failed, or still running)
-// leaves-first. The traversal is bounded by maxTreeRecoverySeconds (default
-// 600s), so it runs in its own goroutine on the server-lifetime context,
-// which shutdown cancels.
+// the tree resumed, so the tree's resume_pending descendants are driven
+// leaves-first, and a descendant left unrecovered is failed only while it is
+// still in resume_pending. The traversal is bounded by
+// maxTreeRecoverySeconds (default 600s), so it runs in its own goroutine on
+// the server-lifetime context, which shutdown cancels.
 //
 // spec: §8.10.
 func (s *Server) recoverDelegationTree(_ context.Context, tenantID, rootID string) {
