@@ -14,7 +14,7 @@ The rule being implemented is SPEC-1, §7.1 **Derive restore semantics:**. The c
 
 ### CODE-1 · Proto field and adapter client carrier
 
-Targets: `schemas/lenny-adapter.proto` (messages `FinalizeWorkspaceRequest` and `NegotiateVersionResponse`), `pkg/proto/adapter/v1` (regenerated), `pkg/gateway/runtime/adapterclient/client.go` (`Client.FinalizeWorkspace`), and every caller of `Client.FinalizeWorkspace` (the Binder sites in CODE-3, and `pkg/gateway/sessionserver/upload_to_session.go`, which passes `nil`).
+Targets: `schemas/lenny-adapter.proto` (message `FinalizeWorkspaceRequest`), `pkg/proto/adapter/v1` (regenerated), `pkg/gateway/runtime/adapterclient/client.go` (`Client.FinalizeWorkspace`), and every caller of `Client.FinalizeWorkspace` (the Binder sites in CODE-3, and `pkg/gateway/sessionserver/upload_to_session.go`, which passes `nil`).
 
 Add to `FinalizeWorkspaceRequest`, after `bind_attempt = 6`:
 
@@ -28,7 +28,7 @@ Add to `FinalizeWorkspaceRequest`, after `bind_attempt = 6`:
 repeated ChunkGrant restore_chunks = 7;
 ```
 
-Add `workspaceRestore` to the platform-known set in the `NegotiateVersionResponse.capabilities` comment. Regenerate the Go bindings; do not hand-edit `*.pb.go`. Change the client signature to
+Regenerate the Go bindings; do not hand-edit `*.pb.go`. Change the client signature to
 
 ```go
 func (c *Client) FinalizeWorkspace(ctx context.Context, sessionID string, plan *adapterv1.WorkspacePlan, archive *adapterv1.ArchivePolicy, restore []ChunkGrant, bindAttempt string, midSession bool) ([]*adapterv1.WorkspacePlanWarning, error)
@@ -38,17 +38,16 @@ and set `RestoreChunks` with the existing Go-to-proto `ChunkGrant` conversion th
 
 ### CODE-2 · Adapter seeds the build tree from the restore, workspace root only
 
-Targets: `pkg/adapter/staging.go` (`FinalizeWorkspace`), `pkg/adapter/resume.go` (`restoreChunks`), `pkg/adapter/workspace/materialize.go` (`MaterializeWithPolicy`, `MaterializeOverlayWithPolicy`, `buildResolvedTree`), `pkg/adapter/server.go` (`advertisedCapabilities`).
+Targets: `pkg/adapter/staging.go` (`FinalizeWorkspace`), `pkg/adapter/resume.go` (`restoreChunks`), and `pkg/adapter/workspace/materialize.go` (`MaterializeWithPolicy`, `MaterializeOverlayWithPolicy`, `buildResolvedTree`).
 
 1. **Factor the fetch stream.** Extract from `restoreChunks` a `chunkStream` helper that fetches the grants in ascending index order through `CheckpointTransport.GetChunk` and concatenates the bodies into one reader. Keep the early `pr.Close()` behaviour so the producer goroutine is unblocked when the consumer stops reading. `restoreChunks` calls the helper and is otherwise unchanged.
 2. **Pairing refusal.** Beside `validateBindFields`, before `ensureSlotEntry`, answer a request with `mid_session` set and non-empty `restore_chunks` with `codes.InvalidArgument`, creating, resolving, and stamping nothing (SPEC-2 rule 1).
 3. **Seed hook.** Give `MaterializeWithPolicy` and `buildResolvedTree` a nil-able seed function. `buildResolvedTree` calls it after its `RemoveAll`/`MkdirAll` of `buildDir` and before the sources loop. Seeded paths are not entered in the `seen` collision map. `MaterializeOverlayWithPolicy` (the mid-session path) passes a nil seed.
-4. **Seed body and error mapping.** Run the seed as `workspace.ExtractTree([]workspace.NamedRoot{{Prefix: workspace.WorkspacePrefix, Root: buildDir}}, chunkStream(...))`. Passing only the workspace root makes `ExtractTree` skip the bundle's `/sessions` entries. A chunk fetch error (`CheckpointTransport.GetChunk`, or a body read error from the chunk stream) is wrapped as `errRestoreFetch` and maps to `codes.Unavailable` `"restore workspace snapshot: ..."` with `CategoryTransient`. Any other restore failure is a property of the stored snapshot and recurs with fresh grants, so it maps to `codes.FailedPrecondition` `"restore workspace snapshot: ..."` with `CategoryPermanent`. That covers gzip or tar corruption, an escaping entry path, a symlink whose target leaves `buildDir` or enters a forbidden mount (absolute targets into the source session's slot included), an unsupported entry type, and the `maxExtractBytes` cap. Source materialization errors keep `InvalidArgument`/`CategoryPermanent`. In every case `buildDir` is removed and `current` is left untouched.
-5. **Capability.** Declare `CapabilityWorkspaceRestore = "workspaceRestore"` in `pkg/adapter/server.go` and append it in `advertisedCapabilities` on every return path, including the one for a configured set that already holds preConnect, so every adapter built from this tree advertises it.
+4. **Seed body and error mapping.** Run the seed as `workspace.ExtractTree([]workspace.NamedRoot{{Prefix: workspace.WorkspacePrefix, Root: buildDir}}, chunkStream(...))`. Passing only the workspace root makes `ExtractTree` skip the bundle's `/sessions` entries. The seed function `FinalizeWorkspace` passes wraps every error it returns in the sentinel `errRestore`, and `buildResolvedTree` returns that error wrapped with `%w`. The restore failures are a chunk fetch error (`CheckpointTransport.GetChunk`), a chunk body read error, gzip or tar corruption, an escaping entry path, a symlink whose target leaves `buildDir` or enters a forbidden mount (absolute targets into the source session's slot included), an unsupported entry type, and the `maxExtractBytes` cap. `FinalizeWorkspace` answers an `errRestore` error with `codes.Unavailable` `"restore workspace snapshot: ..."` and span category `CategoryTransient`, in an arm ahead of its existing `InvalidArgument` arm, which source materialization errors keep. `SlotBindError.Reason` reads `codes.Unavailable` as transient at every stage, so the failure is an ordinary failed bind on the slot path (decision 13). In every case `buildDir` is removed and `current` is left untouched.
 
 ### CODE-3 · Binder calls the restore closure immediately before FinalizeWorkspace; demotion clause
 
-Targets: `pkg/gateway/podlifecycle/podsession/bindrequest.go` (`BindRequest`), `slotbinder.go` (`SlotBindRequest`, `connectSlot`, `bindReservedSlot`, `materializeSlot`, `materializeSlotStages`), `bindprepare.go` (`Prepare`), `sdkdemotion.go` (`RequiresDemotion`), `claimconnect.go` (`negotiated`), `poddial.go` (`dialAndNegotiate`).
+Targets: `pkg/gateway/podlifecycle/podsession/bindrequest.go` (`BindRequest`), `slotbinder.go` (`SlotBindRequest`, `materializeSlotStages`), `bindprepare.go` (`Prepare`), and `sdkdemotion.go` (`RequiresDemotion`).
 
 1. **Field.** Add to both request types, documented like `OnClaimed`:
 
@@ -62,29 +61,15 @@ Targets: `pkg/gateway/podlifecycle/podsession/bindrequest.go` (`BindRequest`), `
    RestoreChunks func(context.Context) ([]adapterclient.ChunkGrant, error)
    ```
 
-2. **Prepare and the capability gate.** Add `Capabilities []string` to `negotiated`, set from the handshake response in `dialAndNegotiate` and in `bindReservedSlot`. `connectSlot` returns `negotiated` in place of its `workspaceBase` result, and `materializeSlot` and `materializeSlotStages` take `negotiated` in place of their `workspaceBase` parameter. Add `errRestoreUnsupported` and this helper in `bindprepare.go`, and call it in `Prepare` immediately before the `FinalizeWorkspace` call:
+2. **Prepare.** Immediately before the `FinalizeWorkspace` call, invoke the closure when it is non-nil. No Binder signature changes; the closure travels on the request (decision 17 records why the pod's adapter is not gated).
 
    ```go
-   // restoreGrants mints one bind attempt's restore grants. It refuses before
-   // minting when the pod's handshake omitted adapter.CapabilityWorkspaceRestore:
-   // adapter images roll with pod replacement rather than with the gateway, and
-   // an adapter that predates restore_chunks drops the field and promotes a
-   // tree without the snapshot. spec: §7.1 (Derive restore semantics).
-   func restoreGrants(ctx context.Context, mint func(context.Context) ([]adapterclient.ChunkGrant, error), neg negotiated) ([]adapterclient.ChunkGrant, error) {
-       if mint == nil {
-           return nil, nil
+   var restore []adapterclient.ChunkGrant
+   if req.RestoreChunks != nil {
+       if restore, err = req.RestoreChunks(ctx); err != nil {
+           reclaim(err)
+           return nil, fmt.Errorf("podsession: resolve workspace restore on pod %s: %w", sandboxName, err)
        }
-       if !slices.Contains(neg.Capabilities, adapter.CapabilityWorkspaceRestore) {
-           return nil, errRestoreUnsupported
-       }
-       return mint(ctx)
-   }
-
-   // In Prepare:
-   restore, err := restoreGrants(ctx, req.RestoreChunks, neg)
-   if err != nil {
-       reclaim(err)
-       return nil, fmt.Errorf("podsession: resolve workspace restore on pod %s: %w", sandboxName, err)
    }
    // then: cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, restore, bindAttempt, false)
    ```
@@ -144,16 +129,36 @@ Targets: `pkg/gateway/sessionserver/snapshot_copy.go` (`copyWorkspaceSnapshot` a
 
 ## Staged schema, chart, and migration changes
 
-The proto change is part of CODE-1. No chart change and no migration.
+The proto change is part of CODE-1. The chart comment edit is part of DOC-1. No chart template change and no migration.
 
 ## Staged docs changes
 
-### DOC-1 · Client error pages
+### DOC-1 · Docs pages, chart comment, and tier-11 mirror check
 
-Targets: `docs/reference/error-catalog.md`, `docs/api/rest.md`. Do not cite § numbers in the docs text.
+Targets: `docs/reference/error-catalog.md`, `docs/api/rest.md`, `docs/getting-started/concepts.md`, `docs/operator-guide/security.md`, `docs/reference/glossary.md`, `docs/tutorials/session-derive-replay.md`, `charts/lenny/templates/agent-network-policies.yaml`, and `tests/tier11_docs/checkpoint_pipeline_consistency_test.go`. Do not cite § numbers in the docs text.
 
 - In the error-catalog `DERIVE_SNAPSHOT_UNAVAILABLE` row, replace "The referenced workspace snapshot object was not found in object storage." with "The source session's workspace snapshot was not found on derive or replay." The rest of the row is unchanged, and the row stays one physical line.
 - In the `POST /v1/sessions/{id}/replay` section of `docs/api/rest.md`, replace "**Key error codes:** `REPLAY_ON_LIVE_SESSION` (409), `INCOMPATIBLE_RUNTIME` (400)." with "**Key error codes:** `REPLAY_ON_LIVE_SESSION` (409), `INCOMPATIBLE_RUNTIME` (400), and `DERIVE_SNAPSHOT_UNAVAILABLE` (503)."
+- In the **Gateway-mediated file delivery** paragraph of `docs/getting-started/concepts.md` and in the `File delivery` row of the **Security Context** table of `docs/operator-guide/security.md`, replace "and on resume `GET`s them from" with "and on resume and at a derived or replayed session's first bind `GET`s them from". The security.md row stays one physical line. Both restate SPEC-5(b).
+- In the **Workspace Plan** entry of `docs/reference/glossary.md`, replace "Includes file sources (client uploads, derived session snapshots, runtime defaults), directory structure, and environment variable configuration." with "It holds a `sources` array of inline files, uploaded files and archives, directories, and Git clones to materialize, and a `setupCommands` array." A derived session's snapshot is not a plan source (SPEC-1), and `env` is a session-creation field outside the plan (§14.1 **Envelope terminology**).
+- In **Step 2: Derive a New Session** of `docs/tutorials/session-derive-replay.md`, replace "The derived session starts in `created` state with the source's workspace already staged. You can upload additional files, finalize, and start it:" with "The derived session starts in `created` state and holds a copy of the source's workspace. Files you upload are applied over that copy, so an uploaded file replaces the copied file at the same path. You can upload additional files, finalize, and start it:". "Already staged" names the staging delivery that SPEC-4 retires.
+- In the comment above `allow-pod-egress-objectstore` in `charts/lenny/templates/agent-network-policies.yaml`, replace
+  ```
+  object storage so the pod can PUT checkpoint chunks and GET them back on
+  resume against gateway-minted presigned capabilities. It renders from the
+  ```
+  with
+  ```
+  object storage so the pod can PUT checkpoint chunks and, on resume and at a
+  derived or replayed session's first bind, GET them against gateway-minted
+  presigned capabilities. It renders from the
+  ```
+  No template or chart test changes.
+- In `tests/tier11_docs/checkpoint_pipeline_consistency_test.go`, `TestCheckpointDocsMirrorsAgreeWithSpec131`:
+  - In the `// diagnosis:` comment, replace "and on resume GETs" / "them from, object storage" (two wrapped comment lines) with "and on resume and at" / "a derived or replayed session's first bind GETs them from, object storage", re-wrapping the comment as needed.
+  - Add `at a derived or replayed session's first bind` to the substrings required of the §13.1 `Checkpoint transfer` row.
+  - Assert the same substring in the security.md `File delivery` row and in the concepts.md **Gateway-mediated file delivery** prose. The architecture.md row names no phase and is not asserted.
+  - `// spec: 13.1` is unchanged.
 
 ### REC-1 · Records
 
@@ -172,16 +177,15 @@ Every test carries `// spec:` naming §7.1 (Derive restore semantics) plus the s
 
 - Order: a restored `a.txt` and `keep.txt`, a source writing `a.txt`. After promotion `a.txt` holds the source bytes, `keep.txt` the restored bytes, and no `workspace_plan_path_collision` warning is emitted. (§5.1, §14.1)
 - Workspace root only: a bundle carrying both workspace and `/sessions` entries. After promotion no `/sessions/{id}` path exists. This is the discriminating assertion for the restore root.
-- Failure table, one case per restore failure CODE-2 step 4 names (the fetch-error case failing after the first chunk has streamed), each asserting the code and category step 4 assigns, `current` byte-identical to its pre-call state, and `buildDir` removed.
+- Failure table, one case per restore failure CODE-2 step 4 names (the fetch-error case failing after the first chunk has streamed), each asserting the status step 4 assigns, `current` byte-identical to its pre-call state, and `buildDir` removed, plus one case of a source materialization failure on a request that carries a restore, asserting the status step 4 leaves to source errors.
 - Add a `FinalizeWorkspace mid-session with restore_chunks` case to `bindattempt.PairingRule` (`tests/testinfra/bindattempt/admission.go`), sending an empty `bind_attempt` so that only the restore pairing refuses it, and name the case in the function doc comment. It runs at tier 10 (`slot_bind_attempt_conformance_test.go`) and at tier 3 over gRPC (`bind_attempt_cascade_wire_test.go`). (§4.7.1 rule 1)
 - Empty `restore_chunks` on a non-mid-session request materializes exactly as today.
-- `NegotiateVersion` advertises `workspaceRestore` with and without an SDK-warm runtime wired, and with preConnect already configured.
 - `resume_test.go` regression after the `chunkStream` refactor, including a consumer that stops early (no goroutine leak under `-race`).
 
 **Binder, tier 1** (`pkg/gateway/podlifecycle/podsession/binder_phases_test.go`, `slotbinder_test.go`, `sdkwarm_bind_test.go`):
 
 - The closure is invoked after `stageWorkspace` and immediately before `FinalizeWorkspace`, once per attempt; a retried bind invokes it again. Assert call order with a recording fake, and, with a closure returning distinct grants per call, that each recorded `FinalizeWorkspaceRequest.restore_chunks` equals that attempt's closure result in index order, on both `Prepare` and `materializeSlotStages`, and is empty when `RestoreChunks` is nil.
-- Closure error, or a handshake that omits `workspaceRestore`: no `FinalizeWorkspace` is sent; `Prepare` reclaims; the slot path records `slotFailureWorkspaceFinalize` and returns `slotFailureWorkspacePrep`. With the token omitted the closure is not invoked, which is the assertion that tells the gate apart from a closure error, and a bind with a nil closure on the same pod proceeds.
+- Closure error: no `FinalizeWorkspace` is sent; `Prepare` reclaims; the slot path records `slotFailureWorkspaceFinalize` and returns `slotFailureWorkspacePrep`.
 - The closure is never invoked on claim-only or launch-only composition.
 - `RequiresDemotion` with a restore and non-empty blocking paths is `true`; with an empty list it is `false`; with `PreConnect` false it is `false`. `Prepare` and `launchPrepared` agree for the same row. (§6.1)
 - Exclusive-pool `Prepare` restore is pinned at this tier only until the create-time claim defect is fixed.
@@ -194,13 +198,13 @@ Every test carries `// spec:` naming §7.1 (Derive restore semantics) plus the s
 
 **Contract, tier 3:** `FinalizeWorkspaceRequest.restore_chunks` round-trips through `adapterclient` and the adapter server with grant URLs and headers intact, and in index order.
 
-**Integration, tier 4** (`tests/tier4_integration/checkpoint_workspace_derive_test.go`, beside `TestDeriveCopiesEveryChunkIntoDerivedPrefix` and `TestReplayCopiesEveryChunkIntoReplayedPrefix`; add `§7.1 Derive restore semantics` to the file header spec line): derive, replay `prompt_history`, and replay `workspace_derive` onto a concurrent-workspace pool using the in-process adapter harness `concurrent_workspace_test.go` uses, against MinIO. Assert the bound pod's `current` equals the source snapshot overlaid with the plan's sources, and that a deleted derived chunk answers `/start` with 422 `SLOT_FAILED` (`details.category` `transient`) after the §5.2 slot retry and leaves no started session. Tier 4 runs on MinIO because only `miniostore` implements `ListByPrefix`.
+**Integration, tier 4** (`tests/tier4_integration/checkpoint_workspace_derive_test.go`, beside `TestDeriveCopiesEveryChunkIntoDerivedPrefix` and `TestReplayCopiesEveryChunkIntoReplayedPrefix`; add `§7.1 Derive restore semantics` to the file header spec line): derive, replay `prompt_history`, and replay `workspace_derive` onto a concurrent-workspace pool using the in-process adapter harness `concurrent_workspace_test.go` uses, against MinIO. Assert the bound pod's `current` equals the source snapshot overlaid with the plan's sources, and that a derived chunk overwritten in place with the same number of bytes that are not a gzip stream answers `/start` with 422 `SLOT_FAILED` (`details.category` `transient`; see the summary's defects list on `error.category`) after the §5.2 slot retry and leaves no started session. The corrupted chunk passes the gateway's resolver, so this case pins CODE-2 step 4's status through the gateway's slot classification. Tier 4 runs on MinIO because only `miniostore` implements `ListByPrefix`.
 
 ## Edge cases and accepted failure modes
 
 - On s3, gcs, and azure backends the chunk resolver is nil, so a derived or replayed bind fails closed there. This is recorded as a defect, not fixed here.
 - On exclusive pools a derived or replayed session cannot start until the create-time claim defect is fixed, so the restore is observable end to end only on concurrent-workspace pools.
-- A large snapshot with many chunks must be fetched within one `checkpointCapabilityTTLSeconds` window per grant; a lapse fails the attempt as `Unavailable`, and the next attempt mints fresh grants.
+- A large snapshot with many chunks must be fetched within one `checkpointCapabilityTTLSeconds` window per grant; a lapse fails the attempt like any other restore failure (CODE-2 step 4), and a later attempt mints fresh grants.
 
 ## Files touched on application (non-spec)
 
@@ -210,14 +214,11 @@ Every test carries `// spec:` naming §7.1 (Derive restore semantics) plus the s
 - pkg/gateway/sessionserver/upload_to_session.go
 - pkg/adapter/staging.go
 - pkg/adapter/resume.go
-- pkg/adapter/server.go
 - pkg/adapter/workspace/materialize.go
 - pkg/gateway/podlifecycle/podsession/bindrequest.go
 - pkg/gateway/podlifecycle/podsession/bindprepare.go
 - pkg/gateway/podlifecycle/podsession/slotbinder.go
 - pkg/gateway/podlifecycle/podsession/sdkdemotion.go
-- pkg/gateway/podlifecycle/podsession/claimconnect.go
-- pkg/gateway/podlifecycle/podsession/poddial.go
 - pkg/gateway/sessionserver/bind_request.go
 - pkg/gateway/sessionserver/snapshot_restore.go (new)
 - pkg/gateway/sessionserver/snapshot_copy.go
@@ -227,5 +228,11 @@ Every test carries `// spec:` naming §7.1 (Derive restore semantics) plus the s
 - tests/spec-map.json
 - docs/reference/error-catalog.md
 - docs/api/rest.md
+- docs/getting-started/concepts.md
+- docs/operator-guide/security.md
+- docs/reference/glossary.md
+- docs/tutorials/session-derive-replay.md
+- charts/lenny/templates/agent-network-policies.yaml
+- tests/tier11_docs/checkpoint_pipeline_consistency_test.go
 - BUILD-GAPS.md
 - gateway-runtime-comms-remediation.md

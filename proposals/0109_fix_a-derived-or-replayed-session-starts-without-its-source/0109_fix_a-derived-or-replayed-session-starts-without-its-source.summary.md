@@ -11,7 +11,7 @@
 - The adapter seeds the build tree from the restore, workspace root only, before the plan's sources (CODE-2).
 - The Binder mints grants through a lazy closure immediately before each bind-time `FinalizeWorkspace`, and the two composers set that closure from the row (CODE-3, CODE-4).
 - Derive and replay copy chunked checkpoints only; the legacy single-object branch is deleted (CODE-5).
-- Tests across tiers 1, 3, 4, and 10, the BUILD-GAPS records, and the client error pages (TEST-1, REC-1, DOC-1).
+- Tests across tiers 1, 3, 4, and 10, the BUILD-GAPS records, and the docs pages, chart comment, and tier-11 docs check named in DOC-1 (TEST-1, REC-1, DOC-1).
 
 **Decisions.**
 
@@ -27,10 +27,11 @@
 10. A restore with a non-empty `sdkWarmBlockingPaths` list demotes a preConnect session, because restored paths cannot be enumerated before materialization and §6.1 makes SDK-warm safe only when no blocking file is injected.
 11. The `mid_session` + `restore_chunks` refusal extends §4.7.1 rule 1 rather than adding a paragraph.
 12. The legacy single-object copy is deleted because §7.1 defines only the chunked copy and no producer writes a single-object ref; its only live effect is misreporting a transient manifest `Get` error as 503. After deletion that error answers 500.
-13. Restore errors split by whether fresh grants cure them: fetch errors are transient, and properties of the stored snapshot are permanent (CODE-2 step 4).
+13. A restore failure is an ordinary failed bind (SPEC-1), so the adapter answers every restore failure with one status (CODE-2 step 4), and the bind path's existing retry and §5.2 health-ledger accounting apply unchanged. No restore failure is non-retryable. §5.2's non-retryable categories describe the request rather than a stored snapshot, and a failure that fresh grants cannot cure costs only the slot retry budget's extra attempts. §5.2 charges the ledger for a non-retryable failure too, so a permanent class would save only the retried attempts and their ledger charges, at the cost of a second status and a fetch-versus-content boundary inside one concatenated stream.
 14. No new error code: restore failure surfaces through `writePodClaimError`'s existing failed-bind branches.
 15. The §7.4 exemption for the restored snapshot lives in SPEC-1, and §7.4's universal "All archive extraction runs inside the gateway" sentence is scoped to client uploads and delegation file exports in the same step, so §19 carries only a pointer.
 16. F-4.5.24 is not a prerequisite: the memory and filesystem stores implement no Presigner, so no bind-time restore reads a copied chunk from them.
+17. `restore_chunks` has no adapter gate. Field 7 joins the adapter protocol at its current version, `"1.0.0"` (§15.4.2 `INIT` row), with no `NegotiateVersion` capability token and no version bump. An adapter built before field 7 would drop it and promote a tree without the snapshot. That skew needs a warm pod stamped with an earlier adapter image to outlive a gateway upgrade, and no release of the protocol has shipped, so it arises only in development clusters. The project rule against backward-compatibility shims excludes a check whose only target is such an adapter. Proposal 0081 added `bind_attempt` to the same request without a gate. An adapter that ignores the field does not conform to the SPEC-2 `FinalizeWorkspace` row.
 
 **Watch out for.**
 
@@ -39,7 +40,6 @@
 - Refactoring `restoreChunks` into `chunkStream` must keep the early `pr.Close()`, or the producer goroutine leaks when extraction stops early.
 - The composers also run on claim-only and launch-only paths. Minting there, or eagerly in the composer, lets the 30 s grants lapse; only the Binder invokes the closure.
 - `resolveResumeChunks` looks reusable and silently drops the restore; use `Resolver.Resolve` directly (CODE-4).
-- `extractSymlink` confines symlinks to `buildDir`, so a source session's absolute symlink into its own slot fails the restore deterministically. That is the permanent class, not a transient one.
 - On exclusive pools derive and replay never claim a pod at create, so a derived row cannot start there today. Tests that expect an exclusive-pool end-to-end restore will fail for that separate reason; the exclusive `Prepare` site is pinned at unit tier only.
 - Only `miniostore` implements `ListByPrefix`, so the resolver is nil on s3, gcs, and azure. Tier 4 must run on MinIO, and on those backends a derived bind now fails closed where it used to start empty.
 - `RequiresDemotion` must give the same answer from `Prepare` and from `launchPrepared`'s recomputation (CODE-3 step 4).
@@ -63,6 +63,7 @@
 - Minting grants in the composers or at each sessionserver bind site: see decision 5.
 - A `Binder.RestoreGrants` resolver dependency with a `RestoreCheckpointID` string on the request: it needs cmd wiring and a second resolver consumer, which the closure avoids.
 - A strict flag on `resolveResumeChunks`: it would make a dual-mode function.
+- A gate on the pod's adapter before minting, whether a `workspaceRestore` capability token in `NegotiateVersionResponse.capabilities` or a protocol bump to `1.1.0` with a selected-version check: see decision 17.
 - Keying the restore on `ParentWorkspaceRef` or on state `created`: see decision 3; the derive-failure row also sets `ParentWorkspaceRef`.
 - Restoring a legacy single-object snapshot as a one-grant set, or keeping the legacy copy: see decision 12.
 - A full-checkpoint, partial-manifest, or empty fallback for the bind-time restore: the derived manifest is the session's only manifest, so a fallback silently substitutes a different workspace.
@@ -81,11 +82,17 @@
 - Implementing `ListByPrefix` on s3, gcs, and azure: a pre-existing resume gap; filed below.
 - Per-chunk re-minting inside one FinalizeWorkspace, or a TTL scaled to chunk count: either adds protocol or changes a capability-model constant; every bind attempt already mints fresh grants.
 - Persisting grants or a restore marker on the row or in replica memory: grants expire, and the row's `Ref` plus the derived manifest let any replica rebuild the restore.
-- Editing `docs/reference/adapter-contract.md` and `docs/tutorials/session-derive-replay.md`: both stay true.
+- Editing `docs/reference/adapter-contract.md`, the materialization descriptions in `docs/getting-started/concepts.md` (**What happens at each state**, **Workspace lifecycle**), and `docs/reference/state-machines.md`: each says the plan's sources are materialized and promoted, which stays true for a derived session.
+- Editing the SDK-warm demotion pages (`docs/runtime-author-guide/lifecycle.md`, `docs/getting-started/concepts.md` **SDK-warm pools**, `docs/runtime-author-guide/publishing.md`, `docs/runtime-author-guide/runtime-configuration.md`, `docs/reference/configuration.md`, `docs/api/internal.md` **DemoteSDK**, and the glossary **SDK-warm** entry): each treats a file matching `sdkWarmBlockingPaths` as a sufficient condition for demotion or says an empty list disables it, and SPEC-7 adds a sufficient condition without changing either statement or the `DemoteSDK` contract.
 
 ## Open decisions for human to make
 
-None. The spec loop routed no decision to the human. Its remaining `OPEN` entries in the review log are pre-existing findings it scoped out or non-spec corrections owed to the non-spec loop (the docs pages the staged spec edits make stale), and neither kind needs a human answer.
+1. **Should the gateway check that the pod's adapter understands `restore_chunks` before sending a restore?** A derived or replayed session's first bind sends its starting snapshot to the pod's adapter in a new `FinalizeWorkspaceRequest` field, `restore_chunks` (field 7). An adapter built before that field exists drops it without error and promotes a workspace that holds only the plan's sources, so the session starts without its source workspace and nothing reports the failure. The options the loop recorded are these.
+   - Option A (staged now, the loop's default): no check. Field 7 joins adapter protocol version `"1.0.0"` with no capability token and no version bump (decision 17). The ground the loop gives is that no release of the protocol has shipped, so the skew needs a warm pod with an earlier adapter image to outlive a gateway upgrade, which happens only in development clusters, and `.claude/rules/code-best-practices.md` excludes backward-compatibility shims whose only target is such an adapter. Proposal 0081 added `bind_attempt` to the same request without a check.
+   - Option B: bump the adapter protocol to `1.1.0`, edit the §15.4.2 `INIT` row, record the selected version on the negotiated handshake result, and thread it through `connectSlot`, `materializeSlot`, and `materializeSlotStages` so the gateway refuses to restore onto an older adapter.
+   - Option C: restore the earlier `workspaceRestore` capability token, which the adapter advertises in `NegotiateVersionResponse.capabilities` and without which the gateway fails the bind before minting any grant.
+
+   The loop flagged this for the owner because Option A reverses a decision recorded earlier in the review (the token gate of Option C) and reopened the SPEC-1 failure sentence to remove the gate's clause. Option A requires no further edit. Option B or C reinstates a staged spec clause and code changes in CODE-1, CODE-2, and CODE-3.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -95,6 +102,7 @@ None. The spec loop routed no decision to the human. Its remaining `OPEN` entrie
 - **A derived or replayed session resumed before its own first checkpoint** restores the derived manifest through the Resume RPC, carrying the source's `/sessions` tree and dropping the plan's sources. It exists independent of this design and needs its own mechanism.
 - **F-4.5.24**: the memory and filesystem blob stores expire a copied chunk immediately because the copy sets no TTL. It stays a direct fix in `pkg/blobstore`; no bind-time restore reads from those stores.
 - **F-4.5.21**: §4.5 omits replay from the lineage writer list. It is a text correction the restore does not depend on.
+- **§5.2 puts the slot failure reason in `error.category`.** §5.2 **Client error on exhaustion** sets `error.category` to the failure reason and names `error.retryable` and `error.sessionId`, while §15.1 and §15.2.1 reserve `error.category` for the §16.3 categories. The gateway writes the reason, `retryable`, and `sessionId` under `error.details` (`writeSlotFailed`), and `SLOT_FAILED` has no §15.1 catalog row, no `errorclassify` entry, and no docs entry. It predates this proposal; the tier-4 restore test asserts the shipped `details.category`.
 
 ## Impacts on other proposals
 
@@ -109,14 +117,14 @@ None. The spec loop routed no decision to the human. Its remaining `OPEN` entrie
 - SPEC-2 — spec/04_system-components.md — §4.7.1 `FinalizeWorkspace` row and rule 1 pairing clause.
 - SPEC-3 — spec/05_runtime-registry-and-pool-model.md, spec/14_workspace-plan-schema.md — snapshot tier in the §5.1 materialization order and deletion of the §14.1 parenthetical copy.
 - SPEC-4 — spec/19_resolved-decisions.md — Decision 12 points at §7.1 instead of claiming `uploadArchive` delivery.
-- SPEC-5 — spec/13_security-model.md, spec/04_system-components.md — §13.1, §13.2.2, §13.2.3, §13.3, and §4.4.3 capability and egress edits for restore GETs at a derived or replayed session's first bind.
+- SPEC-5 — spec/13_security-model.md, spec/04_system-components.md — §13.2.3, §13.1, §13.2.2, §13.3, and §4.4.3 capability and egress edits for restore `GET`s at a derived or replayed session's first bind.
 - SPEC-6 — spec/28_communication-channels.md — §28.5.5 CH-OBJSTORE Messages, Preconditions, and failure-semantics edits, and the §28.8 CH-OBJSTORE row.
 - SPEC-7 — spec/06_warm-pod-model.md — §6.1 matching-contract sentence for a snapshot restore and `sdkWarmBlockingPaths`.
-- CODE-1 — schemas/lenny-adapter.proto, pkg/proto/adapter/v1, pkg/gateway/runtime/adapterclient/client.go — `restore_chunks = 7` and the client carrier.
-- CODE-2 — pkg/adapter/staging.go, pkg/adapter/resume.go, pkg/adapter/workspace/materialize.go, pkg/adapter/server.go — build-tree seed, pairing refusal, error mapping, and capability advertisement.
-- CODE-3 — pkg/gateway/podlifecycle/podsession/ — Binder restore closure call sites and demotion clause.
-- CODE-4 — pkg/gateway/sessionserver/bind_request.go, pkg/gateway/sessionserver/snapshot_restore.go — composer restore closure.
+- CODE-1 — schemas/lenny-adapter.proto, pkg/proto/adapter/v1, pkg/gateway/runtime/adapterclient/client.go, pkg/gateway/sessionserver/upload_to_session.go — `restore_chunks = 7`, the client carrier, and its callers.
+- CODE-2 — pkg/adapter/staging.go, pkg/adapter/resume.go, pkg/adapter/workspace/materialize.go — build-tree seed, pairing refusal, and error mapping.
+- CODE-3 — pkg/gateway/podlifecycle/podsession/bindrequest.go, slotbinder.go, bindprepare.go, sdkdemotion.go — Binder restore closure call sites and demotion clause.
+- CODE-4 — pkg/gateway/sessionserver/bind_request.go, pkg/gateway/sessionserver/snapshot_restore.go (new) — composer restore closure.
 - CODE-5 — pkg/gateway/sessionserver/snapshot_copy.go, pkg/gateway/sessionserver/derive.go, pkg/gateway/externalapi/openapi/openapi.json — chunked-only derive and replay copy.
-- TEST-1 — test files across pkg/adapter, pkg/gateway, and tests/tier4_integration — tests listed under the non-spec Testing section.
-- DOC-1 — docs/reference/error-catalog.md, docs/api/rest.md — `DERIVE_SNAPSHOT_UNAVAILABLE` catalog row and replay key error codes.
+- TEST-1 — test files across pkg/adapter, pkg/gateway, tests/testinfra/bindattempt, and tests/tier4_integration, and tests/spec-map.json — tests listed under the non-spec Testing section.
+- DOC-1 — docs/reference/error-catalog.md, docs/api/rest.md, docs/getting-started/concepts.md, docs/operator-guide/security.md, docs/reference/glossary.md, docs/tutorials/session-derive-replay.md, charts/lenny/templates/agent-network-policies.yaml, tests/tier11_docs/checkpoint_pipeline_consistency_test.go — client error pages, first-bind pod `GET` wording, glossary and tutorial derive wording, and the tier-11 mirror check.
 - REC-1 — BUILD-GAPS.md, gateway-runtime-comms-remediation.md — close findings and file unstaged defects.
