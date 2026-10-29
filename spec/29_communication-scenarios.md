@@ -225,12 +225,14 @@ state that the READY signal is one of them.
     ([§7.1](07_session-lifecycle.md#71-normal-flow)).
 
 14. `client` → `gateway`, no register entry, the client-to-gateway session REST surface. The client calls
-    `FinalizeWorkspace`, which invalidates the upload token on success
-    ([§7.1](07_session-lifecycle.md#71-normal-flow)).
+    `FinalizeWorkspace`, which binds the `WorkspacePlan` it carries when the session was created without
+    one ([§14.1](14_workspace-plan-schema.md#141-workspaceplan-schema-versioning) **Plan binding.**) and
+    invalidates the upload token on success ([§7.1](07_session-lifecycle.md#71-normal-flow)).
 
 15. `gateway` → `adapter`, no register entry, the internal control API
     ([§15.3](15_external-api-surface.md#153-internal-control-api-custom-protocol)). The gateway streams the
-    buffered content into the claimed pod with the `PrepareWorkspace` RPC, which accepts the streamed files
+    buffered uploads that the bound plan's sources name into the claimed pod with the `PrepareWorkspace`
+    RPC, which accepts the streamed files
     into the staging area ([§7.1](07_session-lifecycle.md#71-normal-flow),
     [§4.7](04_system-components.md#47-runtime-adapter)). The §28.3 channel register places the channels
     `CH-ATTACH`, `CH-CHECKPOINT`, `CH-FENCE`, `CH-BARRIER`, and `CH-PODHEALTH` on the gateway-to-pod
@@ -247,9 +249,9 @@ state that the READY signal is one of them.
 
 17. `gateway` → `adapter`, no register entry, the internal control API
     ([§15.3](15_external-api-surface.md#153-internal-control-api-custom-protocol)). The `RunSetup` RPC
-    carries the setup commands the gateway has validated against the runtime's `setupCommandPolicy`
-    ([§4.7](04_system-components.md#47-runtime-adapter),
-    [§7.5](07_session-lifecycle.md#75-setup-commands)).
+    carries the session's setup commands, checked as
+    [§7.5](07_session-lifecycle.md#75-setup-commands) **Command policy:** states
+    ([§4.7](04_system-components.md#47-runtime-adapter)).
 
 18. `agent pod`, `internal`. The setup commands run after workspace finalization and before session start,
     bounded in time and resources, fully logged, and with network access blocked by default through a
