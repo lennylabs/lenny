@@ -4321,6 +4321,25 @@ Four findings were missing, and one entry is new:
 The unticked queue lines in this section were checked in the other direction, and each still names at least
 one open finding. F-29.3.3 is re-routed above, because its named owner, proposal 0101, landed without it.
 
+**Filed from the tier-9 skip-cause investigation (2026-10-29).** Branch `fix/t9-skip-causes` from
+`bfadb2007` fixed the `cross_tenant_read` OCSF mapping (F-11.7.26), the `cred-shell-echo` image build
+(T-4.9.28), the elicitation-integrity probes' missing `If-Match` (T-17.4.41), and the held-pod test cleanup
+that left a recycle-pool pod claimed under `TestPodLifecycle` (T-17.4.42). Four items stay open:
+
+- [ ] **F-5.1.25** (Medium): the §5.1 observed-level check reads the MCP handshake flag once, and a
+  recycled kept-process pod's re-armed MCP surface has cleared it, so a Standard runtime is rejected with
+  `RUNTIME_LEVEL_UNDERPERFORMS` depending on which pod a replica's first assignment lands on. TEST-GAPS
+  T-5.2.16 has the same signature. It needs the proposal pipeline. Owner: proposal 0084 (per-generation
+  intra-pod MCP nonce), or the recycling follow-up proposal in Phase 3.
+- [ ] **F-25.9.20** (Medium): one untranslatable audit row makes the §25.9 audit-events listing return 500,
+  including the `dead_lettered` filter §11.7 says keeps the row queryable. A small §11.7 or §25.9 proposal
+  states the query rendering (the class 2004 translation-failure receipt), then a direct fix renders it.
+- [ ] **TEST-GAPS T-12.9.13** (Low): reinstall the Kind cluster from a commit that carries aa23f1043 and
+  738bdc797, then rerun `TestCredentialLeakage*` and `TestTenantIsolationCrossStore`. Both fixes need new
+  images, and the shared cluster was left at `bfadb2007`.
+- [ ] **TEST-GAPS T-17.4.43** (Low): `TestPodLifecycle` fails when a pool replaces a listed pod during its
+  walk. A direct test fix.
+
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 
 - [ ] **`type: mcp` supervision.** 0087 supervises only `type: agent` sidecar runtimes (D-SCOPE). A
