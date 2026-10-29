@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/delegation/recovery"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
@@ -84,21 +83,20 @@ func (a sessionNodeReattacher) ReattachNode(ctx context.Context, node sessionsto
 	}
 }
 
-// sessionTerminalMarker marks an unrecovered delegation node terminally
-// failed (or expired). It is the treerecovery.TerminalMarker the
-// traversal calls for a node that exhausts its recovery budget.
+// sessionTerminalMarker hands an unrecovered delegation node to
+// failSession. It is the treerecovery.TerminalMarker the traversal calls for
+// every node it could not recover, whatever the reason: the reason does not
+// choose the state, because §8.10 tree recovery writes only `failed`, and
+// only over a node still in resume_pending. A node whose individual
+// `maxResumeWindowSeconds` elapsed was already moved to
+// awaiting_client_action by the §6.2 resume_pending wall-clock cap, so
+// failSession's guard leaves it unchanged.
 //
-// Per §8.10 a node whose individual `maxResumeWindowSeconds`
-// elapsed transitions to `expired`; a node lost to a level or whole-tree
-// budget transitions to `failed`. Both are terminal and trigger the
-// node's cascade policy from that point (§8.10).
+// spec: §8.10 (Delegation Tree Recovery), §6.2 (resume_pending wall-clock
+// cap)
 type sessionTerminalMarker struct{ s *Server }
 
-func (a sessionTerminalMarker) FailNode(ctx context.Context, node sessionstore.Session, reason string) {
-	if reason == recovery.ReasonResumeWindow {
-		a.s.expireSession(ctx, node.TenantID, node.ID)
-		return
-	}
+func (a sessionTerminalMarker) FailNode(ctx context.Context, node sessionstore.Session, _ string) {
 	a.s.failSession(ctx, node.TenantID, node.ID)
 }
 
@@ -106,9 +104,10 @@ func (a sessionTerminalMarker) FailNode(ctx context.Context, node sessionstore.S
 // recovery: exactly the resume_pending nodes. A node is selected by its row
 // state rather than by its absence from this replica's pod registry, because
 // the registry holds only this replica's bindings and a node bound on a peer
-// is not orphaned. Tree recovery therefore never drives, fails, or expires a
-// node that is running, suspended, awaiting_client_action, or bound on a
-// peer replica.
+// is not orphaned. Tree recovery therefore never drives a node that is
+// running, suspended, awaiting_client_action, or bound on a peer replica,
+// and failSession fails a selected node only while its locked row is still
+// in resume_pending.
 //
 // spec: §8.10 (Delegation Tree Recovery).
 func (s *Server) nodeNeedsRecovery(node sessionstore.Session) bool {

@@ -239,6 +239,7 @@ var sessionStateMachineEdges = []state.Transition{
 	{From: state.ResumePending, To: state.Cancelled},
 	{From: state.ResumePending, To: state.Completed},
 	{From: state.ResumePending, To: state.Expired},
+	{From: state.ResumePending, To: state.Failed},
 	{From: state.Resuming, To: state.Running},
 	{From: state.Resuming, To: state.ResumePending},
 	{From: state.Resuming, To: state.AwaitingClientAction},
@@ -319,7 +320,6 @@ var anyStateWriters = []struct {
 	from   state.State
 	to     state.State
 }{
-	{"operator force-terminate", state.ResumePending, state.Failed},
 	{"operator force-terminate", state.AwaitingClientAction, state.Failed},
 	{"operator force-terminate", state.Resuming, state.Failed},
 	{"operator force-terminate", state.Finalizing, state.Failed},

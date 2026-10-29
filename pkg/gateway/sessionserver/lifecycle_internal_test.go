@@ -290,11 +290,12 @@ func TestNonTerminalRecordCompletedNoSSE_spec_7_2_2(t *testing.T) {
 }
 
 func TestFailSessionEmitsTerminalLifecycle_spec_7_2_2(t *testing.T) {
-	// spec: §7.2 — the start-path failure (failSession) is a terminal
-	// transition and emits the same SSE + audit signals as any terminal.
+	// spec: §7.2, §8.10 — tree recovery's failSession over a resume_pending
+	// node is a terminal transition and emits the same SSE + audit signals
+	// as any terminal.
 	store := memstore.New()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning,
+		ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateResumePending,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
