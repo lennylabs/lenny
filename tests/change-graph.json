@@ -448,6 +448,10 @@
     "tests/testinfra/kind/reinstall": {
       "unit": ["tests/testinfra/kind/reinstall/..."]
     },
+    "tests/testinfra/auditquery": {
+      "unit": ["tests/testinfra/auditquery/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/audit_test.go"]
+    },
     "tests/testinfra/supervisorbuild": {
       "static": ["tests/tier0_static/supervisor_binary_test.go"],
       "unit": ["tests/testinfra/supervisorbuild/...", "tests/tier1_unit/supervisor/..."]

@@ -4364,9 +4364,20 @@ that left a recycle-pool pod claimed under `TestPodLifecycle` (T-17.4.42). Four 
   from the release's bootstrap hook. After applying the Runtime CRs it deletes the idle warm pods whose runtime
   image differs from their CR, using a resourceVersion precondition. The pool not rolling pods is §10.5 behavior,
   so no product gap was filed. The next reinstall confirms the fix.
-- [ ] **T-25.9.16** (Low, filed 2026-10-29): tier-9 `TestAuditChainContinuity`, tier-5 `audit_test.go`, and tier-8
-  `TestAuditChainGapDetection` still call the removed `/v1/admin/audit-events/verify` route. Direct fix: rewrite
-  them against the current chain-verification surface.
+- [x] **T-25.9.16** (Low, filed 2026-10-29): tier-9 `TestAuditChainContinuity`, tier-5 `audit_test.go`, and tier-8
+  `TestAuditChainGapDetection` still call the removed `/v1/admin/audit-events/verify` route. Fixed on
+  `fix/t-17-4-44-t-25-9-16`. F-25.9.10 removed the route, and §25.9 carries the verdict in the list response, so
+  all three tests now read `chainIntegrityReport` and the per-row `unmapped.lenny_chain.integrity` through the
+  shared `tests/testinfra/auditquery` decoder. The tier-9 and tier-5 tests pass on `lenny-e2e`. The tier-8 test
+  was not run, because it writes to Postgres directly.
+- [ ] **F-25.9.21** (Medium, filed 2026-10-29 from T-25.9.16): the §25.9 per-row verdict classifies a deleted
+  interior audit row `gap_suspected` instead of `broken`, because `classifyRow` checks sequence density before
+  the `prev_hash` link. A removed row therefore never raises the broken-chain signal. Direct fix in
+  `pkg/audit/chain.go`.
+- [ ] **T-25.9.17** (Low): run the rewritten tier-8 `TestAuditChainGapDetection` once F-25.9.21 lands, on a
+  cluster whose Postgres the run may write to.
+- [ ] **T-17.4.45** (Low): the tier-8 and tier-9 `kubectl run --attach` psql helpers can read an empty result
+  when kubectl loses the pod's output. Apply the tier-5 end-marker retry. A direct test fix.
 
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 

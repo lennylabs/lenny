@@ -958,11 +958,6 @@ sites:
       site: 3
       call: Skip
       reason: 'precondition not met: could not resolve the lenny-postgres pod IP'
-    - path: tests/tier5_e2e_kind/audit_test.go
-      function: TestAuditPipeline
-      site: 4
-      call: Skipf
-      reason: 'precondition not met: GET /v1/admin/audit-events/verify is not reachable (curl exit %d, status %d, body %q); the §11.7 verifier endpoint is unavailable'
     - path: tests/tier5_e2e_kind/auth_modes_test.go
       function: TestStandardBearerGatesSessionCreation
       site: 1
@@ -1380,11 +1375,6 @@ sites:
       reason: 'precondition not met: %s Deployment is not Ready (%s); the §11.7 chain is Postgres-backed'
     - path: tests/tier8_chaos/audit_chain_test.go
       function: TestAuditChainGapDetection
-      site: 2
-      call: Skipf
-      reason: 'precondition not met: %s Deployment is not Ready (%s); the verifier is a gateway endpoint'
-    - path: tests/tier8_chaos/audit_chain_test.go
-      function: TestAuditChainGapDetection
       site: 3
       call: Skipf
       reason: 'precondition not met: could not resolve the lenny-postgres pod IP'
@@ -1395,11 +1385,6 @@ sites:
       reason: |-
         precondition not met: `lenny-migrate up` failed against the live Postgres (%v); cannot establish the audit_log schema for the gap-detection scenario
         %s
-    - path: tests/tier8_chaos/audit_chain_test.go
-      function: TestAuditChainGapDetection
-      site: 5
-      call: Skipf
-      reason: 'precondition not met: GET /v1/admin/audit-events/verify is not reachable (curl exit %d, status %d, body %q); the §11.7 verifier endpoint is unavailable'
     - path: tests/tier8_chaos/component_failure_test.go
       function: TestCertManagerOutage
       site: 1
@@ -1822,16 +1807,6 @@ sites:
       call: Skipf
       reason: 'precondition not met: %s is not Ready; the §11.7 chain is Postgres-backed'
     - path: tests/tier9_security/audit_integrity_test.go
-      function: TestAuditChainContinuity
-      site: 2
-      call: Skipf
-      reason: 'precondition not met: %s is not Ready; the verifier is a gateway endpoint'
-    - path: tests/tier9_security/audit_integrity_test.go
-      function: TestAuditChainContinuity
-      site: 3
-      call: Skipf
-      reason: 'precondition not met: GET /v1/admin/audit-events/verify is not reachable (curl exit %d, status %d, body %q); the §11.7 verifier endpoint is unavailable'
-    - path: tests/tier9_security/audit_integrity_test.go
       function: TestAuditSequenceMonotonicity
       site: 1
       call: Skipf
@@ -1876,14 +1851,6 @@ sites:
       site: 3
       call: Skipf
       reason: '§4.7 credential-file probe: no %s materialized under /run/lenny in cred-shell-echo pod %s (no active credential-bearing session)'
-    - path: tests/tier9_security/credential_leakage_test.go
-      function: TestCredentialLeakageEnvironment
-      site: 1
-      call: Skipf
-      reason: |-
-        TESTING.md §12.9.8 (env): could not read /proc/1/environ from cred-shell-echo pod %s: %v
-        output:
-        %s
     - path: tests/tier9_security/credential_leakage_test.go
       function: TestCredentialLeakageFilesystem
       site: 1
