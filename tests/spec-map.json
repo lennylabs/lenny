@@ -2753,6 +2753,7 @@
       "title": "Setup Commands",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
+        "tests/tier8_chaos/workspace_defaults_outage_test.go::TestWorkspaceDefaultsPostgresOutageFailsClosed_spec_14_1",
         "pkg/adapter/workspace/setup_test.go",
         "pkg/adapter/staging_test.go",
         "pkg/gateway/runtime/adapterclient/client_test.go",
@@ -5600,6 +5601,7 @@
       "title": "REST API",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier8_chaos/workspace_defaults_outage_test.go::TestWorkspaceDefaultsPostgresOutageFailsClosed_spec_14_1",
         "tests/tier3_contract/rest_sessions/start_starting_state_contract_test.go::TestStartLaunchFailureAnswersStartingFailedAndFailsTheSession_spec_15_1",
         "tests/tier3_contract/rest_sessions/start_starting_state_contract_test.go::TestSecondStartWhileTheFirstIsHeldAnswersStarting_spec_15_1",
         "tests/tier3_contract/rest_sessions/start_starting_state_contract_test.go::TestStartStreamsStartingBeforeRunning_spec_7_2",
