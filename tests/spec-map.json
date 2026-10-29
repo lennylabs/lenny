@@ -2952,7 +2952,12 @@
         "pkg/gateway/mcpfabric/delegationtree/leasecontrol/storebudget_test.go",
         "tests/tier3_contract/admin_extension_denial/clear_response_test.go",
         "tests/tier4_integration/lease_extension_any_replica_test.go::TestLeaseExtensionAnyReplica_spec_8_6",
-        "tests/tier8_chaos/lease_extension_postgres_outage_test.go::TestLeaseExtensionPostgresOutageFailsClosed_spec_8_6"
+        "tests/tier8_chaos/lease_extension_postgres_outage_test.go::TestLeaseExtensionPostgresOutageFailsClosed_spec_8_6",
+        "pkg/gateway/mcpfabric/delegationtree/leasecontrol/elicitation_coordinator_test.go",
+        "pkg/gateway/mcpfabric/delegationtree/leasecontrol/leaseelicit/leaseelicit_test.go",
+        "tests/tier3_contract/lease_elicit_dismissal/lease_elicit_dismissal_test.go::TestLeaseElicitRequesterTerminalReason_spec_8_6",
+        "tests/tier4_integration/lease_elicit_requester_terminal_test.go::TestLeaseElicitRequesterTerminalDismisses_spec_8_6",
+        "tests/tier7a_load_local/lease_elicit_driver_end_interleaving_test.go::TestLeaseElicitDriverEndInterleavings_spec_8_6"
       ],
       "packages": [
         "pkg/delegation/lease"
@@ -3137,6 +3142,7 @@
       "spec_file": "spec/09_mcp-integration.md",
       "tests": [
         "tests/tier2_component/stores/interactionstore_expire_raised_test.go::TestInteractionStoreExpireRaisedBy_spec_9_2",
+        "tests/tier4_integration/lease_elicit_requester_terminal_test.go::TestLeaseElicitRequesterTerminalDismisses_spec_8_6",
         "tests/tier2_component/migrations/prod_columns_test.go::TestPendingElicitationOriginIndexMigration_spec_9_2",
         "pkg/elicitation/elicitation_test.go::TestAllModesIsExhaustive",
         "pkg/elicitation/elicitation_test.go::TestModeOrderingStrict",

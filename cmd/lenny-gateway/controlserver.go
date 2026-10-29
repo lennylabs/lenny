@@ -16,6 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectortools"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol/leaseelicit"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
@@ -108,13 +109,13 @@ func (w *gatewayWiring) buildControlServer(
 	// the GatewayControl listener is enabled. F-8.6.2.
 	var leaseElicit leasecontrol.Elicitor
 	if *grpcAddr != "" {
-		leaseElicit = &leaseElicitor{
-			sessions:     w.sessions,
-			interactions: w.interactions,
-			publish:      func(s, et, d string, n time.Time) { w.eventBus.Publish(s, et, d, n) },
-			clock:        clockinject.Now,
-			idgen:        func() string { var b [16]byte; _, _ = rand.Read(b[:]); return fmt.Sprintf("lease-elicit-%x", b[:]) },
-		}
+		leaseElicit = leaseelicit.New(leaseelicit.Config{
+			Sessions:     w.sessions,
+			Interactions: w.interactions,
+			Publish:      func(s, et, d string, n time.Time) { w.eventBus.Publish(s, et, d, n) },
+			Clock:        clockinject.Now,
+			IDGen:        func() string { var b [16]byte; _, _ = rand.Read(b[:]); return fmt.Sprintf("lease-elicit-%x", b[:]) },
+		})
 	}
 	// §9.1 — the bridge forwards a type:agent runtime's
 	// intra-pod platform tool calls (over GatewayControl) to the same

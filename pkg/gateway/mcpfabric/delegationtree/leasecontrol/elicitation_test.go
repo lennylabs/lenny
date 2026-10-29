@@ -5,10 +5,12 @@ package leasecontrol_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 )
@@ -1199,5 +1201,180 @@ func TestExtendStatusString_spec_8_6_line_743(t *testing.T) {
 		if got := s.String(); got != want {
 			t.Errorf("ExtendStatus(%d).String() = %q, want %q", s, got, want)
 		}
+	}
+}
+
+// stepElicitor answers each Elicit call with the next scripted step. A
+// step's gate holds the call open until closed, and started receives the
+// requesting session of every call once it has begun.
+type stepElicitor struct {
+	mu      sync.Mutex
+	steps   []elicitStep
+	calls   int
+	started chan string
+}
+
+type elicitStep struct {
+	gate     chan struct{}
+	approved bool
+	err      error
+}
+
+func (e *stepElicitor) Elicit(ctx context.Context, _ /*tenantID*/, sessionID string) (bool, error) {
+	e.mu.Lock()
+	step := elicitStep{approved: true}
+	if e.calls < len(e.steps) {
+		step = e.steps[e.calls]
+	}
+	e.calls++
+	e.mu.Unlock()
+	e.started <- sessionID
+	if step.gate != nil {
+		select {
+		case <-step.gate:
+		case <-ctx.Done():
+			return false, ctx.Err()
+		}
+	}
+	return step.approved, step.err
+}
+
+func (e *stepElicitor) callCount() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.calls
+}
+
+// twoChildTree seeds root-1 in elicitation mode with delegated children
+// child-A and child-B, each under a parent with no lease ceiling, so both
+// have token headroom.
+func twoChildTree() *memBudget {
+	b := newMemBudget()
+	b.seedRoot("root-1", treeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     1_000_000,
+		DeploymentMax:      2_000_000,
+		ApprovalMode:       leasecontrol.ApprovalModeElicitation,
+	})
+	b.seedChild("child-A", "root-1", "acme")
+	b.seedChild("child-B", "root-1", "acme")
+	return b
+}
+
+// startDetachedExtension calls ExtendForBudget for sess with a short
+// in-path wait, so the call detaches and the episode fan-out delivers the
+// outcome through the reclaimer.
+func startDetachedExtension(svc *leasecontrol.Service, sess string) {
+	go func() {
+		waitCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+		_, _ = svc.ExtendForBudget(context.Background(), waitCtx, "acme", sess)
+	}()
+}
+
+func waitReclaimed(t *testing.T, r *fakeReclaimer, done func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for !done() {
+		if time.Now().After(deadline) {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			t.Fatalf("fan-out incomplete: raised=%v terminated=%v", r.raised, r.terminated)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// TestDriverEndRedrivesLiveWaiter_spec_8_6: the session whose request
+// opened the elicitation ends before the user decides, and the elicitor
+// reports ErrRequesterEnded. The batched request from a live session
+// re-enters the flow, opens a new elicitation, and is raised on approval
+// rather than terminated.
+//
+// spec: §8.6 (Elicitation mode flow)
+// diagnosis: child-B terminated means the driver's end was applied to the
+// batched request as its outcome instead of redriving it.
+func TestDriverEndRedrivesLiveWaiter_spec_8_6(t *testing.T) {
+	budgets := twoChildTree()
+	gate := make(chan struct{})
+	el := &stepElicitor{
+		started: make(chan string, 4),
+		steps: []elicitStep{
+			{gate: gate, err: fmt.Errorf("dismissed: %w", leasecontrol.ErrRequesterEnded)},
+			{approved: true},
+		},
+	}
+	svc, err := leasecontrol.NewService(leasecontrol.Options{Budgets: budgets, Elicitor: el, EpisodeContext: context.Background})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	reclaimer := newFakeReclaimer()
+	svc.SetReclaimer(reclaimer)
+
+	startDetachedExtension(svc, "child-A")
+	if got := <-el.started; got != "child-A" {
+		t.Fatalf("first elicitation for %s, want child-A", got)
+	}
+	startDetachedExtension(svc, "child-B")
+	time.Sleep(40 * time.Millisecond) // child-B batches onto the open elicitation.
+	budgets.SetState("child-A", session.StateCompleted)
+	close(gate)
+
+	select {
+	case got := <-el.started:
+		if got != "child-B" {
+			t.Fatalf("redrive elicitation for %s, want child-B", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no redrive elicitation: the batched request took the driver's end as its outcome")
+	}
+	waitReclaimed(t, reclaimer, func() bool {
+		reclaimer.mu.Lock()
+		defer reclaimer.mu.Unlock()
+		return reclaimer.raised["child-B"] > 0 || reclaimer.terminated["child-B"] > 0
+	})
+	if n := reclaimer.terminateCount("child-B"); n != 0 {
+		t.Errorf("child-B terminations = %d, want 0 (live waiter redriven)", n)
+	}
+	if n := el.callCount(); n != 2 {
+		t.Errorf("elicitations = %d, want 2", n)
+	}
+}
+
+// TestTerminalWaiterGetsNoGrant_spec_8_6: a batched request whose own
+// session ends before the user approves receives neither a grant nor a
+// RaiseBudget call, while the live driver is raised.
+//
+// spec: §8.6 (Elicitation mode flow), §8.6 (Extension state)
+// diagnosis: a raise for child-B means the grant path applies an approval
+// to a terminal session.
+func TestTerminalWaiterGetsNoGrant_spec_8_6(t *testing.T) {
+	budgets := twoChildTree()
+	gate := make(chan struct{})
+	el := &stepElicitor{started: make(chan string, 4), steps: []elicitStep{{gate: gate, approved: true}}}
+	svc, err := leasecontrol.NewService(leasecontrol.Options{Budgets: budgets, Elicitor: el, EpisodeContext: context.Background})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	reclaimer := newFakeReclaimer()
+	svc.SetReclaimer(reclaimer)
+
+	startDetachedExtension(svc, "child-A")
+	<-el.started
+	startDetachedExtension(svc, "child-B")
+	time.Sleep(40 * time.Millisecond)
+	budgets.SetState("child-B", session.StateCancelled)
+	close(gate)
+
+	waitReclaimed(t, reclaimer, func() bool {
+		reclaimer.mu.Lock()
+		defer reclaimer.mu.Unlock()
+		return reclaimer.raised["child-A"] > 0 && reclaimer.terminated["child-B"] > 0
+	})
+	reclaimer.mu.Lock()
+	defer reclaimer.mu.Unlock()
+	if d := reclaimer.raised["child-B"]; d != 0 {
+		t.Errorf("child-B raised by %d, want no RaiseBudget for a terminal session", d)
 	}
 }

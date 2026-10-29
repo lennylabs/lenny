@@ -173,6 +173,9 @@
     "tests/tier3_contract/holderforward/": {
       "contract": ["tests/tier3_contract/holderforward/..."]
     },
+    "tests/tier3_contract/lease_elicit_dismissal/": {
+      "contract": ["tests/tier3_contract/lease_elicit_dismissal/..."]
+    },
     "tests/tier3_contract/adapter_artifact_scope/": {
       "contract": ["tests/tier3_contract/adapter_artifact_scope/..."]
     },
@@ -1369,6 +1372,12 @@
       "integration": ["tests/tier4_integration/delegation_budget_keys_expired_test.go"],
       "load_local": ["tests/tier7a_load_local/budget_sentinel_interleaving_test.go"],
       "chaos": ["tests/tier8_chaos/delegation_budget_datastore_outage_test.go"]
+    },
+    "pkg/gateway/mcpfabric/delegationtree/leasecontrol/leaseelicit": {
+      "unit": ["pkg/gateway/mcpfabric/delegationtree/leasecontrol/...", "cmd/lenny-gateway/..."],
+      "contract": ["tests/tier3_contract/lease_elicit_dismissal/..."],
+      "integration": ["tests/tier4_integration/lease_elicit_requester_terminal_test.go"],
+      "load_local": ["tests/tier7a_load_local/lease_elicit_driver_end_interleaving_test.go"]
     },
     "pkg/gateway/mcpfabric/playground": {
       "unit": ["pkg/gateway/mcpfabric/playground/..."],
