@@ -3356,6 +3356,14 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   identity (or keeping that endpoint per-request in v1), concurrent turns on one conversation, warm/cold
   equivalence, and coordination with the pinned-idle proposal. It follows 0105 and 0101, whose timers and
   forwarding it uses.
+- [ ] **Snapshot restore at bind (F-7.1.34 restore half, High, with F-7.1.33 and F-4.5.21)** (new proposal,
+  queued 2026-10-29 ahead of 0077 because a derived or replayed session still starts without its source's
+  workspace): the copy half landed in `3be845f0b`. The restore needs an adapter contract change, because
+  `FinalizeWorkspaceRequest` carries no restore field and §4.7.1 and §7.1 name no restore at finalize. The
+  smallest option is restore chunks on a non-mid-session finalize, filled from `resolveResumeChunks` when the
+  `created` row has `ParentWorkspaceRef`, restored before the plan's sources. The proposal also settles the
+  silent empty result when the manifest does not resolve, legacy single-object snapshots, and F-7.1.33's
+  collision order. It follows 0108 as the next change-proposal.
 - [ ] **Proposal 0077, re-derived** (Draft; owner decision 2026-10-28): pre-materialize workspace content on a
   warm pod, starting with massive git repositories, and extensible to other content later. The owner wants the
   capability built. Settled direction: a pool-level template names a repository and ref; the adapter fills a
@@ -3932,7 +3940,8 @@ F-10.1.36 was already tracked and keeps its routing. F-5.2.57 and F-7.2.43 named
 stages neither, so F-7.2.43 is queued here and F-5.2.57 is re-routed in the 0100 block above.
 
 - Direct-fix queue, unblocked by 0105's implementation, which edited the same files.
-  - [ ] **F-7.1.34** (High): no bind path restores a derived or replayed session's copied workspace snapshot,
+  - [ ] **F-7.1.34** (High; copy half merged `3be845f0b` 2026-10-29, restore half routed to the snapshot-restore
+    proposal queued ahead of 0077): no bind path restores a derived or replayed session's copied workspace snapshot,
     so the session starts without its source's workspace, and a replay copies no snapshot at all. §7.1 and
     §15.1 already state that the snapshot is the starting workspace. Copy the replay snapshot as derive does,
     carry `WorkspaceSnapshot` through every bind path that binds a `created` row, and restore it before the
