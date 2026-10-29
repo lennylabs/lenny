@@ -31,7 +31,8 @@ func requireProcNet(t *testing.T) {
 // subprocess harnesses use to refuse a readiness probe another process
 // answered (TEST-GAPS T-17.4.38): a listener this process holds is the
 // process's, the same listener read for a child process is another's, a
-// released port has no holder, and a malformed address is unknown.
+// released port has no holder, a malformed address is unknown, and a
+// listener read for an exited process is another's (TEST-GAPS T-17.4.40).
 func TestHeldNamesTheHolderOfALoopbackListener(t *testing.T) {
 	requireProcNet(t)
 	ln := NewListener(t)
@@ -67,8 +68,16 @@ func TestHeldNamesTheHolderOfALoopbackListener(t *testing.T) {
 			t.Errorf("Held(self, %q) = %v, want unknown", bad, got)
 		}
 	}
-	if got := Held(1<<30, addr); got != HolderUnknown {
-		t.Errorf("Held(missing pid, listener) = %v, want unknown", got)
+	// A pid with no /proc entry has exited, so a listener on the port is
+	// another process's and the exited process is not ready on it.
+	if got := Held(1<<30, addr); got != HolderOther {
+		t.Errorf("Held(missing pid, listener) = %v, want other", got)
+	}
+	if got := Ready(1<<30, addr); got {
+		t.Errorf("Ready(missing pid, listener) = true, want false")
+	}
+	if got := Held(1<<30, free); got != HolderNone {
+		t.Errorf("Held(missing pid, released port) = %v, want none", got)
 	}
 }
 

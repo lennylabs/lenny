@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -107,7 +108,9 @@ func (h Holder) String() string {
 // because it also refuses a bind of the loopback address on that port. It
 // reads /proc/net/tcp for the listening sockets' inodes and /proc/<pid>/fd for
 // the process's sockets, and returns HolderUnknown when either cannot be read,
-// so a caller on a platform without /proc falls back to its probe alone.
+// so a caller on a platform without /proc falls back to its probe alone. A
+// process whose /proc/<pid>/fd no longer exists has exited and holds nothing,
+// so a listener on the port is another process's.
 func Held(pid int, addr string) Holder {
 	_, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -125,6 +128,14 @@ func Held(pid int, addr string) Holder {
 		return HolderNone
 	}
 	owned, err := socketInodes(pid)
+	if errors.Is(err, fs.ErrNotExist) {
+		// /proc/net/tcp was readable, so the platform exposes ownership, and
+		// a missing /proc/<pid>/fd means the process has exited. A process
+		// that exits on a bind refusal is reaped while its readiness probe
+		// still runs, and the listener on the port then belongs to another
+		// process (TEST-GAPS T-17.4.40).
+		return HolderOther
+	}
 	if err != nil {
 		return HolderUnknown
 	}
