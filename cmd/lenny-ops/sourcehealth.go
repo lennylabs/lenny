@@ -85,6 +85,11 @@ func (p *sourceHealthProbe) run(ctx context.Context, interval time.Duration, red
 	prevRedisUp := p.redisUp.Load()
 	refresh := func() {
 		nowUp := probeRedis(ctx, redisCli)
+		if ctx.Err() != nil {
+			// The loop is stopping. A PING its cancellation aborted observed
+			// no outage, so it reports no state and fires no edge.
+			return
+		}
 		p.redisUp.Store(nowUp)
 		p.gatewayUp.Store(probeGateway(ctx, gwClient))
 		switch {
