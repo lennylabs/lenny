@@ -46278,6 +46278,14 @@ Implementation: `grep -rn "ops_event\\.subscription_created\|ops_event\\.subscri
 
 **Resolution:** `eventsubscription.AuditSink` + `Service.SetAuditSink` emit `ops_event.subscription_created`/`_updated`/`_deleted`/`_secret_rotated` on every CRUD/rotate op, carrying the secret fingerprint (never the secret). Deps-level mapping onto the §16.7 chain follows the logged-until-audit-store-client posture of drift/backup/escalation. Closed by f9936930.
 
+
+### - [x] F-25.5.21 — The `lenny-ops` source-health loop records a cancelled refresh as a Redis outage. [Low] — CLOSED
+
+Spec: §25.5, the source-health probe and its recovery-edge flush.
+
+Implementation: when the source-health loop's context ended during a refresh, the aborted PING counted as a Redis outage, so every shutdown fired a down edge and opened the recovery-flush outage window. `TestSourceHealthProbeFlushesOnTheRecoveryEdgeOnly_spec_25_5` failed 8 of 8 runs with two down edges where the spec expects one. Filed 2026-10-29 by proposal 0107's finalization, which found it while running the component tier.
+
+**Resolution (2026-10-29):** `cmd/lenny-ops/sourcehealth.go` records no state and fires no edge for a refresh whose context has ended (commit `e0873e318`, merged in `15dcf2179`). The test passes 10 of 10 and the package's component tests pass.
 ### Summary
 
 The §25.5 operational event stream surface is structurally absent in v1. The Redis `ops:events:stream` is neither written nor read; the SSE and polling endpoints are not registered; the cursor model with source-kind translation, the gateway-and-`lenny-ops` co-emission model, the secret hashing/rotation/fingerprinting lifecycle, the SSRF / DNS-rebinding protections on the webhook path, and the tenant-isolation enforcement do not exist. The CRUD surface lives but accepts plaintext secrets and stores them, lacks `PUT` and `/deliveries`, and uses non-canonical error codes. The `ops_event_subscriptions` schema is missing nearly every field that anchors §25.5's security and audit story (`secret_hash`, `secret_fingerprint`, `created_by`, `created_by_tenant_id`, `tenant_filter`, `generation`, `updated_at`, `active`), and `ops_event_deliveries` is not created at all. The webhook delivery worker has the correct retry/backoff policy and the correct HTTP headers, but it runs against an empty event source, an empty subscription source, and a nil delivery recorder in `cmd/lenny-ops/main.go`. None of the §25.5 metrics is registered. The four-case degradation matrix (Redis-down, Gateway-down, Redis+Gateway, Postgres-down) is uncoded. Of the 20 findings, 10 are High (correctness/security gaps that violate normative MUSTs), 8 are Medium (capability unimplemented), 2 are Low.
