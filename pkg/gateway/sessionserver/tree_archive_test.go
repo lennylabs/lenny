@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -304,10 +305,13 @@ func TestOrphanCapCountsChildrenOfTerminalMidTreeSession_spec_8_10(t *testing.T)
 // orphanCapAuditSink captures session-lifecycle audit rows so the
 // §8.10 fallback case can assert on the emitted event.
 type orphanCapAuditSink struct {
+	mu     sync.Mutex
 	events []sessionserver.SessionLifecycleEvent
 }
 
 func (s *orphanCapAuditSink) EmitSessionLifecycle(_ context.Context, ev sessionserver.SessionLifecycleEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.events = append(s.events, ev)
 }
 

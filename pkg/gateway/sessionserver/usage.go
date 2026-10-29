@@ -724,40 +724,26 @@ func (s *Server) emitChildFailed(ctx context.Context, sess sessionstore.Session)
 // cascadeToChildren applies the §8.10 cascadeOnFailure policy when
 // sess reaches a terminal state. Under the default `cancel_all` policy
 // the gateway cancels every descendant; `await_completion` and
-// `detach` leave the children running. A `detach` cascade is capped
-// per §8.10: when the tenant is already over maxOrphanTasksPerTenant
-// the gateway falls back to `cancel_all` so orphans cannot accumulate
-// without bound. Each cancelled descendant is itself governed by its
-// own cascade policy, so a `detach` child shields its own subtree. Each
-// cancel is a hook-path terminal write whose post-terminal hook releases the
-// descendant's pod. Best-effort: a failure never fails the transition that
-// triggered it.
+// `detach` leave the children running. Every node's policy, the top
+// session's and each cancelled descendant's, is resolved through
+// effectiveCascade, which applies the §8.10 maxOrphanTasksPerTenant
+// fallback, so a `detach` descendant shields its own subtree only while the
+// tenant is within the cap. Each cancel is a hook-path terminal write whose
+// post-terminal hook releases the descendant's pod. Best-effort: a failure
+// never fails the transition that triggered it.
 func (s *Server) cascadeToChildren(ctx context.Context, sess sessionstore.Session) {
-	originalPolicy := sess.CascadeOnFailure.Resolve()
-	policy := originalPolicy
-	orphanCapFallback := false
-	if policy == session.CascadeDetach && s.detachExceedsOrphanCap(ctx, sess.TenantID) {
-		// spec: §8.10 — maxOrphanTasksPerTenant fallback. Emit
-		// the §16.7 `session.cascade_applied` audit row, a structured log
-		// line, and a §7.2 status_change on the parent's SSE event stream
-		// so the orchestrator that configured `detach` sees the override
-		// reason. F-8.10.8.
-		policy = session.CascadeCancelAll
-		orphanCapFallback = true
-		s.recordCascadeApplied(ctx, sess, originalPolicy, policy, "orphan_cap_fallback")
-	}
-	if policy != session.CascadeCancelAll {
+	if s.effectiveCascade(ctx, sess) != session.CascadeCancelAll {
 		return
 	}
-	_ = orphanCapFallback // referenced via recordCascadeApplied above
 	// spec: §12.8 (Lifecycle fence and drain), §8.10 — breadth-first, one
 	// level at a time. Each level's children come from a listing of the
 	// primary taken after the parent's terminal commit, or after the
 	// previous level's terminal writes returned, so a child the creation
 	// fence admitted before its parent's terminal write is never missed. A
 	// node's children are queued only when the node's own terminal write
-	// applied and its own policy is `cancel_all`: a `detach` node keeps its
-	// descendants alive.
+	// applied and its effective policy, evaluated on the row that write
+	// committed, is `cancel_all`: a `detach` node within the orphan cap keeps
+	// its descendants alive.
 	seen := map[string]bool{sess.ID: true}
 	level := []string{sess.ID}
 	for len(level) > 0 {
@@ -772,7 +758,8 @@ func (s *Server) cascadeToChildren(ctx context.Context, sess sessionstore.Sessio
 					continue
 				}
 				seen[cur.ID] = true
-				if s.cancelCascadedChild(ctx, sess.TenantID, cur) && cur.CascadeOnFailure.Resolve() == session.CascadeCancelAll {
+				updated, applied := s.cancelCascadedChild(ctx, sess.TenantID, cur)
+				if applied && s.effectiveCascade(ctx, updated) == session.CascadeCancelAll {
 					next = append(next, cur.ID)
 				}
 			}
@@ -781,9 +768,29 @@ func (s *Server) cascadeToChildren(ctx context.Context, sess sessionstore.Sessio
 	}
 }
 
+// effectiveCascade resolves sess's cascadeOnFailure policy with the §8.10
+// maxOrphanTasksPerTenant fallback applied: a `detach` session whose tenant
+// is over the cap cascades as `cancel_all`, and the override is recorded as
+// a `session.cascade_applied` audit row with reason `orphan_cap_fallback` and a
+// structured log line, so the orchestrator that configured `detach` sees why.
+// The caller passes a row that is already terminal, so that session's own live children count
+// as orphans.
+//
+// spec: §8.10 (maxOrphanTasksPerTenant fallback); §11.7, §16.7
+// session.cascade_applied.
+func (s *Server) effectiveCascade(ctx context.Context, sess sessionstore.Session) session.CascadePolicy {
+	policy := sess.CascadeOnFailure.Resolve()
+	if policy != session.CascadeDetach || !s.detachExceedsOrphanCap(ctx, sess.TenantID) {
+		return policy
+	}
+	s.recordCascadeApplied(ctx, sess, policy, session.CascadeCancelAll, "orphan_cap_fallback")
+	return session.CascadeCancelAll
+}
+
 // cancelCascadedChild makes the hook-path terminal write for one descendant
-// the cascade reached and reports whether it applied. An already-terminal
-// row is skipped: its own cascade ran when it settled.
+// the cascade reached and returns the row that write committed and whether
+// it applied. An already-terminal row is skipped: its own cascade ran when it
+// settled.
 //
 // spec: §7.2, §8.10 — the claim opens before the Update, the write applies
 // only over a non-terminal locked row and records the Terminated fact, and
@@ -791,23 +798,23 @@ func (s *Server) cascadeToChildren(ctx context.Context, sess sessionstore.Sessio
 // archive, and the pod release with the cancelled disposition) runs on a
 // goroutine on a detached context, so one descendant's seal window does not
 // delay the next. A descendant another writer already ended reports false,
-// so none of its children are queued.
-func (s *Server) cancelCascadedChild(ctx context.Context, tenantID string, cur sessionstore.Session) bool {
+// so its policy is not evaluated and none of its children are queued.
+func (s *Server) cancelCascadedChild(ctx context.Context, tenantID string, cur sessionstore.Session) (sessionstore.Session, bool) {
 	if session.IsTerminal(cur.State) {
-		return false
+		return sessionstore.Session{}, false
 	}
 	end := s.BeginTerminal(cur.ID)
 	from, updated, err := s.writeTerminal(ctx, tenantID, cur.ID, session.StateCancelled, nonTerminalGuard)
 	if err != nil {
 		end()
-		return false
+		return sessionstore.Session{}, false
 	}
 	hctx := context.WithoutCancel(ctx)
 	go func() {
 		defer end()
 		s.AfterTerminalWrite(hctx, from, updated, s.archiveSettledChild)
 	}()
-	return true
+	return updated, true
 }
 
 // detachExceedsOrphanCap reports whether the tenant's active orphan
