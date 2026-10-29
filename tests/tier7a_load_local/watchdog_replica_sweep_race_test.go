@@ -162,9 +162,13 @@ func runSweepRaceRound(t *testing.T, rng *rand.Rand, now time.Time, round int, o
 	store := &terminalWriteCounter{Store: mem, writes: map[string]int{}}
 	old := now.Add(-time.Hour)
 	if orphans {
+		// The root is seeded live and ended after its children exist, because
+		// the store's creation fence refuses a delegated child under a
+		// terminal parent.
 		if err := mem.Create(ctx, sessionstore.Session{
-			ID: sweepRaceRoot, TenantID: "acme", State: session.StateCompleted,
-			CreatedAt: old.Add(-2 * time.Hour), UpdatedAt: old, TerminatedAt: old.Add(-time.Hour),
+			ID: sweepRaceRoot, TenantID: "acme", State: session.StateRunning,
+			CascadeOnFailure: session.CascadeDetach,
+			CreatedAt:        old.Add(-2 * time.Hour), UpdatedAt: old,
 		}); err != nil {
 			t.Fatalf("seed root: %v", err)
 		}
@@ -180,10 +184,18 @@ func runSweepRaceRound(t *testing.T, rng *rand.Rand, now time.Time, round int, o
 			LastAgentActivityAt: old,
 		}
 		if orphans && rng.Intn(2) == 0 {
-			row.ParentSessionID, child[i] = sweepRaceRoot, true
+			row.ParentSessionID, row.DelegationDepth, child[i] = sweepRaceRoot, 1, true
 		}
 		if err := mem.Create(ctx, row); err != nil {
 			t.Fatalf("seed %s: %v", ids[i], err)
+		}
+	}
+	if orphans {
+		if _, err := mem.Update(ctx, "acme", sweepRaceRoot, func(r *sessionstore.Session) error {
+			r.State, r.TerminatedAt = session.StateCompleted, old.Add(-time.Hour)
+			return nil
+		}); err != nil {
+			t.Fatalf("end root: %v", err)
 		}
 	}
 	// restarted records the rows the writer put back inside their deadline

@@ -239,6 +239,7 @@ var sessionStateMachineEdges = []state.Transition{
 	{From: state.ResumePending, To: state.Cancelled},
 	{From: state.ResumePending, To: state.Completed},
 	{From: state.ResumePending, To: state.Expired},
+	{From: state.ResumePending, To: state.Failed},
 	{From: state.Resuming, To: state.Running},
 	{From: state.Resuming, To: state.ResumePending},
 	{From: state.Resuming, To: state.AwaitingClientAction},
@@ -319,7 +320,6 @@ var anyStateWriters = []struct {
 	from   state.State
 	to     state.State
 }{
-	{"operator force-terminate", state.ResumePending, state.Failed},
 	{"operator force-terminate", state.AwaitingClientAction, state.Failed},
 	{"operator force-terminate", state.Resuming, state.Failed},
 	{"operator force-terminate", state.Finalizing, state.Failed},
@@ -329,15 +329,21 @@ var anyStateWriters = []struct {
 	{"budget terminator", state.Ready, state.Expired},
 	{"orphan cleanup", state.Created, state.Expired},
 	{"orphan cleanup", state.Finalizing, state.Expired},
+	{"orphan cleanup", state.Created, state.Cancelled},
+	{"orphan cleanup", state.Finalizing, state.Cancelled},
+	{"orphan cleanup", state.Ready, state.Cancelled},
+	{"orphan cleanup", state.Starting, state.Cancelled},
 	{"perChildMaxAge expiry", state.ResumePending, state.Expired},
 	{"perChildMaxAge expiry", state.AwaitingClientAction, state.Expired},
 }
 
 // TestValidTransitionsAdmitEveryAnyStateTerminalWriter_spec_7_2 asserts that
 // each existing any-state terminal writer's edge is in ValidTransitions, and
-// that every non-terminal state has a → failed and a → expired edge. Before
-// the table carried the any-state paragraph, ForceTerminate from
-// resume_pending and the budget terminator from resuming were off-table.
+// that every non-terminal state has a → failed, a → expired, and a →
+// cancelled edge. Before the table carried the any-state paragraph,
+// ForceTerminate from resume_pending and the budget terminator from resuming
+// were off-table, and orphan cleanup's cancel of a pre-running orphan under a
+// terminal cancel_all parent was off-table until the table carried → cancelled.
 //
 // spec: §7.2 (Terminal writes from any non-terminal state)
 func TestValidTransitionsAdmitEveryAnyStateTerminalWriter_spec_7_2(t *testing.T) {
@@ -355,7 +361,7 @@ func TestValidTransitionsAdmitEveryAnyStateTerminalWriter_spec_7_2(t *testing.T)
 		if state.IsTerminal(from) {
 			continue
 		}
-		for _, to := range []state.State{state.Failed, state.Expired} {
+		for _, to := range []state.State{state.Failed, state.Expired, state.Cancelled} {
 			if err := state.IsValid(from, to); err != nil {
 				t.Errorf("IsValid(%q, %q) = %v, want nil for an any-state terminal write", from, to, err)
 			}

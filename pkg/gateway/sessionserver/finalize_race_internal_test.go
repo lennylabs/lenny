@@ -39,9 +39,9 @@ func rowState(t *testing.T, store sessionstore.Store, id string) session.State {
 }
 
 // failSession is a hook-path terminal writer whose guard admits only a
-// non-terminal locked row: a failSession on a row another writer already made
-// terminal writes nothing, keeps the row's UpdatedAt, and runs no hook.
-// spec: 7.2 (Interactive Session Model)
+// resume_pending locked row: a failSession on a row another writer already
+// made terminal writes nothing, keeps the row's UpdatedAt, and runs no hook.
+// spec: 7.2 (Interactive Session Model), 8.10 (Delegation Tree Recovery)
 func TestFailSessionWritesNothingOverATerminalRow_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	seedState(t, store, "s", session.StateCancelled)

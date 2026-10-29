@@ -114,8 +114,8 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 	// task in a subtree is blocked, the root receives a deadlock_detected
 	// event on its lenny/await_children poll, and if the deadlock is not
 	// resolved within maxDeadlockWaitSeconds the detector fails the deepest
-	// blocked tasks with DEADLOCK_TIMEOUT. Disabled when the timeout is
-	// zero. spec: §8.8. F-8.8.6.
+	// blocked tasks with DEADLOCK_TIMEOUT through deadlockFail. Disabled
+	// when the timeout is zero. spec: §8.8. F-8.8.6.
 	if w.deadlockManager != nil {
 		deadlockLookup := func(ctx context.Context, tenantID, sessionID string) (session.State, bool) {
 			row, err := w.sessions.Get(ctx, tenantID, sessionID)
@@ -125,40 +125,8 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 			}
 			return row.State, true
 		}
-		deadlockFail := func(ctx context.Context, tenantID, sessionID string) {
-			// spec: §7.2 — a funnel terminal writer: the claim opens before
-			// the write, the write applies only over a non-terminal locked
-			// row and records the Terminated fact, and the terminal pipeline
-			// runs exactly when it applied.
-			end := w.sessionSrv.BeginTerminal(sessionID)
-			defer end()
-			var fromState session.State
-			now := time.Now()
-			updated, err := w.sessions.Update(ctx, tenantID, sessionID, func(s *sessionstore.Session) error {
-				if session.IsTerminal(s.State) {
-					return sessionstore.ErrSuperseded
-				}
-				fromState = s.State
-				s.State = session.StateFailed
-				s.FailureClass = session.FailureClassRuntime
-				s.FailureReason = string(session.FailureDeadlockTimeout)
-				sessionstore.MarkTerminated(s, fromState, now)
-				return nil
-			})
-			if errors.Is(err, sessionstore.ErrSuperseded) {
-				return
-			}
-			if err != nil {
-				log.Printf("lenny-gateway: §8.8 deadlock-timeout fail %s: %v", sessionID, err)
-				return
-			}
-			// spec: §4.6 — a deadlock-timeout fails a blocked running
-			// session, so fromState routes its teardown through the §6.2
-			// executor recycle path rather than the pre-running reclaim.
-			w.sessionSrv.OnSessionTerminal(ctx, fromState, updated)
-		}
 		deadlockDetector := deadlock.NewDetector(w.deadlockManager, w.deadlockTracker, w.inputWaits,
-			deadlockLookup, deadlockFail)
+			deadlockLookup, w.deadlockFail)
 		go deadlockDetector.Run(w.watchdogCtx, 10*time.Second)
 		log.Printf("lenny-gateway: §8.8 subtree deadlock detector enabled (maxDeadlockWaitSeconds=%d)",
 			*maxDeadlockWaitSeconds)
@@ -299,4 +267,67 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 	if w.quotaBudgetTracker != nil {
 		go w.quotaBudgetTracker.Run(w.watchdogCtx)
 	}
+}
+
+// deadlockFail is the §8.8 DEADLOCK_TIMEOUT writer the subtree deadlock
+// detector calls for each deepest blocked task of a timed-out subtree. It
+// reports whether the write applied, so the detector records the §16.1
+// `timeout` resolution only after an applied write.
+//
+// The mutator re-checks, under the row lock, the live input-wait registry
+// the detector's snapshot read: a task whose wait was answered or
+// cancelled after the snapshot is no longer blocked, so the write is
+// refused with ErrSuperseded. The check reads the registry rather than the
+// row state, because a wait served on the gateway-edge MCP endpoint leaves
+// the row running, and a state check would never fail such a task. A wait
+// resolved after the check and before the write commits is still failed;
+// that window is the mutator's duration.
+//
+// spec: §8.8 (Subtree deadlock detection), §16.1; §7.2 (terminal writes
+// run through the claim and the locked-row write)
+func (w *gatewayWiring) deadlockFail(ctx context.Context, tenantID, sessionID string) bool {
+	// spec: §7.2 — a funnel terminal writer: the claim opens before the
+	// write, the write applies only over a non-terminal locked row and
+	// records the Terminated fact, and the terminal pipeline runs exactly
+	// when it applied.
+	end := w.sessionSrv.BeginTerminal(sessionID)
+	defer end()
+	var fromState session.State
+	now := time.Now()
+	updated, err := w.sessions.Update(ctx, tenantID, sessionID, func(s *sessionstore.Session) error {
+		if session.IsTerminal(s.State) || !w.waitStillPending(sessionID) {
+			return sessionstore.ErrSuperseded
+		}
+		fromState = s.State
+		s.State = session.StateFailed
+		s.FailureClass = session.FailureClassRuntime
+		s.FailureReason = string(session.FailureDeadlockTimeout)
+		sessionstore.MarkTerminated(s, fromState, now)
+		return nil
+	})
+	if errors.Is(err, sessionstore.ErrSuperseded) {
+		return false
+	}
+	if err != nil {
+		log.Printf("lenny-gateway: §8.8 deadlock-timeout fail %s: %v", sessionID, err)
+		return false
+	}
+	// spec: §4.6 — a deadlock-timeout fails a blocked running session, so
+	// fromState routes its teardown through the §6.2 executor recycle path
+	// rather than the pre-running reclaim.
+	w.sessionSrv.OnSessionTerminal(ctx, fromState, updated)
+	return true
+}
+
+// waitStillPending reports whether sessionID still holds a pending
+// request_input wait in this replica's live registry. With no registry
+// wired no wait can be pending, so the deadlock write fails closed to no
+// write.
+//
+// spec: §8.8 (Subtree deadlock detection)
+func (w *gatewayWiring) waitStillPending(sessionID string) bool {
+	if w.inputWaits == nil {
+		return false
+	}
+	return len(w.inputWaits.PendingDetailsForSession(sessionID)) > 0
 }

@@ -31,10 +31,10 @@ type terminalWriter struct {
 
 // terminalWriterInventory is the terminal writer inventory as the code
 // spells it. A writer whose mutator lives in a helper names the helper:
-// writeTerminal is the shared mutator of expireSession, failSession,
-// failFinalizing, failStarting, and cancelCascadedChild; cancelNode and cancelSession are
+// writeTerminal is the shared mutator of failSession, failFinalizing,
+// failStarting, and cancelCascadedChild; cancelNode and cancelSession are
 // the mutators of cancelSubtree and the lenny/cancel_session handler;
-// expireOrphan is sweepTenant's; failPreRunning is sweepPreRunning's,
+// endOrphan is sweepTenant's; failPreRunning is sweepPreRunning's,
 // expireAwaiting is sweepAwaitingClientAction's, expireMaxAge is
 // sweepMaxAge's, expireIdle is sweepIdle's, and expireSuspendedIfDue is
 // sweepSuspended's; transitionTerminate is applied inside
@@ -52,7 +52,7 @@ var terminalWriterInventory = []terminalWriter{
 	{"pkg/gateway/runtime/watchdog/suspended.go", "expireSuspendedIfDue", "expireSuspendedIfDue"},
 	{"pkg/gateway/runtime/watchdog/watchdog.go", "expireMaxAge", "expireMaxAge"},
 	{"pkg/gateway/session/orphansession/orphansession.go", "failOrphan", "failOrphan"},
-	{"pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go", "expireOrphan", "expireOrphan"},
+	{"pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go", "endOrphan", "endOrphan"},
 	{"pkg/gateway/mcpfabric/mcptools/mcptools.go", "cancelNode", "cancelNode"},
 	{"pkg/gateway/mcpfabric/mcptools/mcptools_register.go", "cancelSession", "cancelSession"},
 	{"pkg/gateway/externalapi/admin/users.go", "cancelForRevoke", "cancelForRevoke"},
@@ -60,7 +60,7 @@ var terminalWriterInventory = []terminalWriter{
 	{"pkg/gateway/environment/translator/open_responses.go", "handleCreate", ""},
 	{"cmd/lenny-gateway/session_admin.go", "ForceTerminate", "ForceTerminate"},
 	{"cmd/lenny-gateway/session_budget.go", "terminate", "TerminateSession"},
-	{"cmd/lenny-gateway/reconciler_workers.go", "startReconcilerWorkers", "startReconcilerWorkers"},
+	{"cmd/lenny-gateway/reconciler_workers.go", "deadlockFail", "deadlockFail"},
 }
 
 // terminalValueBuilders are functions that build a session value carrying a
@@ -84,7 +84,7 @@ func storeWriteCall(n string) bool {
 
 // writeTerminalCallers are the hook-path writers that write through
 // writeTerminal, each opening its claim before the call.
-var writeTerminalCallers = []string{"cancelCascadedChild", "expireSession", "failFinalizing", "failSession", "failStarting"}
+var writeTerminalCallers = []string{"cancelCascadedChild", "failFinalizing", "failSession", "failStarting"}
 
 var terminalStateNames = map[string]bool{
 	"StateCompleted": true, "StateFailed": true, "StateCancelled": true, "StateExpired": true,

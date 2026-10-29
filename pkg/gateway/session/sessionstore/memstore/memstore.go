@@ -176,8 +176,9 @@ func (s *Store) createLocked(ctx context.Context, sess sessionstore.Session, bef
 	// spec: §8.9 — root_session_id identifies the
 	// delegation-tree apex on every row in the tree. When the caller
 	// did not stamp one, the store inherits the parent's
-	// RootSessionID so children share the parent's root automatically;
-	// a standalone session (no parent) becomes its own root. F-8.9.8.
+	// RootSessionID so delegated children share the parent's root
+	// automatically; a session with no parent (standalone, derived, or
+	// replayed) becomes its own root. F-8.9.8.
 	if sess.RootSessionID == "" {
 		if sess.ParentSessionID != "" {
 			if parent, ok := s.sessions[sess.ParentSessionID]; ok && parent.TenantID == sess.TenantID {

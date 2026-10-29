@@ -169,12 +169,6 @@ func TestRecoverWaitEndsAtNodeDeadline_spec_8_10(t *testing.T) {
 			recovery.Config{LevelTimeout: time.Minute, TreeTimeout: 40 * time.Millisecond},
 			recovery.ReasonTreeTimeout,
 		},
-		{
-			"node resume window",
-			recovery.Node{SessionID: "a", Depth: 1, ResumeWindow: 40 * time.Millisecond},
-			recovery.Config{LevelTimeout: time.Minute, TreeTimeout: time.Minute},
-			recovery.ReasonResumeWindow,
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -299,73 +293,5 @@ func TestRecoverHonorsConfigLevelAndTreeOverrides_spec_8_10_1022_1023(t *testing
 	}
 	if len(results) != 1 || results[0].Outcome != recovery.OutcomeFailed || results[0].Reason != recovery.ReasonLevelTimeout {
 		t.Errorf("results = %+v, want a failed node with the level reason", results)
-	}
-}
-
-// TestRecoverNodeResumeWindowBindsBeforeLevel_spec_8_10_1027 covers the
-// §8.10 effective recovery window contract — a node whose individual
-// maxResumeWindowSeconds already elapsed when its level starts is failed with
-// the node-window reason without a start, while a sibling recovers. F-8.10.11.
-func TestRecoverNodeResumeWindowBindsBeforeLevel_spec_8_10_1027(t *testing.T) {
-	clock := time.Date(2026, 5, 28, 0, 0, 0, 0, time.UTC)
-	nodes := []recovery.Node{
-		{SessionID: "deep", Depth: 2},
-		{SessionID: "short-rw", Depth: 1, ResumeWindow: 2 * time.Second},
-		{SessionID: "long-rw", Depth: 1},
-	}
-	var started []string
-	results := recovery.Recover(context.Background(), nodes, func(n recovery.Node) {
-		started = append(started, n.SessionID)
-	}, func(context.Context, recovery.Node) error {
-		clock = clock.Add(3 * time.Second) // the deeper level burns short-rw's window
-		return nil
-	}, recovery.Config{
-		LevelTimeout: 60 * time.Second,
-		TreeTimeout:  10 * time.Minute,
-		Now:          func() time.Time { return clock },
-	})
-	got := map[string]recovery.NodeResult{}
-	for _, r := range results {
-		got[r.Node.SessionID] = r
-	}
-	if got["long-rw"].Outcome != recovery.OutcomeRecovered {
-		t.Errorf("long-rw should recover within the level cap: %+v", got["long-rw"])
-	}
-	if got["short-rw"].Outcome != recovery.OutcomeFailed || got["short-rw"].Reason != recovery.ReasonResumeWindow {
-		t.Errorf("short-rw = %+v, want failed with the node-window reason", got["short-rw"])
-	}
-	for _, id := range started {
-		if id == "short-rw" {
-			t.Error("short-rw was started past its resume window")
-		}
-	}
-}
-
-// TestRecoverTreeRemainingBindsNodeWindow_spec_8_10_1027 covers the
-// other direction of §8.10 — when the per-node window would
-// outlive the remaining tree budget, the tree cap binds first. F-8.10.11.
-func TestRecoverTreeRemainingBindsNodeWindow_spec_8_10_1027(t *testing.T) {
-	clock := time.Date(2026, 5, 28, 0, 0, 0, 0, time.UTC)
-	nodes := []recovery.Node{
-		{SessionID: "leaf", Depth: 1, ResumeWindow: 30 * time.Minute},
-		{SessionID: "root", Depth: 0, ResumeWindow: 30 * time.Minute},
-	}
-	results := recovery.Recover(context.Background(), nodes, nil, func(context.Context, recovery.Node) error {
-		clock = clock.Add(11 * time.Minute) // burns the whole tree budget
-		return nil
-	}, recovery.Config{
-		LevelTimeout: 30 * time.Minute,
-		TreeTimeout:  10 * time.Minute,
-		Now:          func() time.Time { return clock },
-	})
-	got := map[string]recovery.NodeResult{}
-	for _, r := range results {
-		got[r.Node.SessionID] = r
-	}
-	if got["leaf"].Outcome != recovery.OutcomeRecovered {
-		t.Errorf("leaf should recover before the tree deadline: %+v", got["leaf"])
-	}
-	if got["root"].Outcome != recovery.OutcomeFailed || got["root"].Reason != recovery.ReasonTreeTimeout {
-		t.Errorf("root should fail with the tree-deadline reason once the 10m budget elapses: %+v", got["root"])
 	}
 }

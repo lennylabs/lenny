@@ -87,7 +87,7 @@ func TestOrphanCleanupStampsItsOwnReasonOverAFunnelReason_spec_7_2(t *testing.T)
 			seed(t, store, "sess_root", "", session.StateCompleted, base)
 			seedRow(t, store, sessionstore.Session{
 				ID: "sess_child", TenantID: "acme", State: st, ParentSessionID: "sess_root",
-				CreatedAt: base, UpdatedAt: base,
+				DelegationDepth: 1, CreatedAt: base, UpdatedAt: base,
 				FailureReason: string(session.FailurePodEvicted),
 			})
 			sw := orphancleanup.New(store, orphancleanup.StaticTenants{"acme"}, orphancleanup.Options{})

@@ -1150,7 +1150,7 @@ func (f *gatewayFlags) registerArtifactFlags() {
 	// tree cap. F-8.10.6.
 	f.delegationMaxLevelRecoverySeconds = flag.Int("delegation-max-level-recovery-seconds",
 		envInt("LENNY_DELEGATION_MAX_LEVEL_RECOVERY_SECONDS", int(recovery.DefaultLevelTimeout/time.Second)),
-		"§8.10 delegation.maxLevelRecoverySeconds: maximum time the gateway waits for all nodes at a single tree depth to complete recovery before marking the unrecovered ones as terminally failed. Default 120s. Override via LENNY_DELEGATION_MAX_LEVEL_RECOVERY_SECONDS.")
+		"§8.10 delegation.maxLevelRecoverySeconds: maximum time the gateway waits for all nodes at a single tree depth to complete recovery before marking each unrecovered node at that depth that is still in resume_pending as terminally failed. Default 120s. Override via LENNY_DELEGATION_MAX_LEVEL_RECOVERY_SECONDS.")
 	f.delegationMaxTreeRecoverySeconds = flag.Int("delegation-max-tree-recovery-seconds",
 		envInt("LENNY_DELEGATION_MAX_TREE_RECOVERY_SECONDS", int(recovery.DefaultTreeTimeout/time.Second)),
 		"§8.10 delegation.maxTreeRecoverySeconds: total wall-clock bound for recovering the full delegation tree; overrides per-level budgets. Default 600s. Deployers running deep trees should apply the §8.10 formula. Override via LENNY_DELEGATION_MAX_TREE_RECOVERY_SECONDS.")

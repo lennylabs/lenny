@@ -249,11 +249,13 @@ func afterTerminalWriteDriver(ctx context.Context, f *tcFixture) {
 
 // tcWriter is one terminal writer of the inventory and the hook entry it
 // reaches. A nil drive marks a writer that runs no post-terminal hook, and
-// noHook states why.
+// noHook states why. seed is the state the row starts in, for a writer whose
+// guard admits only one state; empty seeds running.
 type tcWriter struct {
 	key    string
 	drive  tcDriver
 	noHook string
+	seed   session.State
 }
 
 // terminalContextWriters covers every row of the terminal writer inventory.
@@ -270,7 +272,7 @@ var terminalContextWriters = []tcWriter{
 	}},
 	{key: "pkg/gateway/sessionserver/session_terminal.go writeTerminal", drive: func(ctx context.Context, f *tcFixture) {
 		f.srv.failSession(ctx, "acme", "s")
-	}},
+	}, seed: session.StateResumePending},
 	{key: "pkg/gateway/sessionserver/derive.go persistDeriveFailure", noHook: "a derive failure row is created terminal and never ran"},
 	{key: "pkg/gateway/sessionserver/seal.go failWorkspaceSeal", noHook: "the relabel runs inside the hook"},
 	{key: "pkg/gateway/runtime/watchdog/watchdog.go failPreRunning", drive: onSessionTerminalDriver(session.StateFailed)},
@@ -279,7 +281,7 @@ var terminalContextWriters = []tcWriter{
 	{key: "pkg/gateway/runtime/watchdog/suspended.go expireSuspendedIfDue", drive: onSessionTerminalDriver(session.StateExpired)},
 	{key: "pkg/gateway/runtime/watchdog/watchdog.go expireMaxAge", drive: onSessionTerminalDriver(session.StateExpired)},
 	{key: "pkg/gateway/session/orphansession/orphansession.go failOrphan", drive: onSessionTerminalDriver(session.StateFailed)},
-	{key: "pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go expireOrphan", drive: onSessionTerminalDriver(session.StateExpired)},
+	{key: "pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go endOrphan", drive: onSessionTerminalDriver(session.StateExpired)},
 	{key: "pkg/gateway/mcpfabric/mcptools/mcptools.go cancelNode", drive: afterTerminalWriteDriver},
 	{key: "pkg/gateway/mcpfabric/mcptools/mcptools_register.go cancelSession", drive: afterTerminalWriteDriver},
 	{key: "pkg/gateway/externalapi/admin/users.go cancelForRevoke", noHook: "the full_revoke write runs AfterRevokeWrite and the revoked-binding release"},
@@ -287,7 +289,7 @@ var terminalContextWriters = []tcWriter{
 	{key: "pkg/gateway/environment/translator/open_responses.go handleCreate", noHook: "the translator writes on the none path"},
 	{key: "cmd/lenny-gateway/session_admin.go ForceTerminate", drive: onSessionTerminalDriver(session.StateFailed)},
 	{key: "cmd/lenny-gateway/session_budget.go terminate", drive: onSessionTerminalDriver(session.StateExpired)},
-	{key: "cmd/lenny-gateway/reconciler_workers.go startReconcilerWorkers", drive: onSessionTerminalDriver(session.StateFailed)},
+	{key: "cmd/lenny-gateway/reconciler_workers.go deadlockFail", drive: onSessionTerminalDriver(session.StateFailed)},
 }
 
 // TerminalContextWriterKeys returns the inventory keys the terminal context
@@ -367,17 +369,25 @@ func TestTerminalPipelineContextEveryWriter_spec_7_1(t *testing.T) {
 			}
 			for _, sc := range tcScenarios {
 				t.Run(sc.name, func(t *testing.T) {
-					runTerminalContextScenario(t, w.drive, sc)
+					runTerminalContextScenario(t, w.seedState(), w.drive, sc)
 				})
 			}
 		})
 	}
 }
 
-func runTerminalContextScenario(t *testing.T, drive tcDriver, sc tcScenario) {
+// seedState is the state the writer's row starts in.
+func (w tcWriter) seedState() session.State {
+	if w.seed == "" {
+		return session.StateRunning
+	}
+	return w.seed
+}
+
+func runTerminalContextScenario(t *testing.T, seed session.State, drive tcDriver, sc tcScenario) {
 	writerCtx, cancelWriter := context.WithCancel(context.Background())
 	defer cancelWriter()
-	f := newTCFixture(t, session.StateRunning, cancelWriter, sc.block)
+	f := newTCFixture(t, seed, cancelWriter, sc.block)
 	f.store.onTerminal = func(row *sessionstore.Session) { sc.atTerminal(f.clock, row) }
 
 	entry := time.Now()

@@ -174,28 +174,30 @@ func TestFunnelAndHookWritersEmitTheTerminalEventsOnce_spec_7_2(t *testing.T) {
 		}
 		return n
 	}
+	// seed is the row's starting state; empty seeds running.
 	type writeCase struct {
 		name  string
 		write func(ctx context.Context, srv *Server)
 		want  session.State
+		seed  session.State
 	}
 	cases := []writeCase{
 		{"DELETE", func(ctx context.Context, srv *Server) {
 			req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/s", nil).WithContext(ctx)
 			req.Header.Set("X-Lenny-Tenant-ID", "acme")
 			srv.Handler().ServeHTTP(httptest.NewRecorder(), req)
-		}, session.StateCancelled},
+		}, session.StateCancelled, ""},
 		{"failure funnel", func(ctx context.Context, srv *Server) {
 			_, _ = srv.ReportSessionFailure(ctx, FailureReport{
 				TenantID: "acme", SessionID: "s", Reason: string(session.FailureWorkspaceValidationFailed),
 			})
-		}, session.StateFailed},
-		{"failSession", func(ctx context.Context, srv *Server) { srv.failSession(ctx, "acme", "s") }, session.StateFailed},
+		}, session.StateFailed, ""},
+		{"failSession", func(ctx context.Context, srv *Server) { srv.failSession(ctx, "acme", "s") }, session.StateFailed, session.StateResumePending},
 		{"direct emitTerminalLifecycle", func(ctx context.Context, srv *Server) {
 			row, _ := srv.store.Get(ctx, "acme", "s")
 			row.State = session.StateCompleted
 			srv.emitTerminalLifecycle(ctx, row)
-		}, ""},
+		}, "", ""},
 	}
 	for _, tc := range cases {
 		for _, cancelAtCommit := range []bool{false, true} {
@@ -213,8 +215,12 @@ func TestFunnelAndHookWritersEmitTheTerminalEventsOnce_spec_7_2(t *testing.T) {
 				if cancelAtCommit {
 					store.onTerminal = func(*sessionstore.Session) { cancel() }
 				}
+				seed := tc.seed
+				if seed == "" {
+					seed = session.StateRunning
+				}
 				if err := store.Create(context.Background(), sessionstore.Session{
-					ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning,
+					ID: "s", TenantID: "acme", RuntimeRef: "echo", State: seed,
 				}); err != nil {
 					t.Fatalf("seed: %v", err)
 				}

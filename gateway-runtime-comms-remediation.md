@@ -3255,24 +3255,41 @@ Proposals, second wave:
     the integration branch at `1203b97b3`. None of its unstaged defects is discharged; each keeps its entry
     with a 2026-10-29 note. Its unstaged defects are filed below. R20 follows it, because R20 builds the
     shared input-wait store on its `input_wait_id` (R20's 2026-10-28 re-derivation). Position: with P3 implemented, P2b is the remaining second-wave
-    proposal. The third wave follows: P4a (proposal 0106), whose implementation waited on 0104 and 0105, and
-    then P4b (proposal 0107).
+    proposal. In the third wave, P4a (proposal 0106) was implemented on 2026-10-29, after 0104 and 0105, and
+    P4b (proposal 0107) is the next implementation.
 
 Proposals, third wave:
 
-- [ ] **P4. Delegation tree and budget lifecycle** (split; P4a and P4b done as proposals), after P2.
+- [ ] **P4. Delegation tree and budget lifecycle** (split; P4a and P4b done as proposals; P4a implemented and finalized 2026-10-29 on
+  `impl/0106-delegation-tree`, merge into this branch pending), after P2.
   - **Outcome (P4a).** Proposal 0106
     (`proposals/0106_fix_the-delegation-tree-s-membership-and-lifecycle-are-under/`) was approved 2026-10-27
     (merge `d52dc1834`). Derive and replay create independent roots registered for lease extension, tree
     recovery fails only `resume_pending` nodes level by level and leaves an elapsed resume window to the §6.2
     cap, the orphan-cleanup sweeper selects by direct parent and becomes the retry owner for interrupted
-    cascades, and the deadlock, orphan-cap fallback, and rollback paths conform. Its implementation closes
-    F-8.2.30, F-8.8.18, F-8.8.19, F-8.9.13, F-8.10.19 to F-8.10.23, F-8.10.25, and F-8.10.26 as its REC-1
-    states. Its REC-1 also re-owns F-8.10.17 to approved proposal 0104 (D6, CODE-2, and SPEC-3 Edit (a)), with
-    0106's orphan sweeper as a one-interval backstop, and closes F-8.10.24 citing `3f943f56f`; both records
-    are applied. Its implementation runs after 0104 and 0105 are implemented, because its staged edits anchor
-    on their text. Its unstaged defects are filed below. P4b (tree budget keys, the §8.6 lease extension, and
-    the per-session enforcer) remains and is being drafted as proposal 0107.
+    cascades, and the deadlock, orphan-cap fallback, and rollback paths conform. Its approval-time records
+    re-owned F-8.10.17 to proposal 0104 and closed F-8.10.24 citing `3f943f56f`. Its implementation landed
+    2026-10-29 on `impl/0106-delegation-tree`, after 0104 and 0105 were implemented: spec commits `2c9937770`
+    and `cc424867a` (§8.10) and `f30ec183a` (§7.2 `resume_pending → failed`); code commits `e42c4bfa0` and
+    `b408436b7` (derive and replay create roots and register them for lease extension), `4fbc7bfd3` (tree
+    recovery fails each level through a `resume_pending`-only guard, and the per-node window path is
+    deleted), `4ce1eb45b` and `e2c1c78ed` (the orphan predicate, the dispositions by direct parent, the
+    earliest-terminal-ancestor anchor, and the orphan cap counting the same set), `c0cb418de` (the orphan-cap
+    fallback for every node the cascade cancels), `8db304b39` (the deadlock live-wait re-check and `timeout`
+    after an applied write), and `2c6641cdf` (detached, release-allowance-bounded rollbacks); tests
+    `c0d1864c8`, `799f93293`, and `75fa9090f`. BUILD-GAPS closes F-8.2.30, F-8.8.18, F-8.8.19, F-8.9.13,
+    F-8.10.19 to F-8.10.23, F-8.10.25, and F-8.10.26 with resolution notes naming the commits and tests.
+    F-8.10.17 is closed on 0104's implementation (merge `aab694190`), whose creation fence refuses a child of
+    a terminal or absent parent, with 0106's sweeper as the one-interval backstop. F-8.8.18 closes on the
+    answered-wait re-check; 0106 staged no pod-loss drop, and the `lenny/request_input` handler already
+    cancels its wait when the runtime call ends. The filed defects F-4.2.17, F-4.5.21, F-8.8.22, and F-8.10.28
+    are confirmed in place, and F-8.8.22 and F-8.10.28 are no longer blocked on 0106. The implementation was
+    finalized on 2026-10-29: the proposal status is Implemented, its deviations are adjudicated (the
+    `maxLevelRecoverySeconds` flag help text deviation is resolved by `fee24e1bf`, and the rest are accepted),
+    the findings above are closed, F-4.2.17, F-4.5.21, F-7.2.35, F-8.2.32, F-8.8.22, and F-8.10.28 stay open
+    with a 2026-10-29 note, and the branch carries the integration branch at `9aa7b50c7`, merge into this
+    branch pending. Position: P4b (proposal 0107) is the next implementation of
+    the third wave; it runs after 0105 and 0106 (its D15), both now implemented.
   - **Outcome (P4b).** Proposal 0107
     (`proposals/0107_fix_the-delegation-tree-s-budget-lifecycle-is-under-specified/`) was approved 2026-10-28
     (merge `290de6e8d`). The delegated child's terminal pipeline returns the tree budget once, on the recorded
@@ -3987,27 +4004,28 @@ stages neither, so F-7.2.43 is queued here and F-5.2.57 is re-routed in the 0100
     no mapping).
 
 **Defects filed from proposal 0106's unstaged-defect list (2026-10-27).** Proposal 0106 (P4a, approved
-2026-10-27, implementation pending) lists defects in the shipped tree that it does not stage, and its REC-1
+2026-10-27, implemented 2026-10-29) lists defects in the shipped tree that it does not stage, and its REC-1
 files them once confirmed. They are filed now, ahead of REC-1, because no defect is dropped. Each was
 re-confirmed against the tree at `d52dc1834`, and each new BUILD-GAPS entry says it was filed ahead of REC-1,
-so 0106's implementor updates the entry rather than filing a duplicate. Item (b), the cascaded descendant's
+so 0106's implementor updates the entry rather than filing a duplicate. Each entry was confirmed in place
+when 0106 was implemented on 2026-10-29, and none is discharged by it. Item (b), the cascaded descendant's
 `archiveSettledChild` signal tail, and the `lenny/cancel_session` and `cancelSubtree` half of item (a) were
 already tracked by F-7.2.35 and keep its routing to P2b; F-7.2.35 carries a note naming them. None of the
 items is budget-related, so none goes to P4b.
 
-- With P2b, together with F-7.2.35, after 0106's implementation.
-  - [ ] **F-8.10.28** (Medium): tree recovery's `failSession` and `expireSession` run `settledChildSignals`
-    as their signal tail, so a session tree recovery ends skips the `cascadeOnFailure` evaluation and the
+- With P2b, together with F-7.2.35 (0106 is implemented).
+  - [ ] **F-8.10.28** (Medium): tree recovery's `failSession` runs `settledChildSignals` as its signal
+    tail (0106 deleted `expireSession`), so a session tree recovery ends skips the `cascadeOnFailure` evaluation and the
     `maxOrphanTasksPerTenant` fallback. The specification already requires the evaluation on every terminal
     write, and the fix is F-7.2.35's single terminal-signal set, so it rides with that finding.
-- Direct-fix queue, after 0106's implementation, which edits the same Manager.
+- Direct-fix queue; 0106, which edited the same Manager, is implemented, so the fix is unblocked.
   - [ ] **F-8.8.22** (Low): the deadlock Manager records `resolution="resolved"`, which §16.1 does not list,
     and the detection, resolution, and duration metrics are labelled by tenant or resolution rather than by
     `pool`. Classify the cleared deadlock as `client_input` or `child_cancel` and add the `pool` label. A
     clearing cause outside the listed values goes through the proposal pipeline.
 - Proposal routing.
   - [ ] **F-4.2.17** (Low): `ResumeEligibleUntil` is stamped as `CreatedAt` plus the resume window, returned
-    to clients as `resumeEligibleUntil`, and enforced by nothing, and once 0106 CODE-B deletes
+    to clients as `resumeEligibleUntil`, and enforced by nothing, and since 0106 deleted
     `remainingResumeWindow` nothing reads it. Deleting or defining the field is a specification choice. It
     rides with the next proposal that edits the §4.2 session record or the §7.3 resume window.
   - [ ] Text corrections, with any text-corrections proposal: **F-4.5.21** (Low, §4.5 **Workspace lineage:**

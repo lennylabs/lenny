@@ -20,8 +20,8 @@ type MetricsSink interface {
 	IncDelegationDeadlockDetected(tenantID string)
 	// ObserveDelegationDeadlockResolution closes out a tracked deadlock
 	// with `resolved` (the root broke it before willTimeoutAt) or
-	// `timeout` (the detector applied DEADLOCK_TIMEOUT), recording the
-	// detection-to-resolution latency.
+	// `timeout` (the detector's DEADLOCK_TIMEOUT write applied to at least
+	// one deepest task), recording the detection-to-resolution latency.
 	ObserveDelegationDeadlockResolution(resolution string, seconds float64)
 }
 
@@ -48,10 +48,13 @@ type tracked struct {
 
 // TimeoutAction is one subtree the caller must fail: the §8.8 deepest
 // blocked tasks are driven to `failed` with reason deadlock_timeout.
+// DetectedAt is the tracked entry's first-detection time, from which the
+// caller measures the `timeout` resolution once a fail applied.
 type TimeoutAction struct {
 	Root         string
 	TenantID     string
 	DeepestTasks []string
+	DetectedAt   time.Time
 }
 
 // NewManager returns a Manager with the given per-pool
@@ -68,7 +71,13 @@ func NewManager(maxWait time.Duration, metrics MetricsSink) *Manager {
 // refreshes the blocked set on still-deadlocked subtrees while holding
 // detectedAt / willTimeoutAt fixed, resolves subtrees no longer
 // detected, and returns the subtrees whose willTimeoutAt has passed for
-// the caller to fail.
+// the caller to fail. A returned subtree leaves the active set, and
+// Observe records no `timeout` for it: the caller records that resolution
+// only after a fail applied (RunOnce), because a refused or failed write
+// is not one of the §16.1 resolutions. A subtree still deadlocked on the
+// next sweep is re-detected with a fresh detectedAt.
+//
+// spec: §8.8 (Subtree deadlock detection), §16.1
 func (m *Manager) Observe(snap Snapshot, now time.Time) []TimeoutAction {
 	byRoot := make(map[string]Subtree)
 	for _, st := range Detect(snap) {
@@ -107,10 +116,9 @@ func (m *Manager) Observe(snap Snapshot, now time.Time) []TimeoutAction {
 			if now.Before(t.willTimeoutAt) {
 				continue
 			}
-			timeouts = append(timeouts, TimeoutAction{Root: root, TenantID: t.tenantID, DeepestTasks: t.deepest})
-			if m.metrics != nil {
-				m.metrics.ObserveDelegationDeadlockResolution("timeout", now.Sub(t.detectedAt).Seconds())
-			}
+			timeouts = append(timeouts, TimeoutAction{
+				Root: root, TenantID: t.tenantID, DeepestTasks: t.deepest, DetectedAt: t.detectedAt,
+			})
 			delete(m.active, root)
 			continue
 		}
@@ -122,6 +130,18 @@ func (m *Manager) Observe(snap Snapshot, now time.Time) []TimeoutAction {
 	}
 	sort.Slice(timeouts, func(i, j int) bool { return timeouts[i].Root < timeouts[j].Root })
 	return timeouts
+}
+
+// recordTimeout closes out a timed-out subtree with the `timeout`
+// resolution, measured from its first detection. RunOnce calls it once per
+// action, and only when at least one deepest task's fail applied.
+//
+// spec: §8.8 (Subtree deadlock detection), §16.1
+func (m *Manager) recordTimeout(action TimeoutAction, now time.Time) {
+	if m.metrics == nil {
+		return
+	}
+	m.metrics.ObserveDelegationDeadlockResolution("timeout", now.Sub(action.DetectedAt).Seconds())
 }
 
 // Event returns the cached deadlock_detected event for sessionID when it
@@ -146,8 +166,14 @@ type PendingSource interface {
 }
 
 // FailFunc drives one deepest blocked task to `failed` with reason
-// deadlock_timeout. The gateway wires it to the terminal pipeline.
-type FailFunc func(ctx context.Context, tenantID, sessionID string)
+// deadlock_timeout. The gateway wires it to the terminal pipeline. It
+// returns true only when the write applied. It returns false when the
+// locked row refused the write (the row is terminal, or the task's wait
+// left the live registry before the write) and when the store write
+// failed; the implementation logs a store error.
+//
+// spec: §8.8 (Subtree deadlock detection)
+type FailFunc func(ctx context.Context, tenantID, sessionID string) bool
 
 // StateLookup resolves a session's live state within a tenant. ok is
 // false when the row is gone; the snapshot builder treats a missing row
@@ -222,16 +248,35 @@ func (d *Detector) buildSnapshot(ctx context.Context) Snapshot {
 
 // RunOnce performs one sweep: build a snapshot, reconcile the active
 // deadlock set, and fail the deepest blocked tasks of any timed-out
-// subtree.
+// subtree. It records the `timeout` resolution once per action, measured
+// from the action's DetectedAt, and only when at least one fail applied.
+// An action whose fails all returned false records nothing; when the
+// subtree is still deadlocked the next sweep re-detects it.
+//
+// spec: §8.8 (Subtree deadlock detection), §16.1
 func (d *Detector) RunOnce(ctx context.Context, now time.Time) {
 	snap := d.buildSnapshot(ctx)
 	for _, action := range d.manager.Observe(snap, now) {
-		for _, taskID := range action.DeepestTasks {
-			if d.fail != nil {
-				d.fail(ctx, action.TenantID, taskID)
-			}
+		if d.failDeepest(ctx, action) {
+			d.manager.recordTimeout(action, now)
 		}
 	}
+}
+
+// failDeepest calls fail for every deepest task of action and reports
+// whether at least one write applied. Every task is attempted even after
+// one applies, because §8.8 fails all of the deepest blocked tasks.
+func (d *Detector) failDeepest(ctx context.Context, action TimeoutAction) bool {
+	if d.fail == nil {
+		return false
+	}
+	applied := false
+	for _, taskID := range action.DeepestTasks {
+		if d.fail(ctx, action.TenantID, taskID) {
+			applied = true
+		}
+	}
+	return applied
 }
 
 // Run sweeps every interval until ctx is cancelled. The gateway starts

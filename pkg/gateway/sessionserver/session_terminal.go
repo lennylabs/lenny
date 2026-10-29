@@ -9,46 +9,42 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
-// expireSession transitions a session to the §7.3 terminal `expired`
-// state. The §8.10 tree-recovery driver uses it for a node whose individual
-// `maxResumeWindowSeconds` elapsed before recovery reached it (spec: §8.10 —
-// "that node transitions to `expired`"). It is a hook-path terminal writer:
-// it opens its terminal claim before its Update, writes only over a
-// non-terminal locked row, records the Terminated fact in the write, and on a
-// write that applied runs the post-terminal hook with fromState from the
-// locked row. A row already terminal is not applied (sessionstore.
-// ErrSuperseded) and nothing more runs; a store error is ignored, because its
-// one caller, FailNode, returns nothing.
+// failSession marks a delegation node failed. Its caller is §8.10 tree
+// recovery, which fails a node whose recovery ended without a committed
+// restore: a reattach error or an elapsed level or tree budget. It writes
+// `failed` only over a locked row still in resume_pending, through
+// resumePendingGuard. A node that left resume_pending is not written: the
+// resume driver and the §6.2 resuming watchdog own a node in resuming, a
+// node whose restore committed is recovered, the §6.2 resume_pending
+// wall-clock cap owns the move to awaiting_client_action, and a terminal row
+// already ran its hook. It is a hook-path terminal writer: it opens its
+// terminal claim before its Update, records the Terminated fact in the
+// write, and on a write that applied runs the post-terminal hook through
+// afterFailed with fromState from the locked row. A refused write
+// (sessionstore.ErrSuperseded) runs no hook, and a store error is ignored,
+// because its one caller, FailNode, returns nothing.
 //
-// spec: §7.2 (Interactive Session Model), §8.10 (Delegation Tree Recovery)
-func (s *Server) expireSession(ctx context.Context, tenantID, sessionID string) {
-	end := s.BeginTerminal(sessionID)
-	defer end()
-	from, updated, err := s.writeTerminal(ctx, tenantID, sessionID, session.StateExpired, nonTerminalGuard)
-	if err != nil {
-		return
-	}
-	s.AfterTerminalWrite(ctx, from, updated, s.settledChildSignals)
-}
-
-// failSession marks a session row failed. Its caller is §8.10 tree recovery,
-// which fails a node whose level or tree budget elapsed, including an
-// awaiting_client_action node. It is a hook-path terminal writer with the
-// guard expireSession applies: it writes only over a non-terminal locked
-// row, records the Terminated fact in the write, and on a write that applied
-// runs the post-terminal hook through afterFailed with fromState from the
-// locked row. A row already terminal is not applied and nothing more runs; a
-// store error is ignored.
-//
-// spec: §7.2 (Interactive Session Model), §8.10 (Delegation Tree Recovery)
+// spec: §8.10 (Delegation Tree Recovery), §7.2 (Interactive Session Model),
+// §6.2 (resume_pending wall-clock cap)
 func (s *Server) failSession(ctx context.Context, tenantID, sessionID string) {
 	end := s.BeginTerminal(sessionID)
 	defer end()
-	from, updated, err := s.writeTerminal(ctx, tenantID, sessionID, session.StateFailed, nonTerminalGuard)
+	from, updated, err := s.writeTerminal(ctx, tenantID, sessionID, session.StateFailed, resumePendingGuard)
 	if err != nil {
 		return
 	}
 	s.afterFailed(ctx, from, updated)
+}
+
+// resumePendingGuard is tree recovery's locked-row guard: it admits only a
+// row in resume_pending, the one state the §7.2 resume_pending → failed edge
+// leaves from, and refuses every other state with sessionstore.ErrSuperseded.
+// spec: §8.10 (Delegation Tree Recovery), §7.2 (Interactive Session Model)
+func resumePendingGuard(r *sessionstore.Session) error {
+	if r.State != session.StateResumePending {
+		return sessionstore.ErrSuperseded
+	}
+	return nil
 }
 
 // nonTerminalGuard is the hook writers' locked-row guard that admits any
@@ -95,7 +91,7 @@ func (s *Server) afterFailed(ctx context.Context, fromState session.State, updat
 	s.AfterTerminalWrite(ctx, fromState, updated, s.settledChildSignals)
 }
 
-// settledChildSignals is the signal tail of expireSession and afterFailed:
+// settledChildSignals is the signal tail of afterFailed:
 // the §8.10 archive of a settled child, then the terminal lifecycle signals.
 func (s *Server) settledChildSignals(ctx context.Context, sess sessionstore.Session) {
 	s.archiveSettledChild(ctx, sess)

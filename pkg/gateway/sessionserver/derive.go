@@ -92,7 +92,8 @@ type DeriveResponse struct {
 	WorkspaceSnapshotContentHash string `json:"workspaceSnapshotContentHash,omitempty"`
 
 	// ParentSessionID echoes the source session id for client-side
-	// audit / lineage display.
+	// audit / lineage display. The derived row itself carries no
+	// delegation parent: it is a new root (§12.6 StoreRouter).
 	ParentSessionID string `json:"parentSessionId,omitempty"`
 }
 
@@ -368,8 +369,12 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		ScrubPolicy:            derivedLevel.ScrubPolicy,
 		ConversationContinuity: derivedLevel.ConversationContinuity,
 		WorkspaceSnapshot:      copySnapshotRef(source.WorkspaceSnapshot, derivedRef),
-		ParentSessionID:        source.ID,
-		ParentWorkspaceRef:     source.WorkspaceSnapshot.Ref,
+		// spec: §12.6 (StoreRouter), §15.1 (Session Replay Semantics),
+		// §4.5 (Workspace lineage) — a derived session is a new root. It
+		// carries no delegation parent, so the store makes it its own
+		// root_session_id, and its lineage to the source is the
+		// parent_workspace_ref below.
+		ParentWorkspaceRef: source.WorkspaceSnapshot.Ref,
 	}
 	if err := s.store.CreateReserved(r.Context(), derived); err != nil {
 		// spec: §12.8 (Lifecycle fence and drain) — a fence refusal, or a
@@ -386,13 +391,16 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	// spec: §8.6 — the derived root registers its lease-extension budget,
+	// as the plain create paths do, so an in-process extension resolves it.
+	s.registerLeaseTree(derived)
 
 	resp := DeriveResponse{
 		SessionResponse:              toResponse(derived),
 		WorkspaceSnapshotSource:      string(derived.WorkspaceSnapshot.Source),
 		WorkspaceSnapshotTimestamp:   derived.WorkspaceSnapshot.Timestamp.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
 		WorkspaceSnapshotContentHash: derived.WorkspaceSnapshot.ContentHash,
-		ParentSessionID:              derived.ParentSessionID,
+		ParentSessionID:              source.ID,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -576,10 +584,13 @@ func derivedSnapshotPart(sourceSessionID string) string {
 // derive_failure audit row. It is a no-op unless
 // `gateway.persistDeriveFailureRows` is enabled. The row is created
 // directly in the terminal `failed` state (no intermediate visible
-// `created` state) carrying `failureClass = derive_failure`,
-// `parentSessionId = source.ID`, and the intended target isolation
-// profile; no workspace snapshot, pod, or credential lease is recorded
-// because none ever existed.
+// `created` state) carrying `failureClass = derive_failure` and the
+// intended target isolation profile. The row has no delegation parent: it is
+// not a node in the source's delegation tree (§15.1), so a ListByRoot of the
+// source's tree does not return it. When the source has a workspace snapshot,
+// the row records that snapshot's ref as `parent_workspace_ref`, which is
+// where its lineage lives (§4.5). No workspace snapshot of its own, pod, or
+// credential lease is recorded because none ever existed.
 //
 // The write is guarded by a §10.1 coordinator-handoff CAS fence inside the
 // INSERT transaction (CreateIfGeneration): the store reads the source's
@@ -609,9 +620,15 @@ func (s *Server) persistDeriveFailure(ctx context.Context, source sessionstore.S
 		FailureReason:    reason,
 		RuntimeRef:       source.RuntimeRef,
 		IsolationProfile: target,
-		ParentSessionID:  source.ID,
 		CreatedAt:        now,
 		UpdatedAt:        now,
+	}
+	// spec: §15.1 (Session Replay Semantics), §4.5 (Workspace lineage) — the
+	// audit row is no node in the source's delegation tree ("no tree node is
+	// materialised"), so it carries no delegation parent and keeps lineage in
+	// parent_workspace_ref when the source has a snapshot.
+	if source.WorkspaceSnapshot != nil {
+		row.ParentWorkspaceRef = source.WorkspaceSnapshot.Ref
 	}
 	sessionstore.MarkTerminated(&row, "", now)
 	// spec: §7.1 (Derive session semantics) — the CAS fence runs in the

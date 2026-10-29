@@ -72,12 +72,17 @@ func (s *Server) acquireCoordinationLease(ctx context.Context, tenantID, session
 // empty replicaID (the in-memory / dev posture) makes it a no-op. The
 // release is best-effort: a Redis error at rollback is logged and
 // swallowed, because the 60s lease TTL surfaces the lease for re-adoption
-// even if the release write is lost.
+// even if the release write is lost. The release runs detached from the
+// caller's cancellation, bounded by the §7.1 release allowance, so a
+// cancelled request still releases the lease it acquired.
 //
 // spec: §4.6.1 (coordinating replica holds the lease), §10.1 (per-session
 // coordination lease), §15.1 (POST /v1/sessions/{id}/start), §7.2
-// (starting → failed).
+// (starting → failed); §7.1 (Atomicity of session creation (steps 2–8));
+// §7.1 (Terminal pipeline context: release allowance bounds the release).
 func (s *Server) releaseCoordinationLease(ctx context.Context, tenantID, sessionID string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.streamFailureReportTimeout)
+	defer cancel()
 	if s.leaseStore == nil || s.replicaID == "" {
 		return
 	}

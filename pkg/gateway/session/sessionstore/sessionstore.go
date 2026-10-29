@@ -153,8 +153,11 @@ type Session struct {
 	// derive-copy success paths.
 	WorkspaceSnapshot *WorkspaceSnapshot
 
-	// ParentSessionID is the source session a derive copied from, per
-	// §7.1 derive copy semantics. Set only on derived sessions.
+	// ParentSessionID is the §8.2 delegating parent of a delegated child.
+	// Only the delegation service sets it. Derive and replay leave it empty,
+	// because each creates a new root (§12.6 StoreRouter, §15.1 Session
+	// Replay Semantics), and record their lineage to the source in
+	// ParentWorkspaceRef (§4.5 Workspace lineage).
 	ParentSessionID string
 
 	// ContinuationParentID is the OpenResponsesAdapter previous_response_id of

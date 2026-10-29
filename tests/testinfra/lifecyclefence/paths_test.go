@@ -89,13 +89,14 @@ func TestRefusedReservedPathUndoKeepsReservationWhenDeletionFails_spec_12_8(t *t
 
 // TestReservedPathsRunTheProductionCreatePaths_spec_12_8 pins that the derive
 // and delegation paths run the production gateway code rather than a
-// reproduction of its store calls: an admitted derive's row names its source
-// as parent and carries the derived checkpoint's snapshot reference, and the
+// reproduction of its store calls: an admitted derive's row is a new root
+// with no delegation parent, records its source's snapshot as its parent
+// workspace, and carries the derived checkpoint's snapshot reference, and the
 // handler copied the source's chunk and wrote the derived manifest row under
 // the derived ID; an admitted delegation's row is a depth-1 child of its
 // parent with the export written under the child ID.
 //
-// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 15.1 (REST API)
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 15.1 (REST API), 12.6 (StoreRouter), 4.5 (Workspace lineage)
 func TestReservedPathsRunTheProductionCreatePaths_spec_12_8(t *testing.T) {
 	ctx := context.Background()
 	w := NewWorld(t, MemoryStores(), 0)
@@ -108,8 +109,14 @@ func TestReservedPathsRunTheProductionCreatePaths_spec_12_8(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read derived row: %v", err)
 	}
-	if row.ParentSessionID != w.sources["alice"] {
-		t.Errorf("derived row parent = %q, want the source %q", row.ParentSessionID, w.sources["alice"])
+	if row.ParentSessionID != "" || row.RootSessionID != d.ID {
+		t.Errorf("derived row parent = %q root = %q, want no parent and its own id %q as root",
+			row.ParentSessionID, row.RootSessionID, d.ID)
+	}
+	if src, err := w.S.Sessions.Get(ctx, w.Tenant, w.sources["alice"]); err != nil {
+		t.Fatalf("read source row: %v", err)
+	} else if src.WorkspaceSnapshot == nil || row.ParentWorkspaceRef != src.WorkspaceSnapshot.Ref {
+		t.Errorf("derived row parent workspace = %q, want the source snapshot %+v", row.ParentWorkspaceRef, src.WorkspaceSnapshot)
 	}
 	if row.WorkspaceSnapshot == nil || !strings.Contains(row.WorkspaceSnapshot.Ref, d.ID) {
 		t.Errorf("derived row snapshot = %+v, want a reference under the derived ID", row.WorkspaceSnapshot)
