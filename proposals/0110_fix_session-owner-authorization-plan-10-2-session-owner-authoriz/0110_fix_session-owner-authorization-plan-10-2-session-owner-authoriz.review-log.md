@@ -920,3 +920,65 @@ DECISION: No (g) findings this round — BECAUSE every rule now has one stating 
 FACT: The only `SessionService` implementers in the tree are `*sessionserver.Server` and the test double `fakeService`, so the round-11 fakeService clause in TEST-1 item 11 closes the interface-break gap completely. EVIDENCE: pkg/gateway/sessionserver/service.go:93, pkg/gateway/mcpfabric/mcptools/client_tools_test.go:21,32 (grep `func (.*) ServiceCall(` over pkg cmd tests sdks)
 FACT: CODE-4 step 3's reservation re-check of warm condition 4 needs no test of its own beyond TEST-2 item 5. The owner is immutable (SPEC-1 rule 1), so the eligibility check and the re-check cannot diverge on condition 4. EVIDENCE: proposals/0108*/...non-spec-changes.md:120
 DECISION: no test-coverage findings in round 12 — BECAUSE every CODE-1..5 behavior (401 no-subject, 404 deny, act/read classification, list filter, attach, translator resolve, noop binder, condition 4) has a named test at the tier it reaches, and that test covers the deny path — ALTERNATIVES: a separate reservation re-check test was rejected as nice-to-have
+
+### [f2.other-proposals]
+DECISION: 0108 impact row kept as staged and its status cell now reads "Approved (approved-date 2026-10-29; not yet implemented)" in the summary's `## Impacts on other proposals` — BECAUSE the row must carry the status date, and the gate verified every other claim in the row — EVIDENCE: proposals/0108_fix_proposal-0061-re-derived-plan-item-gateway-runtime-comms/0108_fix_proposal-0061-re-derived-plan-item-gateway-runtime-comms.status.md:10,12; 0108 non-spec-changes.md:116,273; spec/15_external-api-surface.md carries no "Open Responses conversation sessions" text yet
+
+### [non-spec-recheck.1.review-applicability.1]
+FACT: the r13 delta is one summary Impacts cell (0108 Status now "Approved (approved-date 2026-10-29; not yet implemented)"); it matches proposals/0108_*/0108_*.status.md ("status: Approved", "approved-date: 2026-10-29") — EVIDENCE: summary.md Impacts table 0108 row
+FACT: `s.readPrimary` named in CODE-2 step 4 substep 2 exists on the sessionserver Server — EVIDENCE: pkg/gateway/sessionserver/interrupt.go:183
+DECISION: no applicability findings this round — BECAUSE the delta changes no staged edit, step, dependency, or tier — ALTERNATIVES: none considered material
+
+### [non-spec-recheck.1.review-citations.1]
+FACT: the r13 delta is one summary Impacts cell: 0108 status "Approved (approved-date 2026-10-29; not yet implemented)". It matches 0108's status.md (status Approved, approved-date 2026-10-29, implemented-date empty) and its checklist has no ticked boxes — EVIDENCE: proposals/0108_*/0108_*.status.md
+FACT: CODE-2 step 4.2's `s.readPrimary(ctx, tenantID, id)` exists with that signature, and handleGet maps ErrNotFound to 404 "session not found" and any other error to 500 INTERNAL_ERROR — EVIDENCE: pkg/gateway/sessionserver/sessionserver.go:1976, session_read.go:21-28
+FACT: re-verified these symbols at the cited files: sessionPermissionGranted, evalWrite, errSessionLookup, requireActiveResolver, resolveElicitationTool, noopSingleShotBinder, serveDevHeaders, smokeTarget, concUser, requireSourceOwnerNotRestricted, lookupTenant, the creation_fence_test names (with the _spec_12_8 suffix), requireDelegatingBearerAllowed, requireActiveDelegator, sessionstore.ReadPrimary, and fakeService — EVIDENCE: rbac_gate.go:75, route_table.go:30, mcptools.go:176/1455/1486, elicitation.go:626/685, primary_read.go:47, client_tools_test.go:21
+
+### [non-spec-recheck.1.review-client-surface.1]
+FACT: The r13 delta is one Impacts-table status cell for 0108; its "Approved (approved-date 2026-10-29; not yet implemented)" matches 0108's status.md (status Approved, approved-date 2026-10-29, implemented-date blank). EVIDENCE: proposals/0108_*/0108_*.status.md
+FACT: s.readPrimary exists in sessionserver (interrupt.go:183 and others), so CODE-2 step 4.2's primary re-read names a real helper. The re-read leaves the wrapper's 404/500 client-visible bodies unchanged. EVIDENCE: pkg/gateway/sessionserver/interrupt.go:183
+
+### [non-spec-recheck.1.review-docs-alignment.1]
+FACT: The r13 delta changes only summary.md's Impacts-table Status cell for 0108. The r12-prefix delta adds CODE-2 step 4.2's readPrimary re-read, rewrites TEST-1 item 1's store-error bullet, widens S7's tiers, and deletes the 500 edge-case line. None of these changes behavior that docs/ describes. EVIDENCE: diff against scratchpad/cp-snap/0110/non-spec-r12-prefix
+FACT: The docs mirrors for the elicitation and tool-use not-found codes stay consistent after SPEC-5 and SPEC-6. docs/api/rest.md:262,268 already list both ELICITATION_NOT_FOUND and RESOURCE_NOT_FOUND. The tool-use routes list RESOURCE_NOT_FOUND (rest.md:250,256). error-handling.md:134 and error-catalog.md:107 describe only the triple mismatch, which stays true. EVIDENCE: docs/api/rest.md:250-268
+
+### [non-spec-recheck.1.review-edit-sites.1]
+FACT: the r13 delta is one summary Impacts cell (0108 status "Approved (approved-date 2026-10-29; not yet implemented)"); it matches proposals/0108_*/0108_*.status.md (status Approved, approved-date 2026-10-29, implemented-date empty). EVIDENCE: summary.md:92; 0108 status.md frontmatter
+FACT: docs carry the removed request-owner field only in the three sdk-examples DOCS-1 already stages (python.md:127, typescript.md:121, go.md:141); no docs page lists `lenny session new --user` (lenny-ctl.md:443 omits it); docs/api/open-responses.md has no `user` parameter row; docs/api/rest/index.html loads /openapi.yaml and embeds no schema copy. EVIDENCE: grep of docs/ for userId|user_id|UserID:|--user
+WATCHOUT: the "Full access" tenant-admin/platform-admin role rows (spec §10.2 bullets, docs/operator-guide/security.md:388) have been refuted as not material in non-spec r8, r10-r12, and recheck r1; do not refile. EVIDENCE: scratchpad/cp-log/0110/history/non-spec-recheck.r1.history.md:68
+
+### [non-spec-recheck.1.review-fresh.1]
+FACT: the r13 -> current delta is one summary Impacts cell: 0108 status now "Approved (approved-date 2026-10-29; not yet implemented)". It matches 0108's status.md (status Approved, approved-date 2026-10-29, implemented-date empty). The 0086, 0107, 0109, and 0085 status files also read Approved with an empty implemented-date, so their "Approved" cells are accurate as well. EVIDENCE: proposals/0108_*/0108_*.status.md
+
+### [non-spec-recheck.1.review-mechanism.1]
+FACT: s.readPrimary (sessionserver.go:1976) wraps sessionstore.ReadPrimary, which uses PrimaryReader.GetPrimary when the store implements it and otherwise a no-write Update; memstore implements GetPrimary. CODE-2 step 4.2's re-read-on-any-error fallback is therefore implementable, and TEST-1 item 1's "Get fails, primary returns alice's row" case needs a fake store that implements GetPrimary (pattern: resume_endpoint_internal_test.go:30 primaryMovingStore). EVIDENCE: pkg/gateway/session/sessionstore/primary_read.go:47-85
+FACT: start.go:60 and resume.go:42 read with s.readPrimary; handleGet (session_read.go:21) reads s.store.Get, so the wrapper's primary fallback is strictly no worse than the handler it fronts. EVIDENCE: pkg/gateway/sessionserver/session_read.go:21
+FACT: 0108 status is Approved, approved-date 2026-10-29, implemented-date empty, matching the summary Impacts cell edited in r13. EVIDENCE: proposals/0108_*/0108_*.status.md
+DECISION: no findings on the r12-prefix/r13 delta — BECAUSE the primary fallback composes with steps 3/4 consistently, no staged spec text states the wrapper's read source, and the deleted edge-case line was a restatement of CODE-2 step 4.4 — ALTERNATIVES: filing the extra primary read on every 404 as a cost; rejected, performance is not a correctness defect.
+
+### [non-spec-recheck.1.review-performance.1]
+FACT: The r13 delta changes only the 0108 Impacts row's status cell. It has no performance surface. EVIDENCE: diff of scratchpad/cp-snap/0110/non-spec-r13 against summary.md:92
+FACT: CODE-2 step 4.2 adds a primary re-read on any wrapper Get error, ErrNotFound included. The cost is one bounded primary PK read per miss, using sessionstore.ReadPrimary with primaryReadTimeout. It adds no write and touches no etcd or Redis. During a replica outage the wrapper falls back to the primary, so /start and /resume, which already read only the primary, degrade no worse than the shipped design. EVIDENCE: pkg/gateway/sessionserver/sessionserver.go:1976, start.go:60, resume.go:42
+USEFUL [Settled: Performance]: the standing entry "no etcd, Redis, or new write; one extra PK read per wrapped request" still holds after the re-read change.
+
+### [non-spec-recheck.1.review-plan-conformance.1]
+FACT: The plan step this proposal claims is the "Session-owner authorization proposal" checkbox entry, plus the 0108 routing block (F-15.1.55, F-10.2.30, F-15.1.54) and the F-15.1.54 completeness-pass entry. Its deliverables are: the per-owner check, the "explicit grant", the adapter owner bound to the principal, and coverage of GET /v1/sessions/{id}, GET /v1/sessions, and GET /v1/responses/{id}. All of them are staged, in SPEC-1/2, CODE-5, CODE-2, CODE-4, and TEST-2 item 6 (tier 9). EVIDENCE: gateway-runtime-comms-remediation.md:3389-3394, :4210-4221, :4396-4400
+FACT: The r13 delta changes only the 0108 Impacts row status text ("Approved (approved-date 2026-10-29; not yet implemented)"). That text matches proposals/0108*/status.md (status: Approved, approved-date 2026-10-29). EVIDENCE: summary.md Impacts table row 1
+
+### [non-spec-recheck.1.review-reliability.1]
+- FACT: pgstore `Get` reads the §12.3 read pool with no deadline of its own (only the request ctx), while `sessionstore.ReadPrimary` always runs under a timeout (default 5s, `--session-primary-read-timeout`). The gateway HTTP servers set only ReadHeaderTimeout, so a request-scoped replica read is bounded only by the client. — EVIDENCE: pkg/gateway/session/sessionstore/pgstore/pgstore.go:500-518; pkg/gateway/session/sessionstore/primary_read.go:41-66; cmd/lenny-gateway/httpsurface.go:979
+- WATCHOUT: CODE-2 step 2's primary re-read (added non-spec r13) fires only when `Get` returns. A hung replica stalls `/start` and `/resume` in the wrapper before they reach their bounded primary read. Before this change those handlers read only the primary. Filed as a finding: bound the wrapper `Get` with `s.primaryReadTimeout` so a timeout falls through to the re-read. — EVIDENCE: non-spec-changes.md CODE-2 step 4.2; pkg/gateway/sessionserver/start.go:59-60, resume.go:42
+- USEFUL [review-log FACT at :826]: the memstore-embedding fake that overrides only Get also exercises a blocking-Get case.
+
+### [non-spec-recheck.1.review-security.1]
+FACT: The r13 delta is only the 0108 Status cell in the summary Impacts table; the r12-prefix delta adds CODE-2 step 4 substep 2's primary re-read on any Get error, rewrites TEST-1 item 1's store-error bullet, widens S7 tiers, and drops the 500 edge-case line. The re-read keeps the SessionAccessible decision on the re-read row, so it opens no bypass, and a replica row with a stale state cannot carry a different owner (SPEC-1 rule 1). EVIDENCE: pkg/gateway/sessionserver/sessionserver.go:1976 (readPrimary wraps sessionstore.ReadPrimary)
+FACT: The wrapper's tenant source `s.resolveTenant(r)` is the same one handleGet uses, so the wrapper and the handler read the same tenant's row. EVIDENCE: pkg/gateway/sessionserver/session_read.go:19
+
+### [non-spec-recheck.1.review-single-source.1]
+
+- FACT: the delta since non-spec-r13 is only the summary Impacts-row status cell for 0108 ("Approved (approved-date 2026-10-29; not yet implemented)"), and it matches proposals/0108_*/…status.md (status: Approved, approved-date 2026-10-29, implemented-date empty). EVIDENCE: summary.md:92
+- DECISION: no single-source findings this round — BECAUSE each multi-site subject (matrix-first 403, SPEC-4 after 0108, tenant-viewer-as-grant reason, owner-immutability second-read reason, elicitation ordering) has one normative home (SPEC-1 rules 3/5/7, checklist S5/S10/S11) and every other site cites it or gives a one-clause reason — ALTERNATIVES: filing summary Watch-out line 31/32 against CODE-2 step 2 and SPEC-1 rule 7; rejected, each is two sentences ending in a pointer.
+
+### [non-spec-recheck.1.review-test-coverage.1]
+FACT: the r13 delta is only the summary Impacts-table 0108 Status cell ("Approved (approved-date 2026-10-29; not yet implemented)"); it changes no behavior and needs no test. The r12-prefix delta (CODE-2 substep 2 primary re-read, S7 tiers, removed edge-case line) is pinned by TEST-1 item 1's last bullet (both reads fail -> 500, no handler; replica miss + primary hit -> alice's /start and /resume reach the handler). EVIDENCE: non-spec-changes.md:69, :187
+FACT: a tier-1 fake can drive the replica-miss/primary-hit split by implementing sessionstore.PrimaryReader (GetPrimary), which ReadPrimary prefers over the Update fallback. EVIDENCE: pkg/gateway/session/sessionstore/primary_read.go:23-28, :73-76; pkg/gateway/sessionserver/sessionserver.go:1976
