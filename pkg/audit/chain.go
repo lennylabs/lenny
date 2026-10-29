@@ -393,10 +393,13 @@ func (c *Chain) Verify() VerifyResult {
 //   - redacted_gdpr         — content-hash break on a §12.8-redacted row
 //     carrying a valid signed receipt; the discontinuity is lawful.
 //   - gap_suspected         — the sequence number jumps relative to the
-//     preceding row (e.g. #1000 then #1150), the §25.9 temporal-gap
-//     signal for a degraded-mode write window.
+//     preceding row (e.g. #1000 then #1150) while the prev_hash still
+//     links to that row: the §25.9 advisory signal for a nextval
+//     rollback or an outage window.
 //   - broken                — content-hash mismatch with no receipt, a
-//     link mismatch with no sequence jump, or a cross-tenant row.
+//     prev_hash that does not link to the in-order predecessor (with or
+//     without a sequence jump, so a removed interior row is broken), or
+//     a cross-tenant row.
 //
 // The walk passes nil receipts when invoked on a chain built via
 // ChainFromRows, matching Store.Verify; a redacted row without an
@@ -426,46 +429,54 @@ func (c *Chain) classifyRow(i int, row Row) ChainIntegrity {
 	// preserved); a valid signed receipt reclassifies the break as lawful.
 	thisRedacted := false
 	if computeHash(row) != row.Hash {
-		if row.Redacted {
-			rcpt, ok := c.receipts[row.Seq]
-			if ok && rcpt.OriginalHash == row.Hash && rcpt.Signature != "" {
-				thisRedacted = true
-			} else {
-				return ChainBroken
-			}
-		} else {
+		if !c.receiptedRedaction(row) {
 			return ChainBroken
 		}
-	}
-	// Sequence-gap detection precedes the link check: a jump in the
-	// sequence number is the §25.9 temporal-gap signal, distinct from a
-	// tamper-broken link.
-	if i > 0 && row.Seq != c.rows[i-1].Seq+1 {
-		return ChainGapSuspected
+		thisRedacted = true
 	}
 	// Link check. The genesis row links to the sentinel; a row whose
 	// predecessor was lawfully redacted carries a stale prev_hash (the
 	// redaction rewrote the predecessor's canonical bytes), tolerated as
 	// the lawful downstream consequence of the erasure.
+	//
+	// The link check runs before the sequence-gap check, because the
+	// prev_hash linkage rather than sequence density separates a benign
+	// gap from a tamper break. A sequence gap whose prev_hash still links
+	// to the in-order predecessor (a nextval rollback) is the advisory
+	// gap_suspected signal. A gap whose prev_hash does not link (a
+	// committed row was removed) is broken. Checking the sequence first
+	// reported a deleted interior row as gap_suspected, so the broken
+	// tally and the broken-chain event never fired (BUILD-GAPS F-25.9.21).
+	//
+	// spec: §11.7 (Authoritative total order); §25.9 (Chain gap detection).
 	if i == 0 {
 		if row.PrevHash != GenesisPrevHash {
 			return ChainBroken
 		}
 	} else {
 		prev := c.rows[i-1]
-		prevRedacted := false
-		if prev.Redacted {
-			rcpt, ok := c.receipts[prev.Seq]
-			prevRedacted = ok && rcpt.OriginalHash == prev.Hash && rcpt.Signature != ""
-		}
-		if !prevRedacted && row.PrevHash != linkHash(prev) {
+		if !c.receiptedRedaction(prev) && row.PrevHash != linkHash(prev) {
 			return ChainBroken
+		}
+		if row.Seq != prev.Seq+1 {
+			return ChainGapSuspected
 		}
 	}
 	if thisRedacted {
 		return ChainRedactedGDPR
 	}
 	return ChainVerified
+}
+
+// receiptedRedaction reports whether row is a §12.8 GDPR redaction
+// carrying a valid signed receipt that matches its preserved hash. The
+// caller holds c.mu.
+func (c *Chain) receiptedRedaction(row Row) bool {
+	if !row.Redacted {
+		return false
+	}
+	rcpt, ok := c.receipts[row.Seq]
+	return ok && rcpt.OriginalHash == row.Hash && rcpt.Signature != ""
 }
 
 // ChainSet is a goroutine-safe collection of per-tenant chains. It
