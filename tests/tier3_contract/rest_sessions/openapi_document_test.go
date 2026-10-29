@@ -329,3 +329,164 @@ func TestServedDocumentOpenResponsesByIDHasNoDeleteOperation(t *testing.T) {
 		t.Error("served document advertises a delete operation on /v1/responses/{id}; the adapter serves none")
 	}
 }
+
+// openAPIOperation is the subset of an OpenAPI operation object the
+// finalize and upload contract assertions read.
+type openAPIOperation struct {
+	RequestBody *struct {
+		Required bool `json:"required"`
+		Content  map[string]struct {
+			Schema map[string]any `json:"schema"`
+		} `json:"content"`
+	} `json:"requestBody"`
+	Responses map[string]struct {
+		Description string `json:"description"`
+		Content     map[string]struct {
+			Schema map[string]any `json:"schema"`
+		} `json:"content"`
+	} `json:"responses"`
+}
+
+// servedSessionDocument is the subset of the served document the
+// finalize and upload contract assertions read.
+type servedSessionDocument struct {
+	Paths      map[string]map[string]openAPIOperation `json:"paths"`
+	Components struct {
+		Schemas map[string]struct {
+			AdditionalProperties any                       `json:"additionalProperties"`
+			Properties           map[string]map[string]any `json:"properties"`
+		} `json:"schemas"`
+	} `json:"components"`
+}
+
+// decodeServedSessionDocument reads the document the gateway serves at
+// GET /openapi.json into the finalize and upload contract subset.
+func decodeServedSessionDocument(t *testing.T) servedSessionDocument {
+	t.Helper()
+	ts := httptest.NewServer(openapi.Handler())
+	t.Cleanup(ts.Close)
+	var doc servedSessionDocument
+	if err := json.Unmarshal([]byte(fetchServedDocument(t, ts.URL+"/openapi.json")), &doc); err != nil {
+		t.Fatalf("decode served /openapi.json: %v", err)
+	}
+	return doc
+}
+
+// servedOperation returns the operation the served document declares
+// for method on path, failing the test when it is absent.
+func servedOperation(t *testing.T, doc servedSessionDocument, path, method string) openAPIOperation {
+	t.Helper()
+	item, ok := doc.Paths[path]
+	if !ok {
+		t.Fatalf("served document has no %s path", path)
+	}
+	op, ok := item[method]
+	if !ok {
+		t.Fatalf("served document has no %s operation on %s", method, path)
+	}
+	return op
+}
+
+// schemaRef returns the $ref of the application/json schema a request
+// body or response content map declares, or "" when there is none.
+func schemaRef(content map[string]struct {
+	Schema map[string]any `json:"schema"`
+},
+) string {
+	ref, _ := content["application/json"].Schema["$ref"].(string)
+	return ref
+}
+
+// spec: §15.1 (REST API: the POST /v1/sessions/{id}/finalize row and the
+// error catalog rows that cite Plan binding), §14.1 (WorkspacePlan Schema
+// Versioning, Plan binding).
+// diagnosis: a failure here means the served OpenAPI document no longer
+// declares the optional finalize request body that binds a WorkspacePlan
+// onto a session created without one, or no longer declares the
+// plan-bind error responses. A client or SDK generated from the document
+// could not send the plan the Go SDK, the CLI, and the playground send,
+// or would not model the 400, 422, and 503 Error envelopes the bind
+// returns. Restore paths./v1/sessions/{id}/finalize.post.requestBody and
+// its responses, and components.schemas.FinalizeRequest, in
+// pkg/gateway/externalapi/openapi/openapi.json.
+func TestServedDocumentFinalizeDeclaresOptionalPlanBody(t *testing.T) {
+	doc := decodeServedSessionDocument(t)
+	op := servedOperation(t, doc, "/v1/sessions/{id}/finalize", "post")
+
+	if op.RequestBody == nil {
+		t.Fatal("finalize declares no requestBody, so a client cannot send the plan the bind reads")
+	}
+	if op.RequestBody.Required {
+		t.Error("finalize requestBody is required; a finalize without a body seals a session whose plan was set at creation")
+	}
+	if got, want := schemaRef(op.RequestBody.Content), "#/components/schemas/FinalizeRequest"; got != want {
+		t.Errorf("finalize requestBody schema $ref = %q, want %q", got, want)
+	}
+
+	req, ok := doc.Components.Schemas["FinalizeRequest"]
+	if !ok {
+		t.Fatal("served document has no components.schemas.FinalizeRequest")
+	}
+	if req.AdditionalProperties != nil {
+		t.Errorf("FinalizeRequest sets top-level additionalProperties = %v; the component leaves it unset", req.AdditionalProperties)
+	}
+	plan, ok := req.Properties["workspacePlan"]
+	if !ok {
+		t.Fatal("FinalizeRequest has no workspacePlan property")
+	}
+	types, _ := plan["type"].([]any)
+	if len(types) != 2 || types[0] != "object" || types[1] != "null" {
+		t.Errorf("FinalizeRequest.workspacePlan type = %v, want [object null]", plan["type"])
+	}
+
+	for _, status := range []string{"400", "422", "503"} {
+		resp, ok := op.Responses[status]
+		if !ok {
+			t.Errorf("finalize declares no %s response for the plan bind", status)
+			continue
+		}
+		if got := schemaRef(resp.Content); got != "#/components/schemas/Error" {
+			t.Errorf("finalize %s response schema $ref = %q, want the Error envelope", status, got)
+		}
+	}
+	for _, status := range []string{"200", "409"} {
+		if _, ok := op.Responses[status]; !ok {
+			t.Errorf("finalize lost its %s response", status)
+		}
+	}
+}
+
+// spec: §14 (Workspace Plan Schema, uploadRef field note), §15.1 (REST
+// API: the /upload and /upload-archive rows).
+// diagnosis: a failure here means an upload route no longer returns
+// UploadResponse on 201, or the UploadResponse.uploadRef description
+// again presents the value as a URI the client may interpret. The
+// uploadRef is opaque to clients and valid only in a plan bound to the
+// uploading session. Restore the 201 response and the opaque description
+// in pkg/gateway/externalapi/openapi/openapi.json.
+func TestServedDocumentUploadRoutesReturnOpaqueUploadRef(t *testing.T) {
+	doc := decodeServedSessionDocument(t)
+	for _, path := range []string{"/v1/sessions/{id}/upload", "/v1/sessions/{id}/upload-archive"} {
+		op := servedOperation(t, doc, path, "post")
+		created, ok := op.Responses["201"]
+		if !ok {
+			t.Errorf("%s declares no 201 response", path)
+			continue
+		}
+		if got := schemaRef(created.Content); got != "#/components/schemas/UploadResponse" {
+			t.Errorf("%s 201 response schema $ref = %q, want UploadResponse", path, got)
+		}
+	}
+
+	ref, ok := doc.Components.Schemas["UploadResponse"].Properties["uploadRef"]
+	if !ok {
+		t.Fatal("UploadResponse has no uploadRef property")
+	}
+	desc, _ := ref["description"].(string)
+	if !strings.HasPrefix(desc, "Opaque reference") {
+		t.Errorf("UploadResponse.uploadRef description = %q, want the opaque-reference wording", desc)
+	}
+	if strings.Contains(desc, "lenny-blob://") {
+		t.Errorf("UploadResponse.uploadRef description %q names the internal URI scheme a client must not interpret", desc)
+	}
+}

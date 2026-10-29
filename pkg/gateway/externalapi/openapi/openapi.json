@@ -201,11 +201,17 @@
           "ticketId":                { "type": "string" }
         }
       },
+      "FinalizeRequest": {
+        "type": "object",
+        "properties": {
+          "workspacePlan": { "type": ["object", "null"], "additionalProperties": true, "description": "WorkspacePlan bound at finalize when the session's CreateSessionRequest carried none (§14.1 Plan binding)." }
+        }
+      },
       "UploadResponse": {
         "type": "object",
         "required": ["uploadRef", "size"],
         "properties": {
-          "uploadRef":   { "type": "string", "description": "§4.5 lenny-blob:// URI" },
+          "uploadRef":   { "type": "string", "description": "Opaque reference to the stored upload. Pass it verbatim as the uploadRef of an uploadFile or uploadArchive source in a plan bound to this session." },
           "mimeType":    { "type": "string" },
           "size":        { "type": "integer", "format": "int64" },
           "contentHash": { "type": "string", "description": "Hex-encoded SHA-256 of the streamed bytes" },
@@ -753,7 +759,14 @@
         "summary": "Finalize workspace",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "responses": { "200": { "description": "OK" }, "409": { "description": "Invalid state transition" } }
+        "requestBody": { "required": false, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FinalizeRequest" } } } },
+        "responses": {
+          "200": { "description": "OK" },
+          "400": { "description": "VALIDATION_ERROR (plan_already_set, invalid_upload_ref, upload_ref_foreign_session, malformed body) / WORKSPACE_PLAN_INVALID", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "409": { "description": "Invalid state transition" },
+          "422": { "description": "GIT_CLONE_AUTH_UNSUPPORTED_HOST / GIT_CLONE_AUTH_HOST_AMBIGUOUS / GIT_CLONE_REF_UNRESOLVABLE", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "503": { "description": "GIT_CLONE_REF_RESOLVE_TRANSIENT / SERVICE_UNAVAILABLE", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
       }
     },
     "/v1/sessions/{id}/start": {
