@@ -111,10 +111,10 @@ No decisions are open.
 - SPEC-2 — spec/15_external-api-surface.md — new paragraph **Open Responses conversation sessions.**
 - SPEC-3 — spec/29_communication-scenarios.md — split the §29.3 adapter off-holder row and edit the lead-in clause.
 - SPEC-4 — spec/28_communication-channels.md — add the §15 link to the §28.5.4 `CH-HOLDERFORWARD` card's **Messages.** bullet.
-- CODE-1 — pkg/gateway/environment/transcriptstore — `Append` returns the last assigned Seq.
-- CODE-2 — pkg/gateway/session/sessionstore — `Session.Responses` and `Session.RequestedRuntimeRef` on the request-envelope bundle.
+- CODE-1 — pkg/gateway/environment/transcriptstore (transcriptstore.go, pgstore/pgstore.go) and its callers — `Append` returns the last assigned Seq.
+- CODE-2 — pkg/gateway/session/sessionstore (sessionstore.go, pgstore, memstore) — `Session.Responses` and `Session.RequestedRuntimeRef` on the request-envelope bundle.
 - CODE-3 — pkg/gateway/sessionserver/holder_forward.go and cmd/lenny-gateway/holder_forward_listener.go — `ForwardKindResponsesTurn` and the `POST /v1/responses` listener route.
 - CODE-4 — pkg/gateway/environment/translator (responseid.go, continuity.go, open_responses.go) — response-id codec, Seq-bounded rehydrate, required record, and GET.
-- CODE-5 — pkg/gateway/environment/translator (open_responses.go, openai_chat.go, singleshot.go) and cmd/lenny-gateway/credentialsurface.go — warm, forward, and cold routing in `handleCreate`.
+- CODE-5 — pkg/gateway/environment/translator (open_responses.go, openai_chat.go, singleshot.go), cmd/lenny-gateway/credentialsurface.go, and the pkg/gateway/sessionserver terminal-writer inventory tests — warm, forward, and cold routing in `handleCreate`.
 - DOCS-1 — docs/api/open-responses.md — describe the held conversation session.
 - TEST-1 — tests across tiers 1, 2, 3, 4, 7a, 8, 9, and 11 (non-spec-changes `## Testing`) — cross-tier cases for SPEC-2 and SPEC-3.
