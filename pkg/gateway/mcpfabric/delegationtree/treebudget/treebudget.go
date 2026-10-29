@@ -384,10 +384,11 @@ func (s *Reserver) Reserve(ctx context.Context, r Reservation) (retTotals Totals
 	}, nil
 }
 
-// Return releases a previously reserved delegation's budget. It is
-// called when a child reaches a terminal state (decrement
-// parallel_children) or on completed-subtree offload (decrement
-// tree_memory). A Redis or script failure is returned wrapped in
+// Return releases a previously reserved delegation's budget. The
+// session server's post-terminal hook calls it once per applied terminal
+// write of a delegated child, after the usage quiescence wait, with the
+// tree_size, tree_memory, parallel_children, and unused-token deltas on
+// the child's recorded root. Archiving a node returns nothing. A Redis or script failure is returned wrapped in
 // ErrBudgetUnavailable for the caller to log; a failed return leaks budget
 // conservatively rather than over-admitting, so it is not fatal to
 // correctness. Return creates no key and keeps the

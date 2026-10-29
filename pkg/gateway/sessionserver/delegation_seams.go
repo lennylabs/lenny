@@ -9,12 +9,16 @@ import (
 )
 
 // TreeBudgetReturner releases the §12.4 delegation tree budget a
-// settled child consumed. The §8.2 completed-subtree offload
-// decrements the tree's maxTreeMemoryBytes counter when a node is
-// archived and the per-parent parallel_children counter when the child
-// stops running, so a long-running tree's freed concurrency slot and
-// in-memory footprint are returned to the budget. *treebudget.Reserver
-// implements it. A nil returner on the Server disables the decrement.
+// delegated child consumed. The post-terminal hook's return step
+// (returnTreeBudget, started from afterTerminalWrite for a delegated
+// child) calls Return once per applied terminal write, after the usage
+// quiescence wait, with the tree_size, tree_memory, parallel_children,
+// and unused-token deltas on the child's recorded root
+// (sess.RootSessionID). Archiving a node returns nothing.
+// *treebudget.Reserver implements it. A nil returner on the Server
+// disables the return.
+//
+// spec: §8.3 (Return on completion)
 type TreeBudgetReturner interface {
 	Return(ctx context.Context, r treebudget.Reservation) error
 }

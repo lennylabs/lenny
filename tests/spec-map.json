@@ -2847,6 +2847,7 @@
       "title": "Delegation Policy and Lease",
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
+        "tests/tier11_docs/tree_budget_return_doc_currency_test.go::TestTreeBudgetReturnDocsNameTheTerminalPipelineReturn_spec_8_3",
         "tests/tier7a_load_local/budget_keys_expired_cleanup_race_test.go::TestBudgetKeysExpiredConcurrentDetectionsEndTheTreeOnce_spec_8_3",
         "tests/tier7a_load_local/budget_return_once_test.go::TestConcurrentTerminalWritersReturnTheChildOnce_spec_8_3",
         "tests/tier4_integration/delegation_budget_return_test.go::TestCancelledChildrenReturnTheirSlots_spec_8_3",
