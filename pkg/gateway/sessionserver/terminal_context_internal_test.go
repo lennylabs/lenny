@@ -289,7 +289,7 @@ var terminalContextWriters = []tcWriter{
 	{key: "pkg/gateway/environment/translator/open_responses.go handleCreate", noHook: "the translator writes on the none path"},
 	{key: "cmd/lenny-gateway/session_admin.go ForceTerminate", drive: onSessionTerminalDriver(session.StateFailed)},
 	{key: "cmd/lenny-gateway/session_budget.go terminate", drive: onSessionTerminalDriver(session.StateExpired)},
-	{key: "cmd/lenny-gateway/reconciler_workers.go startReconcilerWorkers", drive: onSessionTerminalDriver(session.StateFailed)},
+	{key: "cmd/lenny-gateway/reconciler_workers.go deadlockFail", drive: onSessionTerminalDriver(session.StateFailed)},
 }
 
 // TerminalContextWriterKeys returns the inventory keys the terminal context
