@@ -33,9 +33,8 @@ type CreateSessionRequest struct {
 	UserID string `json:"userId,omitempty"`
 
 	// WorkspacePlan is the §14 workspace plan submitted at creation.
-	// Optional; when it is absent, the plan binds at finalize (§14.1 Plan
-	// binding), and the bound plan carries the runtime's
-	// workspaceDefaults.
+	// Optional; an absent plan starts the session with an empty
+	// workspace.
 	WorkspacePlan json.RawMessage `json:"workspacePlan,omitempty"`
 
 	// Environment is the §10.6 environment the session is created in.
@@ -62,9 +61,8 @@ type Session struct {
 	// FailureClass is populated when State is StateFailed.
 	FailureClass string `json:"failureClass,omitempty"`
 
-	// WorkspacePlan echoes the §14 plan the gateway stored when the plan
-	// bound, at creation or at finalize, composed with the runtime's
-	// workspaceDefaults (§14.1 Runtime workspace defaults).
+	// WorkspacePlan echoes the §14 plan stored at creation. Absent
+	// when the session was created without a plan.
 	WorkspacePlan json.RawMessage `json:"workspacePlan,omitempty"`
 }
 

@@ -502,7 +502,8 @@ func cmdSessionCancel(ctx context.Context, args []string, stdout, stderr io.Writ
 }
 
 // cmdSessionList implements `lenny session list` over REST GET
-// /v1/sessions (the §24.17 mapping, whose row names this REST endpoint).
+// /v1/sessions (the §24.17 mapping; the one session command that
+// works over REST for non-interactive callers).
 func cmdSessionList(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	f, err := parseSessionFlags(args)
 	if err != nil {

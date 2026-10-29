@@ -591,9 +591,8 @@ func (m *Metrics) IncSessionSuspensionCheckpointFailed(pool, tenantID string) {
 }
 
 // IncWarmpoolWarmupFailure increments the §16.1
-// `lenny_warmpool_warmup_failure_total{error_type}` counter for one
-// failure; `setup_command_failed` counts a session whose setup commands
-// fail. error_type is the §7.3 non-retryable
+// `lenny_warmpool_warmup_failure_total{error_type}` counter for one warm-
+// pool startup failure. error_type is the §7.3 non-retryable
 // failure category the gateway classified (`setup_command_failed`,
 // `workspace_plan_invalid`, `runtime_image_pull_failed`,
 // `network_policy_denied`). spec: §16.1, §7.3 — F-7.5.9.

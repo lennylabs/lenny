@@ -39,9 +39,8 @@ class CreateSessionRequest:
     #: The section 10.2 user the session is created for. Optional.
     user_id: str = ""
 
-    #: The section 14 workspace plan submitted at creation. Optional; when
-    #: it is absent, the plan binds at finalize (section 14.1 Plan binding),
-    #: and the bound plan carries the runtime's workspaceDefaults.
+    #: The section 14 workspace plan submitted at creation. Optional; an
+    #: absent plan starts the session with an empty workspace.
     workspace_plan: Optional[dict[str, Any]] = None
 
     #: The section 10.6 environment the session is created in. Optional.
@@ -88,9 +87,8 @@ class Session:
     #: Populated when ``state`` is ``failed``.
     failure_class: str = ""
 
-    #: Echoes the section 14 plan the gateway stored when the plan bound,
-    #: at creation or at finalize, composed with the runtime's
-    #: workspaceDefaults (section 14.1 Runtime workspace defaults).
+    #: Echoes the section 14 plan stored at creation. ``None`` when the
+    #: session was created without a plan.
     workspace_plan: Optional[dict[str, Any]] = None
 
     @classmethod
