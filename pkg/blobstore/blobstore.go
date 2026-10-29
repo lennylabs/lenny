@@ -839,7 +839,9 @@ func (s *MemoryStore) DeleteByTenant(_ context.Context, tenantID string) (int, e
 }
 
 // Copy implements Copier. It duplicates src into a new in-memory
-// blob at dst with a freshly minted ExpiresAt; returns
+// blob at dst with a freshly minted ExpiresAt, measured from the copy's
+// write with dst's TTL, or with the source's TTL when dst names none
+// (copyTTL); returns
 // ErrCrossTenant when src and dst name different tenants,
 // ErrNotFound when src is absent or tombstoned, and ErrConflict
 // when dst already names a live blob.
@@ -868,17 +870,41 @@ func (s *MemoryStore) Copy(src, dst URI) error {
 	}
 	now := s.clock()
 	body := append([]byte(nil), from.body...)
+	ttl := copyTTL(dst.TTL, from.info.StoredAt, from.info.ExpiresAt)
+	dst.TTL = ttl
 	s.blobs[s.key(dst)] = memBlob{
 		info: BlobInfo{
 			URI:       dst,
 			MimeType:  from.info.MimeType,
 			Size:      int64(len(body)),
 			StoredAt:  now,
-			ExpiresAt: now.Add(dst.TTL),
+			ExpiresAt: now.Add(ttl),
 		},
 		body: body,
 	}
 	return nil
+}
+
+// copyTTL returns the lifetime a Copy destination is stored with. A
+// destination URI that names a TTL keeps it. A destination that names none,
+// such as a §10.1 checkpoint chunk URI the derive and replay copies build
+// with resumechunks.ChunkObjectURI, keeps the source blob's own TTL (its
+// ExpiresAt minus its StoredAt), measured from the copy's write. Without
+// this a zero TTL stamped ExpiresAt at the write instant, so the copy
+// expired as it was written and every later Get returned ErrNotFound. The
+// S3-compatible stores apply no per-object TTL, so a copy there never
+// expired early (BUILD-GAPS F-4.5.24).
+//
+// spec: §7.1 (Derive copy semantics: the derived session owns a full copy
+// of the parent's checkpoint); §15.1 (Session Replay Semantics); §4.5.
+func copyTTL(dstTTL time.Duration, srcStoredAt, srcExpiresAt time.Time) time.Duration {
+	if dstTTL > 0 {
+		return dstTTL
+	}
+	if src := srcExpiresAt.Sub(srcStoredAt); src > 0 {
+		return src
+	}
+	return dstTTL
 }
 
 // NewPartID returns a fresh §4.5 part identifier — 16 random bytes

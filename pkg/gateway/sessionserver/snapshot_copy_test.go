@@ -131,58 +131,122 @@ func TestSnapshotCopyStoresRefOfCopiedObject_spec_7_1(t *testing.T) {
 	}
 }
 
+// chunkCopyStore is a blob store that copies and erases by session: the
+// in-memory and filesystem stores both qualify.
+type chunkCopyStore interface {
+	blobstore.Store
+	blobstore.Copier
+	DeleteBySession(ctx context.Context, tenantID, sessionID string) (int, error)
+}
+
+// chunkCopyStores builds each blob store the chunked copy runs on in the
+// in-memory and filesystem postures, both on the given clock.
+var chunkCopyStores = []struct {
+	name string
+	new  func(t *testing.T, clock func() time.Time) chunkCopyStore
+}{
+	{"memory", func(_ *testing.T, clock func() time.Time) chunkCopyStore { return blobstore.NewMemoryStore(clock) }},
+	{"filesystem", func(t *testing.T, clock func() time.Time) chunkCopyStore {
+		s, err := blobstore.NewFilesystemStore(t.TempDir(), clock)
+		if err != nil {
+			t.Fatalf("filesystem store: %v", err)
+		}
+		return s
+	}},
+}
+
 // TestSnapshotCopyChunkedCheckpoint_spec_10_1 pins the chunked copy on
-// derive and on both replay modes: every chunk of the source's checkpoint
-// is copied under the new session's prefix, a complete derived manifest
-// row is written for the new session, and the stored ref is the
-// four-segment checkpoint ref naming that row.
-// spec: 7.1 (Normal Flow: Derive copy semantics), 15.1 (REST API: Session Replay Semantics), 10.1 (Horizontal Scaling)
+// derive and on both replay modes, on the in-memory and the filesystem blob
+// stores: every chunk of the source's checkpoint is copied under the new
+// session's prefix and reads back with the source's bytes, a complete
+// derived manifest row is written for the new session, and the stored ref
+// is the four-segment checkpoint ref naming that row. The copied chunk
+// keeps the source chunk's TTL, measured from the copy, because the chunk
+// URI names none; before BUILD-GAPS F-4.5.24 the copy expired as it was
+// written and every read of it returned not found.
+// spec: 7.1 (Normal Flow: Derive copy semantics), 15.1 (REST API: Session Replay Semantics), 10.1 (Horizontal Scaling), 4.5 (Artifact Store)
 func TestSnapshotCopyChunkedCheckpoint_spec_10_1(t *testing.T) {
 	enc := partialmanifeststore.ChunkEncodingTar
-	for _, ep := range copyEndpoints {
-		t.Run(ep.name, func(t *testing.T) {
-			f, _, _ := replayFixture(t)
-			if _, err := f.mem.Update(context.Background(), "acme", "sess_source", func(s *sessionstore.Session) error {
-				s.WorkspaceSnapshot.Ref = "/acme/checkpoints/sess_source/ckpt_parent"
-				return nil
-			}); err != nil {
-				t.Fatalf("point the source at its checkpoint: %v", err)
-			}
-			for n := uint32(0); n < 2; n++ {
-				u := resumechunks.ChunkObjectURI("acme", "sess_source", "ckpt_parent", n, enc)
-				u.TTL = time.Hour
-				if _, err := f.blobs.Put(u, "application/x-tar", strings.NewReader("chunk")); err != nil {
-					t.Fatalf("seed chunk %d: %v", n, err)
+	const sourceTTL = time.Hour
+	for _, st := range chunkCopyStores {
+		for _, ep := range copyEndpoints {
+			t.Run(st.name+"/"+ep.name, func(t *testing.T) {
+				now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+				clock := func() time.Time { return now }
+				blobs := st.new(t, clock)
+				f, _, _ := replayFixture(t)
+				if _, err := f.mem.Update(context.Background(), "acme", "sess_source", func(s *sessionstore.Session) error {
+					s.WorkspaceSnapshot.Ref = "/acme/checkpoints/sess_source/ckpt_parent"
+					return nil
+				}); err != nil {
+					t.Fatalf("point the source at its checkpoint: %v", err)
 				}
-			}
-			manifests := partialmanifeststore.NewMemoryStore(nil)
-			h := copyServer(f, f.blobs, []string{ep.newID, "ckpt_new"}, func(o *sessionserver.Options) {
-				o.CheckpointManifestReader = parentManifest{partialmanifeststore.Record{
-					TenantID: "acme", CheckpointID: "ckpt_parent", SessionID: "sess_source", ChunkCount: 2, ChunkEncoding: enc,
-				}}
-				o.CheckpointManifestWriter = manifests
+				for n := uint32(0); n < 2; n++ {
+					u := resumechunks.ChunkObjectURI("acme", "sess_source", "ckpt_parent", n, enc)
+					u.TTL = sourceTTL
+					if _, err := blobs.Put(u, "application/x-tar", strings.NewReader("chunk-"+string(rune('a'+n)))); err != nil {
+						t.Fatalf("seed chunk %d: %v", n, err)
+					}
+				}
+				// The copy runs 20 minutes into the source chunks' lifetime.
+				now = now.Add(20 * time.Minute)
+				copiedAt := now
+				manifests := partialmanifeststore.NewMemoryStore(nil)
+				h := copyServer(f, blobs, []string{ep.newID, "ckpt_new"}, func(o *sessionserver.Options) {
+					o.CheckpointManifestReader = parentManifest{partialmanifeststore.Record{
+						TenantID: "acme", CheckpointID: "ckpt_parent", SessionID: "sess_source", ChunkCount: 2, ChunkEncoding: enc,
+					}}
+					o.CheckpointManifestWriter = manifests
+				})
+				if rr := ep.call(t, h); rr.Code != http.StatusCreated {
+					t.Fatalf("status = %d, want 201; body %s", rr.Code, rr.Body.String())
+				}
+				row, _ := f.mem.Get(context.Background(), "acme", ep.newID)
+				if want := "/acme/checkpoints/" + ep.newID + "/ckpt_new"; row.WorkspaceSnapshot == nil || row.WorkspaceSnapshot.Ref != want {
+					t.Fatalf("stored ref = %+v, want %s", row.WorkspaceSnapshot, want)
+				}
+				// Each copied chunk reads back with its source's bytes until
+				// the source TTL has run from the copy, and not after.
+				for _, at := range []struct {
+					offset time.Duration
+					live   bool
+				}{{0, true}, {sourceTTL - time.Minute, true}, {sourceTTL + time.Minute, false}} {
+					now = copiedAt.Add(at.offset)
+					for n := uint32(0); n < 2; n++ {
+						u := resumechunks.ChunkObjectURI("acme", ep.newID, "ckpt_new", n, enc)
+						info, body, err := blobs.Get(u)
+						if !at.live {
+							if !errors.Is(err, blobstore.ErrNotFound) {
+								t.Errorf("copied chunk %d at copy+%s: err = %v, want ErrNotFound once the source TTL ran out", n, at.offset, err)
+							}
+							continue
+						}
+						if err != nil {
+							t.Fatalf("copied chunk %d at copy+%s: %v (F-4.5.24)", n, at.offset, err)
+						}
+						got, _ := io.ReadAll(body)
+						_ = body.Close()
+						if want := "chunk-" + string(rune('a'+n)); string(got) != want {
+							t.Errorf("copied chunk %d = %q, want %q", n, got, want)
+						}
+						if want := copiedAt.Add(sourceTTL); !info.ExpiresAt.Equal(want) {
+							t.Errorf("copied chunk %d expires at %s, want %s (the source TTL from the copy)", n, info.ExpiresAt, want)
+						}
+					}
+				}
+				if n, _ := blobs.DeleteBySession(context.Background(), "acme", ep.newID); n != 2 {
+					t.Errorf("%d objects copied under %s, want the 2 chunks", n, ep.newID)
+				}
+				rec, err := manifests.Get(context.Background(), "acme", "ckpt_new")
+				if err != nil {
+					t.Fatalf("derived manifest row: %v", err)
+				}
+				if rec.SessionID != ep.newID || rec.ChunkCount != 2 || rec.Partial {
+					t.Errorf("derived manifest = session %s chunks %d partial %v, want %s, 2, complete",
+						rec.SessionID, rec.ChunkCount, rec.Partial, ep.newID)
+				}
 			})
-			if rr := ep.call(t, h); rr.Code != http.StatusCreated {
-				t.Fatalf("status = %d, want 201; body %s", rr.Code, rr.Body.String())
-			}
-			row, _ := f.mem.Get(context.Background(), "acme", ep.newID)
-			if want := "/acme/checkpoints/" + ep.newID + "/ckpt_new"; row.WorkspaceSnapshot == nil || row.WorkspaceSnapshot.Ref != want {
-				t.Fatalf("stored ref = %+v, want %s", row.WorkspaceSnapshot, want)
-			}
-			// The memory store expires a copy whose destination carries no
-			// TTL at once, so the copied chunks are counted rather than read.
-			if n, _ := f.blobs.DeleteBySession(context.Background(), "acme", ep.newID); n != 2 {
-				t.Errorf("%d objects copied under %s, want the 2 chunks", n, ep.newID)
-			}
-			rec, err := manifests.Get(context.Background(), "acme", "ckpt_new")
-			if err != nil {
-				t.Fatalf("derived manifest row: %v", err)
-			}
-			if rec.SessionID != ep.newID || rec.ChunkCount != 2 || rec.Partial {
-				t.Errorf("derived manifest = session %s chunks %d partial %v, want %s, 2, complete",
-					rec.SessionID, rec.ChunkCount, rec.Partial, ep.newID)
-			}
-		})
+		}
 	}
 }
 

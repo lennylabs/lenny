@@ -4134,8 +4134,10 @@ D2), which stays with the upload route proposal.
     mechanism that restores the copied snapshot on the bind path of a `created` row, so the proposal states
     one (the smallest is a `restore_chunks` field on `FinalizeWorkspaceRequest` filled from
     `resolveResumeChunks`, restored before the plan's sources) along with the colliding-path order.
-  - [ ] Direct fix: **F-4.5.24** (Low, the memory and filesystem blob stores expire a copied checkpoint chunk
-    at once, because the chunk copy sets no TTL).
+  - [x] Direct fix: **F-4.5.24** (Low, the memory and filesystem blob stores expire a copied checkpoint chunk
+    at once, because the chunk copy sets no TTL). Done on 2026-10-29 (`fix/direct-batch-2`): a copy whose
+    destination names no TTL keeps the source's TTL from the copy's write, on both stores, and the derive and
+    replay chunk-copy test reads every copied chunk back on both stores.
   - [ ] Its own proposal, after 0086's implementation: **F-4.5.22** (Low, an upload blob expires 7 days after
     it is stored, and the specification states no retention for a blob a bound plan names).
   - [ ] Its own proposal, or the next proposal that edits §28.5.3: **F-4.5.23** (Low, the emitted
