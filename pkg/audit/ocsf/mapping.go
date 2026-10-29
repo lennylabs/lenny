@@ -85,6 +85,16 @@ var exactCatalog = map[string]ClassMapping{
 	"admin.impersonation_started": accountChange(ActivityCreate),
 	"admin.impersonation_ended":   accountChange(ActivityDelete),
 
+	// §12.3 cross-tenant read receipt → API Activity (6003), Read. Every
+	// code path that sets app.current_tenant = '__all__' writes one
+	// (the SIEM forwarder, the retranscribe worker, the OCSF translator,
+	// and the §25.9 scatter-gather), so without an entry each receipt is
+	// a class_mapping_missing row that dead-letters on the SIEM path and
+	// fails the §25.9 audit-events query that renders it.
+	// spec: §12.3 (cross-tenant reads, audit event); §11.7 (OCSF wire
+	// format, every audit event leaving the hot tier is OCSF).
+	"cross_tenant_read": apiActivity(ActivityRead),
+
 	// §11.7 forged-tenant rejection → Application Security Finding (2004).
 	"security.audit_write_rejected": finding(ActivityCreate),
 

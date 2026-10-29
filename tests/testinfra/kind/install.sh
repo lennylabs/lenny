@@ -192,10 +192,12 @@ lenny-runtime-echo-embedded Dockerfile BINARY=runtimes/echo-embedded
 # capabilities.preConnect; the §6.3 startup_latency benchmark drives its
 # pool as the SDK-warm arm against the pod-warm echo pool.
 lenny-runtime-preconnect-echo Dockerfile BINARY=runtimes/preconnect-echo
-# TESTING.md §12.9.8 / §9.2 tier-9 probe runtimes. cred-shell-echo retains
-# /bin/sh for the credential-leakage probes; elicitation-echo raises §9.2
-# elicitations through the platform MCP fabric.
-lenny-runtime-cred-shell-echo Dockerfile BINARY=runtimes/cred-shell-echo
+# TESTING.md §12.9.8 / §9.2 tier-9 probe runtimes. cred-shell-echo builds
+# from its own Alpine Dockerfile, which retains /bin/sh, cat, and ls for the
+# credential-leakage probes' kubectl exec; the root distroless Dockerfile
+# carries none of them. elicitation-echo raises §9.2 elicitations through the
+# platform MCP fabric.
+lenny-runtime-cred-shell-echo cmd/runtimes/cred-shell-echo/Dockerfile
 lenny-runtime-elicitation-echo Dockerfile BINARY=runtimes/elicitation-echo
 # §5.2 sessionId dispatch-loop reference runtime. Backs
 # concurrent-echo-pool (sessionPolicy.maxConcurrentSessions > 1), the
