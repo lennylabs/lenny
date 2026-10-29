@@ -1523,6 +1523,8 @@
         "pkg/gateway/sessionserver/podclaimerror_internal_test.go::TestWritePodClaimErrorSlotFailedNamesSession_spec_5_2",
         "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestStartSlotFailedBodyNamesSession_spec_5_2",
         "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestCreateAndStartSlotFailureBodyCarriesNoSlotAddress_spec_5_2",
+        "pkg/gateway/sessionserver/slot_retry_budget_test.go::TestSlotRetryBudgetFollowsPoolSlotRetries_spec_5_2",
+        "pkg/gateway/sessionserver/slot_retry_budget_test.go::TestSlotRetriesReachesSlotBindRequest_spec_5_2",
         "pkg/gateway/sessionserver/slotretry_test.go::TestSlotRetryNonRetryableNoRetry_spec_5_2",
         "pkg/gateway/sessionserver/slotretry_test.go::TestSlotRetryFailureNamesSessionWithoutSlotAddress_spec_5_2",
         "pkg/gateway/sessionserver/slotretry_test.go::TestClassifySlotBindFailureNamesSession_spec_5_2",

@@ -568,6 +568,9 @@ func ValidateSessionPolicy(p Pool) error {
 		sp.MaxClientIdleSeconds < 0 || sp.MaxQueueWaitSeconds < 0 {
 		return errors.New("poolstore: sessionPolicy numeric fields must be >= 0 (§5.2)")
 	}
+	if sp.SlotRetries != nil && *sp.SlotRetries < 0 {
+		return errors.New("poolstore: sessionPolicy.slotRetries must be >= 0; 0 disables slot retries (§5.2)")
+	}
 	if sp.OnPoolExhausted != "" && !sp.OnPoolExhausted.IsValid() {
 		return errors.New("poolstore: sessionPolicy.onPoolExhausted is not a recognised §5.2 disposition (reject, queue)")
 	}

@@ -77,11 +77,25 @@ func failReservedSlot(ctx context.Context, binder slotBinder, health *slothealth
 	return classifySlotBindFailure(err, slotReq)
 }
 
-// maxSlotRetries is the §5.2 concurrent-workspace slot retry budget: one
-// retry, two total attempts including the original. The retry always lands
-// on a fresh slot (BindSlot re-reserves, materializing a fresh workspace),
-// satisfying the §5.2 "fresh workspace guarantee".
-const maxSlotRetries = 1
+// defaultSlotRetries is the §5.2 default of sessionPolicy.slotRetries: one
+// retry, two total attempts including the original.
+const defaultSlotRetries = 1
+
+// slotRetryBudget returns the number of retries the §5.2 slot retry policy
+// allows for req: the pool's sessionPolicy.slotRetries, or the default of 1
+// when the pool sets none. 0 disables retries. The admin API and the
+// poolstore validator refuse a negative value; one that reaches here anyway
+// is read as 0, so the gateway retries less rather than more. Each retry
+// lands on a fresh slot (BindSlot re-reserves, materializing a fresh
+// workspace), satisfying the §5.2 fresh workspace guarantee.
+//
+// spec: §5.2 (Slot retry policy)
+func slotRetryBudget(req podsession.SlotBindRequest) int {
+	if req.SlotRetries == nil {
+		return defaultSlotRetries
+	}
+	return max(*req.SlotRetries, 0)
+}
 
 // slotBinder is the subset of *podsession.Binder the §5.2 slot retry
 // policy drives. The interface seam lets applySlotRetryPolicy be unit
@@ -366,7 +380,8 @@ func (l *sessionLocks) unref(sessionID string, e *sessionLockEntry) {
 //     increments the replacement counter.
 //   - A non-retryable reason (oom, workspace_validation, policy_rejection)
 //     or an exhausted retry returns the §5.2 structured SlotFailedError.
-//   - A transient reason retries once on a fresh slot.
+//   - A transient reason retries on a fresh slot, up to the pool's
+//     sessionPolicy.slotRetries (slotRetryBudget: default 1, 0 disables).
 //
 // spec: §5.2 "Concurrent-workspace slot retry policy" (whole-pod
 // replacement trigger); §6.2 (claimed → draining on the unhealthy-slot
@@ -376,7 +391,8 @@ func (l *sessionLocks) unref(sessionID string, e *sessionLockEntry) {
 // lenny_adapter_leaked_slots gauge).
 func applySlotRetryPolicy(ctx context.Context, binder slotBinder, health *slothealth.Tracker, slots *slotstate.Registry, replacement func(pool string), leakGauge func(pod, pool string, leaked int), req podsession.SlotBindRequest) (*podsession.BindResult, error) {
 	var lastErr error
-	for attempt := 0; attempt <= maxSlotRetries; attempt++ {
+	retries := slotRetryBudget(req)
+	for attempt := 0; attempt <= retries; attempt++ {
 		result, err := binder.BindSlot(ctx, req)
 		if err == nil {
 			return result, nil
@@ -410,7 +426,7 @@ func applySlotRetryPolicy(ctx context.Context, binder slotBinder, health *slothe
 		}
 		accountSlotFailure(ctx, binder, health, slots, replacement, leakGauge,
 			req.Pool, req.MaxConcurrentSessions, sbe, sbe.Leaked || relErr != nil)
-		if reason.NonRetryable() || attempt == maxSlotRetries {
+		if reason.NonRetryable() || attempt == retries {
 			return nil, &podsession.SlotFailedError{
 				Category:  string(reason),
 				SessionID: req.SessionID,

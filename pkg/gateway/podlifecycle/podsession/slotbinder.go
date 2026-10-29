@@ -37,6 +37,11 @@ type SlotBindRequest struct {
 	// MaxConcurrentSessions is the §5.2 sessionPolicy.maxConcurrentSessions
 	// per-pod simultaneous-session bound.
 	MaxConcurrentSessions int32
+	// SlotRetries is the pool's §5.2 sessionPolicy.slotRetries: how many
+	// times the gateway's slot retry policy re-places the session on a fresh
+	// slot after a retryable slot failure. Nil takes the §5.2 default of 1;
+	// 0 disables retries. BindSlot itself does not read it.
+	SlotRetries *int
 	// MaxPodUptimeSeconds is the §6.2 concurrent-session
 	// pod-uptime retirement cap. The slot-claim path skips a candidate pod
 	// whose uptime exceeds it before assigning a slot; the skip is a

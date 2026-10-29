@@ -45,6 +45,11 @@ type Registry struct {
 	mu       sync.Mutex
 	pending  map[string]*entry
 	consumed map[string]int
+	// answered is the per-session lifetime count of requests a Resolve
+	// answered. The §8.8 deadlock detector compares it across sweeps to
+	// attribute a cleared deadlock to the §16.1 `client_input` resolution.
+	// ForgetSession drops it with consumed. Guarded by mu.
+	answered map[string]int
 	// now sources the wall clock for the §8.8
 	// timestamp stamped on each pending request. It is overridable in
 	// tests so the §8.8 deadlock detector's blocked-since witnesses are
@@ -93,6 +98,7 @@ func NewRegistry() *Registry {
 	return &Registry{
 		pending:  map[string]*entry{},
 		consumed: map[string]int{},
+		answered: map[string]int{},
 		now:      time.Now,
 	}
 }
@@ -187,7 +193,17 @@ func (r *Registry) Consumed(sessionID string) int {
 	return r.consumed[sessionID]
 }
 
-// ForgetSession drops the per-session counter for sessionID. Callers
+// Answered returns the cumulative count of sessionID's requests that a
+// Resolve answered. Cancel, Close, and a waiter's timeout do not count.
+// The counter is monotonically non-decreasing until ForgetSession.
+// spec: §8.8 (Subtree deadlock detection), §16.1.
+func (r *Registry) Answered(sessionID string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.answered[sessionID]
+}
+
+// ForgetSession drops the per-session counters for sessionID. Callers
 // invoke it on session terminal transition so a long-running gateway
 // process does not accumulate counters for sessions whose rows have
 // been reclaimed. A no-op when the session is not tracked.
@@ -195,6 +211,7 @@ func (r *Registry) ForgetSession(sessionID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.consumed, sessionID)
+	delete(r.answered, sessionID)
 }
 
 // Resolve delivers answer to the request's waiter and removes the
@@ -208,6 +225,7 @@ func (r *Registry) Resolve(sessionID, requestID, answer string) error {
 		return ErrNotFound
 	}
 	delete(r.pending, k)
+	r.answered[sessionID]++
 	e.ch <- answer // buffered with cap 1, so this never blocks
 	return nil
 }

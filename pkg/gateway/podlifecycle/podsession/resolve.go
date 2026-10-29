@@ -140,6 +140,12 @@ type PoolMatch struct {
 	// subset); §4.6.3.
 	CleanupCommands       []string
 	CleanupTimeoutSeconds int
+	// SlotRetries is the pool's §5.2 sessionPolicy.slotRetries, the
+	// concurrent-workspace slot retry budget, folded in from the poolstore
+	// sessionPolicy mirror. Nil, as on a pool with no mirror row or no
+	// stored value, takes the §5.2 default of 1 where the retry loop reads
+	// it. spec: §5.2 (Slot retry policy).
+	SlotRetries *int
 	// PoolWarmingUp reflects the §5.2 PoolWarmingUp condition on the
 	// pool's SandboxTemplate: true while the pool is bootstrapping with
 	// no idle pods. The start path returns a 503 RUNTIME_UNAVAILABLE
@@ -223,6 +229,10 @@ type PoolPolicyMirror struct {
 	// MaxPodUptimeSeconds is sessionPolicy.recycle.maxPodUptimeSeconds, the
 	// §6.2 concurrent-workspace pod-uptime retirement cap.
 	MaxPodUptimeSeconds int64
+	// SlotRetries is sessionPolicy.slotRetries, the §5.2 concurrent-workspace
+	// slot retry budget; nil when the stored policy sets none. spec: §5.2
+	// (Slot retry policy).
+	SlotRetries *int
 	// OnPoolExhausted is sessionPolicy.onPoolExhausted ("reject" | "queue");
 	// empty defaults to "reject". spec: §5.2 (Pool exhaustion behavior).
 	OnPoolExhausted string
@@ -415,6 +425,9 @@ func foldPoolPolicy(ctx context.Context, policy PoolPolicyReader, m *PoolMatch) 
 	m.CleanupCommands = mirror.CleanupCommands
 	m.CleanupTimeoutSeconds = mirror.CleanupTimeoutSeconds
 	m.MaxPodUptimeSeconds = mirror.MaxPodUptimeSeconds
+	// §5.2 Slot retry policy: the slot retry budget is gateway-enforced and
+	// lives on the mirror; nil leaves the §5.2 default to the retry loop.
+	m.SlotRetries = mirror.SlotRetries
 	// §5.2 / §4.6.1 pool-exhaustion disposition: the queue-vs-reject choice
 	// and its wait bound are gateway-enforced and live on the mirror, not the
 	// CRD pair. A pool with no mirror row keeps the "reject" default.

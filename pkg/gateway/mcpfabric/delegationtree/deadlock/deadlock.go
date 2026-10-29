@@ -52,6 +52,13 @@ type Node struct {
 	// (the input_required sub-state). Empty when the session is not
 	// blocked on input.
 	PendingInputs []PendingInput
+	// Pool is the pool the session's row records it bound to (PoolRef). A
+	// deadlocked subtree's metrics carry its root's pool (§16.1).
+	Pool string
+	// Answered is the session's lifetime count of lenny/request_input
+	// rounds answered through inReplyTo. The Manager compares it across
+	// sweeps to classify a cleared deadlock as `client_input` (§16.1).
+	Answered int
 }
 
 // Snapshot is the set of delegation nodes the detector evaluates in one
@@ -89,6 +96,12 @@ type Subtree struct {
 	TenantID        string
 	BlockedRequests []BlockedRequest
 	DeepestTasks    []string
+	// Pool is the root's pool, the §16.1 `pool` label of the deadlock
+	// metrics.
+	Pool string
+	// Members are the root and every blocked descendant the walk reached,
+	// sorted. The Manager classifies a cleared deadlock over them.
+	Members []string
 }
 
 // Detect applies the §8.8 heuristic to snap and returns one
@@ -214,7 +227,7 @@ func isTerminal(nodes map[string]Node, c string) bool {
 // awaited-children edges (only following blocked children), collecting
 // every pending request_input and the deepest blocked task ids.
 func buildSubtree(nodes map[string]Node, root string, blocked func(string) bool) Subtree {
-	st := Subtree{Root: root, TenantID: nodes[root].TenantID}
+	st := Subtree{Root: root, TenantID: nodes[root].TenantID, Pool: nodes[root].Pool}
 	depth := map[string]int{root: 0}
 	order := []string{root}
 	seen := map[string]bool{root: true}
@@ -246,6 +259,8 @@ func buildSubtree(nodes map[string]Node, root string, blocked func(string) bool)
 			order = append(order, c)
 		}
 	}
+	st.Members = append([]string(nil), order...)
+	sort.Strings(st.Members)
 	for _, r := range reqs {
 		st.BlockedRequests = append(st.BlockedRequests, r.req)
 	}

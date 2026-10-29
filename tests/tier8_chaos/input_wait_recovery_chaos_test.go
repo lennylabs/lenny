@@ -130,7 +130,7 @@ func (e *iwChaosEnv) park(t *testing.T, c adapterv1.GatewayControlClient) (<-cha
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	done := inputwaitrig.RequestInput(ctx, c, iwChaosSession, "req-chaos")
+	done := inputwaitrig.RequestInput(ctx, c, iwChaosSession)
 	e.waitState(t, session.StateInputRequired, 15*time.Second)
 	return done, cancel
 }

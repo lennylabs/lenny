@@ -137,7 +137,7 @@ func TestRequestInputExpiredPublishedToParentStream_spec_11_3_238(t *testing.T) 
 
 	// The call blocks until the 10ms request_input timeout fires.
 	resp := call(t, srv.Handler(), "lenny/request_input",
-		`{"sessionId":"sess_child","requestId":"req-x","parts":[{"type":"text","text":"hi"}]}`)
+		`{"sessionId":"sess_child","parts":[{"type":"text","text":"hi"}]}`)
 	result, _ := resp["result"].(map[string]any)
 	env := readLennyErrorEnvelope(t, result)
 	if env["code"] != "REQUEST_INPUT_TIMEOUT" {
@@ -153,7 +153,7 @@ func TestRequestInputExpiredPublishedToParentStream_spec_11_3_238(t *testing.T) 
 	if hist[0].Type != "request_input_expired" {
 		t.Errorf("parent event type = %q, want request_input_expired", hist[0].Type)
 	}
-	for _, want := range []string{`"request_input_expired"`, `"childId":"sess_child"`, `"requestId":"req-x"`, `"expiredAt"`} {
+	for _, want := range []string{`"request_input_expired"`, `"childId":"sess_child"`, `"requestId":"req_`, `"expiredAt"`} {
 		if !strings.Contains(hist[0].Data, want) {
 			t.Errorf("parent event data missing %s: %s", want, hist[0].Data)
 		}
@@ -182,7 +182,7 @@ func TestRequestInputExpiredSkippedForRootSession_spec_11_3_238(t *testing.T) {
 	mkSession(t, store, "sess_root", session.StateRunning, "")
 
 	resp := call(t, srv.Handler(), "lenny/request_input",
-		`{"sessionId":"sess_root","requestId":"req-r","parts":[{"type":"text","text":"hi"}]}`)
+		`{"sessionId":"sess_root","parts":[{"type":"text","text":"hi"}]}`)
 	result, _ := resp["result"].(map[string]any)
 	if env := readLennyErrorEnvelope(t, result); env["code"] != "REQUEST_INPUT_TIMEOUT" {
 		t.Fatalf("envelope.code = %v, want REQUEST_INPUT_TIMEOUT", env["code"])

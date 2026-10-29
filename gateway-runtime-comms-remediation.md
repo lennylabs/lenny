@@ -3985,9 +3985,9 @@ stages neither, so F-7.2.43 is queued here and F-5.2.57 is re-routed in the 0100
     process, and the warning is sent from the listing without a re-read, so it can follow a terminal write.
     Record the warning on the row in a locked-row `Update` and send it only from the replica whose write
     applied. F-11.3.46 is the expiry-warning half of F-11.3.40.
-  - [ ] **F-15.4.5** (Low): `lenny/request_input` accepts a caller-supplied `requestId`, while §15.4 says the
-    gateway generates it. Drop the argument and always generate the value. It lands after 0105 and 0101,
-    which both edit the handler.
+  - [x] **F-15.4.5** (Low): `lenny/request_input` accepts a caller-supplied `requestId`, while §15.4 says the
+    gateway generates it. The tool schema no longer declares the argument, and the gateway always generates
+    the value (2026-10-29, `fix/direct-after-0106`).
 - Proposal routing.
   - [ ] Its own proposal, after 0105's implementation: **F-8.2.32** (Medium, a delegated child that omits
     `perChildMaxAge` is unbounded by it, because no `DelegationPolicy` default exists to store). It was routed
@@ -4030,11 +4030,16 @@ items is budget-related, so none goes to P4b.
     `maxOrphanTasksPerTenant` fallback. The specification already requires the evaluation on every terminal
     write, and the fix is F-7.2.35's single terminal-signal set, so it rides with that finding.
 - Direct-fix queue; 0106, which edited the same Manager, is implemented, so the fix is unblocked.
-  - [ ] **F-8.8.22** (Low): the deadlock Manager records `resolution="resolved"`, which §16.1 does not list,
+  - [x] **F-8.8.22** (Low): the deadlock Manager records `resolution="resolved"`, which §16.1 does not list,
     and the detection, resolution, and duration metrics are labelled by tenant or resolution rather than by
-    `pool`. Classify the cleared deadlock as `client_input` or `child_cancel` and add the `pool` label. A
-    clearing cause outside the listed values goes through the proposal pipeline.
+    `pool`. The detector now classifies a cleared deadlock as `client_input` or `child_cancel`, and all
+    three metrics carry the deadlocked root's pool (2026-10-29, `fix/direct-after-0106`).
 - Proposal routing.
+  - [ ] **F-8.8.23** (Low, filed 2026-10-29 from F-8.8.22): §16.1 lists no resolution for a deadlock that
+    clears without an answer, a cancel, or a timeout, as when a blocked child ends on its own, so the
+    detector records no resolution or duration for it. Adding a value or stating the omission is a
+    specification choice. It rides with the next proposal that edits §16.1's delegation metrics or the §8.8
+    deadlock detector.
   - [ ] **F-4.2.17** (Low): `ResumeEligibleUntil` is stamped as `CreatedAt` plus the resume window, returned
     to clients as `resumeEligibleUntil`, and enforced by nothing, and since 0106 deleted
     `remainingResumeWindow` nothing reads it. Deleting or defining the field is a specification choice. It
@@ -4157,9 +4162,10 @@ for 0085's RECORDS-1, so the §6.2 entry below takes F-6.2.33.
     Close it citing 0105 if the merged tree holds. F-5.2.56 (a retried `/start` binds a slot without a
     reservation) rests on the same retry and carries a note to verify with it.
 - Direct-fix queue.
-  - [ ] **F-5.2.61** (Low), after 0105's implementation: the slot retry budget is the constant
-    `maxSlotRetries = 1`, and the pool's `sessionPolicy.slotRetries` is never read. Carry the pool value on
-    the slot bind request and loop on it.
+  - [x] **F-5.2.61** (Low), after 0105's implementation: the slot retry budget is the constant
+    `maxSlotRetries = 1`, and the pool's `sessionPolicy.slotRetries` is never read. The slot bind request
+    now carries the pool value, the retry loop reads it with the §5.2 default of 1, and pool admission
+    refuses a negative value (2026-10-29, `fix/direct-after-0106`).
   - [ ] **F-4.7.34** (Low, comment only), after 0085's implementation: the `Binder.Bind` doc comment names
     the combined create-and-start path as a caller, while its only production caller is the §7.3 resume
     rebuild.
