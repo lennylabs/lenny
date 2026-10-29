@@ -46,9 +46,10 @@ type PodLifecycleManager interface {
 	// The claim is keyed off the pod, not the session: the session-to-pod
 	// binding lives on the Postgres session row's pod_assignment column, and
 	// sessionID is carried on the handle for attribution alone.
-	// opts.RequiresDemotion = true signals that an SDK-warm pod's adapter
-	// must be demoted before the runtime is used (the §6.1 workspace plan
-	// includes sdkWarmBlockingPaths). opts.Priority is the §5.2 scheduling
+	// opts.RequiresDemotion is a claim-time demotion hint that §4.6.1 no
+	// longer lists among the ClaimOpts fields: under §6.1 the gateway calls
+	// DemoteSDK before it materializes the session's workspace when the
+	// bound plan includes sdkWarmBlockingPaths. opts.Priority is the §5.2 scheduling
 	// priority class hint; opts.ClusterID is reserved for the multi-cluster
 	// v2 path.
 	ClaimPod(ctx context.Context, poolName, sessionID string, opts ClaimOpts) (PodHandle, error)
@@ -112,8 +113,10 @@ type ClaimOpts struct {
 	// spec carries sandboxRef and tenantId. Empty leaves the claim
 	// unpinned, the §5.2 default for a pool without lifetime tenant pinning.
 	TenantID string
-	// RequiresDemotion signals that an SDK-warm pod must be demoted
-	// before use (§6.1 sdkWarmBlockingPaths).
+	// RequiresDemotion is a claim-time demotion hint that §4.6.1 no longer
+	// lists among the ClaimOpts fields. Under §6.1 the gateway calls
+	// DemoteSDK before it materializes the session's workspace when the
+	// bound plan includes sdkWarmBlockingPaths.
 	RequiresDemotion bool
 	// Priority is the §5.2 scheduling priority class hint. An empty
 	// string defers to the pool's default.

@@ -145,7 +145,7 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// spec: §7.1 steps 11-13 — run the prepare phase against the pod
-	// claimed at /create: stream the buffered uploads into the session's
+	// claimed at /create: stream the uploads the bound plan names into the session's
 	// staging tree, materialize its current tree, run setup commands, and assign the §4.9
 	// credential lease. prepareAtFinalize returns (nil, nil) for the
 	// dispositions that materialize nothing at finalize (no binder, service

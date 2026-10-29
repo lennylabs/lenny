@@ -26,8 +26,9 @@ export interface CreateSessionRequest {
   userId?: string;
 
   /**
-   * The §14 workspace plan submitted at creation. Optional; an absent
-   * plan starts the session with an empty workspace.
+   * The §14 workspace plan submitted at creation. Optional; when it is
+   * absent, the plan binds at finalize (§14.1 Plan binding), and the
+   * bound plan carries the runtime's workspaceDefaults.
    */
   workspacePlan?: unknown;
 
@@ -59,8 +60,9 @@ export interface Session {
   failureClass?: string;
 
   /**
-   * Echoes the §14 plan stored at creation. Absent when the session
-   * was created without a plan.
+   * Echoes the §14 plan the gateway stored when the plan bound, at
+   * creation or at finalize, composed with the runtime's
+   * workspaceDefaults (§14.1 Runtime workspace defaults).
    */
   workspacePlan?: unknown;
 }

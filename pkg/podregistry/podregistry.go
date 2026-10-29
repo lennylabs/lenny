@@ -73,10 +73,10 @@ type ClaimOpts struct {
 	TenantID  string
 	SessionID string
 
-	// RequiresDemotion asks for an SDK-warm pod to be demoted to
-	// pod-warm before the claim is satisfied (§6 SDK-warm → pod-warm
-	// demotion, which feeds lenny_warmpool_sdk_demotions_total). v1
-	// callers leave it false.
+	// RequiresDemotion is a claim-time demotion hint that the §12.6
+	// ClaimOpts key fields no longer list. Under §6.1 the gateway calls
+	// DemoteSDK before it materializes the session's workspace, with no
+	// claim-time signal. v1 callers leave it false.
 	RequiresDemotion bool
 
 	// Priority is the admission-control claim priority. nil means
@@ -116,8 +116,8 @@ type StateCounts map[string]int
 // PodSpec is the input to CreatePod: the pool the new pod belongs
 // to and the per-pod fields the §4.6.1 lifecycle manager sets on
 // the new Sandbox. spec: §12.6 — the key fields are
-// RuntimeDefinitionRef, WorkspacePlan, IsolationProfile, ExecutionMode,
-// and resource limits (modeled here as ResourceClass, per §5.1/§5.2).
+// RuntimeDefinitionRef, IsolationProfile, ExecutionMode, and resource
+// limits (modeled here as ResourceClass, per §5.1/§5.2).
 type PodSpec struct {
 	PoolID PoolID
 
@@ -136,8 +136,9 @@ type PodSpec struct {
 	ResourceClass string
 
 	// WorkspacePlan is the serialized §14 WorkspacePlan the pod is
-	// created for (the §12.6 PodSpec WorkspacePlan field). It is empty
-	// for a warm pod, whose workspace is materialized at session claim;
+	// created for. The §12.6 PodSpec key fields do not list it. It is
+	// empty for a warm pod, whose plan binds at session creation or at
+	// finalize (§14.1 Plan binding);
 	// the Tier-4+ gateway-creates-a-pod path passes the resolved plan
 	// here so CreatePod records it on the Sandbox. The registry treats
 	// the bytes as opaque.
