@@ -3901,6 +3901,13 @@ implementor updates the entry rather than filing a duplicate. F-10.1.36 and F-5.
 keep their routing. F-7.2.43 named P3 as its owner, and 0105 does not stage it, so it is queued here.
 
 - Direct-fix queue, after 0105's implementation, which edits the same files.
+  - [ ] **F-7.1.34** (High): no bind path restores a derived or replayed session's copied workspace snapshot,
+    so the session starts without its source's workspace, and a replay copies no snapshot at all. §7.1 and
+    §15.1 already state that the snapshot is the starting workspace. Copy the replay snapshot as derive does,
+    carry `WorkspaceSnapshot` through every bind path that binds a `created` row, and restore it before the
+    plan's sources. It lands after 0105's implementation, which edits the sessionserver start and finalize
+    files, and ahead of F-7.1.33's proposal, which settles the order on a colliding path. Split from F-7.1.33
+    on 2026-10-29.
   - [ ] **F-11.3.45** (Low) and **F-11.3.46** (Low), one fix: every replica sends its own
     `session_expiring_soon` and `DEADLINE_APPROACHING` for a session, because the warning's dedup set is per
     process, and the warning is sent from the listing without a re-read, so it can follow a terminal write.
@@ -4040,8 +4047,9 @@ D2), which stays with the upload route proposal.
     from the specification.
 - Proposal routing.
   - [ ] Its own proposal, after 0086's implementation: **F-7.1.33** (Medium, the specification does not state
-    how a derived or replayed session's copied snapshot composes with the plan it binds at finalize, and no
-    finalize path restores the snapshot). F-4.5.21 can ride with it.
+    how a derived or replayed session's copied snapshot composes with the plan it binds at finalize). The
+    missing restore was split out on 2026-10-29 as F-7.1.34, a direct fix in the 0105 direct-fix queue.
+    F-4.5.21 can ride with it.
   - [ ] Its own proposal, after 0086's implementation: **F-4.5.22** (Low, an upload blob expires 7 days after
     it is stored, and the specification states no retention for a blob a bound plan names).
   - [ ] Its own proposal, or the next proposal that edits §28.5.3: **F-4.5.23** (Low, the emitted
