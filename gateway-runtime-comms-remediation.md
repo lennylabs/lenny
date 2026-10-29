@@ -3261,7 +3261,8 @@ Proposals, second wave:
 Proposals, third wave:
 
 - [ ] **P4. Delegation tree and budget lifecycle** (split; P4a and P4b done as proposals; P4a implemented and finalized 2026-10-29 on
-  `impl/0106-delegation-tree`, merge into this branch pending), after P2.
+  `impl/0106-delegation-tree`; P4b implemented and finalized 2026-10-29 on `impl/0107-tree-budget`, merge into this
+  branch pending; P4 is complete once it merges), after P2.
   - **Outcome (P4a).** Proposal 0106
     (`proposals/0106_fix_the-delegation-tree-s-membership-and-lifecycle-are-under/`) was approved 2026-10-27
     (merge `d52dc1834`). Derive and replay create independent roots registered for lease extension, tree
@@ -3305,6 +3306,22 @@ Proposals, third wave:
     statement removes it, and it is re-routed to its own proposal after 0105's implementation. 0107 is
     implemented after 0105 and 0106 are implemented (its D15). Its unstaged defects are filed below, in the
     block for proposal 0107.
+    Its implementation landed 2026-10-29 on `impl/0107-tree-budget`: spec commits `1495ff2d0` (§7.1),
+    `ced0f0f5f` and `59876cf2a` (§8.3), `4c705bb31` (§16), `61a62ff48` and `955e03386` (§8.6), `eeed32dcc`
+    (§9.2), `aa2a50779` (§19), `d5cf69dcc` (§12.8), and `6e918a057` (§4.7); code commits `ead354b1f` (the
+    `BUDGET_KEYS_EXPIRED` tree cleanup), `ac35bff67` and `61d14c0d6` (the store-backed §8.6 budget source,
+    with registration deleted), `4dd1dc76d`, `5ed5c650c`, and `7958f098b` (the sentinel check, the
+    first-reservation create, and the `delegate_task` side), `46de6d8f2` (the forget in the hook body and the
+    `terminating` flag), `dceea8c3c` and `3dc1ed166` (the return in `afterTerminalWrite` after usage
+    quiescence), `b540a3235` (the requester-terminal dismissal and the driver-end redrive), `ed003d929` and
+    `3ffac0d2e` (the per-replica budget state sweep), and `83da341f1` (`DeleteByRoot` on user erasure); tier 8
+    tests `8bdd5da2f`. The implementation was finalized on 2026-10-29: the proposal status is Implemented, its
+    deviations are adjudicated (three resolved by later steps, eight accepted), and BUILD-GAPS closes F-8.3.2
+    to F-8.3.6, F-8.6.24 to F-8.6.27, F-11.2.31, and F-12.8.57 with resolution notes naming the commits and
+    tests. 8.3-M9 stays OPEN for its `FINAL_USAGE_REPORT` half with a 2026-10-29 note, because the
+    quiescence step landed and the wait ends at the timeout until R12 adds the `CH-ADAPTEREVENTS` consumer
+    (F-8.3.9, which stays OPEN with R12). P4b is implemented, and P4 is complete once
+    `impl/0107-tree-budget` merges into this branch.
   - **Scope.** Tree membership and lifecycle: which sessions belong to a delegation tree, tree recovery
     after a resume, the cancellation cascade and `cancelSubtree`, orphan cleanup, the deadlock detector's
     local decisions, the delegated child's materializer, tree budget keys and their returns, the §8.6 lease
