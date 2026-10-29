@@ -17,8 +17,11 @@
 // the pool upgrade state machine rather than an in-place roll. The test
 // cluster has no such upgrade to run, so StaleIdlePods names the idle
 // pods whose runtime container runs an image other than the one their
-// Runtime CR now names, and the script deletes them so the pool replaces
-// them from the current CR.
+// Runtime CR now names, or whose platform-injected container (the adapter
+// sidecar, the supervisor stage init container, or the egress capture
+// container) runs an image other than the one the install now renders
+// into the controller, and the script deletes them so the pool replaces
+// them from the current CR and the current controller flags.
 //
 // It is test infrastructure: no product path calls it.
 //
@@ -157,8 +160,9 @@ func appendForceUpdate(pod *corev1.PodSpec) error {
 	return fmt.Errorf("Job %q has no container named %q", BootstrapJobName, bootstrapContainer)
 }
 
-// StalePod is an idle warm pod whose runtime container image differs from
-// the image its Runtime CR names.
+// StalePod is a warm pod whose runtime container image differs from the
+// image its Runtime CR names, or whose platform-injected container image
+// differs from the image the install deploys for that container.
 type StalePod struct {
 	// Name is the pod name.
 	Name string
@@ -169,42 +173,58 @@ type StalePod struct {
 	ResourceVersion string
 	// Runtime is the Runtime CR the pod was built from.
 	Runtime string
-	// Image is the image the pod's runtime container runs.
+	// Image is the stale image the pod runs. For a runtime container it is
+	// the bare image reference; for a platform-injected container it is
+	// prefixed with the container name and "=", as in
+	// "adapter=lenny-adapter:src-old".
 	Image string
-	// Want is the image the Runtime CR names now.
+	// Want is the image the pod should run: the Runtime CR image for the
+	// runtime container, or the deployed image for a platform-injected one.
 	Want string
 }
 
+// PlatformImages maps the name of a platform-injected pod container (an
+// ordinary container or an init container) to the image the install
+// renders into the controller for it, such as
+// {"adapter": "lenny-adapter:src-new"}. A pod that has no container of a
+// listed name is not compared on that name, so the embedded deployment
+// model, which runs no adapter sidecar, is unaffected by an adapter entry.
+type PlatformImages map[string]string
+
 // StaleIdlePods returns the pods that are idle and run a runtime image
-// other than the one their Runtime CR names, sorted by name. A pod is idle
+// other than the one their Runtime CR names, or a platform-injected
+// container image other than the one platform names, sorted by name.
+// When both differ the runtime image is reported. A pod is idle
 // only when its lenny.dev/state label is idle, it carries no deletion
 // timestamp, and the Sandbox that owns it reports the §6.2 idle phase; a
 // claimed, reserved, draining, or warming pod is never returned. A pod
 // whose Runtime CR no longer exists, or that has no runtime container, is
 // left alone because there is no current image to compare against.
-func StaleIdlePods(pods *corev1.PodList, runtimes *v1alpha1.RuntimeList, sandboxes *v1alpha1.SandboxList) []StalePod {
-	return stalePods(pods, runtimes, sandboxes, func(p *corev1.Pod, phase string) bool {
+func StaleIdlePods(pods *corev1.PodList, runtimes *v1alpha1.RuntimeList, sandboxes *v1alpha1.SandboxList, platform PlatformImages) []StalePod {
+	return stalePods(pods, runtimes, sandboxes, platform, func(p *corev1.Pod, phase string) bool {
 		return p.Labels[state.LabelState] == state.CoarseIdle && phase == string(state.Idle)
 	})
 }
 
 // StaleWarmingPods returns the pods whose owning Sandbox is in the §6.2
 // warming phase and whose runtime container runs an image other than the
-// one their Runtime CR names, sorted by name. Such a pod was created from
+// one their Runtime CR names, or whose platform-injected container runs an
+// image other than the one platform names, sorted by name. Such a pod was created from
 // the Runtime CR before the install applied the new image. It is not
 // deleted while it warms; the script waits for it to reach idle and then
 // rolls it with the idle pods.
-func StaleWarmingPods(pods *corev1.PodList, runtimes *v1alpha1.RuntimeList, sandboxes *v1alpha1.SandboxList) []StalePod {
-	return stalePods(pods, runtimes, sandboxes, func(_ *corev1.Pod, phase string) bool {
+func StaleWarmingPods(pods *corev1.PodList, runtimes *v1alpha1.RuntimeList, sandboxes *v1alpha1.SandboxList, platform PlatformImages) []StalePod {
+	return stalePods(pods, runtimes, sandboxes, platform, func(_ *corev1.Pod, phase string) bool {
 		return phase == string(state.Warming)
 	})
 }
 
 // stalePods returns the pods that carry no deletion timestamp, whose
 // owning Sandbox phase satisfies match, and whose runtime image differs
-// from their Runtime CR's image, sorted by name.
+// from their Runtime CR's image or whose platform-injected container image
+// differs from platform, sorted by name.
 func stalePods(pods *corev1.PodList, runtimes *v1alpha1.RuntimeList, sandboxes *v1alpha1.SandboxList,
-	match func(p *corev1.Pod, sandboxPhase string) bool,
+	platform PlatformImages, match func(p *corev1.Pod, sandboxPhase string) bool,
 ) []StalePod {
 	want := make(map[string]string, len(runtimes.Items))
 	for _, rt := range runtimes.Items {
@@ -227,8 +247,14 @@ func stalePods(pods *corev1.PodList, runtimes *v1alpha1.RuntimeList, sandboxes *
 			continue
 		}
 		got, ok := runtimeImage(p)
-		if !ok || got == image {
+		if !ok {
 			continue
+		}
+		if got == image {
+			got, image, ok = platformDrift(p, platform)
+			if !ok {
+				continue
+			}
 		}
 		out = append(out, StalePod{
 			Name: p.Name, ResourceVersion: p.ResourceVersion,
@@ -261,4 +287,28 @@ func runtimeImage(p *corev1.Pod) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// platformDrift returns the first platform-injected container of the pod,
+// in container-name order, whose image differs from the one platform
+// names. The stale image is prefixed with the container name. It reports
+// false when every listed container the pod has runs its deployed image.
+func platformDrift(p *corev1.Pod, platform PlatformImages) (string, string, bool) {
+	names := make([]string, 0, len(platform))
+	for name, want := range platform {
+		if want != "" {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		for _, list := range [][]corev1.Container{p.Spec.InitContainers, p.Spec.Containers} {
+			for _, c := range list {
+				if c.Name == name && c.Image != platform[name] {
+					return name + "=" + c.Image, platform[name], true
+				}
+			}
+		}
+	}
+	return "", "", false
 }

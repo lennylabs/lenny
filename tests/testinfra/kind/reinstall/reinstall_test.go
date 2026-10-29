@@ -215,7 +215,7 @@ func TestStaleIdlePodsSelectsOnlyIdleImageMismatches(t *testing.T) {
 		sandboxes.Items = append(sandboxes.Items, sb)
 	}
 
-	got := StaleIdlePods(pods, runtimes, sandboxes)
+	got := StaleIdlePods(pods, runtimes, sandboxes, nil)
 	want := []StalePod{
 		{Name: "stale-a", ResourceVersion: "1", Runtime: "echo", Image: oldImg, Want: newImg},
 		{Name: "stale-b", ResourceVersion: "2", Runtime: "echo", Image: oldImg, Want: newImg},
@@ -229,7 +229,7 @@ func TestStaleIdlePodsSelectsOnlyIdleImageMismatches(t *testing.T) {
 //
 // spec: 4.6.1 (Warm Pool Controller (Pod Lifecycle))
 func TestStaleIdlePodsEmptyInputs(t *testing.T) {
-	if got := StaleIdlePods(&corev1.PodList{}, &v1alpha1.RuntimeList{}, &v1alpha1.SandboxList{}); len(got) != 0 {
+	if got := StaleIdlePods(&corev1.PodList{}, &v1alpha1.RuntimeList{}, &v1alpha1.SandboxList{}, PlatformImages{"adapter": "a:new"}); len(got) != 0 {
 		t.Errorf("StaleIdlePods on empty lists = %+v, want none", got)
 	}
 }
@@ -258,9 +258,80 @@ func TestStaleWarmingPodsSelectsWarmingImageMismatches(t *testing.T) {
 		sb.Status.Phase = ph
 		sandboxes.Items = append(sandboxes.Items, sb)
 	}
-	got := StaleWarmingPods(pods, runtimes, sandboxes)
+	got := StaleWarmingPods(pods, runtimes, sandboxes, nil)
 	want := []StalePod{{Name: "warming-old", ResourceVersion: "1", Runtime: "echo", Image: oldImg, Want: newImg}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("StaleWarmingPods = %+v, want %+v", got, want)
+	}
+}
+
+// TestStalePodsDetectsPlatformContainerDrift pins that a pod whose runtime
+// image is current is still rolled when a platform-injected container (the
+// adapter sidecar or the supervisor stage init container) runs an image
+// other than the one the install deploys, that the runtime drift is
+// reported when both differ, that a pod with no container of a listed name
+// (the embedded model, which has no adapter) is not compared on it, and
+// that a pod whose platform containers are current is left alone. A
+// reinstall that rebuilt only the adapter left every sidecar-mode idle pod
+// on the previous adapter image before this comparison existed.
+//
+// spec: 4.6.1 (Warm Pool Controller (Pod Lifecycle)), 6.2 (Pod State Machine), 10.5 (Upgrade and Rollback Strategy)
+func TestStalePodsDetectsPlatformContainerDrift(t *testing.T) {
+	const rtImg, rtOld = "lenny-runtime-echo:src-new@sha256:bb", "lenny-runtime-echo:src-old@sha256:aa"
+	const adOld, adNew = "lenny-adapter:x", "lenny-adapter:src-new"
+	const supOld, supNew = "lenny-supervisor:src-old", "lenny-supervisor:src-new"
+
+	withInit := func(p corev1.Pod, image string) corev1.Pod {
+		p.Spec.InitContainers = []corev1.Container{{Name: "lenny-supervisor-stage", Image: image}}
+		return p
+	}
+	current := pod("current", "1", "echo", rtImg, "idle", "current", false)
+	current.Spec.Containers[0].Image = adNew
+	current = withInit(current, supNew)
+	supOnly := withInit(pod("sup-only", "6", "echo", rtImg, "idle", "sup-only", false), supOld)
+	supOnly.Spec.Containers[0].Image = adNew
+	embedded := pod("embedded", "4", "echo", rtImg, "idle", "embedded", false)
+	embedded.Spec.Containers = embedded.Spec.Containers[1:]
+	pods := &corev1.PodList{Items: []corev1.Pod{
+		current,
+		pod("adapter-old", "2", "echo", rtImg, "idle", "adapter-old", false),
+		pod("both-old", "3", "echo", rtOld, "idle", "both-old", false),
+		embedded,
+		pod("adapter-old-claimed", "5", "echo", rtImg, "active", "adapter-old-claimed", false),
+		supOnly,
+		pod("adapter-old-warming", "7", "echo", rtImg, "", "adapter-old-warming", false),
+	}}
+	runtimes := &v1alpha1.RuntimeList{Items: []v1alpha1.Runtime{
+		{ObjectMeta: metav1.ObjectMeta{Name: "echo"}, Spec: v1alpha1.RuntimeSpec{Image: rtImg}},
+	}}
+	sandboxes := &v1alpha1.SandboxList{}
+	for name, ph := range map[string]string{
+		"current": "idle", "adapter-old": "idle", "both-old": "idle", "embedded": "idle",
+		"adapter-old-claimed": "claimed", "sup-only": "idle", "adapter-old-warming": "warming",
+	} {
+		sb := v1alpha1.Sandbox{ObjectMeta: metav1.ObjectMeta{Name: name}}
+		sb.Status.Phase = ph
+		sandboxes.Items = append(sandboxes.Items, sb)
+	}
+	platform := PlatformImages{"adapter": adNew, "lenny-supervisor-stage": supNew, "egress-capture": "lenny-egress-capture:src-new"}
+
+	got := StaleIdlePods(pods, runtimes, sandboxes, platform)
+	want := []StalePod{
+		{Name: "adapter-old", ResourceVersion: "2", Runtime: "echo", Image: "adapter=" + adOld, Want: adNew},
+		{Name: "both-old", ResourceVersion: "3", Runtime: "echo", Image: rtOld, Want: rtImg},
+		{Name: "sup-only", ResourceVersion: "6", Runtime: "echo", Image: "lenny-supervisor-stage=" + supOld, Want: supNew},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("StaleIdlePods = %+v, want %+v", got, want)
+	}
+
+	gotWarming := StaleWarmingPods(pods, runtimes, sandboxes, platform)
+	wantWarming := []StalePod{{Name: "adapter-old-warming", ResourceVersion: "7", Runtime: "echo", Image: "adapter=" + adOld, Want: adNew}}
+	if !reflect.DeepEqual(gotWarming, wantWarming) {
+		t.Errorf("StaleWarmingPods = %+v, want %+v", gotWarming, wantWarming)
+	}
+
+	if got := StaleIdlePods(pods, runtimes, sandboxes, PlatformImages{"adapter": ""}); len(got) != 1 || got[0].Name != "both-old" {
+		t.Errorf("an empty platform image must not be compared; StaleIdlePods = %+v, want only both-old", got)
 	}
 }

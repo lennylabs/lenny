@@ -9,11 +9,13 @@
 // manifest of a one-off copy of the bootstrap Job that runs
 // `lenny-ctl bootstrap --force-update`.
 //
-//	reinstall-sync stale-pods [--warming] --pods <file> --runtimes <file> --sandboxes <file>
+//	reinstall-sync stale-pods [--warming] [--platform-image <container>=<image>]... \
+//	    --pods <file> --runtimes <file> --sandboxes <file>
 //
 // reads `kubectl get -o json` lists of the agent pods, the Runtime CRs,
 // and the Sandboxes, and prints one line per idle pod (per warming pod
-// with --warming) whose runtime image differs from its Runtime CR:
+// with --warming) whose runtime image differs from its Runtime CR, or
+// whose container named by a --platform-image flag runs another image:
 //
 //	<pod> TAB <resourceVersion> TAB <runtime> TAB <pod image> TAB <CR image>
 //
@@ -25,6 +27,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -70,6 +73,15 @@ func stalePods(args []string) error {
 	runtimesFile := fs.String("runtimes", "", "kubectl get runtimes -o json output")
 	sandboxesFile := fs.String("sandboxes", "", "kubectl get sandboxes -o json output")
 	warming := fs.Bool("warming", false, "print the warming pods on an old image instead of the idle ones")
+	platform := reinstall.PlatformImages{}
+	fs.Func("platform-image", "<container>=<image> of a platform-injected container; repeatable", func(v string) error {
+		name, image, ok := strings.Cut(v, "=")
+		if !ok || name == "" || image == "" {
+			return fmt.Errorf("want <container>=<image>, got %q", v)
+		}
+		platform[name] = image
+		return nil
+	})
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -88,7 +100,7 @@ func stalePods(args []string) error {
 	if *warming {
 		selectPods = reinstall.StaleWarmingPods
 	}
-	for _, p := range selectPods(&pods, &runtimes, &sandboxes) {
+	for _, p := range selectPods(&pods, &runtimes, &sandboxes, platform) {
 		if _, err := fmt.Printf("%s\t%s\t%s\t%s\t%s\n", p.Name, p.ResourceVersion, p.Runtime, p.Image, p.Want); err != nil {
 			return err
 		}

@@ -1895,8 +1895,10 @@ sed \
   "${AGENT_WORKLOAD_MANIFEST}" | kc apply -f -
 
 # Roll the idle warm pods whose runtime image is no longer the one their
-# Runtime CR names. The warm pool builds each new pod from the CR's
-# spec.image but leaves an existing idle pod alone when the CR changes,
+# Runtime CR names, or whose adapter, supervisor stage, or egress capture
+# container is no longer the image the controller now injects. The warm
+# pool builds each new pod from the CR's spec.image and the controller's
+# image flags but leaves an existing idle pod alone when either changes,
 # because §10.5 routes a production runtime image change through the pool
 # upgrade state machine rather than an in-place roll. A reinstall has no
 # such upgrade to run, so without this step a test can claim a pod built
@@ -1908,12 +1910,15 @@ sed \
 # and the pool replaces it from the current CR. A pod created from the old
 # CR before the apply above can still be warming; the loop waits for it to
 # reach idle and rolls it on a later pass.
-log "rolling idle warm pods whose runtime image differs from their Runtime CR"
+log "rolling idle warm pods whose runtime or platform container image is out of date"
 roll_list() {
   kc -n lenny-agents get pods -l lenny.dev/managed=true -o json >"${REINSTALL_SYNC_DIR}/pods.json"
   kc get runtimes.lenny.dev -o json >"${REINSTALL_SYNC_DIR}/runtimes.json"
   kc -n lenny-agents get sandboxes.lenny.dev -o json >"${REINSTALL_SYNC_DIR}/sandboxes.json"
   "${REINSTALL_SYNC}" stale-pods "$@" \
+    --platform-image "adapter=$(image_ref lenny-adapter)" \
+    --platform-image "lenny-supervisor-stage=$(image_ref lenny-supervisor)" \
+    --platform-image "egress-capture=$(image_ref lenny-egress-capture)" \
     --pods "${REINSTALL_SYNC_DIR}/pods.json" \
     --runtimes "${REINSTALL_SYNC_DIR}/runtimes.json" \
     --sandboxes "${REINSTALL_SYNC_DIR}/sandboxes.json"
@@ -1947,14 +1952,14 @@ stale_idle="$(roll_list)"
 stale_warming="$(roll_list --warming)"
 if [ -n "${stale_idle}" ]; then
   printf '%s\n' "${stale_idle}" >&2
-  echo "error: idle warm pods still run a runtime image other than their Runtime CR's" >&2
+  echo "error: idle warm pods still run a runtime or platform container image other than the deployed one" >&2
   exit 1
 fi
 if [ -n "${stale_warming}" ]; then
-  log "WARNING: warming pods on a previous runtime image did not reach idle; they are not rolled:"
+  log "WARNING: warming pods on a previous runtime or platform image did not reach idle; they are not rolled:"
   printf '%s\n' "${stale_warming}"
 fi
-log "rolled ${rolled} idle warm pod(s) onto their Runtime CR image"
+log "rolled ${rolled} idle warm pod(s) onto their current images"
 
 # The pools reach Postgres only after the post-install lenny-bootstrap Job
 # runs, and the PoolScalingController then reconciles them into CRDs and

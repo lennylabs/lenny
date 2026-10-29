@@ -147,20 +147,39 @@ func TestAuditPipeline(t *testing.T) {
 
 	// --- Assertion 2: the events are durable in Postgres. Read the
 	// audit_log rows for the tenant straight from the database and
-	// confirm at least wantEvents rows landed, carrying the documented
-	// bootstrap event type.
+	// confirm at least wantEvents rows past the baseline landed, carrying
+	// the documented bootstrap event type.
+	//
+	// Rows at or below the baseline are a prior run's remnant and are not
+	// this run's events. The known remnant is the §12.8 Phase 6
+	// gdpr.tenant_erased receipt: the cleanup's DELETE of the synthetic
+	// tenant starts the asynchronous tenant deletion lifecycle, whose
+	// receipt is appended to the tenant's chain after deleteAuditRows has
+	// run and is retained and exempt from erasure by design. A receipt
+	// that lands after the baseline read is tolerated for the same reason.
 	rows := readAuditRows(t, c, pgIP, tenant)
-	if len(rows) < wantEvents {
-		t.Fatalf("TESTING.md §13.28 violation: audit_log holds %d rows for tenant %s after %d admin-API mutations; "+
-			"expected at least %d — events did not reach the durable Postgres ledger",
-			len(rows), tenant, wantEvents, wantEvents)
-	}
+	baseSeq := base.MaxSeq()
+	bootstrapRows := 0
 	for i, row := range rows {
-		if row.eventType != "platform.bootstrap_applied" {
-			t.Errorf("TESTING.md §13.28: audit_log row %d for tenant %s carries event_type %q, expected "+
-				"\"platform.bootstrap_applied\" — the bootstrap upserts emit that event type",
-				i, tenant, row.eventType)
+		if row.seq <= baseSeq {
+			continue
 		}
+		switch row.eventType {
+		case "platform.bootstrap_applied":
+			bootstrapRows++
+		case "gdpr.tenant_erased":
+			t.Logf("audit_log row %d (seq %d) for tenant %s is a prior run's §12.8 erasure receipt; not counted",
+				i, row.seq, tenant)
+		default:
+			t.Errorf("TESTING.md §13.28: audit_log row %d (seq %d) for tenant %s carries event_type %q, expected "+
+				"\"platform.bootstrap_applied\" — the bootstrap upserts emit that event type",
+				i, row.seq, tenant, row.eventType)
+		}
+	}
+	if bootstrapRows < wantEvents {
+		t.Fatalf("TESTING.md §13.28 violation: audit_log holds %d platform.bootstrap_applied rows past baseline seq %d "+
+			"for tenant %s after %d admin-API mutations; expected at least %d — events did not reach the durable "+
+			"Postgres ledger", bootstrapRows, baseSeq, tenant, wantEvents, wantEvents)
 	}
 
 	// --- Assertion 3: the Postgres hash chain is intact. The chain's

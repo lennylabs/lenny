@@ -4495,7 +4495,11 @@ that left a recycle-pool pod claimed under `TestPodLifecycle` (T-17.4.42). Four 
   `fix/t-17-4-44-t-25-9-16`. On an upgrade it runs a one-off `lenny-ctl bootstrap --force-update` Job derived
   from the release's bootstrap hook. After applying the Runtime CRs it deletes the idle warm pods whose runtime
   image differs from their CR, using a resourceVersion precondition. The pool not rolling pods is §10.5 behavior,
-  so no product gap was filed. The next reinstall confirms the fix.
+  so no product gap was filed. The reinstall from ae4a65043 confirmed the runtime half: the force-update Job
+  moved the changed runtime rows to the new digests and the roll replaced 15 idle pods. It also showed that the
+  roll ignored an adapter-only image change and left 17 sidecar pods on the old adapter. `fix/kind-after-0107`
+  extends the comparison to the adapter, supervisor stage, and egress capture containers, and a re-run of the
+  install rolled the 17 pods.
 - [x] **T-25.9.16** (Low, filed 2026-10-29): tier-9 `TestAuditChainContinuity`, tier-5 `audit_test.go`, and tier-8
   `TestAuditChainGapDetection` still call the removed `/v1/admin/audit-events/verify` route. Fixed on
   `fix/t-17-4-44-t-25-9-16`. F-25.9.10 removed the route, and §25.9 carries the verdict in the list response, so
