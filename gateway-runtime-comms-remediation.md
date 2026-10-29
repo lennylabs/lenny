@@ -3378,20 +3378,29 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   `handleCreate` among 0107 CODE-3's hookless writers, and gives `endHeldSession` the dispatch of the CODE-3
   `lenny/cancel_session` row. Its unstaged defects are filed below, in the block for proposal 0108. The next
   change-proposal run is the snapshot-restore proposal below, drafting as 0109.
-- [ ] **Snapshot restore at bind (F-7.1.34 restore half, High, with F-7.1.33 and F-4.5.21)** (new proposal,
-  queued 2026-10-29 ahead of 0077 because a derived or replayed session still starts without its source's
-  workspace): the copy half landed in `3be845f0b`. The restore needs an adapter contract change, because
-  `FinalizeWorkspaceRequest` carries no restore field and §4.7.1 and §7.1 name no restore at finalize. The
-  smallest option is restore chunks on a non-mid-session finalize, filled from `resolveResumeChunks` when the
-  `created` row has `ParentWorkspaceRef`, restored before the plan's sources. The proposal also settles the
-  silent empty result when the manifest does not resolve, legacy single-object snapshots, and F-7.1.33's
-  collision order. It follows 0108 and is the next change-proposal run, drafting as proposal 0109.
+- [x] **Snapshot restore at bind (F-7.1.34 restore half, High, with F-7.1.33)**
+  (`proposals/0109_fix_a-derived-or-replayed-session-starts-without-its-source/`): approved 2026-10-29 as
+  proposal 0109, merge `bad91fe31`. A derived or replayed session's copied snapshot is restored at its first
+  bind through a new `FinalizeWorkspaceRequest.restore_chunks` field, workspace root only and before the plan's
+  sources, a restore failure is an ordinary failed bind, `restore_chunks` has no adapter gate (section 10.3),
+  and derive and replay copy chunked checkpoints only. Its implementation closes F-7.1.34 and F-7.1.33, whose
+  BUILD-GAPS owner lines were re-pointed to 0109 with their checklist steps on 2026-10-29; F-4.5.21 does not
+  ride with it and stays with the text corrections. Implementation order: the summary orders it only against
+  0086, with no semantic dependency, and whichever of 0086 and 0109 lands second rebases textually (both edit
+  the composer literals in `bind_request.go`, the §5.1 **Derived Runtime Instantiation** paragraph, different
+  §15.1 catalog rows and `docs/reference/error-catalog.md` rows, `docs/api/rest.md`, and `openapi.json`), with
+  SPEC-3 applied to the `Workspace materialization order:` sentence wherever it stands after 0086. The summary
+  fixes no order against 0107 or 0108; 0107 also edits `derive.go` and `replay.go`, so whichever of 0107 and
+  0109 lands second locates its `derive.go` targets by symbol and quoted text, and 0108 shares no code file with it.
+  Its unstaged defects are filed below, in the block for proposal 0109. The next change-proposal run is the
+  session-owner authorization proposal below, drafting as 0110.
 - [ ] **Session-owner authorization proposal (new; F-15.1.55 High, F-10.2.30, F-15.1.54)** (queued 2026-10-29
   after the snapshot-restore proposal and ahead of 0077, because F-15.1.55 lets a built-in adapter client assert
   the session owner): define the §10.2 per-owner check on `user`-role session reads and the "explicit grant" it
   promises, bind the adapter session owner to the authenticated principal, and cover `GET /v1/sessions/{id}`,
   `GET /v1/sessions`, and `GET /v1/responses/{id}`. It may draft before 0108's implementation; its code steps
-  land after 0108's, which edit the Open Responses handlers.
+  land after 0108's, which edit the Open Responses handlers. It follows 0109 and is the next change-proposal
+  run, drafting as proposal 0110.
 - [ ] **Proposal 0077, re-derived** (Draft; owner decision 2026-10-28): pre-materialize workspace content on a
   warm pod, starting with massive git repositories, and extensible to other content later. The owner wants the
   capability built. Settled direction: a pool-level template names a repository and ref; the adapter fills a
@@ -3979,7 +3988,8 @@ stages neither, so F-7.2.43 is queued here and F-5.2.57 is re-routed in the 0100
     snapshot as derive does, and both fail closed instead of storing a ref with no object. The restore half
     stays open and leaves this queue: it needs an adapter contract change (a chunk field on
     `FinalizeWorkspaceRequest`) that no specification section states, so it moves to F-7.1.33's proposal
-    below. F-4.5.24 (Low, direct fix) was filed from the same work.
+    below. F-4.5.24 (Low, direct fix) was filed from the same work. The restore half is owned by proposal 0109
+    (approved 2026-10-29, merge `bad91fe31`), whose REC-1 closes this entry.
   - [x] **F-11.3.45** (Low) and **F-11.3.46** (Low), one fix: every replica sends its own
     `session_expiring_soon` and `DEADLINE_APPROACHING` for a session, because the warning's dedup set is per
     process, and the warning is sent from the listing without a re-read, so it can follow a terminal write.
@@ -4133,7 +4143,10 @@ D2), which stays with the upload route proposal.
     F-4.5.21 can ride with it. F-7.1.34's restore half (High) joins this proposal: the specification names no
     mechanism that restores the copied snapshot on the bind path of a `created` row, so the proposal states
     one (the smallest is a `restore_chunks` field on `FinalizeWorkspaceRequest` filled from
-    `resolveResumeChunks`, restored before the plan's sources) along with the colliding-path order.
+    `resolveResumeChunks`, restored before the plan's sources) along with the colliding-path order. This
+    proposal is 0109 (approved 2026-10-29, merge `bad91fe31`), which closes F-7.1.33 and the F-7.1.34 restore
+    half at its REC-1 and leaves F-4.5.21 with the text corrections. It mints grants through
+    `Resolver.Resolve` rather than `resolveResumeChunks`, so the restore fails closed.
   - [x] Direct fix: **F-4.5.24** (Low, the memory and filesystem blob stores expire a copied checkpoint chunk
     at once, because the chunk copy sets no TTL). Done on 2026-10-29 (`fix/direct-batch-2`): a copy whose
     destination names no TTL keeps the source's TTL from the copy's write, on both stores, and the derive and
@@ -4220,6 +4233,36 @@ filing a duplicate.
     suggested direct fix copies the `GET /v1/sessions/{id}` check, which does not exist, so it moves to the
     same proposal. The completeness-pass entry for F-15.1.54 above routes with it.
 - Not filed: none. Every listed defect is filed or annotated.
+
+**Defects filed from proposal 0109's unstaged-defect list (2026-10-29).** Proposal 0109 (snapshot restore at
+bind, approved 2026-10-29, merge `bad91fe31`, implementation pending) lists defects in the shipped tree that it
+does not stage. Its REC-1 files them at implementation; they are filed now, because no defect is dropped, and
+each new or annotated BUILD-GAPS entry says 0109's REC-1 updates the entry rather than filing a duplicate. Each
+was re-confirmed against the tree at `bad91fe31`. 0109's REC-1 closes F-7.1.34 (restore half) and F-7.1.33,
+whose owner lines now name proposal 0109 with their checklist steps.
+
+- Direct-fix queue, after 0109's implementation, whose CODE-4 and CODE-5 edit `bind_request.go` and
+  `derive.go`, and after 0107's, which edits `derive.go` and `replay.go`.
+  - [ ] **F-7.1.36** (High): derive and replay persist a `created` row with no pod claimed, so on an exclusive
+    pool `prepareAtFinalize` prepares nothing and the launch-only `/start` reconnects to an empty binding. The
+    fix claims at create as `POST /v1/sessions` does, which adds claim-failure codes to the derive and replay
+    responses; if the §15.1 rows need those codes stated, it moves to the proposal pipeline.
+  - [ ] **F-15.1.63** (Medium): derive and replay mint no `uploadToken`, although the §15.1 replay response is
+    identical to `POST /v1/sessions`. It rides with F-7.1.36, which edits the same create path.
+- Direct-fix queue, independent of 0109's implementation and preferably ahead of it.
+  - [ ] **F-10.1.45** (High): only `miniostore` implements `ListByPrefix`, so the chunk resolver is nil on
+    S3, GCS, and Azure, a resume restores no chunks there, and after 0109 derive and replay answer `500` there.
+- Proposal routing.
+  - [ ] Its own proposal, after 0109's implementation: **F-7.3.36** (Medium, a derived or replayed session
+    resumed before its own first checkpoint restores the source's checkpoint through the Resume RPC, carrying
+    the source's `/sessions` tree and dropping the bound plan's sources).
+  - [ ] Any text-corrections proposal, or the next proposal that edits the §15.1 error catalog or §5.2 slot
+    failure handling: **F-5.2.63** (Low, §5.2 puts the slot failure reason in `error.category`, and
+    `SLOT_FAILED` has no §15.1 catalog row, `errorclassify` entry, or docs entry).
+  - [ ] **F-4.5.21** (Low, existing, annotated): 0109 leaves it open. It stays with the text corrections in
+    the block for proposal 0106.
+- Not filed: **F-4.5.24**, which 0109 lists as a direct fix, was already closed on 2026-10-29
+  (`fix/direct-batch-2`); its entry carries a note. Every other listed defect is filed or annotated.
 
 **Test-harness direct fixes (2026-10-27).** The unit tier reported a package timeout for
 `pkg/gateway/podlifecycle/podsession` whenever the host was loaded, which hid the results of every
@@ -4625,6 +4668,14 @@ Answered on 2026-10-01 for the later phases:
   the **Built-in adapter single-shot compute model.** in v1, and a Chat Completions conversation identity is a
   follow-up proposal. This narrows the 2026-10-28 decision to Open Responses, so the owner confirms it
   (section 10.5).
+- Proposal 0109, 2026-10-29, decided under the owner's delegation (decision 17): `restore_chunks` has no
+  adapter gate. Field 7 joins the adapter protocol at its current version, `"1.0.0"`, with no
+  `NegotiateVersion` capability token and no version bump. An adapter built before the field would drop it
+  and promote a tree without the snapshot, but that needs a warm pod stamped with an earlier adapter image to
+  outlive a gateway upgrade, and no release of the protocol has shipped. The project rule against
+  backward-compatibility shims, dual modes, and migration paths while the platform is pre-deployment
+  (`.claude/rules/code-best-practices.md`, "Configuration and compatibility") excludes a check whose only
+  target is such an adapter. Proposal 0081 added `bind_attempt` to the same request without a gate.
 
 ### 10.4 Related work outside this track
 
@@ -4634,9 +4685,11 @@ after their open items were filed in BUILD-GAPS and routed in section 10.2 ("Aud
 0060 and above"). Proposals 0086 and 0085 are no longer independent: 0086 was widened to take F-5.1.23 and
 the reopened F-7.5.3 and was approved on 2026-10-28 (merge `153a7e23b`), and 0085 was approved on 2026-10-29
 (merge `f5151ba18`), with its implementation queued after 0105's. Proposal 0061, re-derived, was approved on
-2026-10-29 as proposal 0108 (merge `4e5a94071`), and its implementation is unblocked. The next change-proposal
-run is the snapshot-restore proposal (the F-7.1.34 restore half), drafting as 0109 (section 10.2, "Queue after
-P4b").
+2026-10-29 as proposal 0108 (merge `4e5a94071`), and its implementation is unblocked. The snapshot-restore
+proposal (the F-7.1.34 restore half, with F-7.1.33) was approved on 2026-10-29 as proposal 0109 (merge
+`bad91fe31`); its implementation rebases textually against 0086's and locates its `derive.go` targets by
+symbol against 0107's. The next change-proposal run is the session-owner authorization proposal (F-15.1.55,
+F-10.2.30, and F-15.1.54), drafting as 0110 (section 10.2, "Queue after P4b").
 
 The final verification of proposal 0079 (2026-10-03) recorded these conditions, each of which also holds
 on the base commit and none of which is yet filed in BUILD-GAPS:
