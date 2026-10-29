@@ -3209,8 +3209,8 @@ Proposals, second wave:
     `delivered_message_ids`, beside TT-81 and TT-82), and R16 and R4 (adapter-side shutdown, beside the
     gateway shutdown of TT-6, which stays in P2).
   - **Drafting.** Under the drafting rules and the test instruction above.
-- [x] **P3. Session timers and sweep ownership** (done as proposal 0105; implementation landed 2026-10-28 on
-  `impl/0105-session-timers`, final gate and merge pending), beside P2.
+- [x] **P3. Session timers and sweep ownership** (done as proposal 0105; implemented 2026-10-28 and finalized
+  2026-10-29 on `impl/0105-session-timers`, merge into this branch pending), beside P2.
   - **Scope.** The per-state deadlines and the watchdog sweeps that enforce them: the timestamp each
     deadline is anchored on, the reason each expiry stamps, which replica runs each terminal sweep, how a
     sweep re-checks its listed row, how a sweep continues past errors and runs the hooks of the rows it
@@ -3248,8 +3248,12 @@ Proposals, second wave:
     `starting` and single-attempt SDK `Start`), `e55474c10`, `c36b93e4c`, `6be131c90`, and `18c462e9f` (the
     persisted `input_required` wait and its recovery), and `0cdc46ecb` (the leader-gated orphan-session
     reconciler); docs `00bef2772`; tests `7b7b35386` and `f7305e150`. BUILD-GAPS carries resolution notes on
-    F-6.2.28, F-7.2.31, F-8.3.1, F-10.1.34, and F-11.3.37 to F-11.3.43, which close once the merge lands.
-    Its unstaged defects are filed below. R20 follows it, because R20 builds the
+    F-6.2.28, F-7.2.31, F-8.3.1, F-10.1.34, and F-11.3.37 to F-11.3.43. The implementation was finalized
+    on 2026-10-29: the proposal status is Implemented, its deviations are adjudicated (the `InputWaitID` round-trip deviation
+    is resolved by a later step, and the rest are accepted, including the owner-accepted renumbering of the
+    state-entry migration to 0195), the findings above are closed, and the branch carries
+    the integration branch at `1203b97b3`. None of its unstaged defects is discharged; each keeps its entry
+    with a 2026-10-29 note. Its unstaged defects are filed below. R20 follows it, because R20 builds the
     shared input-wait store on its `input_wait_id` (R20's 2026-10-28 re-derivation). Position: with P3 implemented, P2b is the remaining second-wave
     proposal. The third wave follows: P4a (proposal 0106), whose implementation waited on 0104 and 0105, and
     then P4b (proposal 0107).
