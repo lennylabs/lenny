@@ -77,6 +77,7 @@ func TestResolvePoolFoldsPolicyMirror(t *testing.T) {
 	ns := testNamespace(t)
 	tmpl := sandboxTemplate(ns, "conc-tmpl", "conc-runtime", "microvm")
 	c := k8sClient(t, warmPool(ns, "conc-pool", "conc-tmpl"), tmpl)
+	slotRetries := 3
 	policy := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{
 		"conc-pool": {
 			MaxConcurrentSessions: 4,
@@ -84,6 +85,7 @@ func TestResolvePoolFoldsPolicyMirror(t *testing.T) {
 			MaxPodUptimeSeconds:   86400,
 			CleanupCommands:       []string{"rm -rf /tmp/work", "reset"},
 			CleanupTimeoutSeconds: 30,
+			SlotRetries:           &slotRetries,
 		},
 	}}
 
@@ -107,6 +109,11 @@ func TestResolvePoolFoldsPolicyMirror(t *testing.T) {
 	}
 	if len(got.CleanupCommands) != 2 || got.CleanupCommands[0] != "rm -rf /tmp/work" || got.CleanupCommands[1] != "reset" {
 		t.Errorf("CleanupCommands = %v, want [rm -rf /tmp/work reset] (from the mirror)", got.CleanupCommands)
+	}
+	// spec: §5.2 (Slot retry policy) — the slot retry budget folds in from
+	// the mirror so the concurrent-workspace retry loop reads the pool value.
+	if got.SlotRetries == nil || *got.SlotRetries != 3 {
+		t.Errorf("SlotRetries = %v, want 3 (from the mirror)", got.SlotRetries)
 	}
 }
 

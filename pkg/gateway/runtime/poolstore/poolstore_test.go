@@ -422,6 +422,21 @@ func TestValidateSessionPolicy_spec_5_2(t *testing.T) {
 			pool: poolstore.Pool{ExecutionMode: runtimestore.ExecutionModeSession},
 		},
 		{
+			name: "slotRetries 0 disables retries and is admitted",
+			pool: poolstore.Pool{
+				ExecutionMode: runtimestore.ExecutionModeSession,
+				SessionPolicy: &runtimestore.SessionPolicy{SlotRetries: intp(0)},
+			},
+		},
+		{
+			name: "negative slotRetries is rejected",
+			pool: poolstore.Pool{
+				ExecutionMode: runtimestore.ExecutionModeSession,
+				SessionPolicy: &runtimestore.SessionPolicy{SlotRetries: intp(-1)},
+			},
+			wantSub: "sessionPolicy.slotRetries must be >= 0",
+		},
+		{
 			name: "concurrent sessions without the process-level acknowledgment is rejected",
 			pool: poolstore.Pool{
 				ExecutionMode: runtimestore.ExecutionModeSession,
