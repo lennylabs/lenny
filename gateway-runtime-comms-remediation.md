@@ -4357,6 +4357,13 @@ that left a recycle-pool pod claimed under `TestPodLifecycle` (T-17.4.42). Four 
   images, and the shared cluster was left at `bfadb2007`.
 - [ ] **TEST-GAPS T-17.4.43** (Low): `TestPodLifecycle` fails when a pool replaces a listed pod during its
   walk. A direct test fix.
+- [ ] **T-17.4.44** (Low, test infrastructure, filed 2026-10-29 by the kind reinstall): a reinstall leaves the
+  Postgres runtime rows and existing warm pods on the old runtime image, because the bootstrap Job skips existing
+  runtimes and the pool does not roll a pod whose Runtime CR image changed. Direct fix in `install.sh` or the
+  bootstrap Job.
+- [ ] **T-25.9.16** (Low, filed 2026-10-29): tier-9 `TestAuditChainContinuity`, tier-5 `audit_test.go`, and tier-8
+  `TestAuditChainGapDetection` still call the removed `/v1/admin/audit-events/verify` route. Direct fix: rewrite
+  them against the current chain-verification surface.
 
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 
