@@ -718,7 +718,7 @@ leaseExtension:
 **Elicitation mode flow:**
 
 1. **First request** in a tree triggers a generic elicitation to the client: _"The agent needs more budget to continue. Approve?"_ No specific token amounts are shown.
-2. **Concurrent requests** arriving while the elicitation is pending are queued silently. No duplicate elicitation is sent.
+2. **Concurrent requests** arriving while the elicitation is pending are queued silently. When the session whose request opened a pending elicitation reaches a terminal state before the user decides, the gateway dismisses that elicitation with the reason `LEASE_EXTENSION_REQUESTER_TERMINAL` and applies no outcome of it to the queued requests ([Section 9.2](09_mcp-integration.md#92-elicitation-chain) **Expiry when the session leaves its pod:** does not apply to a lease-extension elicitation). Each queued request from a session that is still non-terminal re-enters step 1, so the first to re-enter opens a new elicitation and the others are queued on it. A queued request from a terminal session receives no grant.
 3. **User approves:**
    - The gateway grants each queued request its individually requested amount, adding those tokens to the tree budget (capped at the effective max).
    - A **cool-off window** starts.
