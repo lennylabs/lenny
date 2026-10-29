@@ -5764,6 +5764,9 @@
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
         "tests/tier3_contract/rest_mcp_consistency/resume_interrupt_parity_test.go::TestInterruptToolAndRESTRefuseInputRequired_spec_15_2_1",
+        "tests/tier3_contract/rest_mcp_consistency/finalize_workspace_schema_test.go::TestFinalizeWorkspaceAdvertisesWorkspacePlan_spec_15_2_1",
+        "pkg/gateway/mcpfabric/mcptools/client_tools_test.go::TestFinalizeWorkspaceInputSchemaDeclaresWorkspacePlan_spec_15_2_1",
+        "pkg/gateway/mcpfabric/mcptools/client_tools_test.go::TestFinalizeWorkspaceForwardsWorkspacePlan_spec_15_2_1",
         "tests/tier3_contract/rest_mcp_consistency/caller_check_parity_test.go::TestCreateSessionCallerCheckParity_spec_15_2_1",
         "pkg/gateway/mcpfabric/mcp/...",
         "tests/tier3_contract/rest_mcp_consistency/error_matrix_test.go",
