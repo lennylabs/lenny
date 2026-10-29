@@ -6,7 +6,7 @@
 
 **What changes.**
 
-- The specification gains one normative home for the restore, §7.1 **Derive restore semantics:**, with pointers from §4.7.1, §5.1, §14.1, §19, §13, §4.4.3, §28, and §6.1 (SPEC-1 to SPEC-7), and SPEC-1 also edits the `DERIVE_SNAPSHOT_UNAVAILABLE` trigger in §7.1 derive rule 2 and its §15.1 catalog row.
+- The specification gains one normative home for the restore, §7.1 **Derive restore semantics:**, with pointers from §4.7.1, §5.1, §14.1, §19, §13, §4.4.3, §28, and §6.1 (SPEC-2 to SPEC-7). SPEC-1 also scopes the §7.4 extraction sentence and edits the `DERIVE_SNAPSHOT_UNAVAILABLE` trigger in §7.1 derive rule 2 and its §15.1 catalog row.
 - `FinalizeWorkspaceRequest` gains `repeated ChunkGrant restore_chunks = 7` (CODE-1).
 - The adapter seeds the build tree from the restore, workspace root only, before the plan's sources (CODE-2).
 - The Binder mints grants through a lazy closure immediately before each bind-time `FinalizeWorkspace`, and the two composers set that closure from the row (CODE-3, CODE-4).
@@ -104,7 +104,7 @@ None.
 | Proposal | Status | What this change does to it | What it must do |
 |:--|:--|:--|:--|
 | 0086_fix_the-gateway-accepts-a-workspaceplan-in-the-body-of | Approved | Both edit the composer literals in `pkg/gateway/sessionserver/bind_request.go` and the §5.1 **Derived Runtime Instantiation** paragraph. 0086 rewrites the earlier sentences of that paragraph; 0109 rewrites only the `Workspace materialization order:` sentence. Both also edit different rows of the §15.1 **Error code catalog:** and of `docs/reference/error-catalog.md`, different sections of `docs/api/rest.md`, and different operations of `openapi.json`. No semantic dependency. | Whichever lands second rebases textually. SPEC-3's §5.1 edit applies to the `Workspace materialization order:` sentence wherever it stands after 0086 lands. |
-| 0094_fix_data-lifecycle-user-erasure-tenant-deletion-and-suspension-f | Implemented (2026-10-21) | CODE-5 deletes the legacy single-object branch of `copyWorkspaceSnapshot`, together with `parseDeriveURIs` and `derivedSnapshotPart`. That retires the half of the subject and key cells of 0094's Session-keyed write table row K2 that names the legacy single object `handleDerive` copies through `blobstore.Copier`. K2's chunk-object half and its `DeleteBySession(tenantID, derivedID)` undo stand, as do rows C8, C9, K1, K3, and K4. A transient manifest `Get` error now answers `500 INTERNAL_ERROR` where it answered `503 DERIVE_SNAPSHOT_UNAVAILABLE`, and C9's refusal surface already lists both codes. | Nothing. 0094 is landed and is not edited. |
+| 0094_fix_data-lifecycle-user-erasure-tenant-deletion-and-suspension-f | Implemented (2026-10-21) | CODE-5 deletes the legacy single-object branch of `copyWorkspaceSnapshot`, together with `parseDeriveURIs` and `derivedSnapshotPart`. That retires the half of the subject and key cells of 0094's Session-keyed write table row K2 that names the legacy single object `handleDerive` copies through `blobstore.Copier`. K2's chunk-object half and its `DeleteBySession(tenantID, derivedID)` undo stand, as do rows C8, C9, K1, K3, and K4. A transient manifest `Get` error now answers `500 INTERNAL_ERROR` where it answered `503 DERIVE_SNAPSHOT_UNAVAILABLE`, an unwired chunk resolver answers `500` before any chunk is copied (CODE-5 step 2), and C9's refusal surface already lists both codes. | Nothing. 0094 is landed and is not edited. |
 
 ## Deliverable index
 
