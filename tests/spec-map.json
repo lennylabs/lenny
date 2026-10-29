@@ -3062,6 +3062,7 @@
         "pkg/gateway/mcpfabric/delegationtree/treerecovery/treerecovery_test.go::TestRecoverTreeTreeTimeout_spec_8_10_1025",
         "pkg/gateway/mcpfabric/delegationtree/treerecovery/treerecovery_test.go::TestRecoverTreeIgnoresResumeEligibleUntil_spec_8_10",
         "pkg/gateway/mcpfabric/delegationtree/treerecovery/treerecovery_test.go::TestRecoverTreeCountsAwaitingClientActionNodeFailed_spec_8_10",
+        "tests/tier11_docs/tree_recovery_failed_doc_currency_test.go::TestTreeRecoveryFailedDocsNameResumePendingCondition_spec_8_10",
         "pkg/gateway/mcpfabric/delegationtree/treerecovery/treerecovery_test.go::TestRecoverTreeFailsDeeperLevelBeforeShallowerStart_spec_8_10",
         "pkg/gateway/mcpfabric/mcptools/cancel_release_test.go::TestCancelChildListsPrimaryPerLevel_spec_12_8",
         "pkg/gateway/sessionserver/cascade_on_expire_test.go::TestCascadeAppliesOrphanCapFallbackToEveryCancelledNode_spec_8_10",

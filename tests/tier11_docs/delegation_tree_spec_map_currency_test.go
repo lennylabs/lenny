@@ -56,6 +56,7 @@ var delegationTreeTestFiles = []string{
 	"tests/testinfra/orphanfixture/orphanfixture_test.go",
 	"tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go",
 	"tests/tier11_docs/delegation_tree_spec_map_currency_test.go",
+	"tests/tier11_docs/tree_recovery_failed_doc_currency_test.go",
 	"tests/tier2_component/stores/sessionserver_orphan_cap_primary_test.go",
 	"tests/tier2_component/stores/sessionstore_orphan_membership_test.go",
 	"tests/tier4_integration/derived_session_root_test.go",
