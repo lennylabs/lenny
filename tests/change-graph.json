@@ -1467,6 +1467,10 @@
     "pkg/blobstore/replication": {
       "unit": ["pkg/blobstore/replication/..."]
     },
+    "pkg/blobstore/prefixlisttest": {
+      "unit": ["pkg/blobstore/..."],
+      "component": ["tests/tier2_component/stores/prefixlist_component_test.go"]
+    },
     "pkg/ops/upgradeservice": {
       "unit": ["pkg/ops/upgradeservice/..."],
       "component": [
