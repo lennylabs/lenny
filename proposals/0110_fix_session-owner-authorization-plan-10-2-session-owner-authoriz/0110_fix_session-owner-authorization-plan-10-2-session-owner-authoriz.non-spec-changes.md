@@ -47,7 +47,7 @@ Steps:
 
 ### CODE-2 · One access predicate; owner check in the `read` and `manage` wrappers; owner-filtered list
 
-Targets: `pkg/gateway/sessionserver/rbac_gate.go`, `pkg/gateway/sessionserver/route_table.go`, `pkg/gateway/sessionserver/session_read.go` (`handleList`), and `pkg/gateway/sessionserver/service.go` (the `ServiceCall` comment).
+Targets: `pkg/gateway/sessionserver/rbac_gate.go`, `pkg/gateway/sessionserver/route_table.go`, `pkg/gateway/sessionserver/session_read.go` (`handleList`), `pkg/gateway/sessionserver/service.go` (the `ServiceCall` comment), and `pkg/gateway/session/sessionstore/primary_read.go` (step 7).
 
 1. `rbac_gate.go`: split `principalHolds(ctx context.Context, p authmw.Principal, perm auth.Permission) bool` out of `sessionPermissionGranted`. It resolves built-in `RolesGrant` plus the custom-role registry for the tenant in `p.TenantID`. It has no role-less fall-through and no admit for a missing principal. `sessionPermissionGranted` keeps its current behavior and calls `principalHolds` for the role resolution.
 2. Add the exported predicate:
@@ -66,14 +66,23 @@ Targets: `pkg/gateway/sessionserver/rbac_gate.go`, `pkg/gateway/sessionserver/ro
 3. `route_table.go`: build two variants of each closure. `readID` and `manageID` compose `requireSessionPermission(perm, requireSessionAccess(act, next))`, with `act` false for `readID` and true for `manageID`. Mount them on every pattern that contains `{id}` and is wrapped by `read` or `manage` today. Keep the existing `read` and `manage` for `POST /v1/sessions`, the environment-session create routes, `POST /v1/sessions/start`, and `GET /v1/sessions`. Leave `POST /v1/sessions/{id}/eval` (`evalWrite`), `GET /v1/sessions/{id}/usage`, and `GET /v1/blobs/{ref...}` untouched. The tool-use, elicitation, and memory routes are inside the wrapper, and there is no exemption list.
 4. `requireSessionAccess(act bool, next http.HandlerFunc) http.HandlerFunc` runs in this order:
    1. `ownerFromPrincipal` (CODE-1 step 1). On error it writes the `401` and returns.
-   2. `s.store.Get(getCtx, s.resolveTenant(r), r.PathValue("id"))`, where `getCtx` is `context.WithTimeout(ctx, …)` of the bound `s.readPrimary` applies (`s.primaryReadTimeout`, or `sessionstore.DefaultPrimaryReadTimeout` when that is zero). When it returns any error, including `sessionstore.ErrNotFound` and the timeout, it re-reads with `s.readPrimary` under the request `ctx`, and substeps 3 and 4 decide on that result.
-   3. On `sessionstore.ErrNotFound`, or when `!s.SessionAccessible(ctx, row, act)`, it writes `404 RESOURCE_NOT_FOUND` with message `"session not found"`, byte-identical to `handleGet`'s miss.
-   4. On any other store error it writes `500 INTERNAL_ERROR`, matching `handleGet`.
-   5. Otherwise it calls `next`.
+   2. It reads the row for `s.resolveTenant(r)` and `r.PathValue("id")` with `s.store.Get`, under `context.WithTimeout(r.Context(), sessionstore.PrimaryReadBound(s.primaryReadTimeout))`, which is the bound `s.readPrimary` applies (step 7). That context scopes this `Get` only, and `pgstore.Store.Get` passes it to pgx, so the bound ends a hung read-pool query. When the `Get` returns an error, the wrapper re-reads the row once with `s.readPrimary` under `r.Context()`. In the table, a granted row is one for which `s.SessionAccessible(r.Context(), row, act)` returns true, and a denied row is one for which it returns false.
+
+      | Rule | `s.store.Get` result | `s.readPrimary` result | Response |
+      |:--|:--|:--|:--|
+      | 1 | a granted row | not issued | call `next` |
+      | 2 | a denied row | not issued | `404` |
+      | 3 | `sessionstore.ErrNotFound`, any other error, or expiry of the bound | a granted row | call `next` |
+      | 4 | as rule 3 | a denied row | `404` |
+      | 5 | as rule 3 | `sessionstore.ErrNotFound` | `404` |
+      | 6 | as rule 3 | any other error | `500` |
+
+      `404` is the body `handleGet` writes for `ErrNotFound` (`RESOURCE_NOT_FOUND`, message `"session not found"`), and `500` is the body it writes for another store error (`INTERNAL_ERROR` with the error's text). A replica row decides alone because the owner never changes (SPEC-1 rule 1). A replica error is re-read because the read pool can lag a row the primary already holds, such as a session created moments earlier.
 
    `next` is never called on a refusal. Because the permission gate is outer, a caller whose roles lack the route's permission still receives `403 FORBIDDEN`.
 5. `handleList`: call `ownerFromPrincipal` first, and write the `401` on error. Set `ListFilter.UserID = p.Subject` unless `principalHolds(ctx, p, auth.PermReadTenantSessions)`. This also applies on the platform-admin `?tenant=` path, where platform-admin passes through its role.
 6. Rewrite the doc comments in `rbac_gate.go` that describe a request with no principal as admitted, and the `ServiceCall` comment in `service.go` that describes a role-less dev principal as admitted. Each states that the permission gate may admit such a request, and that the ownership step then refuses it on every `{id}` route, on list, and on create. Cite `// spec: §10.2 (Session ownership)`.
+7. `primary_read.go`: move `ReadPrimary`'s non-positive-timeout default into an exported `PrimaryReadBound(timeout time.Duration) time.Duration`, and have `ReadPrimary` call it. Behavior does not change, and the existing `ReadPrimary` subtest "zero timeout uses the default" covers it. Cite `// spec: §12.3 (Postgres HA Requirements)`.
 
 The dev-header transport (`serveDevHeaders` in `pkg/gateway/middleware/auth/auth.go`) builds a principal whose `Subject` is the raw `X-Lenny-User-ID` header and accepts an empty value. It is not changed.
 
@@ -184,7 +193,8 @@ Every test carries `// spec: §10.2 (Session ownership)`, plus the section of an
    - bob/`tenant-viewer` on a manage route receives the unchanged `403 FORBIDDEN`.
    - A no-principal request, or an empty `Subject` that passes the permission gate, receives `401 UNAUTHORIZED`.
    - Every other refusal receives a `404` body byte-identical to a missing id.
-   - A handler spy records zero calls on every refusal. When `Get` fails, or blocks until its context ends (a fake embedding `*memstore.Store` that overrides only `Get`), one case per CODE-2 step 4 outcome on the primary re-read (store error, `ErrNotFound`, and alice's row), driven on alice's `POST /{id}/start` and `/resume` by alice and by bob/`user`, asserts the response and handler-call count that outcome gives.
+   - A handler spy records zero calls on every refusal.
+   - **Read table** (`pkg/gateway/sessionserver/session_access_read_internal_test.go`, package `sessionserver`, `TestSessionAccessWrapperReadTable_spec_10_2`). The server is built with `PrimaryReadTimeout` of 100ms over a store fake that embeds `*memstore.Store` and overrides both `Get` and `GetPrimary`, so it satisfies `sessionstore.PrimaryReader` and `s.readPrimary` reaches the fake. The fake's `Get` returns its context's error when that context has already ended. Otherwise it returns alice's row, `sessionstore.ErrNotFound`, or an error, or it blocks until its context ends and returns the context's error. Its `GetPrimary` returns its context's error when that context has ended, and otherwise returns alice's row, `sessionstore.ErrNotFound`, or an error, and it counts its calls. The CODE-2 step 3 `manage` composition wraps the spy and is mounted on the `POST /v1/sessions/{id}/start` and `POST /v1/sessions/{id}/resume` patterns. The cases are every combination of `Get` result, `GetPrimary` result, caller (alice or bob/`user`, on alice's session id), and pattern. Each case asserts the response of the CODE-2 step 4 substep 2 rule it reaches, a spy call count of 1 for "call `next`" and 0 otherwise, and a `GetPrimary` count of 0 for "not issued" and 1 otherwise. One further case builds the server with `PrimaryReadTimeout` 0, has `Get` return alice's row, and has alice call. It asserts a spy call count of 1 and a `GetPrimary` count of 0, which pins the wrapper's use of `sessionstore.PrimaryReadBound` (CODE-2 step 7). The discriminating assertions are that a blocking `Get` returns within the test's deadline, and that a blocking `Get` followed by alice's primary row reaches the spy instead of answering `500`.
 
    The discriminating assertion is that role-less single-tenant bob receives `404` on alice's row. It fails if the bypass reuses `sessionPermissionGranted`.
 2. **Coverage guard** (tier 1, `route_owner_coverage_test.go`). Every `/v1/sessions/{id}` pattern except eval and `/usage` answers `404` to bob/`user` on alice's row, so a route mounted outside the wrappers fails the test. The tool-use, elicitation, and memory routes return `RESOURCE_NOT_FOUND` from the wrapper for a missing session and for a foreign one.
@@ -240,10 +250,12 @@ Items 1 through 4 are in `pkg/gateway/environment/translator/open_responses_owne
 - The wrapper and the handler each read the row, and nothing caches the owner between them. Neither read can observe a different owner, because the owner never changes after creation (SPEC-1 rule 1).
 - Accepted: on a missing session, the tool-use and elicitation routes and the MCP elicitation tools now return `RESOURCE_NOT_FOUND` where they returned a route-specific not-found code (CODE-2 step 4, CODE-3 step 4).
 - Accepted: dev-header callers that omit `X-Lenny-User-ID` receive `401` on session routes (TEST-1 item 11).
+- Accepted: while the read pool hangs, every wrapped request answers up to one primary-read bound later, because its replica read runs to that bound before the primary re-read (CODE-2 step 4 substep 2).
 
 ## Files touched on application (non-spec)
 
 - pkg/gateway/sessionserver/request_identity.go, create_handler.go, create.go, create_and_start.go, derive.go, replay.go, service.go, rbac_gate.go, route_table.go, session_read.go, and their tests
+- pkg/gateway/session/sessionstore/primary_read.go
 - pkg/gateway/mcpfabric/mcptools/client_tools.go, mcptools.go, mcptools_register.go, elicitation.go, generated_schemas.go, and tests
 - pkg/gateway/mcpfabric/delegation/service.go and service_test.go
 - pkg/gateway/environment/translator/singleshot.go, open_responses.go, openai_chat.go, and tests

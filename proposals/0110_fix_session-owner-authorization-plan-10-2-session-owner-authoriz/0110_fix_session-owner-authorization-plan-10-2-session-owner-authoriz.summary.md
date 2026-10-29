@@ -69,7 +69,9 @@
 
 ## Open decisions for human to make
 
-None. Decision 1 (role-less principals and the permission matrix) was decided on 2026-10-29 by the orchestrator under the owner's standing delegation, taking the recommendation: this proposal stages neither change, and the defects list below records the gap for a successor proposal. The `await_children` classification stays an act (owner only), because the tool begins deadlock tracking and stamps qualifying activity on the parent session.
+- **Decision 4: where checklist step S5 sits.** Step S5 applies SPEC-4, the amendment to the §15 Open Responses text that proposal 0108 stages, and it can run only after 0108's checklist step S1 has landed. S5 currently sits in the leading block of spec steps, ahead of the part A code steps S6 through S9. Question: should S5 stay in the leading spec block, or move to sit next to S10, the first part B code step? Ground from the review log (non-spec.8.review-applicability.1): if the checklist runs in order, the part A code steps wait on 0108's S1 even though part A has no dependency on 0108. The reviewer did not file it as a finding, because the spec-first pattern places S5 in the leading block and the wait corrupts nothing. The checklist rules allow a code step before a remaining spec step only when the spec text cannot be written or applied until that earlier step lands. The loop derived no recommendation; the open-decisions-and-impact-review phase supplies one.
+
+Decision 1 (role-less principals and the permission matrix) was decided on 2026-10-29 by the orchestrator under the owner's standing delegation, taking the recommendation: this proposal stages neither change, and the defects list below records the gap for a successor proposal. The `await_children` classification stays an act (owner only), because the tool begins deadlock tracking and stamps qualifying activity on the parent session.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -98,7 +100,7 @@ None. Decision 1 (role-less principals and the permission matrix) was decided on
 - SPEC-5 — spec/09_mcp-integration.md — §9.2 **`respond_to_elicitation` authorization:** applies the ownership check before the triple check.
 - SPEC-6 — spec/15_external-api-surface.md — §15.1 `ELICITATION_NOT_FOUND` catalog row scoped to a session the caller may act on.
 - CODE-1 — pkg/gateway/sessionserver, pkg/gateway/mcpfabric/mcptools, pkg/gateway/mcpfabric/delegation, cmd/lenny-gateway/credentialsurface.go, pkg/gateway/externalapi/openapi/openapi.json, sdks/client, tests/tier3_contract/sdks, pkg/embedded/localcli/session.go, pkg/ctlcli/install_smoke.go — principal-bound owner on the sessionserver create paths and deletion of client owner inputs.
-- CODE-2 — pkg/gateway/sessionserver/rbac_gate.go, route_table.go, session_read.go, service.go — access predicate, wrapper owner check, and owner-filtered list.
+- CODE-2 — pkg/gateway/sessionserver/rbac_gate.go, route_table.go, session_read.go, service.go, pkg/gateway/session/sessionstore/primary_read.go — access predicate, wrapper owner check, and owner-filtered list.
 - CODE-3 — pkg/gateway/mcpfabric/mcptools, cmd/lenny-gateway/mcpsurface.go — MCP session-naming tools and the SSE attach authorizer call the predicate.
 - CODE-4 — pkg/gateway/environment/translator, cmd/lenny-gateway/credentialsurface.go — Open Responses resolve-step check and warm condition 4.
 - CODE-5 — pkg/gateway/environment/translator — translator owner binding and the noop binder `401`.
