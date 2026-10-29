@@ -4442,10 +4442,12 @@ that left a recycle-pool pod claimed under `TestPodLifecycle` (T-17.4.42). Four 
   `classifyRow` checks the link first, so a non-linking gap is `broken` and only an intact-link gap is
   `gap_suspected`. Tier-1 table tests in `pkg/audit`, a paging list-handler test, and a tier-2 test over a
   private Postgres pin it.
-- [ ] **F-25.9.22** (Low, filed 2026-10-29 from F-25.9.21): a row deleted directly after a receipted GDPR
+- [x] **F-25.9.22** (Low, filed 2026-10-29 from F-25.9.21): a row deleted directly after a receipted GDPR
   redaction still reads `gap_suspected`, because `classifyRow`, `Verify`, and `prevHashLinks` skip the link
   check after a redacted predecessor although the redaction preserves the hash the successor links to. Direct
-  fix in `pkg/audit/chain.go` and `audit_query.go`.
+  fix in `pkg/audit/chain.go` and `audit_query.go`. Done on 2026-10-29 (`fix/direct-batch-2`): the link check
+  runs through redactions, so the row after the deletion is `broken`. Tier-1 table cases, a list-handler test,
+  and a tier-2 test over a private Postgres pin it.
 - [ ] **T-25.9.17** (Low): run the rewritten tier-8 `TestAuditChainGapDetection` on a cluster whose Postgres the
   run may write to. F-25.9.21 has landed. A dedicated cluster was not created on 2026-10-29 because of host disk
   headroom; the tier-2 counterpart passes.

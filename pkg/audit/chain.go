@@ -306,7 +306,6 @@ func (c *Chain) Verify() VerifyResult {
 	}
 
 	redactionSeen := false
-	prevRedacted := false
 	for i, row := range c.rows {
 		// Cross-tenant rows must never appear in a tenant chain.
 		if row.TenantID != c.tenantID {
@@ -326,7 +325,6 @@ func (c *Chain) Verify() VerifyResult {
 			if row.Redacted {
 				rcpt, ok := c.receipts[row.Seq]
 				if ok && rcpt.OriginalHash == row.Hash && rcpt.Signature != "" {
-					redactionSeen = true
 					thisRedacted = true
 				} else {
 					return VerifyResult{
@@ -343,11 +341,14 @@ func (c *Chain) Verify() VerifyResult {
 				}
 			}
 		}
-		// Link check. The genesis row links to the sentinel. A row
-		// whose predecessor was lawfully redacted carries a stale
-		// prev_hash (the redaction rewrote the predecessor's
-		// canonical bytes); that break is the lawful downstream
-		// consequence of the erasure and is tolerated.
+		// Link check. The genesis row links to the sentinel; every
+		// other row links to its predecessor's stored Hash. The check
+		// runs through a receipted redaction too: the redaction
+		// rewrites only the payload columns and keeps the predecessor's
+		// pre-redaction Hash, which the successor's prev_hash still
+		// carries, so a successor that does not link marks a removed
+		// or rewritten row even after a redaction (F-25.9.22).
+		// spec: §12.8 (OCSF dead-letter PII redaction); §11.7.
 		if i == 0 {
 			if row.PrevHash != GenesisPrevHash {
 				return VerifyResult{
@@ -356,16 +357,16 @@ func (c *Chain) Verify() VerifyResult {
 					Detail:    fmt.Sprintf("genesis row %d prev_hash is not the sentinel", row.Seq),
 				}
 			}
-		} else if !prevRedacted {
-			if row.PrevHash != linkHash(c.rows[i-1]) {
-				return VerifyResult{
-					Integrity: ChainBroken,
-					BreakSeq:  row.Seq,
-					Detail:    fmt.Sprintf("row %d prev_hash does not link to row %d", row.Seq, row.Seq-1),
-				}
+		} else if row.PrevHash != linkHash(c.rows[i-1]) {
+			return VerifyResult{
+				Integrity: ChainBroken,
+				BreakSeq:  row.Seq,
+				Detail:    fmt.Sprintf("row %d prev_hash does not link to row %d", row.Seq, c.rows[i-1].Seq),
 			}
 		}
-		prevRedacted = thisRedacted
+		if thisRedacted {
+			redactionSeen = true
+		}
 	}
 	// A lawfully-receipted §12.8 GDPR redaction is the redacted_gdpr
 	// chainIntegrity bucket, distinct from rechained_post_outage (the
@@ -434,10 +435,12 @@ func (c *Chain) classifyRow(i int, row Row) ChainIntegrity {
 		}
 		thisRedacted = true
 	}
-	// Link check. The genesis row links to the sentinel; a row whose
-	// predecessor was lawfully redacted carries a stale prev_hash (the
-	// redaction rewrote the predecessor's canonical bytes), tolerated as
-	// the lawful downstream consequence of the erasure.
+	// Link check. The genesis row links to the sentinel; every other row
+	// links to its predecessor's stored Hash, including a predecessor that
+	// is a receipted redaction. The redaction rewrites only the payload
+	// columns and keeps the pre-redaction Hash, which the successor's
+	// prev_hash still carries, so skipping the check after a redaction
+	// would hide a row removed directly after it (BUILD-GAPS F-25.9.22).
 	//
 	// The link check runs before the sequence-gap check, because the
 	// prev_hash linkage rather than sequence density separates a benign
@@ -448,14 +451,15 @@ func (c *Chain) classifyRow(i int, row Row) ChainIntegrity {
 	// reported a deleted interior row as gap_suspected, so the broken
 	// tally and the broken-chain event never fired (BUILD-GAPS F-25.9.21).
 	//
-	// spec: §11.7 (Authoritative total order); §25.9 (Chain gap detection).
+	// spec: §11.7 (Authoritative total order); §25.9 (Chain gap detection);
+	// §12.8 (OCSF dead-letter PII redaction).
 	if i == 0 {
 		if row.PrevHash != GenesisPrevHash {
 			return ChainBroken
 		}
 	} else {
 		prev := c.rows[i-1]
-		if !c.receiptedRedaction(prev) && row.PrevHash != linkHash(prev) {
+		if row.PrevHash != linkHash(prev) {
 			return ChainBroken
 		}
 		if row.Seq != prev.Seq+1 {

@@ -527,6 +527,84 @@ func TestAuditQueryDeletedRowIsBrokenAcrossPages(t *testing.T) {
 	}
 }
 
+// receiptedAuditLog is a crafted audit backend that also serves §12.8
+// RedactionReceipts, so the list handler treats its redacted rows as lawful.
+type receiptedAuditLog struct {
+	craftedAuditLog
+	receipts map[uint64]audit.RedactionReceipt
+}
+
+func (r *receiptedAuditLog) Receipts(context.Context, string) (map[uint64]audit.RedactionReceipt, error) {
+	return r.receipts, nil
+}
+
+// redactedChain seals n platform rows, redacts row redactSeq in place with a
+// receipt binding its preserved pre-redaction hash, and returns the rows and
+// the receipts.
+func redactedChain(n int, redactSeq uint64) ([]audit.Row, map[uint64]audit.RedactionReceipt) {
+	ts := auditTestClock.Add(-time.Hour)
+	specs := make([][3]any, n)
+	for i := range specs {
+		specs[i] = [3]any{"admin.tenant.created", `{"n":` + strconv.Itoa(i+1) + `}`, ts}
+	}
+	rows := craftChain("platform", specs...)
+	idx := redactSeq - 1
+	rows[idx].Payload = json.RawMessage(`{"redacted":true}`)
+	rows[idx].Redacted = true
+	return rows, map[uint64]audit.RedactionReceipt{
+		redactSeq: {RedactedSeq: redactSeq, OriginalHash: rows[idx].Hash, Signature: "kms-sig"},
+	}
+}
+
+// TestAuditQueryDeletedRowAfterRedactionIsBroken pins BUILD-GAPS F-25.9.22
+// on the §25.9 list. A receipted GDPR redaction keeps the redacted row's
+// pre-redaction hash, which its successor's prev_hash carries, so the link
+// check runs through the redaction. Deleting the row directly after a
+// redacted row leaves the next row non-linking: it is tallied broken, the
+// broken-chain event fires, and the gap is not listed as a benign
+// nextval_rollback window. A nextval rollback directly after a redaction
+// still links and is listed as one.
+//
+// spec: 25.9 (Audit Log Query API, Chain gap detection), 11.7 (Audit
+// Logging), 12.8 (Compliance Interfaces, OCSF dead-letter PII redaction)
+func TestAuditQueryDeletedRowAfterRedactionIsBroken(t *testing.T) {
+	since := "since=" + auditTestClock.Add(-2*time.Hour).Format(time.RFC3339)
+	t.Run("deleted row after the redaction", func(t *testing.T) {
+		rows, receipts := redactedChain(4, 2)
+		rows = append(append([]audit.Row{}, rows[:2]...), rows[3])
+		sink := &recordingSink{}
+		_, env := listAudit(t, newCraftedRouter(&receiptedAuditLog{craftedAuditLog{rows: rows}, receipts}, sink), since)
+		rep := env.ChainIntegrityReport
+		if rep == nil || rep.Broken != 1 || rep.RedactedGDPR != 1 || rep.GapSuspected != 0 || rep.Verified != 1 {
+			t.Fatalf("report = %+v, want verified 1, redacted_gdpr 1, broken 1, gap_suspected 0", rep)
+		}
+		if !sink.has("audit.chain_integrity_broken_detected") {
+			t.Errorf("no audit.chain_integrity_broken_detected; events=%+v", sink.events)
+		}
+		if env.AuditMetadata != nil && len(env.AuditMetadata.SuspectedGaps) != 0 {
+			t.Errorf("deletion after a redaction listed as a benign window: %+v", env.AuditMetadata.SuspectedGaps)
+		}
+	})
+	t.Run("nextval rollback after the redaction", func(t *testing.T) {
+		rows, receipts := redactedChain(2, 2)
+		rows = append(rows, craftRow(4, "platform", "admin.tenant.created", `{"n":4}`,
+			auditTestClock.Add(-time.Hour), audit.LinkHash(rows[1])))
+		sink := &recordingSink{}
+		_, env := listAudit(t, newCraftedRouter(&receiptedAuditLog{craftedAuditLog{rows: rows}, receipts}, sink), since)
+		rep := env.ChainIntegrityReport
+		if rep == nil || rep.Broken != 0 || rep.RedactedGDPR != 1 || rep.GapSuspected != 1 {
+			t.Fatalf("report = %+v, want redacted_gdpr 1, gap_suspected 1, broken 0", rep)
+		}
+		if env.AuditMetadata == nil || len(env.AuditMetadata.SuspectedGaps) != 1 ||
+			env.AuditMetadata.SuspectedGaps[0].Reason != "nextval_rollback" {
+			t.Fatalf("auditMetadata = %+v, want one nextval_rollback window", env.AuditMetadata)
+		}
+		if sink.has("audit.chain_integrity_broken_detected") {
+			t.Errorf("an intact-link rollback emitted the broken-chain event")
+		}
+	})
+}
+
 func TestAuditSummaryGroupByEventType_spec_25_9_3661(t *testing.T) {
 	ts := auditTestClock.Add(-time.Hour)
 	backend := &craftedAuditLog{rows: craftChain(
