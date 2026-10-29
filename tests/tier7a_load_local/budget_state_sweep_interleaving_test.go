@@ -47,6 +47,7 @@ type sweepClock struct{ ns atomic.Int64 }
 
 func (c *sweepClock) Now() time.Time { return time.Unix(0, c.ns.Add(int64(time.Millisecond))).UTC() }
 
+// spec: §11.2 (Budgets and Quotas), §10.1.1
 // diagnosis: the budget state sweep forgot the budget state of a session
 // whose row was still non-terminal, or left a live session untracked after
 // a Record. A live session that loses its enforcer counter mid-flight
