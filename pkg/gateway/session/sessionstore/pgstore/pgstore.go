@@ -168,7 +168,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	accumulated_session_age_seconds,
 	pod_released_at,
 	state_entered_at,
-	COALESCE(input_wait_id, '')`
+	COALESCE(input_wait_id, ''),
+	expiry_warned_cap_seconds`
 
 // Create persists a fresh session row. root_session_id defaults to the
 // session's own id when the caller did not stamp one (a standalone
@@ -628,7 +629,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		last_write_id = $57::uuid,
 		pod_released_at = $58,
 		state_entered_at = $59,
-		input_wait_id = NULLIF($60, '')
+		input_wait_id = NULLIF($60, ''),
+		expiry_warned_cap_seconds = $61
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	// spec: §12.3 (Write durability categories during failover) — the
@@ -768,6 +770,9 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			// $60 — §7.2 input_wait_id, the live lenny/request_input wait
 			// an input_required row names; an empty string persists as NULL.
 			sess.InputWaitID,
+			// $61 — §11.3 expiry_warned_cap_seconds, the deadline the
+			// expiry-warning sweep claimed its warning for; zero until then.
+			sess.ExpiryWarnedCapSeconds,
 		); err != nil {
 			return err
 		}
@@ -1575,6 +1580,9 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §7.2 — input_wait_id from migration 0195, COALESCEd to '' when
 		// NULL.
 		&s.InputWaitID,
+		// §11.3 — expiry_warned_cap_seconds from migration 0196, the
+		// deadline the session_expiring_soon warning was claimed for.
+		&s.ExpiryWarnedCapSeconds,
 	); err != nil {
 		return sessionstore.Session{}, err
 	}

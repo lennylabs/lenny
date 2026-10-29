@@ -3980,11 +3980,14 @@ stages neither, so F-7.2.43 is queued here and F-5.2.57 is re-routed in the 0100
     stays open and leaves this queue: it needs an adapter contract change (a chunk field on
     `FinalizeWorkspaceRequest`) that no specification section states, so it moves to F-7.1.33's proposal
     below. F-4.5.24 (Low, direct fix) was filed from the same work.
-  - [ ] **F-11.3.45** (Low) and **F-11.3.46** (Low), one fix: every replica sends its own
+  - [x] **F-11.3.45** (Low) and **F-11.3.46** (Low), one fix: every replica sends its own
     `session_expiring_soon` and `DEADLINE_APPROACHING` for a session, because the warning's dedup set is per
     process, and the warning is sent from the listing without a re-read, so it can follow a terminal write.
     Record the warning on the row in a locked-row `Update` and send it only from the replica whose write
-    applied. F-11.3.46 is the expiry-warning half of F-11.3.40.
+    applied. F-11.3.46 is the expiry-warning half of F-11.3.40. Done on 2026-10-29 (`fix/direct-batch-2`):
+    the sweep claims each warning with a locked-row write that re-checks the band and records the warned
+    deadline in `sessions.expiry_warned_cap_seconds` (migration 0196), and only the replica whose write
+    applied sends it. Tier-1, tier-2, and tier-7a two-replica tests pin it.
   - [x] **F-15.4.5** (Low): `lenny/request_input` accepts a caller-supplied `requestId`, while §15.4 says the
     gateway generates it. The tool schema no longer declares the argument, and the gateway always generates
     the value (2026-10-29, `fix/direct-after-0106`).

@@ -660,6 +660,11 @@ var prodMigrationSchema = []struct {
 	// directly in TestSessionStateEnteredAtMigration_spec_6_2.
 	// spec: §6.2, §7.2, §10.5.
 	{migration: "0195", table: "sessions", columns: []string{"state_entered_at", "input_wait_id"}},
+	// 0196 adds sessions.expiry_warned_cap_seconds, the §11.3 deadline the
+	// session_expiring_soon warning was claimed for by the watchdog's
+	// locked-row write.
+	// spec: §11.3, §10.1.1.
+	{migration: "0196", table: "sessions", columns: []string{"expiry_warned_cap_seconds"}},
 }
 
 // spec: 12.2, 18.5
