@@ -263,10 +263,11 @@ func (d *Detector) buildSnapshot(ctx context.Context) Snapshot {
 		if _, ok := nodes[id]; ok {
 			return
 		}
-		info := NodeInfo{State: session.StateCompleted} // default for a reclaimed (settled) row
+		// A reclaimed row reads as settled (completed) with no pool.
+		state, pool := session.StateCompleted, ""
 		if d.lookup != nil {
 			if got, ok := d.lookup(ctx, tenant, id); ok {
-				info = got
+				state, pool = got.State, got.Pool
 			}
 		}
 		awaiting := d.tracker.AwaitedChildren(id)
@@ -281,10 +282,10 @@ func (d *Detector) buildSnapshot(ctx context.Context) Snapshot {
 		nodes[id] = Node{
 			SessionID:        id,
 			TenantID:         tenant,
-			State:            info.State,
+			State:            state,
 			AwaitingChildIDs: awaiting,
 			PendingInputs:    pend,
-			Pool:             info.Pool,
+			Pool:             pool,
 			Answered:         answered,
 		}
 		for _, c := range awaiting {
