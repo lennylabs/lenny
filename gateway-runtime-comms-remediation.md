@@ -3311,12 +3311,21 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   `delegation/service.go`, `finalize.go`, and `create.go`, and whichever of 0086 and 0107 lands second
   locates its targets by symbol and quoted text. Its unstaged defects are filed below, in the block for
   proposal 0086. The next change-proposal run is 0085.
-- [ ] **Proposal 0085** (Draft): the §6.2 pre-attached retry scope. It is the next change-proposal run, after
-  0086's approval. It follows 0086, because both edit the
-  §6.2 setup-failure wording. Its RECORDS-1 files a finding as F-6.2.27, which collides with the existing
-  OPEN F-6.2.27 (the `idle → draining` trigger list); a note in its summary file requires renumbering to the
-  next free identifier at filing.
-- [ ] **Proposal 0061, re-derived** (Draft; owner decision 2026-10-28, part of v1): a conversation on the built-in
+- [x] **Proposal 0085**
+  (`proposals/0085_fix_the-6-2-pre-attached-failure-retry-loop-has/`): approved 2026-10-29, merge
+  `f5151ba18`. It confines the §6.2 pre-attached failure retry to the `POST /v1/sessions/start` creation unit,
+  the one request that has persisted no session row, so finalize and delegated-child materialization make one
+  attempt and need no stop condition for a session that ends mid-setup. It changes no production behavior. Its
+  implementation is small: the staged spec edits in §6.2, §15.1, §4.7, §29.2, and §28.5.3, comment corrections
+  (CODE-1), one test that counts SandboxClaim creates on a failed finalize (TEST-1), and RECORDS-1, which files
+  F-6.2.32 (renumbered from the colliding F-6.2.27) and retargets T-6.2.10. F-6.2.32 stays OPEN when 0085 lands,
+  because 0085 builds no combined-route loop. Its implementation is queued after 0105's implementation: both
+  edit the §6.2, §15.1, and §29.2 specification text and `pkg/gateway/sessionserver` (0105 rewrites `start.go`
+  and adds start-state tests; 0085's TEST-1 edits `start_pod_test.go`), and 0085's design reads the `/start`
+  launch as running in `starting`, which 0105 introduces. Its unstaged defects are filed below, in the block for
+  proposal 0085. The next change-proposal run is 0061, re-derived.
+- [ ] **Proposal 0061, re-derived** (Draft; owner decision 2026-10-28, part of v1; the next change-proposal run,
+  after 0085's approval): a conversation on the built-in
   OpenAI-dialect adapters (`/v1/responses`, and `/v1/chat/completions` if a conversation identity can be defined)
   is a session. It keeps its pod across turns and follows the same timeouts and TTLs as every other session (the
   §6.2 idle timeout, `maxSessionAge`, and the per-state deadlines 0105 anchors), reaped by the watchdog sweeps,
@@ -4063,6 +4072,48 @@ D2), which stays with the upload route proposal.
   - [ ] Any text-corrections proposal, or the next one that edits §26.3: **F-26.3.11** (Low, §26.3 bootstrap
     step 1 names an `INIT` pod state that §6.2 does not define).
 
+**Defects filed from proposal 0085's unstaged-defect list (2026-10-29).** Proposal 0085 (approved
+2026-10-29, merge `f5151ba18`, implementation pending) lists defects in the shipped tree that it does not
+stage. Its RECORDS-1 files only F-6.2.32, the unbuilt combined-route loop, at implementation, so the listed
+defects are filed now, because no defect is dropped. Each was re-confirmed against the tree at `f5151ba18` and
+checked against proposal 0105's implementation branch (`impl/0105-session-timers` at `3dc6ceb88`), and each new
+BUILD-GAPS entry says 0085's implementor updates the entry rather than filing a duplicate. F-6.2.32 is reserved
+for 0085's RECORDS-1, so the §6.2 entry below takes F-6.2.33.
+
+- Verify after 0105's implementation merges.
+  - [ ] **F-7.1.35** (Medium): a failed exclusive-pool `/{id}/start` launch leaves the row `ready` with
+    `pod_assignment` naming the reclaimed pod, so a retried `/start` reconnects to a drained pod until
+    `READY_TIMEOUT`. 0105 writes `starting` before the launch, fails the session through `failStarting` on
+    every later exit, and restates the §15.1 `STARTING_FAILED` row as retryable by creating a new session.
+    Close it citing 0105 if the merged tree holds. F-5.2.56 (a retried `/start` binds a slot without a
+    reservation) rests on the same retry and carries a note to verify with it.
+- Direct-fix queue.
+  - [ ] **F-5.2.61** (Low), after 0105's implementation: the slot retry budget is the constant
+    `maxSlotRetries = 1`, and the pool's `sessionPolicy.slotRetries` is never read. Carry the pool value on
+    the slot bind request and loop on it.
+  - [ ] **F-4.7.34** (Low, comment only), after 0085's implementation: the `Binder.Bind` doc comment names
+    the combined create-and-start path as a caller, while its only production caller is the §7.3 resume
+    rebuild.
+- Proposal routing.
+  - [ ] Its own proposal, after 0085's implementation lands SPEC-3: **F-4.7.33** (Medium, `Binder.Launch`
+    reclaims an SDK-warm pod on a `ConfigureWorkspace` error without the `DemoteSDK` fallback that §4.7 and
+    §29.2 state, and the specification does not say what the fallback re-runs at a launch-only `/start`).
+  - [ ] The next proposal that edits the §5.2 **Slot retry policy**, after 0105's implementation: **F-5.2.62**
+    (Low, the slot retry re-reads no session row, and §5.2 states no stop condition for a session that ends
+    between attempts).
+  - [ ] Any text-corrections proposal, or the next proposal that edits the §6.2 pre-attached policy after
+    0085's implementation: **F-6.2.33** (Low, §6.2 and §7.2 use the `attached` boundary, which the pod state
+    machine no longer defines).
+  - [ ] The proposal that takes F-8.5.26: **F-8.2.33** (Low, a delegated child's transient materialization
+    failure reaches the parent as `INTERNAL_ERROR`, and §8.2 states no envelope). 0085 listed it as a lead to
+    verify, and `materializeToolError` confirms it.
+- Not filed: "`transitionStart` is unconditional". The helper sets the state without a guard, but both of its
+  callers guard in the same locked mutator: `commitStart` re-runs the §15.1 start precondition on the locked row,
+  and `MaterializeDelegatedChild` refuses unless the locked row is `created`. A terminal write during the launch
+  therefore makes the running commit refuse, and the terminal state stands. 0105 replaces the `commitStart`
+  check with `startingPrecondition` and keeps the delegated-child guard, so the merged tree keeps the guard. The
+  delegated child's `created → running` edge is F-7.2.45, already filed.
+
 **Test-harness direct fixes (2026-10-27).** The unit tier reported a package timeout for
 `pkg/gateway/podlifecycle/podsession` whenever the host was loaded, which hid the results of every
 other test in that binary.
@@ -4403,6 +4454,11 @@ Answered on 2026-10-01 for the later phases:
     choice for the §15.1 `/upload` `running` row goes to the next proposal that edits §15.1 or mid-session
     upload, F-15.1.57); and a store failure while composing workspace defaults returns `503
     SERVICE_UNAVAILABLE` with `Retry-After`.
+  - Proposal 0085, its one contested item, settled 2026-10-29 by the orchestrator under the owner's standing
+    delegation (0085 has no open decisions): nothing 0082 landed is retired. 0085 resolves the defect 0082 handed on (the §6.2 retry loop has no stop condition for a
+    terminal session) by giving persisted-row seams no retry, and its §15.1 `SETUP_COMMAND_FAILED` edit is
+    disjoint from the finalize precondition row 0082 edited. 0082's guarded finalize exits and its
+    `start_pod_test.go` fixtures stand, and 0085's TEST-1 applies against them.
 
 ### 10.4 Related work outside this track
 
@@ -4410,8 +4466,9 @@ BUILD-GAPS F-10.3.26 (admission webhooks never reload a renewed serving certific
 order above and can run whenever capacity allows. Draft proposals 0072 and 0080 were retired on 2026-10-28
 after their open items were filed in BUILD-GAPS and routed in section 10.2 ("Audit of unfinished proposals
 0060 and above"). Proposals 0086 and 0085 are no longer independent: 0086 was widened to take F-5.1.23 and
-the reopened F-7.5.3 and was approved on 2026-10-28 (merge `153a7e23b`), and 0085 is the next change-proposal
-run (section 10.2, "Queue after P4b").
+the reopened F-7.5.3 and was approved on 2026-10-28 (merge `153a7e23b`), and 0085 was approved on 2026-10-29
+(merge `f5151ba18`), with its implementation queued after 0105's. The next change-proposal run is 0061,
+re-derived (section 10.2, "Queue after P4b").
 
 The final verification of proposal 0079 (2026-10-03) recorded these conditions, each of which also holds
 on the base commit and none of which is yet filed in BUILD-GAPS:
