@@ -29,10 +29,13 @@
 10. Gateway → Store:     Buffer uploaded content in the Artifact Store during the created
                          window (POST /upload, POST /upload-archive); no pod I/O occurs
 
-11. Client → Gateway:    FinalizeWorkspace()
-12. Gateway → Pod:       Stream the buffered upload content into the claimed pod's
-                         /workspace/slots/{sessionId}/staging, validate staging,
-                         materialize to /workspace/slots/{sessionId}/current
+11. Client → Gateway:    FinalizeWorkspace(workspacePlan?), which binds the plan when the
+                         CreateSessionRequest carried none (Section 14.1 Plan binding)
+12. Gateway → Pod:       Stream the content of the uploads that the bound plan's uploadFile
+                         and uploadArchive sources name (archives extracted in the gateway,
+                         Section 7.4) into the claimed pod's
+                         /workspace/slots/{sessionId}/staging, validate staging, and
+                         materialize the plan's sources to /workspace/slots/{sessionId}/current
 13. Pod:                 Run setup commands (bounded, logged); the gateway then assigns the
                          CredentialLease map and pushes it to the runtime, and finalize returns
                          only once the session is ready
@@ -490,7 +493,7 @@ This guarantee is specific to the unplanned pod-restore path (`resume_pending �
 
 All uploads are gateway-mediated. **Pre-start uploads** are the default. **Mid-session uploads** are supported as an opt-in capability.
 
-Pre-start uploads are buffered in the Artifact Store during the `created` window. The staging→validation→promotion model applies when the gateway streams the buffered content into the claimed pod's `/workspace/slots/{sessionId}/staging` at finalize: files are written to staging first, validated, then atomically promoted to `/workspace/slots/{sessionId}/current`. Archive extraction still runs inside the gateway's Upload Handler subsystem (see the archive-extraction rules below), and the post-promotion symlink re-validation against `/workspace/slots/{sessionId}/current` runs in the finalize block.
+Pre-start uploads are buffered in the Artifact Store during the `created` window. The staging→validation→promotion model applies when the gateway streams the content of the uploads that the bound plan names ([Section 14.1](14_workspace-plan-schema.md#141-workspaceplan-schema-versioning) **Plan binding.**) into the claimed pod's `/workspace/slots/{sessionId}/staging` at finalize: files are written to staging first, validated, then atomically promoted to `/workspace/slots/{sessionId}/current`. Archive extraction still runs inside the gateway's Upload Handler subsystem (see the archive-extraction rules below), and the post-promotion symlink re-validation against `/workspace/slots/{sessionId}/current` runs in the finalize block.
 
 **Mid-session uploads:** If the runtime declares `capabilities.midSessionUpload: true` and the deployer policy allows it, clients can call `upload_to_session(session_id, files)` during an active session. Mid-session uploads use the same staging→validation→promotion pattern as pre-start uploads. Files are first written to `/workspace/slots/{sessionId}/staging`, validated (path traversal protection, size limits, hash verification), then atomically moved to `/workspace/slots/{sessionId}/current`. The runtime adapter receives a `FilesUpdated` notification only after promotion, so the agent never sees partially-written files.
 
