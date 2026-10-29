@@ -254,7 +254,7 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
 
-	parsedPlan, planJSON, planWarnings, planOK := s.resolvePlanForCreate(w, r, req.WorkspacePlan)
+	parsedPlan, planJSON, planWarnings, planOK := s.resolveSubmittedPlan(w, r, req.WorkspacePlan, tenantID, "")
 	if !planOK {
 		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
@@ -371,6 +371,17 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 		row.ExecutionMode = afterLevel.ExecutionMode
 		row.ScrubPolicy = afterLevel.ScrubPolicy
 		row.ConversationContinuity = afterLevel.ConversationContinuity
+	}
+	// spec: §14.1 WorkspacePlan Schema Versioning (Runtime workspace
+	// defaults) — create-and-start always binds a plan, the empty plan when
+	// the request carries none, so the runtime that routing selected
+	// composes its workspaceDefaults here. claimAtCreate and startOnPod read
+	// build.parsedPlan, so the composed plan replaces it as well as the row's
+	// stored JSON. The setupCommandPolicy check above saw only the client's
+	// commands (§7.5 Command policy).
+	parsedPlan, row.WorkspacePlan, ok = s.composeRuntimeDefaults(w, r, row.RuntimeRef, parsedPlan, row.WorkspacePlan)
+	if !ok {
+		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
 	// §4.8 PostRoute: run the interceptor chain after runtime selection
 	// with the resolved runtime metadata. A REJECT blocks the create; a

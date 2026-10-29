@@ -801,7 +801,7 @@ groups:
           labels:
             severity: warning
           annotations:
-            description: lenny_warmpool_warmup_failure_total rate exceeds 1 failure/min for any pool for more than 5 min; pods are failing to reach idle state during warm-up. WarmPoolLow / WarmPoolExhausted may follow.
+            description: lenny_warmpool_warmup_failure_total rate exceeds 1 failure/min for any pool for more than 5 min. The error_type label classifies each failure. WarmPoolLow / WarmPoolExhausted may follow.
             summary: Warm pool warm-up failures sustained
         - alert: PoolScaleoutBlockedByQuota
           expr: increase(lenny_warmpool_warmup_failure_total{error_type="resource_quota_exceeded"}[5m]) > 0

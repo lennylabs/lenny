@@ -189,7 +189,7 @@ Derived runtimes exist so you can have per-team, per-environment, or per-purpose
 
 A derived runtime can customize:
 
-- **`workspaceDefaults` and `setupCommands`** — appended to the base's (execution order: base → derived → client).
+- **[`workspaceDefaults`](../runtime-author-guide/runtime-configuration.md#workspace-and-pool-defaults) and `setupCommands`** — appended to the base's (execution order: base → derived → client).
 - **`setupPolicy.timeoutSeconds`** — the gateway uses the maximum of base and derived, so a derived runtime cannot shorten a base-defined safety margin.
 - **`agentInterface`, `limits`, `supportedProviders`, `credentialCapabilities`, `labels`, `sessionPolicy`, `publishedMetadata`**.
 - **`delegationPolicyRef`** — restrict-only; the derived policy must be a subset of the base's.
@@ -227,7 +227,7 @@ Pools are configured with:
 - **Warm count range:** `minWarm` and `maxWarm` bounds for the number of idle pods.
 - **Scaling policy:** Optional time-of-day schedules (e.g., scale to zero overnight), demand-based rules, and safety factors.
 - **Egress profile:** Network policy applied to pods (`restricted`, `internet`, or custom).
-- **Setup command policy:** Allowlisted commands that may run during workspace finalization.
+- **Setup command policy:** The allowlist and limits that apply to the setup commands a client's workspace plan submits.
 
 ### SDK-warm pools
 
@@ -364,9 +364,9 @@ A **workspace** is the pod-local filesystem area where an agent operates. Lenny 
 
 ### Workspace lifecycle
 
-**Staging:** When a client uploads files, they are streamed through the gateway into the session's staging area (`/workspace/slots/{sessionId}/staging`). Files are staged but not yet visible to the runtime.
+**Uploading:** While the session is in `created`, a client can upload files and archives through the gateway. The gateway stores each upload and returns an `uploadRef` that identifies it. An upload is not yet part of the workspace and is not visible to the runtime.
 
-**Materialization:** When the client calls `FinalizeWorkspace`, all declarative [workspace sources](#workspace-sources) are materialized into `/workspace/slots/{sessionId}/current` (client uploads flow through the session's `/workspace/slots/{sessionId}/staging` for atomicity). Any [setup commands](#setup-commands) then execute. The workspace is now the runtime's working directory.
+**Materialization:** When the client calls `FinalizeWorkspace`, the gateway materializes the [workspace sources](#workspace-sources) of the session's workspace plan into `/workspace/slots/{sessionId}/current`. Upload content flows through the session's `/workspace/slots/{sessionId}/staging` for atomicity. Any [setup commands](#setup-commands) then execute. The workspace is now the runtime's working directory.
 
 **Runtime operation:** The agent reads and writes files in `/workspace/slots/{sessionId}/current` during its session. All filesystem access is local to the pod; no shared NFS mounts, no distributed filesystem.
 
@@ -376,17 +376,19 @@ A **workspace** is the pod-local filesystem area where an agent operates. Lenny 
 
 ### Workspace sources
 
-A workspace is populated from a declarative `sources[]` list in the `WorkspacePlan`. Each source is materialized by the gateway at session creation time, before the agent runtime starts. Lenny ships five source types:
+A workspace is populated from a declarative `sources[]` list in the `WorkspacePlan`. A session binds one workspace plan, either in the session creation request or, when creation carried none, in the body of the finalize request. A plan that names uploads binds at finalize, because the client uploads content after the session is created and receives the `uploadRef` of each upload in the upload response. A session created without a plan and finalized without one binds the empty plan.
+
+The gateway materializes the bound plan's sources before the agent runtime starts: at finalize for a session created with `POST /v1/sessions`, and at start for a session created with `POST /v1/sessions/start` or served by a concurrent-workspace pool. The gateway materializes only the uploads that an `uploadFile` or `uploadArchive` source of the bound plan names. An upload that no source names stays out of the workspace. Lenny ships the following source types:
 
 | Source          | Purpose                                                                                                            |
 | --------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `inlineFile`    | Write a small file whose content is embedded directly in the request (e.g., `CLAUDE.md`, `.claude/settings.json`). |
-| `uploadFile`    | Materialize a single file previously uploaded via `POST /v1/sessions/{id}/upload`.                                 |
-| `uploadArchive` | Extract a `tar`, `tar.gz`, or `zip` archive into the workspace.                                                    |
+| `uploadFile`    | Materialize a single file uploaded to the same session via `POST /v1/sessions/{id}/upload`, named by its `uploadRef`. |
+| `uploadArchive` | Extract a `tar`, `tar.gz`, or `zip` archive uploaded to the same session via `POST /v1/sessions/{id}/upload-archive`, named by its `uploadRef`. |
 | `mkdir`         | Create an empty directory (useful for output collection).                                                          |
 | `gitClone`      | Clone a Git repository at a specified ref (branch, tag, or commit SHA).                                            |
 
-`gitClone` is the canonical way to populate a workspace from a repository. The gateway performs the clone over its own network path — the pod itself has no network access during setup and never sees raw credentials. Lenny accepts HTTPS URLs only; authentication for private repositories is via credential-lease scopes (`vcs.github.read`, `vcs.github.write`), and the clone flow installs an in-pod HTTPS credential helper that fetches short-lived tokens from the gateway for follow-up `git pull` / `git push` operations. The gateway resolves `ref` to an immutable commit SHA at session creation and persists it as `resolvedCommitSha`, so retries and resumes within the same session always materialize the same tree even if the branch moves.
+`gitClone` is the canonical way to populate a workspace from a repository. The gateway performs the clone over its own network path — the pod itself has no network access during setup and never sees raw credentials. Lenny accepts HTTPS URLs only; authentication for private repositories is via credential-lease scopes (`vcs.github.read`, `vcs.github.write`), and the clone flow installs an in-pod HTTPS credential helper that fetches short-lived tokens from the gateway for follow-up `git pull` / `git push` operations. The gateway resolves `ref` to an immutable commit SHA when the plan binds, at session creation or at finalize, and persists it as `resolvedCommitSha`, so retries and resumes within the same session always materialize the same tree even if the branch moves.
 
 ```json
 {
@@ -402,9 +404,9 @@ For the full schema — including `depth`, `submodules`, per-provider auth, and 
 
 ### Setup commands
 
-After sources are materialized, the runtime can run **setup commands** against the workspace — dependency installs, native compilation, permission fixups. They execute inside the pod, as the sandbox user, with `/workspace/slots/{sessionId}/current` as the working directory, during the session's `finalizing` state. Setup completes (or fails) before the agent binary starts.
+After sources are materialized, the runtime can run **setup commands** against the workspace — dependency installs, native compilation, permission fixups. They execute inside the pod, as the sandbox user, with `/workspace/slots/{sessionId}/current` as the working directory. Setup completes (or fails) before the agent binary starts.
 
-Setup commands are strictly scoped by the runtime's `setupCommandPolicy`:
+The runtime's `setupCommandPolicy` checks the setup commands that a client's workspace plan submits. The setup commands from the runtime's own `workspaceDefaults` are exempt from the allowlist and from the command count. The following limits apply:
 
 - **Prefix-matched allowlist.** `npm ci` permits `npm ci --no-audit` but not `npm install`.
 - **Exec mode** (`shell: false`): commands run as an argv list, not `sh -c`, so shell metacharacters do not expand.

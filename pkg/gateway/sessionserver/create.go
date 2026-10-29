@@ -194,7 +194,7 @@ func (s *Server) validateAndBuildCreateRow(w http.ResponseWriter, r *http.Reques
 	// state-machine paths). The validated plan is stored on the row so
 	// the start handler can materialize it onto the claimed pod and
 	// GET /v1/sessions/{id} can return it per §15.1.
-	parsedPlan, planJSON, planWarnings, planOK := s.resolvePlanForCreate(w, r, req.WorkspacePlan)
+	parsedPlan, planJSON, planWarnings, planOK := s.resolveSubmittedPlan(w, r, req.WorkspacePlan, tenantID, "")
 	if !planOK {
 		return sessionstore.Session{}, createBuild{}, false
 	}
@@ -300,6 +300,18 @@ func (s *Server) validateAndBuildCreateRow(w http.ResponseWriter, r *http.Reques
 	// the session's profile.
 	if !s.routeExperiment(w, r, &row) {
 		return sessionstore.Session{}, createBuild{}, false
+	}
+	// spec: §14.1 WorkspacePlan Schema Versioning (Runtime workspace
+	// defaults) — a plan that binds here carries the routed runtime's
+	// workspaceDefaults ahead of its own entries. The setupCommandPolicy
+	// check above saw only the client's commands (§7.5 Command policy). A
+	// create without a plan binds nothing, so its defaults compose at
+	// finalize.
+	if len(planJSON) > 0 {
+		parsedPlan, row.WorkspacePlan, ok = s.composeRuntimeDefaults(w, r, row.RuntimeRef, parsedPlan, planJSON)
+		if !ok {
+			return sessionstore.Session{}, createBuild{}, false
+		}
 	}
 
 	// spec: §14 — the §14 plan-parse warnings and the

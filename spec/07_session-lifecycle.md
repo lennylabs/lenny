@@ -29,10 +29,13 @@
 10. Gateway → Store:     Buffer uploaded content in the Artifact Store during the created
                          window (POST /upload, POST /upload-archive); no pod I/O occurs
 
-11. Client → Gateway:    FinalizeWorkspace()
-12. Gateway → Pod:       Stream the buffered upload content into the claimed pod's
-                         /workspace/slots/{sessionId}/staging, validate staging,
-                         materialize to /workspace/slots/{sessionId}/current
+11. Client → Gateway:    FinalizeWorkspace(workspacePlan?), which binds the plan when the
+                         CreateSessionRequest carried none (Section 14.1 Plan binding)
+12. Gateway → Pod:       Stream the content of the uploads that the bound plan's uploadFile
+                         and uploadArchive sources name (archives extracted in the gateway,
+                         Section 7.4) into the claimed pod's
+                         /workspace/slots/{sessionId}/staging, validate staging, and
+                         materialize the plan's sources to /workspace/slots/{sessionId}/current
 13. Pod:                 Run setup commands (bounded, logged); the gateway then assigns the
                          CredentialLease map and pushes it to the runtime, and finalize returns
                          only once the session is ready
@@ -490,7 +493,7 @@ This guarantee is specific to the unplanned pod-restore path (`resume_pending �
 
 All uploads are gateway-mediated. **Pre-start uploads** are the default. **Mid-session uploads** are supported as an opt-in capability.
 
-Pre-start uploads are buffered in the Artifact Store during the `created` window. The staging→validation→promotion model applies when the gateway streams the buffered content into the claimed pod's `/workspace/slots/{sessionId}/staging` at finalize: files are written to staging first, validated, then atomically promoted to `/workspace/slots/{sessionId}/current`. Archive extraction still runs inside the gateway's Upload Handler subsystem (see the archive-extraction rules below), and the post-promotion symlink re-validation against `/workspace/slots/{sessionId}/current` runs in the finalize block.
+Pre-start uploads are buffered in the Artifact Store during the `created` window. The staging→validation→promotion model applies when the gateway streams the content of the uploads that the bound plan names ([Section 14.1](14_workspace-plan-schema.md#141-workspaceplan-schema-versioning) **Plan binding.**) into the claimed pod's `/workspace/slots/{sessionId}/staging` at finalize: files are written to staging first, validated, then atomically promoted to `/workspace/slots/{sessionId}/current`. Archive extraction still runs inside the gateway's Upload Handler subsystem (see the archive-extraction rules below), and the post-promotion symlink re-validation against `/workspace/slots/{sessionId}/current` runs in the finalize block.
 
 **Mid-session uploads:** If the runtime declares `capabilities.midSessionUpload: true` and the deployer policy allows it, clients can call `upload_to_session(session_id, files)` during an active session. Mid-session uploads use the same staging→validation→promotion pattern as pre-start uploads. Files are first written to `/workspace/slots/{sessionId}/staging`, validated (path traversal protection, size limits, hash verification), then atomically moved to `/workspace/slots/{sessionId}/current`. The runtime adapter receives a `FilesUpdated` notification only after promotion, so the agent never sees partially-written files.
 
@@ -528,7 +531,7 @@ Pre-start uploads are buffered in the Artifact Store during the `created` window
 
 ### 7.5 Setup Commands
 
-Run after workspace finalization, before session start.
+Setup commands run in the session's `/workspace/slots/{sessionId}/current`, after the session's workspace is materialized there and before the runtime starts the session. A pod that serves more than one session, concurrently or in sequence, runs each session's setup commands for that session. [Section 7.3](#73-retry-and-resume) step 3e states when a resume runs them, and [Section 6.2](06_warm-pod-model.md#62-pod-state-machine) states the outcome of a setup failure.
 
 **Constraints:**
 
@@ -536,11 +539,11 @@ Run after workspace finalization, before session start.
 - Resource-bounded
 - Fully logged (stdout/stderr captured)
 - Network **blocked by default** during setup (static NetworkPolicy; no dynamic toggling which would require NET_ADMIN)
-- Max commands per session enforced (`setupCommandPolicy.maxCommands`)
+- Max commands per session enforced (`setupCommandPolicy.maxCommands`; **Command policy:** below states which commands count)
 
 **Security model:** The true security boundary for setup commands is the pod's isolation profile (gVisor/Kata), filesystem read-only root, non-root UID, network policy, and the ephemeral nature of the pod. Setup commands run inside the sandbox — even a malicious setup command is constrained by the pod's security context. The command policy modes below are defense-in-depth layers, not the primary security boundary.
 
-**Command policy:** The gateway validates every setup command against the Runtime's `setupCommandPolicy` before forwarding to the pod:
+**Command policy:** Before forwarding to the pod, the gateway validates every setup command of a client-submitted `WorkspacePlan` against the Runtime's `setupCommandPolicy` and counts those commands toward `maxCommands`. The setup commands that the runtime's own `workspaceDefaults` contributes ([Section 5.1](05_runtime-registry-and-pool-model.md#51-runtime)) are exempt from both checks, and **Shell-free execution (`shell: false`):** below applies to every setup command. The policy modes are:
 
 | Mode        | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

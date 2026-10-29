@@ -3351,7 +3351,7 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
 
 - [x] **Proposal 0086, widened**
   (`proposals/0086_fix_the-gateway-accepts-a-workspaceplan-in-the-body-of/`): approved 2026-10-28, merge
-  `153a7e23b`. The finalize-time `WorkspacePlan` bind, widened on 2026-10-28 to take BUILD-GAPS F-5.1.23
+  `153a7e23b`; implemented and finalized 2026-10-29 on `impl/0086-plan-binding`. The finalize-time `WorkspacePlan` bind, widened on 2026-10-28 to take BUILD-GAPS F-5.1.23
   (§5.1 places setup at pod warm-up, once per pod, against every other site and the code) and reopened
   F-7.5.3 (runtime `workspaceDefaults` reach no session; F-5.1.6 carries a note). Design: a session binds one
   workspace plan, at creation or at finalize, and the `uploadRef` scope check covers every client-submitted
@@ -3366,6 +3366,20 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   `delegation/service.go`, `finalize.go`, and `create.go`, and whichever of 0086 and 0107 lands second
   locates its targets by symbol and quoted text. Its unstaged defects are filed below, in the block for
   proposal 0086. The next change-proposal run is 0085.
+  Its implementation landed 2026-10-29 on `impl/0086-plan-binding`: spec commits `4ae727ccf` (§14, §4.6, §6.1,
+  §12.6, §15.1, and §16, the plan bind), `309dc0c4d` (§14, §5.1, and §7.5, the runtime workspace defaults),
+  `0f727737b` (§15.1, §15.2, and §15.4), `fe5fee6b4` (§7.1 and §7.4), `d5f9cc32b` (§29), `7b7ba4028` (§24.17 and
+  §26), and `896da7465` (§7.5, §5.1, and §16, per-session setup); code commits `bb638bfa2` (the shared-resolver
+  `uploadRef` scope check), `45ec36db3` (the `lenny/finalize_workspace` input schema), `2749a9c07` (OpenAPI),
+  `006ba0d81`, `ac26246f5`, and `36c1adee0` (comments), and `97d019b7d` (the defaults composer, its callers,
+  and the registration check); docs `a6abc7fee` and `88b570954`; tests `2a4416a22`, `078cc7611`, and tier 8
+  `7c5d6af60` and `aecd89d5f`. The implementation was finalized on 2026-10-29: the proposal status is
+  Implemented, its deviations are accepted (the stale `ClaimOpts.RequiresDemotion` and
+  `PodSpec.WorkspacePlan` sites stay with F-12.6.27 and F-12.6.28 in the direct-fix queue below), and
+  BUILD-GAPS closes F-5.1.23 and F-7.5.3 with resolution notes naming the commits and tests. F-5.1.6 stays
+  closed with a 2026-10-29 note. The direct-fix queue and the proposal routing in the block for proposal 0086
+  below are unchanged, because the implementation fixed none of them as a side effect. 0086 is implemented once
+  `impl/0086-plan-binding` merges into this branch.
 - [x] **Proposal 0085**
   (`proposals/0085_fix_the-6-2-pre-attached-failure-retry-loop-has/`): approved 2026-10-29, merge
   `f5151ba18`. It confines the §6.2 pre-attached failure retry to the `POST /v1/sessions/start` creation unit,
@@ -4147,7 +4161,7 @@ F-11.2.34.
     §4.9 proxy admission.
 
 **Defects filed from proposal 0086's unstaged-defect list (2026-10-28).** Proposal 0086 (approved
-2026-10-28, merge `153a7e23b`, implementation pending) lists defects in the shipped tree that it does not
+2026-10-28, merge `153a7e23b`, implemented 2026-10-29 on `impl/0086-plan-binding`) lists defects in the shipped tree that it does not
 stage. 0086 carries no REC-1 record item, so they are filed now, ahead of its implementation, because no
 defect is dropped. Each was re-confirmed against the tree at `153a7e23b`, and each new BUILD-GAPS entry says
 0086's implementor updates the entry rather than filing a duplicate. One item was already tracked and is not

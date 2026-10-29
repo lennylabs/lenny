@@ -1606,3 +1606,35 @@ func TestSlotBindCompensationOutcomeReachesTheReclaimHook_spec_7_1(t *testing.T)
 		})
 	}
 }
+
+// spec: 7.5 (Setup Commands)
+// diagnosis: a session with no RunSetup, or with a RunSetup before its
+// FinalizeWorkspace, means the bind path gated setup per pod or ran it
+// before the slot was materialized. §7.5 runs each session's setup
+// commands once, after its own workspace is materialized, including when
+// two sessions share one concurrent-workspace pod.
+func TestBindSlotRunsEachSessionsSetupOnASharedPod_spec_7_5(t *testing.T) {
+	ns := testNamespace(t)
+	a := newConcurrentAdapter()
+	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
+
+	var pods []string
+	for _, sessionID := range []string{"sess-1", "sess-2"} {
+		res, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
+			Pool: testPool, SessionID: sessionID, TenantID: "acme", Runtime: "claude-code",
+			MaxConcurrentSessions: 4, Plan: setupPlan(),
+		})
+		if err != nil {
+			t.Fatalf("BindSlot %s: %v", sessionID, err)
+		}
+		defer res.Adapter.Close()
+		pods = append(pods, res.SandboxName)
+	}
+	if pods[0] != pods[1] {
+		t.Fatalf("the two slots landed on different pods %v; the case needs one shared pod", pods)
+	}
+
+	assertOneSetupAfterFinalize(t, &a.rec, "sess-1")
+	assertOneSetupAfterFinalize(t, &a.rec, "sess-2")
+}

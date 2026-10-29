@@ -56,12 +56,14 @@ func registerClientFacingTools(srv *mcp.Server, deps Deps, tenant string) {
 
 	// postByID registers a POST tool that targets one session: it requires
 	// a non-empty `sessionId`, strips it from the forwarded body, and POSTs
-	// the remainder to the per-session path.
-	postByID := func(name, description, subpath string) {
+	// the remainder to the per-session path. inputSchema is the advertised
+	// tool input schema; a tool whose REST body carries fields beyond the
+	// session id declares them there.
+	postByID := func(name, description, subpath string, inputSchema json.RawMessage) {
 		srv.RegisterTool(mcp.Tool{
 			Name:        name,
 			Description: description,
-			InputSchema: sessionIDInputSchema,
+			InputSchema: inputSchema,
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 			id, body, err := extractSessionID(args)
 			if err != nil {
@@ -98,14 +100,16 @@ func registerClientFacingTools(srv *mcp.Server, deps Deps, tenant string) {
 	})
 
 	// spec: §15.2 — per-session lifecycle transitions.
-	postByID("lenny/start_session", "Start the agent runtime for a created session.", "/start")
-	postByID("lenny/finalize_workspace", "Seal the session workspace and run setup.", "/finalize")
-	postByID("lenny/terminate_session", "End a session gracefully (marks completed).", "/terminate")
-	postByID("lenny/resume_session", "Resume a suspended or paused session.", "/resume")
+	postByID("lenny/start_session", "Start the agent runtime for a created session.", "/start", sessionIDInputSchema)
+	// spec: §15.2, §14.1 (Plan binding) — the optional workspacePlan
+	// argument is forwarded as the REST finalize body.
+	postByID("lenny/finalize_workspace", "Seal the session workspace, binding an optional workspace plan, and run setup.", "/finalize", finalizeWorkspaceInputSchema)
+	postByID("lenny/terminate_session", "End a session gracefully (marks completed).", "/terminate", sessionIDInputSchema)
+	postByID("lenny/resume_session", "Resume a suspended or paused session.", "/resume", sessionIDInputSchema)
 	// spec: §15.2, §15.2.1 (REST/MCP Consistency Contract) — the interrupt
 	// runs the REST POST /v1/sessions/{id}/interrupt route, the one write of
 	// an interrupt into suspended, and answers its session body.
-	postByID("lenny/interrupt_session", "Interrupt the running agent in a session. REST equivalent: POST /v1/sessions/{id}/interrupt.", "/interrupt")
+	postByID("lenny/interrupt_session", "Interrupt the running agent in a session. REST equivalent: POST /v1/sessions/{id}/interrupt.", "/interrupt", sessionIDInputSchema)
 
 	// spec: §15.2 — per-session reads.
 	getByID("lenny/get_session_status", "Query a session's state (including suspended).", "")
@@ -256,6 +260,12 @@ func registerClientFacingTools(srv *mcp.Server, deps Deps, tenant string) {
 // sessionIDInputSchema is the shared JSON schema for the per-session
 // lifecycle/read tools that take a single required `sessionId`.
 var sessionIDInputSchema = json.RawMessage(`{"type":"object","required":["sessionId"],"properties":{"sessionId":{"type":"string","description":"The target session id."}}}`)
+
+// finalizeWorkspaceInputSchema declares the optional workspacePlan that
+// lenny/finalize_workspace forwards as the REST finalize body.
+// spec: §15.2.1 REST/MCP Consistency Contract; §14.1 WorkspacePlan Schema
+// Versioning (Plan binding).
+var finalizeWorkspaceInputSchema = json.RawMessage(`{"type":"object","required":["sessionId"],"properties":{"sessionId":{"type":"string","description":"The target session id."},"workspacePlan":{"type":["object","null"],"additionalProperties":true,"description":"Optional §14 WorkspacePlan bound at finalize when the session was created without one."}}}`)
 
 // unmarshalArgs decodes the tool arguments, mapping a decode failure to
 // the canonical VALIDATION_ERROR envelope. An empty arguments object

@@ -451,9 +451,9 @@ type Subscription interface {
 | Struct | Defined in | Key fields |
 |---|---|---|
 | `PodRecord` | [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle) (pod state machine) | `PodID`, `PoolID`, `TenantID`, `State`, `SessionID` (nullable), `IsolationProfile`, `ExecutionMode`, `ResourceVersion` (CRD optimistic-locking generation) |
-| `PodSpec` | [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle) (pod creation) | `RuntimeDefinitionRef`, `WorkspacePlan`, `IsolationProfile`, `ExecutionMode`, resource limits |
+| `PodSpec` | [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle) (pod creation) | `RuntimeDefinitionRef`, `IsolationProfile`, `ExecutionMode`, resource limits |
 | `StateTransition` | [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle) (pod state machine) | source state, target state, reason; validated against the pod state machine |
-| `ClaimOpts` | [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle), [§12.6](#126-interface-design) | `PoolID`, `TenantID`, `SessionID`, `RequiresDemotion` (bool), `Priority` (nullable `*int32`, nil when unset), `ClusterID` (nullable `*ClusterID`, always nil in v1) |
+| `ClaimOpts` | [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle), [§12.6](#126-interface-design) | `PoolID`, `TenantID`, `SessionID`, `Priority` (nullable `*int32`, nil when unset), `ClusterID` (nullable `*ClusterID`, always nil in v1) |
 | `PodFilter` | [§12.6](#126-interface-design) (PodRegistry) | state filter, label selectors; implementation-defined |
 | `StateCounts` | [§12.6](#126-interface-design) (PodRegistry) | map of pod state → count; used by `PoolScalingController` for scaling decisions |
 | `PodEvent` | [§12.6](#126-interface-design) (PodRegistry) | `PodID`, `EventType` (created/updated/deleted), `PodRecord` snapshot |

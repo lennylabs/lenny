@@ -94,26 +94,22 @@ credentialCapabilities:
 
 Individual runtimes restrict `proxyDialect` to only the dialects their underlying CLI actually uses; see each entry for the restricted set.
 
-**Reference `WorkspacePlan`.** The following minimal plan is used by the `lenny session new --attach` CLI ([§24.17](24_lenny-ctl-command-reference.md#2417-session-operations)) when the client passes `--workspace=<local-path>`:
+**Reference `WorkspacePlan`.** The following minimal plan is used by the `lenny session new --attach` CLI ([§24.17](24_lenny-ctl-command-reference.md#2417-session-operations)) when the client passes `--workspace=<local-path>`, as the `POST /v1/sessions/{id}/finalize` body ([§14.1](14_workspace-plan-schema.md#141-workspaceplan-schema-versioning) **Plan binding.**):
 
 ```json
 {
-  "pool": "<runtime-name>-default",
   "workspacePlan": {
     "$schema": "https://schemas.lenny.dev/workspaceplan/v1.json",
     "schemaVersion": 1,
     "sources": [
-      { "type": "uploadArchive", "pathPrefix": ".", "uploadRef": "<upload_id>", "format": "tar.gz" }
+      { "type": "uploadArchive", "pathPrefix": ".", "uploadRef": "<uploadRef>", "format": "tar.gz" }
     ],
     "setupCommands": []
-  },
-  "env": {},
-  "timeouts": { "maxSessionAgeSeconds": 14400, "maxIdleSeconds": 900 },
-  "runtimeOptions": { /* per-runtime options per §14 */ }
+  }
 }
 ```
 
-The `uploadArchive` entry is populated by the CLI: it tars the `--workspace` directory (respecting a `.lennyignore` file if present; otherwise `.gitignore`), uploads it to the gateway via the upload API ([§15.1](15_external-api-surface.md#151-rest-api)), and references the resulting upload ID.
+The `uploadArchive` entry is populated by the CLI: it tars the `--workspace` directory (respecting a `.lennyignore` file if present; otherwise `.gitignore`), uploads it with `POST /v1/sessions/{id}/upload-archive` ([§15.1](15_external-api-surface.md#151-rest-api)), and names the returned `uploadRef` in the `uploadArchive` source.
 
 **Credential-lease scopes (shared).** Every coding-agent runtime declares lease scopes for its LLM provider. The scope naming follows [§4.9](04_system-components.md#49-credential-leasing-service):
 
@@ -129,7 +125,7 @@ $ lenny session new --runtime=<name> --workspace=./my-repo --attach \
     "Refactor the auth module to use the new token-exchange flow"
 ```
 
-The CLI uploads the workspace, creates the session via the gateway REST API, then attaches via the MCP WebSocket and streams the runtime's output to stdout until completion or Ctrl-C. See [§24.17](24_lenny-ctl-command-reference.md#2417-session-operations) for full command reference.
+The CLI stages the workspace over the gateway REST API, then attaches via the MCP WebSocket and streams the runtime's output to stdout until completion or Ctrl-C. See [§24.17](24_lenny-ctl-command-reference.md#2417-session-operations) for full command reference.
 
 ---
 
@@ -219,7 +215,7 @@ The runtime does **not** request or use `anthropic.api.write` (fine-tuning/file-
 
 1. Warm-pool controller pulls the image and starts the pod in INIT state.
 2. The platform adapter boots and signals READY.
-3. On session claim: gateway materializes the `WorkspacePlan` into `/workspace/slots/{sessionId}/current/`; runs any `setupCommands`; the runtime supervisor launches `lenny-claude-code-adapter`, the runtime's `command`, as [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Launch.** states; emits `session.created`.
+3. At finalize and start ([§7.1](07_session-lifecycle.md#71-normal-flow)): gateway materializes the `WorkspacePlan` into `/workspace/slots/{sessionId}/current/`; runs any `setupCommands`; the runtime supervisor launches `lenny-claude-code-adapter`, the runtime's `command`, as [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Launch.** states.
 4. On first `message`: adapter invokes `claude --no-tty --print --session-id=<id>` and pipes the message to stdin. All subsequent messages for the session reuse the same `claude` process (multi-turn).
 5. Tool calls emitted by `claude` are translated by the adapter into Lenny's `tool_call` message envelope ([§28.5.3](28_communication-channels.md#2853-intra-pod)); tool results are injected back via `tool_result`.
 6. On session termination: adapter sends SIGTERM to `claude`; waits up to 5s for graceful shutdown; force-kills on timeout. Any files written under `/workspace/output/` are sealed as session artifacts.
@@ -231,7 +227,7 @@ $ lenny session new --runtime=claude-code --workspace=./my-repo --attach \
     "Find all uses of the deprecated AuthV1 API and migrate them to AuthV2."
 ```
 
-The CLI uploads the repo, creates the session, and streams Claude Code's output (tool calls, intermediate reasoning if `thinkingBudget > 0`, final text) to stdout until the agent produces a `response` or the user presses Ctrl-C.
+The CLI stages the repo over REST ([§24.17](24_lenny-ctl-command-reference.md#2417-session-operations)) and streams Claude Code's output (tool calls, intermediate reasoning if `thinkingBudget > 0`, final text) to stdout until the agent produces a `response` or the user presses Ctrl-C.
 
 **Delegation behavior.** Claude Code does not delegate by default. A derived runtime (e.g., `claude-code-orchestrator`) can enable delegation by attaching a `delegationPolicyRef` and exposing `lenny/delegate_task` in the tool set. The reference implementation does not configure this — see [§8](08_recursive-delegation.md) for the delegation model.
 

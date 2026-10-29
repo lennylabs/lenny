@@ -188,11 +188,11 @@ func newSessionLifecycleMetrics(reg *prometheus.Registry) (sessionLifecycleMetri
 		return m, err
 	}
 	// §6.1 / §16.1 — `lenny_warmpool_sdk_demotions_total`
-	// counts SDK-warm pods demoted to pod-warm before session assignment
-	// because the workspace plan matched sdkWarmBlockingPaths.
+	// counts SDK-warm pods demoted to pod-warm because the workspace
+	// plan matched sdkWarmBlockingPaths.
 	warmpoolSDKDemotions, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_warmpool_sdk_demotions_total",
-		Help: "SDK-warm pods demoted to pod-warm before session assignment per pool (§6.1, §16.1).",
+		Help: "SDK-warm pods demoted to pod-warm per pool (§6.1, §16.1).",
 	}, []string{"pool"})
 	if err != nil {
 		return m, err

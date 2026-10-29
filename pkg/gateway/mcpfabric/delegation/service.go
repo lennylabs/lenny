@@ -37,6 +37,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 
 // DefaultMaxDepth is the §8.2.bis Helm fallback for
@@ -1542,7 +1543,45 @@ func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Re
 			return sessionstore.Session{}, reserved, err
 		}
 	}
+	if err := s.composeChildWorkspaceDefaults(ctx, &child); err != nil {
+		return sessionstore.Session{}, reserved, err
+	}
 	return child, reserved, nil
+}
+
+// composeChildWorkspaceDefaults composes the workspaceDefaults of the
+// child's routed runtime into the child's plan, ahead of the file-export
+// sources, and stores the result on the row. A child with no export binds the
+// defaults alone. A runtime with no defaults or no registry entry leaves the
+// plan unchanged. A failure to read the runtime or its base fails the
+// delegation before the child row is created; a transient store error wraps
+// runtimestore.ErrWorkspaceDefaultsLookup, which lenny/delegate_task maps to
+// SERVICE_UNAVAILABLE.
+//
+// spec: §14.1 WorkspacePlan Schema Versioning (Runtime workspace defaults);
+// §8.7 File Export Model.
+func (s *Service) composeChildWorkspaceDefaults(ctx context.Context, child *sessionstore.Session) error {
+	var plan workspaceplan.Plan
+	if len(child.WorkspacePlan) > 0 {
+		parsed, _, err := workspaceplan.ParseStored(child.WorkspacePlan)
+		if err != nil {
+			return fmt.Errorf("delegation: parse child workspace plan: %w", err)
+		}
+		plan = parsed
+	}
+	composed, changed, err := runtimestore.ComposeWorkspaceDefaults(ctx, s.runtimes, child.RuntimeRef, plan)
+	if err != nil {
+		return fmt.Errorf("delegation: compose workspace defaults for child %s: %w", child.ID, err)
+	}
+	if !changed {
+		return nil
+	}
+	raw, err := workspaceplan.Marshal(composed)
+	if err != nil {
+		return fmt.Errorf("delegation: marshal child workspace plan: %w", err)
+	}
+	child.WorkspacePlan = raw
+	return nil
 }
 
 // commitChild inserts the child row: through CreateReserved when its ID

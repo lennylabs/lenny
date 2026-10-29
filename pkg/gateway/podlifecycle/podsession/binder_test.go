@@ -3079,3 +3079,199 @@ func TestResumeCompensationOutcomeReachesTheReclaimHook_spec_7_1(t *testing.T) {
 		t.Errorf("SlotReclaim calls = %+v, want %+v", calls, want)
 	}
 }
+
+// prepareCapturingAdapter is the concurrentAdapter fake with a
+// PrepareWorkspace that records the content of every upload_ref it was
+// streamed, so a test can assert which uploads a bind staged.
+type prepareCapturingAdapter struct {
+	*concurrentAdapter
+
+	prepMu sync.Mutex
+	staged map[string][]byte
+}
+
+func (a *prepareCapturingAdapter) PrepareWorkspace(stream grpc.ClientStreamingServer[adapterv1.PrepareWorkspaceRequest, adapterv1.PrepareWorkspaceResponse]) error {
+	for {
+		req, err := stream.Recv()
+		if err != nil {
+			break
+		}
+		a.prepMu.Lock()
+		a.staged[req.GetUploadRef()] = append(a.staged[req.GetUploadRef()], req.GetChunk()...)
+		a.prepMu.Unlock()
+	}
+	return stream.SendAndClose(&adapterv1.PrepareWorkspaceResponse{})
+}
+
+// stagedRefs returns a copy of the recorded upload_ref → content map.
+func (a *prepareCapturingAdapter) stagedRefs() map[string][]byte {
+	a.prepMu.Lock()
+	defer a.prepMu.Unlock()
+	out := make(map[string][]byte, len(a.staged))
+	for ref, content := range a.staged {
+		out[ref] = content
+	}
+	return out
+}
+
+// grpcAdapterDialer serves an arbitrary adapter fake over an in-memory
+// connection and returns a DialAdapter func wired to it.
+func grpcAdapterDialer(t *testing.T, srv adapterv1.AdapterServer) func(string) (*adapterclient.Client, error) {
+	t.Helper()
+	lis := bufconn.Listen(1 << 20)
+	gs := grpc.NewServer()
+	adapterv1.RegisterAdapterServer(gs, srv)
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(gs.Stop)
+	return func(string) (*adapterclient.Client, error) {
+		return adapterclient.Dial("passthrough:///bufnet",
+			grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+				return lis.DialContext(ctx)
+			}),
+			grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}
+}
+
+// putUploadBlob stores content for sessionID under partID and returns the
+// blob's URI.
+func putUploadBlob(t *testing.T, blobs blobstore.Store, sessionID, partID, content string) blobstore.URI {
+	t.Helper()
+	uri := blobstore.URI{
+		TenantID: "acme", ObjectType: blobstore.ObjectTypeUpload, SessionID: sessionID, PartID: partID,
+		TTL: time.Hour, Encoding: blobstore.Encoding,
+	}
+	if _, err := blobs.Put(uri, "application/octet-stream", strings.NewReader(content)); err != nil {
+		t.Fatalf("put blob %s: %v", partID, err)
+	}
+	return uri
+}
+
+// spec: 14.1 (WorkspacePlan Schema Versioning), 14 (Workspace Plan Schema)
+// diagnosis: a second staged upload means finalize materialized an upload
+// the bound plan does not name. The §14.1 Plan binding rule materializes
+// only the uploads the bound plan's upload sources reference; an
+// unreferenced upload stays in the blob store and never reaches the pod.
+func TestBindStagesOnlyUploadsThePlanNames_spec_14_1(t *testing.T) {
+	ns := testNamespace(t)
+	blobs := blobstore.NewMemoryStore(nil)
+	named := putUploadBlob(t, blobs, "sess-1", "part-named", "named payload")
+	unnamed := putUploadBlob(t, blobs, "sess-1", "part-unnamed", "unreferenced payload")
+
+	a := &prepareCapturingAdapter{concurrentAdapter: newConcurrentAdapter(), staged: map[string][]byte{}}
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, grpcAdapterDialer(t, a))
+	binder.Blobs = blobs
+
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+		Plan: &adapterv1.WorkspacePlan{
+			SchemaVersion: 1,
+			Sources: []*adapterv1.WorkspaceSource{
+				{Type: "uploadFile", Path: "data/named.txt", UploadRef: named.String()},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	defer res.Adapter.Close()
+
+	staged := a.stagedRefs()
+	if len(staged) != 1 {
+		t.Fatalf("PrepareWorkspace staged %d uploads (%v), want only the one the plan names", len(staged), keysOf(staged))
+	}
+	if got := string(staged[named.String()]); got != "named payload" {
+		t.Errorf("staged content for the named upload = %q, want %q", got, "named payload")
+	}
+	if _, ok := staged[unnamed.String()]; ok {
+		t.Errorf("PrepareWorkspace staged the unreferenced upload %s", unnamed.String())
+	}
+}
+
+// keysOf returns the keys of m for a failure message.
+func keysOf(m map[string][]byte) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// setupPlan is a plan with one setup command and no sources.
+func setupPlan() *adapterv1.WorkspacePlan {
+	return &adapterv1.WorkspacePlan{
+		SchemaVersion: 1,
+		SetupCommands: []*adapterv1.SetupCommand{{Cmd: "echo setup"}},
+	}
+}
+
+// assertOneSetupAfterFinalize fails unless the recorder carries exactly one
+// RunSetup for sessionID and it follows that session's FinalizeWorkspace.
+func assertOneSetupAfterFinalize(t *testing.T, rec *bindRequestRecorder, sessionID string) {
+	t.Helper()
+	finalizeAt, setupAt, setups := -1, -1, 0
+	for i, c := range rec.forSession(sessionID) {
+		switch c.rpc {
+		case "FinalizeWorkspace":
+			if finalizeAt < 0 {
+				finalizeAt = i
+			}
+		case "RunSetup":
+			setups++
+			setupAt = i
+		}
+	}
+	if setups != 1 {
+		t.Errorf("session %s carried %d RunSetup calls, want exactly 1", sessionID, setups)
+		return
+	}
+	if finalizeAt < 0 || setupAt < finalizeAt {
+		t.Errorf("session %s RunSetup at %d, FinalizeWorkspace at %d; want RunSetup after FinalizeWorkspace",
+			sessionID, setupAt, finalizeAt)
+	}
+}
+
+// spec: 7.5 (Setup Commands), 5.2 (Execution Modes)
+// diagnosis: sess-2 without a RunSetup means the exclusive bind path gated
+// setup per pod. §7.5 runs a session's setup commands once per session,
+// after its workspace is materialized, so a recycled pod's second session
+// runs its own setup as the first session did.
+func TestBindRunsEachSequentialSessionsSetupOnARecycledPod_spec_7_5(t *testing.T) {
+	ns := testNamespace(t)
+	a := newConcurrentAdapter()
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, concurrentAdapterDialer(t, a))
+
+	for _, sessionID := range []string{"sess-1", "sess-2"} {
+		res, err := binder.Bind(context.Background(), podsession.BindRequest{
+			Pool: testPool, SessionID: sessionID, TenantID: "acme", Runtime: "claude-code",
+			Recycle: true, Plan: setupPlan(),
+		})
+		if err != nil {
+			t.Fatalf("Bind %s: %v", sessionID, err)
+		}
+		if res.SandboxName != "sbx-1" {
+			t.Fatalf("Bind %s landed on %s, want the one recycling pod sbx-1", sessionID, res.SandboxName)
+		}
+		if err := binder.Release(context.Background(), res, "completed"); err != nil {
+			t.Fatalf("Release %s: %v", sessionID, err)
+		}
+		res.Adapter.Close()
+		returnRecycledPodToIdle(t, c, ns, res.SandboxName)
+	}
+
+	assertOneSetupAfterFinalize(t, &a.rec, "sess-1")
+	assertOneSetupAfterFinalize(t, &a.rec, "sess-2")
+}
+
+// returnRecycledPodToIdle models a successful whole-pod scrub: the per-pod
+// claim the recycle Release patched to recycling is deleted, so the pod is
+// claimable again as an idle warm pod.
+func returnRecycledPodToIdle(t *testing.T, c client.Client, ns, sandboxName string) {
+	t.Helper()
+	claim := &lennyv1.SandboxClaim{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "claim-" + sandboxName}}
+	if err := c.Delete(context.Background(), claim); err != nil && !apierrors.IsNotFound(err) {
+		t.Fatalf("delete recycling claim of %s: %v", sandboxName, err)
+	}
+}

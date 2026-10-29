@@ -27,13 +27,14 @@ import (
 // The producer is the whole target rather than `buf generate` alone.
 // The target prepends $(go env GOPATH)/bin to PATH so the local
 // protoc-gen-go and protoc-gen-go-grpc plugins resolve, then applies
-// two post-generation steps that the plugins do not perform: it
-// prepends the SPDX header to every generated file that lacks one, and
-// it regroups the import block with goimports under the local prefix.
+// the post-generation steps that the plugins do not perform: it
+// prepends the SPDX header to every generated file that lacks one, it
+// regroups the import block with goimports under the local prefix, and
+// it runs gofumpt to its fixed point.
 // Diffing raw plugin output against the committed stubs would report
 // drift on every file.
 //
-// A tree missing any of the producer's four binaries reports the
+// A tree missing any of the producer's binaries reports the
 // unverified marker and leaves the tier unverified. Returning early
 // without the marker would certify pkg/proto/ on a host that ran no
 // generator, which is the fail-open behavior of the shell check this
@@ -56,13 +57,18 @@ const (
 	// protoSPDXMarker identifies a file that already carries the
 	// header on its first line.
 	protoSPDXMarker = "SPDX-License-Identifier"
+	// protoGofumptPasses is the number of gofumpt passes the target
+	// runs: the first groups the protoc var declarations and the
+	// second spaces the grouped block, which is gofumpt's fixed point.
+	protoGofumptPasses = 2
 )
 
 // protoProducerBinaries are the external binaries the target needs.
 // buf runs the generation; protoc-gen-go and protoc-gen-go-grpc are
 // declared as local: plugins in schemas/buf.gen.yaml and are resolved
-// from PATH by buf; goimports applies the target's final rewrite.
-var protoProducerBinaries = []string{"buf", "protoc-gen-go", "protoc-gen-go-grpc", "goimports"}
+// from PATH by buf; goimports and gofumpt apply the target's final
+// rewrites.
+var protoProducerBinaries = []string{"buf", "protoc-gen-go", "protoc-gen-go-grpc", "goimports", "gofumpt"}
 
 // protoProducerTimeout bounds the whole reproduced run.
 const protoProducerTimeout = 5 * time.Minute
@@ -169,7 +175,32 @@ func reproduceProtoProducer(ctx context.Context, root, base string) (map[string]
 		"goimports", "-w", "-local", protoLocalPrefix, genDir); err != nil {
 		return nil, err
 	}
+	if err := runGofumptToFixedPoint(ctx, root, genDir); err != nil {
+		return nil, err
+	}
 	return collectGoTree(genDir)
+}
+
+// runGofumptToFixedPoint applies the target's gofumpt step. gofumpt
+// skips a file carrying the generated-code header when it walks a
+// directory, so each pass names every generated file explicitly, as the
+// target's `find -exec gofumpt -w {} +` does.
+func runGofumptToFixedPoint(ctx context.Context, root, genDir string) error {
+	files, err := collectGoTree(genDir)
+	if err != nil {
+		return err
+	}
+	args := []string{"-w"}
+	for rel := range files {
+		args = append(args, filepath.Join(genDir, filepath.FromSlash(rel)))
+	}
+	sort.Strings(args[1:])
+	for range protoGofumptPasses {
+		if err := runProtoCommand(ctx, root, "gofumpt", args...); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // runProtoCommand runs one step of the producer in dir and folds the

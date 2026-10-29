@@ -23,8 +23,11 @@ const uploadTokenHeader = "X-Lenny-Upload-Token"
 const contentHashHeader = "X-Lenny-Content-Hash"
 
 // UploadResult is the §15.1 POST /v1/sessions/{id}/upload(-archive)
-// response. UploadRef is the §4.5 lenny-blob:// URI the caller passes as
-// sources[<n>].uploadRef in the workspace plan it binds at finalize.
+// response. UploadRef is the opaque reference the caller passes verbatim
+// as sources[<n>].uploadRef in a plan bound to this same session at
+// finalize.
+//
+// spec: §14 Workspace Plan Schema (uploadRef field note); §15.1.
 type UploadResult struct {
 	UploadRef   string `json:"uploadRef"`
 	MimeType    string `json:"mimeType,omitempty"`
@@ -110,13 +113,14 @@ func (c *Client) UploadFile(ctx context.Context, sessionID, uploadToken string, 
 }
 
 // FinalizeWorkspace calls POST /v1/sessions/{id}/finalize with a §14
-// workspace plan body, binding the plan onto a created session and
-// transitioning it to ready. The plan references blobs uploaded against
-// this session (via UploadArchive); the gateway materializes them when
-// the session starts. Pass a nil plan for a no-plan finalize (equivalent
-// to Finalize).
+// workspace plan body, binding the plan onto a created session (§14.1
+// Plan binding). The plan references blobs uploaded against this session
+// (via UploadArchive or UploadFile). The gateway validates the plan and,
+// during finalize, materializes its sources, including the uploads it
+// names; the call returns once the session is ready. Pass a nil plan for
+// a no-plan finalize (equivalent to Finalize).
 //
-// spec: §7.1 step 11 (FinalizeWorkspace); §26.2.
+// spec: §14.1 WorkspacePlan Schema Versioning (Plan binding); §7.1 Normal Flow; §26.2.
 func (c *Client) FinalizeWorkspace(ctx context.Context, id string, plan json.RawMessage, opts ...RequestOption) (*Session, error) {
 	if len(plan) == 0 {
 		return c.Finalize(ctx, id, opts...)

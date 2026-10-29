@@ -660,10 +660,7 @@ message SessionId {
 // (the §10.7 ref-resolver, audit log, partial-replay snapshot) sees the
 // plan as a single document. The adapter MUST NOT execute setup
 // commands from this field — it runs them only on the explicit
-// RunSetup RPC, which §5.2 specifies fires once per pod at
-// start (a recycled pod skips the second RunSetup on its subsequent
-// session assignments; the gateway owns the once-per-pod gate). See
-// also F-5.2.24.
+// RunSetup RPC. spec: §7.5 Setup Commands.
 message WorkspacePlan {
   int32 schema_version = 1;
   repeated WorkspaceSource sources = 2;
@@ -890,15 +887,8 @@ message WorkspacePlanWarning {
 // authoritative execution payload — see WorkspacePlan.setup_commands
 // for why the same commands also ride on the plan document.
 //
-// Per §5.2 setup commands run once per pod at start. The gateway issues
-// RunSetup once on first pod assignment; on a recycled pod's subsequent
-// session assignments the gateway skips the RunSetup RPC entirely so the
-// adapter's pod-level setup-completion state is implicit (no second
-// RunSetup means no second execution). Per-session setup belongs in the
-// runtime's handling of the session's first message rather than in
-// setupCommands, because setup commands run once per pod while the runtime
-// process of a `keep` pod serves several sessions (§5.2, Runtime-process
-// lifetime).
+// The adapter keeps no pod-level setup-completion state: it runs the
+// commands of every RunSetup it receives. spec: §7.5 Setup Commands.
 message RunSetupRequest {
   SessionId session_id = 1;
   repeated SetupCommand setup_commands = 2;
@@ -1002,8 +992,9 @@ message SetupPolicy {
   // no aggregate cap.
   int32 timeout_seconds = 1;
   // on_timeout is the §5.1 disposition when the cap is hit: "fail"
-  // aborts pod startup, "warn" proceeds to runtime start. An empty
-  // value is the conservative "fail" default.
+  // fails the session's setup (spec: §7.5 Setup Commands; §6.2 Pod
+  // State Machine), "warn" proceeds to runtime start. An empty value is
+  // the conservative "fail" default.
   string on_timeout = 2;
   // shell carries the §7.5 setupCommandPolicy.shell flag from the gateway
   // to the adapter. When true the adapter runs each command via

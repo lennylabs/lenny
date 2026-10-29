@@ -2486,6 +2486,15 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 				return mcp.ToolResult{}, mcp.NewToolError("EXPORT_FILE_SCAN_UNAVAILABLE",
 					err.Error(), nil)
 			}
+			// spec: §14.1 WorkspacePlan Schema Versioning (Runtime workspace
+			// defaults) — a transient store error kept the gateway from
+			// reading the child runtime's workspaceDefaults, so the
+			// delegation failed closed before creating the child. Surface the
+			// retryable SERVICE_UNAVAILABLE the REST binding requests return.
+			if errors.Is(err, runtimestore.ErrWorkspaceDefaultsLookup) {
+				return mcp.ToolResult{}, mcp.NewToolError("SERVICE_UNAVAILABLE",
+					err.Error(), nil)
+			}
 			return mcp.ToolResult{}, err
 		}
 		// spec: §8.2 — materialize the admitted StateCreated

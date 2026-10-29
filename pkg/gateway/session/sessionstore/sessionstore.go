@@ -138,12 +138,16 @@ type Session struct {
 	// spec: §7.1.
 	ConversationContinuity string
 
-	// WorkspacePlan is the raw §14 WorkspacePlan JSON submitted with
-	// POST /v1/sessions or POST /v1/sessions/start. It is stored at
-	// create so the finalize and start handlers can materialize the
-	// workspace onto the claimed pod, and GET /v1/sessions/{id} can
-	// return the stored plan per §15.1. Nil when the session was
-	// created without a workspace plan.
+	// WorkspacePlan is the §14 WorkspacePlan JSON stored when the plan
+	// binds: in POST /v1/sessions or POST /v1/sessions/start, in the
+	// finalize request when creation carried none, or when the gateway
+	// creates a delegated child. It carries the runtime's
+	// workspaceDefaults ahead of the plan's own entries, so every later
+	// materialization reads the defaults pinned at bind, and
+	// GET /v1/sessions/{id} returns it per §15.1. Nil until a plan binds,
+	// and after a bind that yielded no plan.
+	// spec: §14.1 WorkspacePlan Schema Versioning (Plan binding; Runtime
+	// workspace defaults).
 	WorkspacePlan json.RawMessage
 
 	// WorkspaceSnapshot is the §7.1 / §15.1 workspace snapshot ref

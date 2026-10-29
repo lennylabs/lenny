@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.lenny.dev/workspaceplan/v1.json",
   "title": "WorkspacePlan v1",
-  "description": "Declares how to materialize a session's working tree under /workspace/slots/{sessionId}/current at pod claim time. Nested under CreateSessionRequest.workspacePlan. See spec/14_workspace-plan-schema.md.",
+  "description": "Declares how to materialize a session's working tree under /workspace/slots/{sessionId}/current. Carried in CreateSessionRequest.workspacePlan or the finalize request body's workspacePlan. See spec/14_workspace-plan-schema.md.",
   "type": "object",
   "required": ["schemaVersion", "sources"],
   "additionalProperties": false,
@@ -74,7 +74,7 @@
       "properties": {
         "type": { "const": "uploadFile" },
         "path": { "type": "string", "minLength": 1 },
-        "uploadRef": { "type": "string", "minLength": 1, "description": "Reference to a previously uploaded blob (lenny-blob:// URI or upload id)." },
+        "uploadRef": { "type": "string", "minLength": 1, "description": "Opaque uploadRef returned by POST /v1/sessions/{id}/upload or /upload-archive for the session the plan binds to." },
         "mode": { "$ref": "#/$defs/modeFile", "default": "0644" }
       }
     },
@@ -86,7 +86,7 @@
       "properties": {
         "type": { "const": "uploadArchive" },
         "pathPrefix": { "type": "string", "minLength": 1, "description": "Extraction destination under /workspace/slots/{sessionId}/current/." },
-        "uploadRef": { "type": "string", "minLength": 1 },
+        "uploadRef": { "type": "string", "minLength": 1, "description": "Opaque uploadRef returned by POST /v1/sessions/{id}/upload or /upload-archive for the session the plan binds to." },
         "format": { "type": "string", "enum": ["tar", "tar.gz", "zip"] },
         "stripComponents": {
           "type": "integer",
@@ -119,7 +119,7 @@
           "pattern": "^https://",
           "description": "HTTPS only. SSH and git:// are rejected at schema validation."
         },
-        "ref": { "type": "string", "minLength": 1, "description": "Branch, tag, or commit SHA. Resolved to a commit SHA at session creation and stored in resolvedCommitSha." },
+        "ref": { "type": "string", "minLength": 1, "description": "Branch, tag, or commit SHA. Resolved to a commit SHA when the plan binds and stored in resolvedCommitSha." },
         "path": { "type": "string", "default": ".", "description": "Clone destination under /workspace/slots/{sessionId}/current/." },
         "depth": { "type": "integer", "minimum": 1, "description": "Shallow-clone depth. Omit for a full clone." },
         "submodules": { "type": "boolean", "default": false },
