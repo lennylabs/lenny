@@ -351,8 +351,7 @@
                   "required": ["path"],
                   "properties": {
                     "path":    { "type": "string" },
-                    "content": { "type": "string" },
-                    "ref":     { "type": "string" }
+                    "content": { "type": "string" }
                   }
                 }
               },

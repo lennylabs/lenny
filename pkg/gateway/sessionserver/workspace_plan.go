@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
+	"strconv"
 
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
@@ -15,12 +17,16 @@ import (
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 
-// storedWorkspacePlan re-parses the §14 WorkspacePlan recorded on the
-// session row at create. It returns the zero Plan when the session was
-// created without a plan. The plan was validated at create, so a parse
-// failure here indicates gateway-version skew against the stored plan.
-// ParseStored is used because the stored plan carries the
+// storedWorkspacePlan re-parses the §14 WorkspacePlan stored on the session
+// row when the plan bound: at creation, at finalize, or at delegated-child
+// creation, with the runtime's workspaceDefaults already composed in. It
+// returns the zero Plan when no plan has bound. The plan was validated when
+// it bound, so a parse failure here indicates gateway-version skew against
+// the stored plan. ParseStored is used because the stored plan carries the
 // gateway-written resolvedCommitSha that Parse rejects as client input.
+//
+// spec: §14.1 WorkspacePlan Schema Versioning (Plan binding; Runtime
+// workspace defaults).
 func storedWorkspacePlan(row sessionstore.Session) (workspaceplan.Plan, error) {
 	if len(row.WorkspacePlan) == 0 || isJSONNull(row.WorkspacePlan) {
 		return workspaceplan.Plan{}, nil
@@ -82,6 +88,53 @@ func (s *Server) resolveSubmittedPlan(w http.ResponseWriter, r *http.Request, ra
 		storedJSON = pinned
 	}
 	return parsed, storedJSON, warns, true
+}
+
+// composeRuntimeDefaults composes the workspaceDefaults of runtimeRef into a
+// plan that is binding, and returns the plan and the JSON to persist. When
+// the runtime declares no defaults, or has no registry entry, plan and
+// storedJSON are returned unchanged. A transient failure to read the
+// runtime or its base writes 503 SERVICE_UNAVAILABLE with Retry-After, and
+// any other failure writes 500 INTERNAL_ERROR; both return ok=false before
+// the caller writes any session state.
+//
+// spec: §14.1 WorkspacePlan Schema Versioning (Runtime workspace defaults).
+func (s *Server) composeRuntimeDefaults(w http.ResponseWriter, r *http.Request, runtimeRef string,
+	plan workspaceplan.Plan, storedJSON json.RawMessage,
+) (workspaceplan.Plan, json.RawMessage, bool) {
+	composed, changed, err := runtimestore.ComposeWorkspaceDefaults(r.Context(), s.runtimes, runtimeRef, plan)
+	if err != nil {
+		s.writeWorkspaceDefaultsError(w, runtimeRef, err)
+		return workspaceplan.Plan{}, nil, false
+	}
+	if !changed {
+		return plan, storedJSON, true
+	}
+	raw, err := workspaceplan.Marshal(composed)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"could not serialize the composed workspace plan: "+err.Error(), nil)
+		return workspaceplan.Plan{}, nil, false
+	}
+	return composed, raw, true
+}
+
+// writeWorkspaceDefaultsError maps a ComposeWorkspaceDefaults failure to its
+// §15.1 response. A wrapped ErrWorkspaceDefaultsLookup is a transient store
+// error and fails closed with the retryable SERVICE_UNAVAILABLE, as the §5.1
+// injection gate does. A derived runtime whose base is missing, or a stored
+// default that cannot be composed, is a definite failure and takes the
+// generic INTERNAL_ERROR.
+func (s *Server) writeWorkspaceDefaultsError(w http.ResponseWriter, runtimeRef string, err error) {
+	log.Printf("sessionserver: compose workspaceDefaults of runtime %q: %v", runtimeRef, err)
+	if errors.Is(err, runtimestore.ErrWorkspaceDefaultsLookup) {
+		w.Header().Set("Retry-After", strconv.Itoa(serviceUnavailableRetryAfterSeconds))
+		s.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE",
+			"runtime workspace defaults are transiently unavailable; retry", nil)
+		return
+	}
+	s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+		"could not compose the runtime workspace defaults: "+err.Error(), nil)
 }
 
 // hasGitClone reports whether the plan has at least one gitClone

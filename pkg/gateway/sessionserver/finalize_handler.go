@@ -109,8 +109,9 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	}
 	// spec: §14.1 WorkspacePlan Schema Versioning (Plan binding); §7.1
 	// Normal Flow — a session created without a plan binds the plan the
-	// finalize body carries. A no-body finalize keeps the existing plan
-	// (or empty workspace).
+	// finalize body carries, or the empty plan when the body carries none,
+	// composed with the runtime's workspaceDefaults. A session that already
+	// has a plan keeps it.
 	planJSON, planWarnings, hasPlan, planOK := s.resolveFinalizePlan(w, r, tenantID, row)
 	if !planOK {
 		return

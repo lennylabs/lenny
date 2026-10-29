@@ -38,15 +38,24 @@ type finalizeRequest struct {
 }
 
 // resolveFinalizePlan reads the optional §14 WorkspacePlan from a finalize
-// request body and, when present, validates it for binding onto the
-// session row. It returns the canonical JSON to persist, the parser's
-// consumer-advisory warnings, whether a plan was supplied, and ok=false
-// (with the error response already written) on any validation failure.
-// The plan binds to this session, so its uploadRef values are checked
-// against row.ID.
+// request body and resolves the plan this finalize binds. It returns the
+// canonical JSON to persist, the parser's consumer-advisory warnings,
+// whether there is a plan to persist, and ok=false (with the error response
+// already written) on any rejection. Every rejection precedes the
+// created → finalizing write, so a rejected finalize binds nothing.
 //
-// spec: §14.1 WorkspacePlan Schema Versioning (Plan binding); §7.1 Normal
-// Flow.
+//   - A row that already has a plan keeps it: a body carrying a plan is
+//     rejected with plan_already_set, and a body without one persists
+//     nothing, so finalize materializes the stored plan.
+//   - Otherwise the body's plan, or the empty plan when the body carries
+//     none, is validated as a submitted plan bound to this session (its
+//     uploadRef values are checked against row.ID), checked against the
+//     runtime's setupCommandPolicy, and composed with the runtime's
+//     workspaceDefaults. hasPlan is false only when that yields no plan
+//     JSON: no client plan and no defaults.
+//
+// spec: §14.1 WorkspacePlan Schema Versioning (Plan binding; Runtime
+// workspace defaults); §7.1 Normal Flow; §7.5 Setup Commands.
 func (s *Server) resolveFinalizePlan(w http.ResponseWriter, r *http.Request, tenantID string, row sessionstore.Session) (
 	storedJSON json.RawMessage, warnings []workspaceplan.Warning, hasPlan bool, ok bool,
 ) {
@@ -54,19 +63,16 @@ func (s *Server) resolveFinalizePlan(w http.ResponseWriter, r *http.Request, ten
 	if !readOK {
 		return nil, nil, false, false
 	}
-	if len(raw) == 0 || isJSONNull(raw) {
-		return nil, nil, false, true
-	}
-
-	// spec: §14 — a session created with a plan already has its workspace
-	// sources fixed; finalize cannot silently replace it. Reject so a
-	// client that submitted a create-time plan and a finalize plan learns
-	// which one binds rather than getting a surprising merge.
 	if len(row.WorkspacePlan) > 0 && !isJSONNull(row.WorkspacePlan) {
-		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
-			"session already has a workspace plan; finalize cannot replace it",
-			map[string]any{"reason": "plan_already_set"})
-		return nil, nil, false, false
+		// spec: §14.1 (Plan binding) — a session binds at most one plan, so
+		// finalize cannot replace or merge with the plan bound at creation.
+		if len(raw) > 0 && !isJSONNull(raw) {
+			s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+				"session already has a workspace plan; finalize cannot replace it",
+				map[string]any{"reason": "plan_already_set"})
+			return nil, nil, false, false
+		}
+		return nil, nil, false, true
 	}
 
 	parsed, storedJSON, warns, planOK := s.resolveSubmittedPlan(w, r, raw, tenantID, row.ID)
@@ -78,7 +84,10 @@ func (s *Server) resolveFinalizePlan(w http.ResponseWriter, r *http.Request, ten
 	if !s.enforceSetupCommandPolicy(w, r, row.RuntimeRef, parsed) {
 		return nil, nil, false, false
 	}
-	return storedJSON, warns, true, true
+	if _, storedJSON, planOK = s.composeRuntimeDefaults(w, r, row.RuntimeRef, parsed, storedJSON); !planOK {
+		return nil, nil, false, false
+	}
+	return storedJSON, warns, len(storedJSON) > 0, true
 }
 
 // readFinalizePlanBody reads the finalize request body and extracts the
