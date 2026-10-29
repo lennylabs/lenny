@@ -9,7 +9,6 @@ import (
 	"sort"
 	"time"
 
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/uuid"
@@ -333,9 +332,6 @@ func (r *CRDPodRegistry) CreatePod(ctx context.Context, poolID PoolID, spec PodS
 	sb.Spec.IsolationProfile = spec.IsolationProfile
 	sb.Spec.ExecutionMode = spec.ExecutionMode
 	sb.Spec.ResourceClass = spec.ResourceClass
-	if len(spec.WorkspacePlan) > 0 {
-		sb.Spec.WorkspacePlan = &apiextensionsv1.JSON{Raw: append([]byte(nil), spec.WorkspacePlan...)}
-	}
 	if err = r.Client.Create(ctx, sb); err != nil {
 		err = fmt.Errorf("podregistry: create sandbox: %w", err)
 		return nil, err

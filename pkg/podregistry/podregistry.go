@@ -11,7 +11,6 @@ package podregistry
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
 	"github.com/lennylabs/lenny/pkg/platform/store"
@@ -110,8 +109,9 @@ type StateCounts map[string]int
 // PodSpec is the input to CreatePod: the pool the new pod belongs
 // to and the per-pod fields the §4.6.1 lifecycle manager sets on
 // the new Sandbox. spec: §12.6 — the key fields are
-// RuntimeDefinitionRef, WorkspacePlan, IsolationProfile, ExecutionMode,
-// and resource limits (modeled here as ResourceClass, per §5.1/§5.2).
+// RuntimeDefinitionRef, IsolationProfile, ExecutionMode, and resource
+// limits (modeled here as ResourceClass, per §5.1/§5.2). A pod carries no
+// workspace plan: a session binds its plan at creation or finalize (§14.1).
 type PodSpec struct {
 	PoolID PoolID
 
@@ -128,14 +128,6 @@ type PodSpec struct {
 	// modeled as a named class in this codebase). Empty selects the
 	// pool/runtime default.
 	ResourceClass string
-
-	// WorkspacePlan is the serialized §14 WorkspacePlan the pod is
-	// created for (the §12.6 PodSpec WorkspacePlan field). It is empty
-	// for a warm pod, whose workspace is materialized at session claim;
-	// the Tier-4+ gateway-creates-a-pod path passes the resolved plan
-	// here so CreatePod records it on the Sandbox. The registry treats
-	// the bytes as opaque.
-	WorkspacePlan json.RawMessage
 }
 
 // PodEvent is one frame of the WatchPods stream.
