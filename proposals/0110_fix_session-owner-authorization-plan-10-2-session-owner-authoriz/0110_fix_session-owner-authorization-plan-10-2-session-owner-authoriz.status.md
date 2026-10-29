@@ -2,13 +2,13 @@
 proposal: 0110_fix_session-owner-authorization-plan-10-2-session-owner-authoriz
 title: Session owner is client-assertable and user-role session reads are not owner-scoped
 kind: fix
-status: Reviewed
+status: Approved
 drafted-date: 2026-10-29
 drafted-by: change-proposal
 reviewed-date: 2026-10-29
-reviewed-by: change-proposal
-approved-date: 
-approved-by: 
+reviewed-by: jaf
+approved-date: 2026-10-29
+approved-by: jaf
 implemented-date: 
 implemented-by: 
 ---
