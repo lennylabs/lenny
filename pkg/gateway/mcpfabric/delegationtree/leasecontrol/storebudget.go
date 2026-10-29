@@ -97,13 +97,15 @@ type treeView struct {
 }
 
 // clampLimit returns the per-dimension bound on the tree's cumulative
-// grant: the requester's ceiling (the effective max, capped by the
-// parent ceiling) less the root's base limit, never below zero.
+// grant: the effective max less the root's base limit, never below zero.
+// The bound is a property of the tree's one pool, so it is the same
+// whichever session in the tree asks; the parent ceiling bounds only the
+// requester's pre-commit grant in ExtendLease.
 // spec: §8.6 (Extension state)
 func (v treeView) clampLimit() Dimensions {
 	var lim Dimensions
 	for _, d := range allDims {
-		l := dimCeiling(d.get(v.effectiveMax), d.get(v.parentCeiling)) - d.get(v.base)
+		l := d.get(v.effectiveMax) - d.get(v.base)
 		if l < 0 {
 			l = 0
 		}

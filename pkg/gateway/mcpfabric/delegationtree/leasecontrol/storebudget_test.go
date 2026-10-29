@@ -221,8 +221,10 @@ func TestStoreBudgetSourceStoreErrorsPropagate_spec_8_6(t *testing.T) {
 }
 
 // TestStoreBudgetSourceApplyGrantClampLimit_spec_8_6 pins that ApplyGrant
-// hands the store the effective max less the root's base, capped by the
-// parent ceiling, and returns the store's applied grant.
+// hands the store the effective max less the root's base, and returns the
+// store's applied grant. The bound belongs to the tree's one pool, so a
+// delegated child whose parent ceiling sits below the effective max hands
+// the store the same bound as the root does.
 //
 // spec: §8.6 (Extension state), §8.6 (In-flight requests)
 func TestStoreBudgetSourceApplyGrantClampLimit_spec_8_6(t *testing.T) {
@@ -244,8 +246,8 @@ func TestStoreBudgetSourceApplyGrantClampLimit_spec_8_6(t *testing.T) {
 	if _, err := b.ApplyGrant(context.Background(), "acme", "root-1", "child-1", leasecontrol.Dimensions{Tokens: 1}); err != nil {
 		t.Fatalf("ApplyGrant(child): %v", err)
 	}
-	if ds.lastLimit.Tokens != 100_000 {
-		t.Errorf("child clamp limit = %d, want the parent ceiling less the base, 100000", ds.lastLimit.Tokens)
+	if ds.lastLimit.Tokens != 400_000 {
+		t.Errorf("child clamp limit = %d, want the effective max less the root base, 400000, independent of the parent ceiling", ds.lastLimit.Tokens)
 	}
 	if _, err := b.ApplyGrant(context.Background(), "acme", "other-root", "child-1", leasecontrol.Dimensions{Tokens: 1}); !errors.Is(err, leasecontrol.ErrSessionNotFound) {
 		t.Errorf("ApplyGrant with a foreign root err = %v, want ErrSessionNotFound", err)
