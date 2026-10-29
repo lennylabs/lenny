@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package mcptools_test
 
 import (
