@@ -81,6 +81,16 @@ func TestExpiryWarningOnceAcrossReplicasOverPostgres_spec_11_3(t *testing.T) {
 		if got := mustGetSession(t, ctx, store, tenant, id).ExpiryWarnedCapSeconds; got != 7200 {
 			t.Fatalf("Get after Update: ExpiryWarnedCapSeconds = %d, want 7200", got)
 		}
+		seeded := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: seeded, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+			ExpiryWarnedCapSeconds: 600,
+		}); err != nil {
+			t.Fatalf("Create with a recorded deadline: %v", err)
+		}
+		if got := mustGetSession(t, ctx, store, tenant, seeded).ExpiryWarnedCapSeconds; got != 600 {
+			t.Fatalf("Create did not persist ExpiryWarnedCapSeconds: got %d, want 600", got)
+		}
 		rows, err := store.List(ctx, tenant, sessionstore.ListFilter{})
 		if err != nil {
 			t.Fatalf("List: %v", err)

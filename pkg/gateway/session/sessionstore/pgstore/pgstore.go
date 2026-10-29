@@ -294,7 +294,8 @@ func (s *Store) create(ctx context.Context, sess sessionstore.Session, before be
 		accumulated_session_age_seconds,
 		pod_released_at,
 		state_entered_at,
-		input_wait_id
+		input_wait_id,
+		expiry_warned_cap_seconds
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid,
@@ -346,7 +347,9 @@ func (s *Store) create(ctx context.Context, sess sessionstore.Session, before be
 		-- §6.2 state_entered_at; the creation instant.
 		$61,
 		-- §7.2 input_wait_id; an empty string persists as NULL.
-		NULLIF($62, '')
+		NULLIF($62, ''),
+		-- §11.3 expiry_warned_cap_seconds; zero for a new row.
+		$63
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -469,7 +472,10 @@ func (s *Store) create(ctx context.Context, sess sessionstore.Session, before be
 			// $61 — §6.2 state_entered_at, set to created_at above.
 			sess.StateEnteredAt,
 			// $62 — §7.2 input_wait_id; an empty string persists as NULL.
-			sess.InputWaitID)
+			sess.InputWaitID,
+			// $63 — §11.3 expiry_warned_cap_seconds, the deadline the
+			// expiry-warning sweep claimed a warning for; zero for a new row.
+			sess.ExpiryWarnedCapSeconds)
 		if err != nil {
 			return err
 		}
