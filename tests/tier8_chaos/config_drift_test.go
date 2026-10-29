@@ -562,19 +562,35 @@ func runMigrate(t *testing.T, c *kind.Cluster, pgIP, subcommand string) string {
 // failing the test. The dirty-flag test uses it for the `up` call it
 // expects to fail. The pod runs the image ENTRYPOINT
 // (/usr/local/bin/lenny) with the subcommand args.
+//
+// `kubectl run --attach` can lose a fast-exiting pod's output, so a run
+// whose output is incomplete under migrateOutputComplete is rerun
+// (TEST-GAPS T-17.4.45). Both subcommands the tests run are safe to
+// rerun: `version` only reads, and `up` is idempotent.
 func runMigrateExpectErr(t *testing.T, c *kind.Cluster, pgIP, subcommand string) (string, error) {
 	t.Helper()
-	podName := "chaos-migrate-" + subcommand
-	_, _ = c.KubectlOut(t, "-n", lennySystemNamespace, "delete", "pod", podName,
-		"--ignore-not-found", "--wait=true")
-	return c.KubectlOut(
-		t,
-		"-n", lennySystemNamespace, "run", podName,
+	return c.RunAttachedUntil(
+		t, lennySystemNamespace, "chaos-migrate-"+subcommand, 3,
+		func(out string, err error) bool { return migrateOutputComplete(subcommand, out, err) },
 		"--image="+migrateImage, "--image-pull-policy=Never",
 		"--restart=Never", "--attach", "--rm", "--quiet",
 		"--command", "--",
 		"/usr/local/bin/lenny", "--postgres-dsn", migrateDSN(pgIP), subcommand,
 	)
+}
+
+// migrateOutputComplete reports whether a `lenny-migrate <subcommand>`
+// run's output is whole. A failed run must carry the error text the
+// dirty-flag assertion reads, and a `version` run must carry the parsed
+// version. A successful run of any other subcommand needs no output.
+func migrateOutputComplete(subcommand, out string, err error) bool {
+	if err != nil {
+		return strings.TrimSpace(out) != ""
+	}
+	if subcommand == "version" {
+		return parseMigrateVersion(out) != ""
+	}
+	return true
 }
 
 // parseMigrateVersion extracts the integer version from `lenny-migrate

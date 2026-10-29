@@ -471,6 +471,62 @@ func TestAuditQueryEmitsChainIntegrityBroken_spec_25_9_3750(t *testing.T) {
 	}
 }
 
+// TestAuditQueryDeletedRowIsBrokenAcrossPages pins BUILD-GAPS F-25.9.21
+// on the §25.9 list: a committed interior row removed from the chain
+// leaves its successor with a prev_hash that does not link across the
+// sequence gap, so the successor is broken rather than gap_suspected. The
+// verdict is computed over the full chain, so it holds when the gap
+// falls on a page boundary. The page carrying the broken row tallies it
+// in chainIntegrityReport.broken and emits
+// audit.chain_integrity_broken_detected; the page before it does
+// neither. A non-linking gap is not a benign window, so auditMetadata
+// lists none.
+//
+// spec: 25.9 (Audit Log Query API, Chain gap detection), 11.7 (Audit
+// Logging)
+func TestAuditQueryDeletedRowIsBrokenAcrossPages(t *testing.T) {
+	ts := auditTestClock.Add(-time.Hour)
+	chain := craftChain(
+		"platform",
+		[3]any{"admin.tenant.created", `{"n":1}`, ts},
+		[3]any{"admin.tenant.created", `{"n":2}`, ts},
+		[3]any{"admin.tenant.created", `{"n":3}`, ts},
+		[3]any{"admin.tenant.created", `{"n":4}`, ts},
+		[3]any{"admin.tenant.created", `{"n":5}`, ts},
+	)
+	// Remove sequence 3; page 1 (limit 2) is rows 1 and 2, page 2 starts
+	// at row 4, whose prev_hash links to the absent row 3.
+	rows := append(append([]audit.Row{}, chain[:2]...), chain[3:]...)
+	since := "since=" + ts.Add(-time.Hour).Format(time.RFC3339)
+
+	sink1 := &recordingSink{}
+	_, page1 := listAudit(t, newCraftedRouter(&craftedAuditLog{rows: rows}, sink1), since+"&limit=2")
+	if page1.ChainIntegrityReport == nil || page1.ChainIntegrityReport.Broken != 0 ||
+		page1.ChainIntegrityReport.Verified != 2 {
+		t.Fatalf("page 1 report = %+v, want 2 verified and 0 broken", page1.ChainIntegrityReport)
+	}
+	if page1.NextCursor == "" {
+		t.Fatalf("page 1 carries no nextCursor over a 4-row chain with limit 2")
+	}
+	if sink1.has("audit.chain_integrity_broken_detected") {
+		t.Errorf("page 1 emitted the broken-chain event although it lists no broken row")
+	}
+
+	sink2 := &recordingSink{}
+	_, page2 := listAudit(t, newCraftedRouter(&craftedAuditLog{rows: rows}, sink2),
+		since+"&limit=2&cursor="+page1.NextCursor)
+	if page2.ChainIntegrityReport == nil || page2.ChainIntegrityReport.Broken != 1 ||
+		page2.ChainIntegrityReport.GapSuspected != 0 {
+		t.Fatalf("page 2 report = %+v, want broken 1 and gap_suspected 0 (F-25.9.21)", page2.ChainIntegrityReport)
+	}
+	if !sink2.has("audit.chain_integrity_broken_detected") {
+		t.Errorf("page 2 did not emit audit.chain_integrity_broken_detected; events=%+v", sink2.events)
+	}
+	if page2.AuditMetadata != nil && len(page2.AuditMetadata.SuspectedGaps) != 0 {
+		t.Errorf("non-linking gap listed as a benign window: %+v", page2.AuditMetadata.SuspectedGaps)
+	}
+}
+
 func TestAuditSummaryGroupByEventType_spec_25_9_3661(t *testing.T) {
 	ts := auditTestClock.Add(-time.Hour)
 	backend := &craftedAuditLog{rows: craftChain(

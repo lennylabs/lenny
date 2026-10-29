@@ -64,50 +64,21 @@ func dataStorePodIPT9(t *testing.T, c *kind.Cluster, store string) string {
 }
 
 // runPsqlExec runs a SQL script against the e2e Postgres via a one-shot
-// postgres:16.4 pod connected to pgIP. The pod connects to the pod IP
-// rather than the Service DNS name because the lenny-system
-// default-deny NetworkPolicy denies a throwaway pod's egress to
-// CoreDNS. ON_ERROR_STOP makes any failed statement a non-zero exit,
-// which fails the test — a seed or cleanup that did not apply is not a
-// recoverable condition.
+// psql pod connected to pgIP. A failed statement fails the test, because
+// a seed or cleanup that did not apply is not a recoverable condition.
 func runPsqlExec(t *testing.T, c *kind.Cluster, pgIP, podName, sql string) {
 	t.Helper()
-	_, _ = c.KubectlOut(t, "-n", lennySystemNS, "delete", "pod", podName,
-		"--ignore-not-found", "--wait=true")
-	if out, err := c.KubectlOut(
-		t,
-		"-n", lennySystemNS, "run", podName,
-		"--image=postgres:16.4", "--image-pull-policy=IfNotPresent",
-		"--restart=Never", "--attach", "--rm", "--quiet",
-		"--env=PGPASSWORD=lenny",
-		"--command", "--",
-		"psql", "-h", pgIP, "-U", "lenny", "-d", "lenny",
-		"-v", "ON_ERROR_STOP=1", "-c", sql,
-	); err != nil {
-		t.Fatalf("psql script %q failed: %v\n%s", podName, err, out)
-	}
+	c.RunPsqlExec(t, lennySystemNS, pgIP, podName, sql)
 }
 
 // runPsqlQuery runs a read-only SQL query against the e2e Postgres via
 // a one-shot psql pod and returns the rows as raw lines (psql -tA:
-// tuples-only, unaligned — one value per line). A query failure fails
-// the test.
+// tuples-only, unaligned, one value per line). It delegates to
+// kind.Cluster.RunPsqlQuery, which appends an end-marker row and retries
+// a run whose `kubectl run --attach` output was lost, so an empty read
+// is never mistaken for an empty result (TEST-GAPS T-17.4.45). A query
+// failure fails the test.
 func runPsqlQuery(t *testing.T, c *kind.Cluster, pgIP, podName, sql string) string {
 	t.Helper()
-	_, _ = c.KubectlOut(t, "-n", lennySystemNS, "delete", "pod", podName,
-		"--ignore-not-found", "--wait=true")
-	out, err := c.KubectlOut(
-		t,
-		"-n", lennySystemNS, "run", podName,
-		"--image=postgres:16.4", "--image-pull-policy=IfNotPresent",
-		"--restart=Never", "--attach", "--rm", "--quiet",
-		"--env=PGPASSWORD=lenny",
-		"--command", "--",
-		"psql", "-h", pgIP, "-U", "lenny", "-d", "lenny",
-		"-tA", "-v", "ON_ERROR_STOP=1", "-c", sql,
-	)
-	if err != nil {
-		t.Fatalf("psql query %q failed: %v\n%s", podName, err, out)
-	}
-	return out
+	return c.RunPsqlQuery(t, lennySystemNS, pgIP, podName, sql)
 }

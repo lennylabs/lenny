@@ -399,91 +399,21 @@ func t5DataStorePodIP(t *testing.T, c *kind.Cluster, store string) string {
 }
 
 // t5RunPsqlQuery runs a read-only SQL query against the e2e Postgres
-// via a one-shot postgres:16.4 pod connected to pgIP. The pod connects
-// to the pod IP rather than the Service DNS name because the
-// lenny-system default-deny NetworkPolicy denies a throwaway pod's
-// egress to CoreDNS. It returns the rows as raw lines (psql -tA:
-// tuples-only, unaligned). A query failure fails the test.
-//
-// `kubectl run --attach` can return before it has attached to a
-// container that exits quickly, and then reports success with no output,
-// which reads as an empty result set. The query therefore ends with a
-// marker row; a run whose output lacks the marker is retried, and the
-// marker line is stripped from the returned output.
+// via a one-shot psql pod connected to pgIP and returns the rows as raw
+// lines (psql -tA). It delegates to kind.Cluster.RunPsqlQuery, which
+// appends an end-marker row and retries a run whose `kubectl run
+// --attach` output was lost. A query failure fails the test.
 func t5RunPsqlQuery(t *testing.T, c *kind.Cluster, pgIP, podName, sql string) string {
 	t.Helper()
-	const attempts = 3
-	sql = strings.TrimSpace(sql)
-	if !strings.HasSuffix(sql, ";") {
-		sql += ";"
-	}
-	var out string
-	for i := 0; i < attempts; i++ {
-		_, _ = c.KubectlOut(t, "-n", t5SystemNS, "delete", "pod", podName,
-			"--ignore-not-found", "--wait=true")
-		var err error
-		out, err = c.KubectlOut(
-			t,
-			"-n", t5SystemNS, "run", podName,
-			"--image=postgres:16.4", "--image-pull-policy=IfNotPresent",
-			"--restart=Never", "--attach", "--rm", "--quiet",
-			"--env=PGPASSWORD=lenny",
-			"--command", "--",
-			"psql", "-h", pgIP, "-U", "lenny", "-d", "lenny",
-			"-tA", "-v", "ON_ERROR_STOP=1", "-c", sql+" SELECT '"+t5PsqlEndMarker+"';",
-		)
-		if err != nil {
-			t.Fatalf("psql query %q failed: %v\n%s", podName, err, out)
-		}
-		if body, ok := t5StripPsqlEndMarker(out); ok {
-			return body
-		}
-		t.Logf("psql query %q returned without its end marker (attempt %d of %d); retrying", podName, i+1, attempts)
-	}
-	t.Fatalf("psql query %q returned without its end marker in %d attempts; output %q", podName, attempts, out)
-	return ""
-}
-
-// t5PsqlEndMarker is the row t5RunPsqlQuery appends to every query so a
-// run whose output was lost is told apart from an empty result.
-const t5PsqlEndMarker = "LENNY_PSQL_END"
-
-// t5StripPsqlEndMarker removes the end-marker line from psql output and
-// reports whether the marker was present.
-func t5StripPsqlEndMarker(out string) (string, bool) {
-	lines := strings.Split(out, "\n")
-	kept := lines[:0]
-	found := false
-	for _, line := range lines {
-		if strings.TrimSpace(line) == t5PsqlEndMarker {
-			found = true
-			continue
-		}
-		kept = append(kept, line)
-	}
-	return strings.Join(kept, "\n"), found
+	return c.RunPsqlQuery(t, t5SystemNS, pgIP, podName, sql)
 }
 
 // t5RunPsqlExec runs a SQL script against the e2e Postgres via a
-// one-shot psql pod. ON_ERROR_STOP makes any failed statement a
-// non-zero exit, which fails the test — a cleanup that did not apply is
-// not a recoverable condition.
+// one-shot psql pod. A failed statement fails the test, because a
+// cleanup that did not apply is not a recoverable condition.
 func t5RunPsqlExec(t *testing.T, c *kind.Cluster, pgIP, podName, sql string) {
 	t.Helper()
-	_, _ = c.KubectlOut(t, "-n", t5SystemNS, "delete", "pod", podName,
-		"--ignore-not-found", "--wait=true")
-	if out, err := c.KubectlOut(
-		t,
-		"-n", t5SystemNS, "run", podName,
-		"--image=postgres:16.4", "--image-pull-policy=IfNotPresent",
-		"--restart=Never", "--attach", "--rm", "--quiet",
-		"--env=PGPASSWORD=lenny",
-		"--command", "--",
-		"psql", "-h", pgIP, "-U", "lenny", "-d", "lenny",
-		"-v", "ON_ERROR_STOP=1", "-c", sql,
-	); err != nil {
-		t.Fatalf("psql script %q failed: %v\n%s", podName, err, out)
-	}
+	c.RunPsqlExec(t, t5SystemNS, pgIP, podName, sql)
 }
 
 // t5DecodeJSON unmarshals body into v, failing the test with the body

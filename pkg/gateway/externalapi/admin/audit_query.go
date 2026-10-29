@@ -681,8 +681,9 @@ func tallyIntegrity(report *ChainIntegrityReport, integrity audit.ChainIntegrity
 // number; a nil map means no redaction is authorized.
 //
 // This mirrors the link decision the §25.9 query-API classifier makes in
-// pkg/audit (Chain.classifyRow), kept local to the admin surface so the
-// classifier itself stays unchanged.
+// pkg/audit (Chain.classifyRow), which checks the link before the
+// sequence gap, so a gap this function rejects is the row the per-row
+// verdict reports broken.
 //
 // spec: §11.7 item 3 (prev_hash linkage); §25.9.
 func prevHashLinks(prev, next audit.Row, receipts map[uint64]audit.RedactionReceipt) bool {
