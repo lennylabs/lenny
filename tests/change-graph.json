@@ -445,6 +445,9 @@
     "tests/testinfra/kind/imagetag": {
       "unit": ["tests/testinfra/kind/imagetag/..."]
     },
+    "tests/testinfra/kind/reinstall": {
+      "unit": ["tests/testinfra/kind/reinstall/..."]
+    },
     "tests/testinfra/supervisorbuild": {
       "static": ["tests/tier0_static/supervisor_binary_test.go"],
       "unit": ["tests/testinfra/supervisorbuild/...", "tests/tier1_unit/supervisor/..."]
