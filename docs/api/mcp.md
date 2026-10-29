@@ -272,29 +272,33 @@ Same as `create_session`, plus:
 
 ### `upload_files`
 
-Upload workspace files to a session. Valid before finalization (state: `created`) and mid-session if the runtime declares `capabilities.midSessionUpload: true`.
+Upload one workspace file to a session. Valid before finalization (state: `created`) and mid-session if the runtime declares `capabilities.midSessionUpload: true`. The tool forwards the content to `POST /v1/sessions/{id}/upload` and returns the same response.
 
 **Input schema:**
 
 | Parameter | Type | Required | Description |
 |:----------|:-----|:---------|:------------|
 | `sessionId` | string | Yes | Target session ID |
-| `files` | array | Yes | Files to upload. Each entry: `{ "path": "string", "content": "string", "encoding": "utf-8 \| base64" }` |
+| `uploadToken` | string | Yes | The upload token that `create_session` returned |
+| `contentBase64` | string | Yes | The file content, base64-encoded |
+| `mimeType` | string | No | Content type of the file. Defaults to `application/octet-stream`. |
 
-**Output schema:**
+**Output schema:** the REST upload response. Its `uploadRef` field is an opaque reference to the stored upload; pass it verbatim as the `uploadRef` of an `uploadFile` source in the `workspacePlan` of `finalize_workspace`.
 
 ```json
 {
-  "uploaded": 3,
-  "totalBytes": 24576,
-  "paths": ["src/main.go", "go.mod", "go.sum"]
+  "uploadRef": "<uploadRef>",
+  "size": 2048
 }
 ```
+
+Uploading a file does not place it in the workspace. The gateway materializes only the uploads that a source of the session's bound plan names (see [Workspace sources](../getting-started/concepts.md#workspace-sources)).
 
 **Error codes:**
 
 | Code | When |
 |:-----|:-----|
+| `VALIDATION_ERROR` | `sessionId`, `uploadToken`, or `contentBase64` is missing, or `contentBase64` is not valid base64 |
 | `RESOURCE_NOT_FOUND` | Session does not exist |
 | `INVALID_STATE_TRANSITION` | Session already finalized or started (and mid-session upload not enabled) |
 | `UPLOAD_TOKEN_EXPIRED` | Upload token TTL elapsed |
@@ -309,13 +313,9 @@ Upload workspace files to a session. Valid before finalization (state: `created`
     "name": "upload_files",
     "arguments": {
       "sessionId": "sess_01J5K9...",
-      "files": [
-        {
-          "path": "src/main.go",
-          "content": "package main\n\nfunc main() {\n\tprintln(\"hello\")\n}\n",
-          "encoding": "utf-8"
-        }
-      ]
+      "uploadToken": "<uploadToken>",
+      "contentBase64": "cGFja2FnZSBtYWluCgpmdW5jIG1haW4oKSB7fQo=",
+      "mimeType": "text/x-go"
     }
   }
 }
@@ -325,13 +325,14 @@ Upload workspace files to a session. Valid before finalization (state: `created`
 
 ### `finalize_workspace`
 
-Seal the workspace and run setup commands. After finalization, no further file uploads are accepted (unless mid-session upload is enabled).
+Bind the session's workspace plan when creation carried none, materialize the workspace, and run setup commands. After finalization, no further file uploads are accepted (unless mid-session upload is enabled). The tool forwards to `POST /v1/sessions/{id}/finalize`.
 
 **Input schema:**
 
 | Parameter | Type | Required | Description |
 |:----------|:-----|:---------|:------------|
 | `sessionId` | string | Yes | Target session ID |
+| `workspacePlan` | object | No | The [workspace plan](../reference/workspace-plan.md) to bind, allowed only when the session was created without one. Its `uploadFile` sources name uploads to this session by the `uploadRef` that `upload_files` returned. When the argument is absent or `null`, finalize materializes the plan bound at creation, or the empty plan. |
 
 **Output schema:**
 
@@ -348,8 +349,13 @@ Seal the workspace and run setup commands. After finalization, no further file u
 
 | Code | When |
 |:-----|:-----|
+| `VALIDATION_ERROR` | `details.reason` is `plan_already_set` (the session was created with a plan), `invalid_upload_ref` (an `uploadRef` is not an upload reference), or `upload_ref_foreign_session` (an `uploadRef` names another session's upload) |
+| `WORKSPACE_PLAN_INVALID` | The `workspacePlan` fails schema validation |
+| `GIT_CLONE_AUTH_UNSUPPORTED_HOST`, `GIT_CLONE_AUTH_HOST_AMBIGUOUS`, `GIT_CLONE_REF_UNRESOLVABLE`, `GIT_CLONE_REF_RESOLVE_TRANSIENT` | A `gitClone` source cannot be authenticated or its `ref` cannot be resolved |
 | `RESOURCE_NOT_FOUND` | Session does not exist |
 | `INVALID_STATE_TRANSITION` | Session not in `created` state, or the session ended while finalization was in progress |
+
+A call rejected for its `workspacePlan` binds nothing and leaves the session in `created`.
 
 **Example:**
 
@@ -359,11 +365,19 @@ Seal the workspace and run setup commands. After finalization, no further file u
   "params": {
     "name": "finalize_workspace",
     "arguments": {
-      "sessionId": "sess_01J5K9..."
+      "sessionId": "sess_01J5K9...",
+      "workspacePlan": {
+        "schemaVersion": 1,
+        "sources": [
+          { "type": "uploadFile", "path": "src/main.go", "uploadRef": "<uploadRef>" }
+        ]
+      }
     }
   }
 }
 ```
+
+`<uploadRef>` is the value from the `upload_files` response.
 
 ---
 

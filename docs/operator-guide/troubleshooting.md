@@ -38,10 +38,11 @@ kubectl logs -n lenny-system -l app=lenny-controller --tail=100 | grep warmup
 | Cause | Indicator | Resolution |
 |---|---|---|
 | Image pull errors | `reason: image_pull_error` in warmup failures | Verify image registry access, check ImagePullPolicy |
-| Setup command failures | `reason: setup_command_failed` | Check runtime setup commands, increase `setupPolicy.timeoutSeconds` |
 | Resource quota exceeded | `reason: resource_quota_exceeded` | Increase `agentNamespaces[].resourceQuota.pods` |
 | Node pressure | `reason: node_pressure` | Add nodes, check node resource utilization |
 | Insufficient minWarm | Low idle count before exhaustion | Increase `minWarm` or review scaling formula |
+
+The `setup_command_failed` value of the warm-up failure counter counts sessions whose [setup commands](../getting-started/concepts.md#setup-commands) fail after their pod is claimed, rather than pods that fail to reach `idle`, so it does not explain an empty pool. It still counts toward the `WarmPoolReplenishmentFailing` alert.
 
 **Emergency scaling:**
 

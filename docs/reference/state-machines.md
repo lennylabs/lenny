@@ -190,8 +190,8 @@ stateDiagram-v2
     idle --> claimed : Session claims pod
     claimed --> receiving_uploads : File upload begins
     receiving_uploads --> finalizing_workspace : All files received
-    finalizing_workspace --> running_setup : Demotion required
-    finalizing_workspace --> attached : No demotion needed
+    finalizing_workspace --> running_setup : Plan has setup commands
+    finalizing_workspace --> attached : No setup commands
     running_setup --> attached : Setup complete
 ```
 

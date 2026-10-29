@@ -652,10 +652,17 @@ def test_cross_tenant_artifact_invisible(acme_token, globex_token):
     session_id = resp.json()["session_id"]
     upload_token = resp.json()["uploadToken"]
 
-    # Upload a file
-    requests.post(f"{GATEWAY}/v1/sessions/{session_id}/upload",
-        headers={"X-Upload-Token": upload_token},
-        files={"files": ("secret.txt", b"Acme confidential data")})
+    # Upload a file as the raw body, then bind a plan that places it at secret.txt
+    resp = requests.post(f"{GATEWAY}/v1/sessions/{session_id}/upload",
+        headers={"Authorization": f"Bearer {acme_token}",
+                 "X-Lenny-Upload-Token": upload_token},
+        data=b"Acme confidential data")
+    upload_ref = resp.json()["uploadRef"]
+    requests.post(f"{GATEWAY}/v1/sessions/{session_id}/finalize",
+        headers={"Authorization": f"Bearer {acme_token}",
+                 "X-Lenny-Upload-Token": upload_token},
+        json={"workspacePlan": {"schemaVersion": 1, "sources": [
+            {"type": "uploadFile", "path": "secret.txt", "uploadRef": upload_ref}]}})
 
     # Globex tries to download it
     resp = requests.get(f"{GATEWAY}/v1/sessions/{session_id}/artifacts/secret.txt",

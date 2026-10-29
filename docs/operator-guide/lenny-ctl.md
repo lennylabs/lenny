@@ -436,7 +436,7 @@ lenny-ctl admin credential-pools list
 
 ## Session Operations
 
-Session commands route through the **MCP** client SDK, not REST. They exercise the same code path that any other MCP client uses — the CLI embeds the Lenny Go client SDK and opens a full MCP session for the duration of the command. The short form `lenny session` is preferred in developer-facing examples; the long form `lenny-ctl session` is preferred in operator runbooks. Both are identical.
+Session commands route through the **MCP** client SDK, and `lenny session new` with `--workspace` or `--file` stages the workspace over the REST API. The MCP commands exercise the same code path that any other MCP client uses — the CLI embeds the Lenny Go client SDK and opens a full MCP session for the duration of the command. The short form `lenny session` is preferred in developer-facing examples; the long form `lenny-ctl session` is preferred in operator runbooks. Both are identical.
 
 | Command | Description | Min Role |
 |---|---|---|
@@ -445,7 +445,7 @@ Session commands route through the **MCP** client SDK, not REST. They exercise t
 | `lenny session send <sessionId> <message>` | Send a user message to an existing session. If the CLI is not attached, the message is delivered and the CLI exits. | `user` (owner) |
 | `lenny session interrupt <sessionId>` | Send an interrupt to a running session. | `user` (owner) |
 | `lenny session cancel <sessionId>` | Cancel a session cooperatively. | `user` (owner) |
-| `lenny session list [--runtime <name>] [--status <status>]` | List the caller's sessions. The one session command that also works over REST for non-interactive callers. | `user` |
+| `lenny session list [--runtime <name>] [--status <status>]` | List the caller's sessions. | `user` |
 | `lenny session get <sessionId>` | Fetch a session's current state. | `user` (owner) |
 | `lenny session logs <sessionId> [--since <time>]` | Fetch session logs from the event store (paginated, streamable via SSE). | `user` (owner) |
 

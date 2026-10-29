@@ -40,8 +40,9 @@ In `make run` dev mode, authentication is disabled.
 | :------- | :---------------------------- | :----------------------------------------- |
 | `POST`   | `/v1/sessions`                | Create a new session                       |
 | `GET`    | `/v1/sessions`                | List sessions (filterable)                 |
-| `POST`   | `/v1/sessions/{id}/upload`    | Upload workspace files                     |
-| `POST`   | `/v1/sessions/{id}/finalize`  | Finalize workspace and run setup           |
+| `POST`   | `/v1/sessions/{id}/upload`    | Upload a workspace file                    |
+| `POST`   | `/v1/sessions/{id}/upload-archive` | Upload a workspace archive            |
+| `POST`   | `/v1/sessions/{id}/finalize`  | Bind the workspace plan if none is bound, materialize the workspace, and run setup |
 | `POST`   | `/v1/sessions/{id}/start`     | Start the agent runtime                    |
 | `POST`   | `/v1/sessions/{id}/interrupt` | Interrupt current agent work               |
 | `POST`   | `/v1/sessions/{id}/resume`    | Resume a session in `awaiting_client_action` or `suspended` |
@@ -61,7 +62,7 @@ Create a new session. Claims a warm pod, assigns credentials, and returns a sess
 | :-------------------- | :----- | :------- | :----------------------------------------------------------- |
 | `runtime`             | string | Yes      | Name of a registered runtime                                 |
 | `pool`                | string | No       | Specific pool (defaults to runtime's default pool)           |
-| `workspacePlan`       | object | No       | Workspace configuration (sources, maxSizeMB, setup commands) |
+| `workspacePlan`       | object | No       | Workspace plan (sources and setup commands). A plan here cannot carry `uploadFile` or `uploadArchive` sources, because uploads happen after creation; a plan that names uploads binds in the [finalize](#post-v1sessionsidfinalize) body instead. |
 | `labels`              | object | No       | Key-value labels for filtering                               |
 | `environment`         | string | No       | Environment name to scope the session                        |
 | `callbackUrl`         | string | No       | Webhook URL for completion notification                      |
@@ -86,18 +87,75 @@ In service mode (`conversationContinuity: none`) every message is self-contained
 
 ### POST /v1/sessions/{id}/upload
 
-Upload workspace files before finalization (or mid-session if `capabilities.midSessionUpload: true`). Uses multipart form data. Requires the `UploadToken` from session creation.
+Upload one workspace file before finalization (or mid-session if `capabilities.midSessionUpload: true`). The request body is the raw file content; it is not multipart form data. The request carries the upload token from session creation in the `X-Lenny-Upload-Token` header.
 
-**Key error codes:** `UPLOAD_TOKEN_EXPIRED` (401), `UPLOAD_TOKEN_MISMATCH` (403), `UPLOAD_TOKEN_CONSUMED` (410), `STORAGE_QUOTA_EXCEEDED` (429), `INVALID_STATE_TRANSITION` (409).
+```bash
+curl -X POST "https://lenny.example.com/v1/sessions/$SESSION_ID/upload" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Lenny-Upload-Token: $UPLOAD_TOKEN" \
+  --data-binary @src/main.py
+```
+
+**Response** (`201 Created`) is an `UploadResponse`. Its `uploadRef` field is an opaque reference to the stored upload; the other fields are listed in the OpenAPI document. Pass `uploadRef` verbatim as the `uploadRef` of an `uploadFile` source in the workspace plan that the session binds at finalize. An `uploadRef` is valid only in a plan bound to the session it was uploaded to. Uploading a file does not place it in the workspace: the gateway materializes only the uploads that a source of the bound plan names (see [Workspace sources](../getting-started/concepts.md#workspace-sources)).
+
+```json
+{
+  "uploadRef": "<uploadRef>",
+  "size": 2048
+}
+```
+
+**Valid precondition states:** `created`.
+
+**Key error codes:** `UPLOAD_TOKEN_INVALID` (401), `UPLOAD_TOKEN_EXPIRED` (401), `UPLOAD_TOKEN_MISMATCH` (403), `UPLOAD_TOKEN_CONSUMED` (410), `PAYLOAD_TOO_LARGE` (413), `STORAGE_QUOTA_EXCEEDED` (429), and `INVALID_STATE_TRANSITION` (409).
+
+### POST /v1/sessions/{id}/upload-archive
+
+Upload one workspace archive in `tar`, `tar.gz`, or `zip` format. The request body is the raw archive, and the request carries the `X-Lenny-Upload-Token` header. The gateway extracts the archive itself at materialization, with zip-slip protection and size ceilings.
+
+**Response** (`201 Created`) is an `UploadResponse` whose `uploadRef` names the archive in an `uploadArchive` source of the plan the session binds at finalize. The precondition states and error codes are the same as for `POST /v1/sessions/{id}/upload`.
 
 ### POST /v1/sessions/{id}/finalize
 
-Seal the workspace and run setup commands. Moves uploaded files from the session's staging area to `/workspace/slots/{sessionId}/current`. After finalization, no further pre-start uploads are accepted.
+Bind the session's workspace plan when creation carried none, materialize the workspace into `/workspace/slots/{sessionId}/current`, and run setup commands. After finalization, no further pre-start uploads are accepted. Finalize requests carry the `X-Lenny-Upload-Token` header.
+
+**Request body** (optional):
+
+| Parameter       | Type   | Required | Description |
+| :-------------- | :----- | :------- | :---------- |
+| `workspacePlan` | object | No       | The [workspace plan](../reference/workspace-plan.md) to bind. Its `uploadFile` and `uploadArchive` sources name uploads to this session by their `uploadRef`. Allowed only when the session was created without a plan. |
+
+```bash
+curl -X POST "https://lenny.example.com/v1/sessions/$SESSION_ID/finalize" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Lenny-Upload-Token: $UPLOAD_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workspacePlan": {
+      "schemaVersion": 1,
+      "sources": [
+        { "type": "uploadFile", "path": "src/main.py", "uploadRef": "<uploadRef>" }
+      ]
+    }
+  }'
+```
+
+`<uploadRef>` is the value from the upload response. A request without a body, or whose `workspacePlan` is absent or `null`, carries no plan: finalize materializes the plan bound at creation, or the empty plan when the session has none. The gateway validates a plan in the body, and resolves each `gitClone.ref` to a commit SHA, before it changes the session. A request rejected for its plan binds nothing and leaves the session in `created`, so the client can correct the plan and finalize again. The gateway materializes only the uploads that a source of the bound plan names (see [Workspace sources](../getting-started/concepts.md#workspace-sources)).
 
 **Valid precondition states:** `created`.
 **Resulting transition:** `finalizing` then `ready`.
 
-**Key error codes:** `RESOURCE_NOT_FOUND` (404), `INVALID_STATE_TRANSITION` (409).
+**Key error codes:**
+
+| Code | Status | Meaning |
+| :--- | :----- | :------ |
+| `VALIDATION_ERROR` | 400 | `details.reason` is `plan_already_set` when the body carries a plan for a session created with one, `invalid_upload_ref` when an `uploadRef` is not an upload reference, or `upload_ref_foreign_session` when an `uploadRef` names another session's upload. `details.field` names the source, such as `sources[0].uploadRef`. |
+| `WORKSPACE_PLAN_INVALID` | 400 | The plan in the body fails schema validation. |
+| `GIT_CLONE_AUTH_UNSUPPORTED_HOST`, `GIT_CLONE_AUTH_HOST_AMBIGUOUS`, `GIT_CLONE_REF_UNRESOLVABLE` | 422 | A `gitClone` source cannot be authenticated for its host, or its `ref` cannot be resolved to a commit. The [Error Catalog](../reference/error-catalog.html) lists the `details` of each code. |
+| `GIT_CLONE_REF_RESOLVE_TRANSIENT`, `SERVICE_UNAVAILABLE` | 503 | A `gitClone.ref` or the runtime's workspace defaults could not be read because of a transient failure. Retry after the `Retry-After` interval. |
+| `SETUP_COMMAND_FAILED` | 422 | A setup command exited non-zero. |
+| `RESOURCE_NOT_FOUND` | 404 | The session does not exist. |
+| `INVALID_STATE_TRANSITION` | 409 | The session is not in `created`. |
 
 A finalize call that is still running when the session ends, for example through `POST /v1/sessions/{id}/terminate`, `DELETE /v1/sessions/{id}`, an administrator force-terminate, or the gateway's finalizing timeout (`maxFinalizingTimeoutSeconds`), returns `INVALID_STATE_TRANSITION` (409), even when its own finalization also failed. The session stays in the state it ended in, and the error's `details.currentState` names that state.
 

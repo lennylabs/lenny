@@ -64,10 +64,10 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | `lenny_warmpool_idle_pods` | Gauge | Pods in `idle` state ready to be claimed; idle pods pinned to a tenant are excluded |
 | `lenny_warmpool_pod_startup_duration_seconds` | Histogram | Pod creation to `idle` state |
 | `lenny_warmpool_replenishment_rate` | Gauge | Pods/min entering `idle` state |
-| `lenny_warmpool_warmup_failure_total` | Counter | Pods failing to reach `idle` (by `error_type`: `image_pull_error`, `setup_command_failed`, `resource_quota_exceeded`, `node_pressure`) |
+| `lenny_warmpool_warmup_failure_total` | Counter | Warm-up and setup failures by `error_type`: `image_pull_error`, `resource_quota_exceeded`, and `node_pressure` count a pod that fails to reach `idle` during warm-up, and `setup_command_failed` counts a session whose setup commands fail |
 | `lenny_warmpool_cold_start_total` | Counter | Sessions served from cold pods |
 | `lenny_warmpool_claims_total` | Counter | Warm pod claims |
-| `lenny_warmpool_sdk_demotions_total` | Counter | SDK-warm pods demoted before assignment |
+| `lenny_warmpool_sdk_demotions_total` | Counter | SDK-warm pods demoted to pod-warm |
 | `lenny_warmpool_idle_pod_minutes` | Counter | Cumulative idle pod-minutes (cost tracking) |
 
 ### Token Service Metrics

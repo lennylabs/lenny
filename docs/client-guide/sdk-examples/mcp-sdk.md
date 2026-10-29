@@ -42,8 +42,8 @@ These are the client-facing tools exposed by the Lenny gateway as an MCP server:
 |---|---|
 | `create_session` | Create a new agent session |
 | `create_and_start_session` | Create, upload inline files, and start in one call |
-| `upload_files` | Upload workspace files |
-| `finalize_workspace` | Seal workspace, run setup |
+| `upload_files` | Upload one workspace file; returns its `uploadRef` |
+| `finalize_workspace` | Bind the optional `workspacePlan`, materialize the workspace, and run setup |
 | `start_session` | Start the agent runtime |
 | `attach_session` | Attach to a running session (returns streaming task) |
 | `send_message` | Send a message to a session |
@@ -263,29 +263,32 @@ async function createSessionStepByStep(
   const uploadToken = data.uploadToken;
   console.log(`Created session: ${sessionId}`);
 
-  // Step 2: Upload files
+  // Step 2: Upload a file; the response carries its uploadRef
+  const mainTs =
+    'import { greet } from "./example.js";\n\nconsole.log(greet("world"));\n';
   result = await client.callTool({
     name: "upload_files",
     arguments: {
       sessionId,
       uploadToken,
-      files: [
-        {
-          path: "main.ts",
-          content:
-            'import { greet } from "./example.js";\n\nconsole.log(greet("world"));\n',
-        },
-      ],
+      contentBase64: Buffer.from(mainTs, "utf-8").toString("base64"),
+      mimeType: "text/plain",
     },
   });
-  console.log("Files uploaded");
+  const { uploadRef } = JSON.parse(
+    (result.content as Array<{ type: string; text: string }>)[0].text
+  );
+  console.log(`Uploaded: ${uploadRef}`);
 
-  // Step 3: Finalize workspace
+  // Step 3: Finalize workspace, binding a plan that places the upload
   result = await client.callTool({
     name: "finalize_workspace",
     arguments: {
       sessionId,
-      uploadToken,
+      workspacePlan: {
+        schemaVersion: 1,
+        sources: [{ type: "uploadFile", path: "main.ts", uploadRef }],
+      },
     },
   });
   data = JSON.parse(
@@ -910,6 +913,7 @@ Usage:
 """
 
 import asyncio
+import base64
 import json
 import os
 from typing import Any
@@ -1111,32 +1115,35 @@ async def create_session_stepwise(
     upload_token = data["uploadToken"]
     print(f"Created: {session_id}")
 
-    # Step 2: Upload files
-    await session.call_tool(
+    # Step 2: Upload a file; the response carries its uploadRef
+    main_py = (
+        "from example import greet\n\n"
+        'if __name__ == "__main__":\n'
+        '    print(greet("world"))\n'
+    )
+    result = await session.call_tool(
         "upload_files",
         arguments={
             "sessionId": session_id,
             "uploadToken": upload_token,
-            "files": [
-                {
-                    "path": "main.py",
-                    "content": (
-                        "from example import greet\n\n"
-                        'if __name__ == "__main__":\n'
-                        '    print(greet("world"))\n'
-                    ),
-                },
-            ],
+            "contentBase64": base64.b64encode(main_py.encode("utf-8")).decode("ascii"),
+            "mimeType": "text/x-python",
         },
     )
-    print("Files uploaded")
+    upload_ref = parse_tool_result(result)["uploadRef"]
+    print(f"Uploaded: {upload_ref}")
 
-    # Step 3: Finalize
+    # Step 3: Finalize, binding a plan that places the upload
     result = await session.call_tool(
         "finalize_workspace",
         arguments={
             "sessionId": session_id,
-            "uploadToken": upload_token,
+            "workspacePlan": {
+                "schemaVersion": 1,
+                "sources": [
+                    {"type": "uploadFile", "path": "main.py", "uploadRef": upload_ref},
+                ],
+            },
         },
     )
     data = parse_tool_result(result)
