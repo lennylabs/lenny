@@ -302,26 +302,12 @@ func deleteAuditChainTenant(t *testing.T, c *kind.Cluster, pgIP string) {
 }
 
 // runPsql runs a SQL script against the e2e Postgres via a one-shot
-// postgres:16.4 pod connected to pgIP. The pod connects to the pod IP
-// rather than the Service DNS name because the lenny-system
-// default-deny NetworkPolicy denies a throwaway pod's egress to
-// CoreDNS. ON_ERROR_STOP makes any failed statement a non-zero exit.
+// psql pod connected to pgIP, failing the test on a failed statement. It
+// delegates to kind.Cluster.RunPsqlExec, which runs the script once
+// because the seed INSERTs are not safe to rerun.
 func runPsql(t *testing.T, c *kind.Cluster, pgIP, podName, sql string) {
 	t.Helper()
-	_, _ = c.KubectlOut(t, "-n", lennySystemNamespace, "delete", "pod", podName,
-		"--ignore-not-found", "--wait=true")
-	if out, err := c.KubectlOut(
-		t,
-		"-n", lennySystemNamespace, "run", podName,
-		"--image=postgres:16.4", "--image-pull-policy=IfNotPresent",
-		"--restart=Never", "--attach", "--rm", "--quiet",
-		"--env=PGPASSWORD=lenny",
-		"--command", "--",
-		"psql", "-h", pgIP, "-U", "lenny", "-d", "lenny",
-		"-v", "ON_ERROR_STOP=1", "-c", sql,
-	); err != nil {
-		t.Fatalf("psql script %q failed: %v\n%s", podName, err, out)
-	}
+	c.RunPsqlExec(t, lennySystemNamespace, pgIP, podName, sql)
 }
 
 // dataStorePodIP returns the pod IP of the named e2e data store
