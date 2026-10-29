@@ -179,6 +179,59 @@ func TestSessionStoreRoundTripsInputWaitID_spec_7_2(t *testing.T) {
 	}
 }
 
+// spec: §7.2 (Session state machine), §28.3 (Link register)
+// diagnosis: a write that returns an input_required row to running cleared
+//
+//	input_wait_id, or the store rewrote it on a state change. §7.2 leaves the
+//	value on the row: only the wait's entry write, its exit write, and the
+//	connection recovery write set it, and every reader also requires the row
+//	to be input_required, so a value left on a running row is never read and
+//	no writer clears it. Migration 0195 documents the same rule.
+func TestSessionStoreKeepsInputWaitIDOutsideInputRequired_spec_7_2(t *testing.T) {
+	t.Parallel()
+	store, pg := startStore(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+	id := newUUID(t)
+	if err := store.Create(ctx, sessionstore.Session{
+		ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := store.Update(ctx, tenant, id, func(s *sessionstore.Session) error {
+		s.State = session.StateInputRequired
+		s.InputWaitID = "iw_ended"
+		return nil
+	}); err != nil {
+		t.Fatalf("Update to input_required: %v", err)
+	}
+	updated, err := store.Update(ctx, tenant, id, func(s *sessionstore.Session) error {
+		s.State = session.StateRunning
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Update to running: %v", err)
+	}
+	if updated.State != session.StateRunning {
+		t.Fatalf("returned State = %q, want %q", updated.State, session.StateRunning)
+	}
+	assertInputWaitID(t, ctx, store, tenant, id, "iw_ended")
+	got, err := store.Get(ctx, tenant, id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.State != session.StateRunning {
+		t.Fatalf("Get State = %q, want %q", got.State, session.StateRunning)
+	}
+	var isNull bool
+	if err := pg.Pool.QueryRow(ctx, `SELECT input_wait_id IS NULL FROM sessions WHERE id = $1::uuid`, id).Scan(&isNull); err != nil {
+		t.Fatalf("read column: %v", err)
+	}
+	if isNull {
+		t.Error("input_wait_id is NULL on a running row the input-wait exit returned to running")
+	}
+}
+
 func assertInputWaitID(t *testing.T, ctx context.Context, store *pgstore.Store, tenant, id, want string) {
 	t.Helper()
 	got, err := store.Get(ctx, tenant, id)

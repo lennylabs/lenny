@@ -16,8 +16,12 @@
 -- store's own state-changing write always carries a new value, so the
 -- trigger leaves that write as it is.
 --
--- input_wait_id names the live lenny/request_input wait a row in
--- input_required is waiting on. It is NULL on every other row.
+-- input_wait_id names the lenny/request_input wait an input_required row
+-- stands for. Only the wait's entry write, its exit write, and the
+-- connection recovery write set it. A row that leaves input_required keeps
+-- the value it had, so the column can be non-NULL on a row in another state.
+-- Nothing reads it there, because every reader of input_wait_id also requires
+-- the locked row to be in input_required, and no writer clears it.
 --
 -- spec: §6.2 (Pod State Machine), §7.2 (Interactive Session Model).
 
