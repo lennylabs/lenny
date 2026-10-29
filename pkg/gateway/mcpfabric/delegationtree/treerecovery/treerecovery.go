@@ -148,10 +148,8 @@ type Summary struct {
 	Recoverable int
 	// Recovered is the number reattached successfully.
 	Recovered int
-	// Failed is the number not recovered (Recoverable - Recovered). The
-	// terminal marker writes only those still in resume_pending, so a node
-	// that already left resume_pending is counted here without being
-	// marked failed.
+	// Failed is the number marked terminally failed (Recoverable -
+	// Recovered).
 	Failed int
 }
 

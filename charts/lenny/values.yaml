@@ -2836,9 +2836,8 @@ gateway:
 # F-8.10.6 / F-8.10.9 / F-8.10.10.
 delegation:
   # maxLevelRecoverySeconds is the §8.10 per-tree-level bound.
-  # Nodes unrecovered when the level deadline elapses that are still in
-  # resume_pending are marked terminally failed, and the traversal
-  # continues upward. Override via
+  # Nodes unrecovered when the level deadline elapses are marked
+  # terminally failed and the traversal continues upward. Override via
   # LENNY_DELEGATION_MAX_LEVEL_RECOVERY_SECONDS.
   maxLevelRecoverySeconds: 120
   # maxTreeRecoverySeconds is the §8.10 total
