@@ -1,42 +1,36 @@
 # Summary: The §6.2 pre-attached retry loop has no stop condition for a terminal session
 
-## Records numbering note (2026-10-28)
-
-RECORDS-1 files its new BUILD-GAPS finding as `F-6.2.27`, and that identifier is already taken by an OPEN finding about the §6.2 `idle → draining` trigger list. Renumber the new finding to the next free `F-6.2.N` identifier when RECORDS-1 is applied, and update every reference to it in this proposal's files, including the `CODE-1` comment and the TEST-GAPS T-6.2.10 retarget in the non-spec changes. The plan in `gateway-runtime-comms-remediation.md` §10.2 queues this proposal after proposal 0086, because both edit the §6.2 setup-failure wording.
-
 ## Summary
 
-**Problem statement.** The §6.2 **Pre-attached failure retry policy:** re-claims a fresh pod and replays setup after any failure before `attached`, up to 2 retries per client request. It names no seam it is confined to and no stop condition for a session that terminate, DELETE, or a pre-running watchdog ends mid-setup. The policy assumes a request with no persisted session row. That holds for the §7.1 creation of `POST /v1/sessions` and `POST /v1/sessions/start` and fails at finalize, `/{id}/start`, `/resume`, and delegated-child materialization, where a re-claim would run setup for an ended session and leak a pod to orphan GC. Other spec sites promise a fresh-pod recovery or a replacement claim at those seams while §7.1 names only the pre-attached disposition, so the spec reads both ways. The tree runs no §6.2 loop anywhere, so the defect constrains a future implementation.
+**Problem statement.** The §6.2 **Pre-attached failure retry policy:** re-claims a fresh pod and replays setup after any failure before `attached`, up to 2 retries per client request. It names no seam it is confined to and no stop condition for a session that terminate, DELETE, or a pre-running watchdog ends mid-setup. The policy assumes a request with no persisted session row. That holds for the §7.1 creation of `POST /v1/sessions/start` and fails at finalize and delegated-child materialization, where a re-claim would run setup for an ended session and leak a pod to orphan GC. Other spec sites promise a fresh-pod recovery or a replacement claim at those seams while §7.1 names only the pre-attached disposition, so the spec reads both ways. The tree runs no §6.2 loop anywhere, so the defect constrains a future implementation.
 
 **What changes.**
 
-- `spec/06_warm-pod-model.md` §6.2: the policy's lead sentence defers to its **Scope:** bullet, and the Scope bullet confines the retry to requests that have persisted no session row (SPEC-1).
+- `spec/06_warm-pod-model.md` §6.2: the policy's lead sentence defers to its **Scope:** bullet, and the Scope bullet states which request the retry covers (SPEC-1).
 - `spec/15_external-api-surface.md` §15.1: the `SETUP_COMMAND_FAILED` row drops its "recovered with a fresh pod per Section 6.2" clause (SPEC-2).
-- `spec/04_system-components.md` §4.7 and `spec/29_communication-scenarios.md` §29.2 step 23: the `ConfigureWorkspace`-and-`DemoteSDK` failure drops "a replacement is claimed" (SPEC-3).
+- `spec/04_system-components.md` §4.7, `spec/29_communication-scenarios.md` §29.2 step 23, and `spec/28_communication-channels.md` §28.5.3: the `ConfigureWorkspace`-and-`DemoteSDK` failure drops its replacement-claim clause (SPEC-3).
 - `pkg/gateway/podlifecycle/podsession/binder.go` and `pkg/gateway/sessionserver`: comments and test annotations that the spec edits make false are corrected, with no code token change (CODE-1).
 - `pkg/gateway/sessionserver/start_pod_test.go`: the finalize failure test counts SandboxClaim creates (TEST-1).
 - `BUILD-GAPS.md` and `TEST-GAPS.md`: a new OPEN finding records the unbuilt combined-route loop, and T-6.2.10 is retargeted (RECORDS-1).
 
 **Decisions.**
 
-- The retry is narrowed to the pre-persist creation unit. Four of the six design stances converged on this, and it touches the fewest sites.
+- The retry is narrowed to the `POST /v1/sessions/start` creation unit. Four of the six design stances converged on this, and it touches the fewest sites.
 - Narrowing is chosen over deleting the §6.2 gateway retry everywhere. Deletion removes a spec-promised recovery where the validated problem shows no hazard and rewrites more of §6.2, §7.2, and §5.2.
 - The seam rule has one home, the §6.2 **Scope:** bullet. §7.1 and §7.2 already defer to the §6.2 policy and are not edited, and the **Exhaustion:** and **Client visibility:** bullets read correctly because SPEC-1 defines the single attempt's failure as the exhaustion outcome.
 - "Under this policy" keeps §6.2 from speaking for the §5.2 **Slot retry policy**. §5.2 is not edited, and the reserved-slot exemption stays 0083's separately recorded defect.
-- `/resume` is listed among the persisted-row requests with §7.3 named as its recovery, which corrects the old §15.1 row's attribution in the direction the tree already takes.
-- SPEC-2 and SPEC-3 delete clauses rather than naming a governing policy. A named policy would restate the Scope rule, and at `/{id}/start` the §6.2 policy is the wrong one because a launch failure in `starting` follows the §7.2 edges and §7.3.
+- `/{id}/start` and `/resume` are absent from the Scope text because neither runs pre-attached work. The `/start` launch, including concurrent-workspace slot setup, runs in `starting` (proposal 0105), and the §7.3 **Resume driver.** performs the resume restore.
+- SPEC-2 and SPEC-3 delete clauses rather than naming a governing policy, because a named policy would restate the Scope rule.
 - No production behavior changes. The tree already makes one attempt at every persisted-row seam.
 - The `Bind`, `Resume`, and `ErrNoConcurrentSlot` comments in `binder.go` are not edited. `Bind`'s only production caller is the §7.3 resume rebuild, where re-claiming a fresh pod stays correct.
 - TEST-1 counts SandboxClaim CREATE calls through a wrapper on the binder's client. A count of remaining claims cannot distinguish "no retry" from "a retry that also failed".
-- F-6.2.27 is scoped to `POST /v1/sessions/start`. `POST /v1/sessions` runs only the pre-check and claim before persisting, and §7.1 requires a claim failure there to fail fast.
+- F-6.2.32 is scoped to `POST /v1/sessions/start`. `POST /v1/sessions` runs only the pre-check and claim before persisting, and §7.1 requires a claim failure there to fail fast.
 - T-6.2.10 is retargeted to the combined route, because its current target, a retry at finalize, is excluded by SPEC-1.
 
 **Watch out for.**
 
-- F-6.2.27 cites proposal 0085 and must stay OPEN when 0085 lands. 0085 builds no loop, so the implementation pipeline's step that closes BUILD-GAPS findings referencing the proposal must skip it.
+- F-6.2.32 cites proposal 0085 and must stay OPEN when 0085 lands. 0085 builds no loop, so the implementation pipeline's step that closes BUILD-GAPS findings referencing the proposal must skip it.
 - 0082's code steps edit `start.go`, `sessionserver.go`, and the `start_pod_test.go` fixture family. S5 and S6 land after them, and every site is located by symbol and quoted text.
-- The SPEC-1 Scope text lists `POST /v1/sessions` among the pre-persist requests. That text does not license wrapping the create-time claim in `create.go` in a retry loop; §7.1 **Atomicity of session creation (steps 2–8).** requires the claim failure to return the retryable 503 immediately.
-- At `/{id}/start`, a runtime-launch failure after the session entered `starting` follows the §7.2 `starting` edges and §7.3. The SPEC-1 Scope text governs only the §6.2 policy and does not override them.
 
 ## Goals
 
@@ -53,19 +47,19 @@ RECORDS-1 files its new BUILD-GAPS finding as `F-6.2.27`, and that identifier is
 - Keeping the retry only at finalize with 0082's `finalizingPrecondition` as the fence. That guard fences only the exit writes and cannot stop a re-claim or a setup replay.
 - Keeping the retry at delegated-child materialization. A cascade cancel or the created-TTL sweep reclaims nothing there, so each extra attempt claims a pod that only orphan GC collects.
 - Bounding the loop by the remaining `FINALIZE_TIMEOUT` budget. A single attempt is already bounded by `maxFinalizingTimeoutSeconds ≥ setupTimeoutSeconds`.
-- No change. The §6.2 lead and **Scope:**, the §15.1 `SETUP_COMMAND_FAILED` row, the §4.7 `ConfigureWorkspace` row, and §29.2 step 23 read as mandating a fresh-pod re-claim at persisted-row seams.
+- No change. The sites SPEC-1 through SPEC-3 edit read as mandating a fresh-pod re-claim at persisted-row seams.
 - Editing the §6.2 **Client visibility:** or **Exhaustion:** bullets. SPEC-1 defines the single attempt's failure as the exhaustion outcome, and an edit would add a second statement of the seam rule.
 - Editing §7.1 **Atomicity of session creation (steps 2–8).** or §7.2 **Pre-attached vs. post-attached failure visibility.** Both defer to the §6.2 policy, and a restatement would drift.
 - Anchoring the term "pre-attached disposition" in the §6.2 lead. §7.1 and the code already use it, and it resolves to the policy's "marked failed and released" sentence.
 - A §5.2 cross-reference exempting a reserved slot at `/{id}/start`, or a deferral clause in §6.2 Scope naming §5.2 and §7.3. "Under this policy" already keeps §5.2 separate, and the reserved-slot exemption belongs to 0083's recorded defect.
 - Removing the §5.2 "analogous to the pre-attached failure retry policy" parenthetical. It is needed only under deletion.
-- An ordering clause requiring each retry to claim only after the previous attempt's pod is released. It is new normative behavior the problem does not require; F-6.2.27's gap text carries the expectation for the builder.
+- An ordering clause requiring each retry to claim only after the previous attempt's pod is released. It is new normative behavior the problem does not require; F-6.2.32's gap text carries the expectation for the builder.
 - Stating in §6.2 that a failed attempt revokes its credential lease, or that `pod_assignment` never changes on failure. `failPhase` and §7.1 step 23 already cover the lease, and "claims no replacement pod" already rules out a rebind.
 - Stating in §6.2 that finalize moves the row to `failed`. 0082 governs the finalize exit writes, and §6.2 does not own per-endpoint row outcomes.
 - New pinning tests at `/{id}/start`, at delegated-child materialization, and on the combined route, and an assertion that `pod_assignment` is unchanged. Neither persisted seam has code that could claim a replacement, the combined route's single attempt is the unbuilt-loop gap, and the create counter makes the `pod_assignment` assertion redundant.
 - Adding `// spec: §6.2 (Scope)` lines at the `handleFinalize`, `handleStart`, and `MaterializeDelegatedChild` failure branches. Those comments stay true, and CODE-1 is limited to comments the spec edits falsify.
 - Correcting the `Bind` doc comment's stale description of its callers. The drift predates 0085, and CODE-1 leaves the `Bind` doc comment unchanged.
-- Building the §6.2 retry loop on the combined route. It is a new mechanism the spec gap does not require, recorded as F-6.2.27.
+- Building the §6.2 retry loop on the combined route. It is a new mechanism the spec gap does not require, recorded as F-6.2.32.
 - Specifying or implementing an abort of an in-flight attempt by terminate, DELETE, or the pre-running watchdogs, including a cross-replica abort. The problem statement puts it out of scope, and 0082 records the terminate abort.
 - The §5.2 slot loop's missing row re-read against §7.2 snapshot-close and its hard-coded `maxSlotRetries = 1`. The problem statement's scope lens cut them.
 - Defining the `attached` boundary or replacing the term. It is recorded below as a defect not staged.
@@ -96,9 +90,9 @@ None yet. The review loops write this section.
 
 ## Deliverable index
 
-- **SPEC-1** (`spec/06_warm-pod-model.md`): confines the §6.2 pre-attached retry to requests that have persisted no session row.
-- **SPEC-2** (`spec/15_external-api-surface.md`): drops the §6.2 fresh-pod recovery clause from the §15.1 `SETUP_COMMAND_FAILED` row.
-- **SPEC-3** (`spec/04_system-components.md`, `spec/29_communication-scenarios.md`): drops the replacement-claim clause from the `ConfigureWorkspace`-and-`DemoteSDK` failure.
-- **CODE-1** (`pkg/gateway/podlifecycle/podsession/binder.go`, `pkg/gateway/sessionserver/start.go`, `pkg/gateway/sessionserver/podclaimerror_internal_test.go`, `pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go`): comment and annotation sweep.
+- **SPEC-1** (`spec/06_warm-pod-model.md`): scopes the §6.2 pre-attached retry in its lead sentence and **Scope:** bullet.
+- **SPEC-2** (`spec/15_external-api-surface.md`): drops the fresh-pod recovery clause from the §15.1 `SETUP_COMMAND_FAILED` row.
+- **SPEC-3** (`spec/04_system-components.md`, `spec/29_communication-scenarios.md`, `spec/28_communication-channels.md`): drops the replacement-claim clause from the `ConfigureWorkspace`-and-`DemoteSDK` failure at each site.
+- **CODE-1** (`pkg/gateway/podlifecycle/podsession/binder.go`, `pkg/gateway/sessionserver/start.go`, `pkg/gateway/sessionserver/podclaimerror_internal_test.go`, `pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go`): corrects the comments and test annotations the spec edits make false.
 - **TEST-1** (`pkg/gateway/sessionserver/start_pod_test.go`): pins that a failed finalize claims no replacement pod.
-- **RECORDS-1** (`BUILD-GAPS.md`, `TEST-GAPS.md`): records F-6.2.27 and retargets T-6.2.10.
+- **RECORDS-1** (`BUILD-GAPS.md`, `TEST-GAPS.md`): files F-6.2.32 and retargets T-6.2.10.

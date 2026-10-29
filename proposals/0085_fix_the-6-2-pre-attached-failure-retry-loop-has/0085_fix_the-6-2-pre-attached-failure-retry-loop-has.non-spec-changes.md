@@ -58,7 +58,7 @@ with
 // setup-window transport failure, so it keeps the retryable 503 fallback +
 // Retry-After for a client retry. Under the §6.2 pre-attached retry Scope,
 // only the POST /v1/sessions/start atomic unit also retries it internally on
-// a fresh pod (unbuilt: BUILD-GAPS F-6.2.27). The same
+// a fresh pod (unbuilt: BUILD-GAPS F-6.2.32). The same
 ```
 
 and replace the tag line `// §6.2 (transient setup failure retried on a fresh pod).` at the end of the same comment with `// §6.2 (pre-attached retry Scope).`
@@ -84,23 +84,23 @@ None.
 
 ### RECORDS-1 · BUILD-GAPS.md and TEST-GAPS.md
 
-**(a) New BUILD-GAPS finding.** Insert the entry below in `BUILD-GAPS.md` after the `F-6.2.26` entry and before the `---` rule that precedes the §6.2 `### Cross-cutting summary`. The finding stays OPEN when 0085 lands.
+**(a) New BUILD-GAPS finding.** Insert the entry below in `BUILD-GAPS.md` after the `F-6.2.31` entry and before the `## §6.3 Startup Latency Analysis` heading. The finding stays OPEN when 0085 lands.
 
 ```markdown
-### - [ ] F-6.2.27 — The §6.2 pre-attached retry is unbuilt on the `POST /v1/sessions/start` atomic creation unit [Low] — OPEN
+### - [ ] F-6.2.32 — The §6.2 pre-attached retry is unbuilt on the `POST /v1/sessions/start` atomic creation unit [Low] — OPEN
 
 - **Spec:** §6.2 Pod State Machine, **Pre-attached failure retry policy:** **Scope:** as amended by proposal 0085. Within the §7.1 atomic creation unit of `POST /v1/sessions/start`, a pre-attached failure in the claim, prepare/setup, or launch steps is retried up to 2 times on a fresh pod with 500ms and 1s backoff before the row is persisted.
-- **Impl:** `mintClaimStartPersist` (`pkg/gateway/sessionserver/start.go`) runs `claimAtCreate` and `startOnPod` once and rolls back on the first error through `rollbackClaim` (when `createClaimNeedsRollback` holds) or `rollbackBinding`. `runWithQueue` re-enters acquisition only on the pool-exhaustion sentinels, only on a `queue` pool, and holds no pod between attempts. `POST /v1/sessions` is not part of this gap. Its only pre-persist work is the step-3 pre-check and the step-4 claim, and §7.1 and §7.2 require a claim failure there to surface immediately as a retryable 503 `SESSION_CREATION_FAILED`, or to wait in the §4.6.1 queue on a `queue` pool.
+- **Impl:** `mintClaimStartPersist` (`pkg/gateway/sessionserver/start.go`) runs `claimAtCreate` and `startOnPod` once and rolls back on the first error through `rollbackClaim` (when `createClaimNeedsRollback` holds) or `rollbackBinding`. `runWithQueue` re-enters acquisition only on the pool-exhaustion sentinels, only on a `queue` pool, and holds no pod between attempts.
 - **Gap:** Build the loop in mintClaimStartPersist around claimAtCreate and startOnPod, ahead of the coordination-lease acquire and `store.Create`. Each failed attempt releases its pod and any credential lease it minted before the next attempt claims. A failure the policy's **Non-retryable failures:** bullet names, and the deterministic `FailedPrecondition` setup exit that surfaces as `SETUP_COMMAND_FAILED`, returns on the first attempt. Pool exhaustion at the claim keeps its §7.1 and §4.6.1 handling and is not retried by this loop. Exhaustion returns the last attempt's envelope, and success keeps the existing `201` response. A slot failure on a concurrent-workspace pool follows the §5.2 **Slot retry policy** and is outside this finding. Tier 1 covers the attempt count, the backoff, and the non-retryable exit; TEST-GAPS T-6.2.10 covers the integration test.
 ```
 
 **(b) Retarget TEST-GAPS T-6.2.10.** Keep the entry's heading line. Replace its five bullets with:
 
 ```markdown
-- **Spec/Doc:** §6.2 Pod State Machine, **Pre-attached failure retry policy:** ("Max retries: 2 (3 total attempts including the original)", "Backoff: Exponential — 500ms, 1s between retries"). As amended by proposal 0085, the **Scope:** bullet confines the retry to requests that have persisted no session row, and a request against a persisted row, `POST /v1/sessions/{id}/finalize` included, makes one attempt. Proposal 0007 (eager claim at create) added a pool-exhaustion-at-create path on `POST /v1/sessions` that fails fast with `SESSION_CREATION_FAILED`; that claim exhaustion is outside the retry and stays covered by the fail-fast tests below.
+- **Spec/Doc:** §6.2 Pod State Machine, **Pre-attached failure retry policy:** ("Max retries: 2 (3 total attempts including the original)", "Backoff: Exponential — 500ms, 1s between retries"). As amended by proposal 0085, the **Scope:** bullet limits the retry to `POST /v1/sessions/start`, and `POST /v1/sessions/{id}/finalize` makes one attempt. Proposal 0007 (eager claim at create) added a pool-exhaustion-at-create path on `POST /v1/sessions` that fails fast with `SESSION_CREATION_FAILED`; that claim exhaustion is outside the retry and stays covered by the fail-fast tests below.
 - **Existing tests:** `tests/tier5_e2e_kind/eager_claim_e2e_test.go::TestEagerClaimPoolExhaustionAtCreate` asserts `503 SESSION_CREATION_FAILED` when `POST /v1/sessions` hits an exhausted pool, and `tests/tier7a_load_local/scenarios/create_pool_exhaustion` load-tests the same fail-fast ordering under concurrency. No test injects a transient failure into an attempt of `POST /v1/sessions/start` and asserts the invisible retry-and-recover loop.
 - **Gap:** The invisible-retry half is untested: fail the first one or two claim, setup, or launch attempts of `POST /v1/sessions/start`, then assert `201` with the session `running`, no client-visible `resume_pending`, and no session row or SandboxClaim left by the failed attempts.
-- **Dependencies:** Blocked on BUILD-GAPS F-6.2.27, which builds the loop. Also requires a fault-injecting adapter or warm pool that fails the first N attempts, plus the `--agent-namespace`-wired gateway. A pre-attached fault-injection stub does not exist; building it is part of this finding.
+- **Dependencies:** Blocked on BUILD-GAPS F-6.2.32, which builds the loop. Also requires a fault-injecting adapter or warm pool that fails the first N attempts, plus the `--agent-namespace`-wired gateway. A pre-attached fault-injection stub does not exist; building it is part of this finding.
 - **Suggested test:** Add `tests/tier4_integration/pre_attached_retry_test.go` that injects setup failures into the first attempts of `POST /v1/sessions/start` and asserts the eventual `running` with no client-visible `resume_pending`, using `tests/testinfra/sessiondriver` and a fault-injection stub.
 ```
 
