@@ -38,10 +38,9 @@ func (f *fakePlatformTools) CallPlatformTool(_ context.Context, sessionID, toolN
 
 func newServiceWithTools(t *testing.T, pt leasecontrol.PlatformToolService) *leasecontrol.Service {
 	t.Helper()
-	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets := newMemBudget()
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets:       budgets,
-		Tenants:       budgets,
 		PlatformTools: pt,
 	})
 	if err != nil {

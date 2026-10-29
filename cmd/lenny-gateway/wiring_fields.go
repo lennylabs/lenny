@@ -256,13 +256,10 @@ type gatewayWiringFields struct {
 	// across the next Enforcer.Record (proposal 0023 S3/S4). Nil when no
 	// usagestore is wired (the recorder is nil), in which case exhaustion
 	// keeps the §11.2 terminate-immediately posture.
-	proxyUsageRec         *proxyUsageRecorder
-	leaseBudgets          *leasecontrol.MemoryBudgetSource
-	leaseExtDefaults      sessionserver.LeaseExtensionDefaults
-	sessionLeaseRegistrar sessionserver.LeaseTreeRegistrar
-	childLeaseRegistrar   delegation.LeaseChildRegistrar
-	activityStamper       *sessionidle.Stamper
-	slotHealth            *slothealth.Tracker
+	proxyUsageRec   *proxyUsageRecorder
+	leaseBudgets    *leasecontrol.StoreBudgetSource
+	activityStamper *sessionidle.Stamper
+	slotHealth      *slothealth.Tracker
 
 	// §4.9 / §9.3 credential-surface outputs. buildCredentialSurface
 	// constructs the OpenAI/Open Responses translators, the §4.9 end-user

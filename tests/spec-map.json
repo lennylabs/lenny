@@ -2936,9 +2936,11 @@
         "pkg/delegation/lease/...",
         "tests/tier2_component/leasedenial/leasedenialstore_test.go",
         "tests/tier9_security/budget_extension_failclosed_test.go",
-        "pkg/gateway/mcpfabric/delegation/parent_freshness_test.go::TestDelegateParentEndedBeforeInsertRefuses_spec_8_2",
-        "pkg/gateway/sessionserver/derive_test.go::TestDeriveAndReplayCreateRoots_spec_12_6",
-        "pkg/gateway/sessionserver/derive_test.go::TestDeriveAndReplayInsertErrorRegistersNoLeaseTree_spec_8_6"
+        "tests/tier9_security/lease_extension_clear_test.go",
+        "pkg/gateway/mcpfabric/delegationtree/leasecontrol/storebudget_test.go",
+        "tests/tier3_contract/admin_extension_denial/clear_response_test.go",
+        "tests/tier4_integration/lease_extension_any_replica_test.go::TestLeaseExtensionAnyReplica_spec_8_6",
+        "tests/tier8_chaos/lease_extension_postgres_outage_test.go::TestLeaseExtensionPostgresOutageFailsClosed_spec_8_6"
       ],
       "packages": [
         "pkg/delegation/lease"
@@ -5677,7 +5679,7 @@
         "pkg/gateway/sessionserver/derive_failure_audit_test.go::TestDeriveFailureAuditRowIsNoTreeNode_spec_15_1",
         "pkg/gateway/sessionserver/derive_failure_lineage_internal_test.go::TestPersistDeriveFailureLineage_spec_4_5",
         "pkg/gateway/sessionserver/derive_test.go::TestDeriveAndReplayCreateRoots_spec_12_6",
-        "pkg/gateway/sessionserver/derive_test.go::TestDeriveAndReplayInsertErrorRegistersNoLeaseTree_spec_8_6",
+        "tests/tier3_contract/admin_extension_denial/clear_response_test.go",
         "pkg/gateway/sessionserver/finalize_race_internal_test.go::TestFinalizingPreconditionRefusesNonFinalizing_spec_15_1",
         "pkg/gateway/sessionserver/finalize_race_internal_test.go::TestFailFinalizingLosesToTerminalWriter_spec_15_1",
         "pkg/gateway/sessionserver/terminal_context_internal_test.go::TestFailFinalizingCommitsOnCancelledRequest_spec_7_1",

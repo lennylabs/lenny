@@ -5,16 +5,12 @@ package main
 import (
 	"context"
 	"log"
-	"time"
 
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentprovider"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentsticky"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol/denialpg"
 	"github.com/lennylabs/lenny/pkg/gateway/metrics/extractionthreshold"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
@@ -45,13 +41,6 @@ import (
 func (w *gatewayWiring) buildSessionDeps() {
 	f := w.f
 	callbackURLAllowedDomains := f.callbackURLAllowedDomains
-	grpcAddr := f.grpcAddr
-	leaseDefaultBudget := f.leaseDefaultBudget
-	leaseMaxBudget := f.leaseMaxBudget
-	leaseDefaultApproval := f.leaseDefaultApproval
-	leaseCoolOffSec := f.leaseCoolOffSec
-	leaseRejectionCoolOffSec := f.leaseRejectionCoolOffSec
-	leaseAutoMaxPerMin := f.leaseAutoMaxPerMin
 
 	gwMetrics := w.gwMetrics
 
@@ -201,45 +190,13 @@ func (w *gatewayWiring) buildSessionDeps() {
 	sessionBudgetEnforcer := sessionbudget.New(budgetTerminator, nil,
 		func(tenantID, _ string, _, _ int64) { gwMetrics.IncSessionBudgetExceeded(tenantID) })
 
-	// §8.6 lease-extension budget state. Created here, when the
-	// GatewayControl listener is enabled via --grpc-addr, so the same
-	// per-tree denial flags are shared between the in-process
-	// leasecontrol.ExtendLease dispatch and the §15.1 admin
-	// extension-denial clear endpoint — the admin handler must mutate the
-	// very state the dispatch reads. The session server registers each root
-	// tree (RegisterTree) and the delegation Service registers each child
-	// (AddSession/SetParentLease), so a later in-process extension resolves
-	// the tree instead of failing ErrSessionNotFound. F-8.6.8 / F-15.3.5.
-	var leaseBudgets *leasecontrol.MemoryBudgetSource
-	if *grpcAddr != "" {
-		leaseBudgets = leasecontrol.NewMemoryBudgetSource()
-		// §8.6 durability: when Postgres is configured the
-		// extension-denied flag, cool-off expiry, and grant counters are
-		// persisted to delegation_tree_budget through the denialpg store,
-		// so a coordinator handoff or gateway restart cannot bypass a
-		// user's rejection. Without Postgres (the dev/Embedded path) the
-		// denial stays in-memory. F-8.6.5.
-		if w.pgPool != nil {
-			leaseBudgets = leaseBudgets.WithDenialStore(denialpg.New(w.pgPool))
-		}
-	}
-	// §8.6: resolve the deployment-level lease-extension
-	// defaults the root tree's budget ceiling is registered with. nil
-	// leaseBudgets (no GatewayControl listener) leaves leaseRegistrar
-	// unset, so RegisterTree is never called. F-15.3.5.
-	leaseExtDefaults := sessionserver.LeaseExtensionDefaults{
-		DeploymentBudget:    *leaseDefaultBudget,
-		DeploymentMaxBudget: *leaseMaxBudget,
-		ApprovalMode:        leasecontrol.ApprovalMode(*leaseDefaultApproval),
-		SuccessCoolOff:      time.Duration(*leaseCoolOffSec) * time.Second,
-		RejectionCoolOff:    time.Duration(*leaseRejectionCoolOffSec) * time.Second,
-		AutoMaxPerMinute:    *leaseAutoMaxPerMin,
-	}
-	var sessionLeaseRegistrar sessionserver.LeaseTreeRegistrar
-	var childLeaseRegistrar delegation.LeaseChildRegistrar
-	if leaseBudgets != nil {
-		sessionLeaseRegistrar = leaseBudgets
-		childLeaseRegistrar = leaseBudgets
+	// §8.6 lease-extension budget state, created when the GatewayControl
+	// listener is enabled via --grpc-addr. One store-backed source serves
+	// the in-process leasecontrol dispatch and the §15.1 admin
+	// extension-denial clear endpoint, so both act on the same rows.
+	leaseBudgets, err := w.newLeaseBudgetSource()
+	if err != nil {
+		log.Fatalf("lenny-gateway: lease-extension budget source: %v", err)
 	}
 
 	// spec: §6.2 / §11.3 — the activity stamper
@@ -273,9 +230,6 @@ func (w *gatewayWiring) buildSessionDeps() {
 	w.budgetTerminator = budgetTerminator
 	w.sessionBudgetEnforcer = sessionBudgetEnforcer
 	w.leaseBudgets = leaseBudgets
-	w.leaseExtDefaults = leaseExtDefaults
-	w.sessionLeaseRegistrar = sessionLeaseRegistrar
-	w.childLeaseRegistrar = childLeaseRegistrar
 	w.activityStamper = activityStamper
 	w.slotHealth = slotHealth
 }

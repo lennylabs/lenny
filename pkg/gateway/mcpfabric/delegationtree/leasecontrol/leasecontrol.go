@@ -17,13 +17,11 @@
 // cool-off window, and the extension-denied flag.
 //
 // The per-tree budget state lives behind the BudgetSource interface.
-// MemoryBudgetSource is the in-memory implementation used by tests and
-// the minimal gateway. The §8.6 durability requirement — persisting the
-// extension-denied flag and cool-off expiry to the delegation_tree_budget
-// Postgres table, and reading them inside the budget-increment
-// transaction so a coordinator handoff cannot bypass a user rejection —
-// is satisfied by a Postgres-backed BudgetSource that ships with the
-// Wave 1 store-persistence work. The interface is the seam for it.
+// StoreBudgetSource reads it per request: the requesting, root, and
+// parent rows from the SessionStore, and the denial, cool-off, and
+// cumulative grants from a DenialStore (denialpg over the
+// delegation_tree_budget row when Postgres is configured, and
+// MemoryDenialStore otherwise), so any replica serves any session.
 package leasecontrol
 
 import (
@@ -271,35 +269,39 @@ type TreeBudget struct {
 // spec: §8.6
 type NewLimits = Dimensions
 
+// AppliedGrant is what BudgetSource.ApplyGrant committed: the
+// per-dimension amount actually added after the in-transaction clamp, and
+// the resulting limits the audit record carries.
+// spec: §8.6 (Extension state)
+type AppliedGrant struct {
+	// Granted is the clamped per-dimension amount the grant added. It can
+	// be less than requested, and zero on every dimension, when grants
+	// served elsewhere used the headroom since the TreeBudget read.
+	Granted Dimensions
+	// NewLimits is the root's base limits plus the tree's cumulative
+	// grants after this grant.
+	NewLimits NewLimits
+}
+
 // BudgetSource resolves and mutates the §8.6 per-tree budget state.
-//
-// The minimal gateway wires MemoryBudgetSource. The handoff-safe
-// Postgres implementation reads the extension-denied flag and
-// cool-off expiry, and commits the budget increment, inside one
-// transaction under the delegation_tree_budget row lock, so the §8.6
-// in-flight-request race and coordinator-handoff bypass are both
-// closed. The Service depends only on this interface.
+// StoreBudgetSource is the gateway's implementation. The Service depends
+// only on this interface.
 type BudgetSource interface {
 	// TreeBudget returns the extension state for the tree that
 	// contains sessionID. It returns ErrSessionNotFound when the
-	// session is unknown.
+	// session is unknown and ErrSessionTerminal when it is terminal.
 	TreeBudget(ctx context.Context, tenantID, sessionID string) (TreeBudget, error)
 
-	// ApplyGrant atomically raises the requesting session's view of
-	// the tree budget by the per-dimension grant in granted. §8.6 scope an extension to the requesting session only:
-	// existing children's leases are unaffected, only new children
-	// spawned after the extension benefit from the expanded parent
-	// budget. The source therefore records the bump against
-	// requestingSessionID rather than the root, and TreeBudget keyed
-	// by another session in the same tree returns the unchanged
-	// base. A Postgres implementation re-checks the extension-denied
-	// flag inside the same transaction and returns ErrExtensionDenied
-	// when a rejection was persisted between the TreeBudget read and
-	// the commit (§8.6 in-flight atomic check). A zero on a dimension
-	// is a no-op for that dimension; the returned NewLimits reflect
-	// whichever dimensions did land. F-8.6.1; F-8.6.10; F-8.6.11;
-	// F-8.6.12.
-	ApplyGrant(ctx context.Context, tenantID, rootSessionID, requestingSessionID string, granted Dimensions) (NewLimits, error)
+	// ApplyGrant adds granted to the tree's cumulative extension grants.
+	// The implementation re-reads the requesting session, returns
+	// ErrSessionTerminal for a terminal one, and, inside the transaction
+	// that re-checks the extension-denied flag, clamps the grant so the
+	// cumulative grant stays within the effective max less the root's base
+	// limit. It returns ErrExtensionDenied when a rejection was persisted
+	// since the TreeBudget read. The returned AppliedGrant carries the
+	// clamped amount.
+	// spec: §8.6 (Extension state), §8.6 (In-flight requests)
+	ApplyGrant(ctx context.Context, tenantID, rootSessionID, requestingSessionID string, granted Dimensions) (AppliedGrant, error)
 
 	// RejectionCoolOff returns the §8.6 rejectionCoolOffSeconds for the
 	// tree, resolved through the deployment, tenant, and runtime
@@ -314,29 +316,19 @@ type BudgetSource interface {
 	// from the subtree are auto-rejected during the cool-off. A Postgres
 	// implementation keys the flag with a per-row subtree id and persists
 	// it to delegation_tree_budget so a coordinator handoff cannot bypass
-	// the denial (§8.6); the in-memory source applies it
-	// tree-wide. spec: §8.6.
+	// the denial (§8.6). spec: §8.6.
 	Deny(ctx context.Context, tenantID, rootSessionID, requestingSessionID string) error
 }
 
-// DenialStore is the durable backing for the §8.6 extension-denied flag,
-// the rejection cool-off expiry, and the lease-extension grant counters.
-// MemoryBudgetSource delegates to it when one is injected via
-// WithDenialStore so a user rejection survives a coordinator handoff or
-// gateway restart, which §8.6 forbids bypassing. The Postgres
-// implementation (pkg/gateway/leasecontrol/denialpg) persists the flag to
-// the delegation_tree_budget table, reads it back compared against the
-// database clock (§8.6), and re-checks it inside the
-// budget-increment transaction (§8.6). A nil store leaves the
-// in-memory behavior unchanged — the development and test path.
-//
-// The store keys its rows by (tenantID, rootSessionID): the denial is
-// recorded tree-wide, matching both the delegation_tree_budget primary
-// key and the in-memory source's tree-wide denial. The requestingSessionID
-// the BudgetSource methods carry is the per-subtree scoping the in-memory
-// per-session extension deltas already enforce (F-8.6.12); the durable
-// denial state stays tree-keyed.
-// spec: §8.6.
+// DenialStore is the backing for the §8.6 extension-denied flag, the
+// rejection cool-off expiry, and the tree's cumulative extension grants,
+// which are the authoritative record of what extensions have raised. The
+// Postgres implementation (denialpg) persists them to the
+// delegation_tree_budget row, reads the flag compared against the
+// database clock, and re-checks it inside the grant transaction.
+// MemoryDenialStore is the replica-local backing for a gateway run
+// without Postgres. Rows are keyed by (tenantID, rootSessionID).
+// spec: §8.6 (Extension state), §8.6 (Durability)
 type DenialStore interface {
 	// Deny persists the tree's extension-denied flag and a cool-off
 	// expiry coolOff into the future, keyed by (tenantID, rootSessionID).
@@ -351,18 +343,30 @@ type DenialStore interface {
 	// A tree with no persisted row is reported not denied.
 	Denied(ctx context.Context, tenantID, rootSessionID string) (denied bool, expiry time.Time, err error)
 
-	// Grant runs the §8.6 in-flight atomic re-check: inside one
-	// transaction it locks the tree's delegation_tree_budget row,
-	// re-evaluates the denial against the database clock, and — only when
-	// the tree is not denied — increments the durable per-tree extension
-	// counters by granted and commits. It returns ErrExtensionDenied when
-	// the flag was set (the grant must roll back) and nil when the grant
-	// committed.
-	Grant(ctx context.Context, tenantID, rootSessionID string, granted Dimensions) error
+	// Grant runs the §8.6 in-flight atomic re-check: under the tree row's
+	// lock, in one transaction, it re-evaluates the denial and, only when
+	// the tree is not denied, clamps requested so the cumulative grant
+	// does not exceed limit on any dimension (ClampGrant), adds the
+	// clamped amount, and commits. It returns ErrExtensionDenied when the
+	// flag was set, and otherwise the applied amount and the new
+	// cumulative grant.
+	Grant(ctx context.Context, tenantID, rootSessionID string, requested, limit Dimensions) (GrantResult, error)
+
+	// Grants returns the tree's cumulative extension grants, zero for a
+	// tree with no row.
+	Grants(ctx context.Context, tenantID, rootSessionID string) (Dimensions, error)
 
 	// Clear clears the tree's extension-denied flag and cool-off, backing
 	// the §15.1 admin extension-denial clear endpoint.
 	Clear(ctx context.Context, tenantID, rootSessionID string) error
+}
+
+// GrantResult is what DenialStore.Grant committed.
+type GrantResult struct {
+	// Applied is the clamped per-dimension amount added.
+	Applied Dimensions
+	// Total is the tree's cumulative grant after the add.
+	Total Dimensions
 }
 
 // Sentinel errors a BudgetSource returns.
@@ -371,20 +375,16 @@ var (
 	// budget source.
 	ErrSessionNotFound = errors.New("leasecontrol: session not found")
 
+	// ErrSessionTerminal — the requesting session is terminal. The gateway
+	// applies no grant to, and presents no elicitation for, a terminal
+	// session. spec: §8.6 (Extension state).
+	ErrSessionTerminal = errors.New("leasecontrol: session is terminal")
+
 	// ErrExtensionDenied — the subtree's extension-denied flag was set
 	// (found by ApplyGrant inside the commit transaction, closing the
 	// §8.6 in-flight race).
 	ErrExtensionDenied = errors.New("leasecontrol: subtree extension denied")
 )
-
-// TenantResolver maps a session id to its owning tenant. The gateway
-// session store satisfies it. ExtendLease needs the tenant because the
-// budget state is tenant-scoped per §4.2.
-type TenantResolver interface {
-	// TenantOf returns the tenant that owns sessionID, or
-	// ErrSessionNotFound when the session is unknown.
-	TenantOf(ctx context.Context, sessionID string) (string, error)
-}
 
 // Service implements adapterv1.GatewayControlServer for the surviving
 // §9.1/§9.3 tool-bridge and §5.2 scrub-report RPCs, and hosts the §8.6
@@ -394,7 +394,6 @@ type Service struct {
 	adapterv1.UnimplementedGatewayControlServer
 
 	budgets           BudgetSource
-	tenants           TenantResolver
 	auditing          Auditor
 	metrics           MetricEmitter
 	clock             func() time.Time
@@ -636,9 +635,6 @@ type Options struct {
 	// Budgets resolves the §8.6 per-tree budget state. Required.
 	Budgets BudgetSource
 
-	// Tenants maps a session id to its tenant. Required.
-	Tenants TenantResolver
-
 	// Auditing records the §8.6 audit entry per request. Optional;
 	// nil skips auditing.
 	Auditing Auditor
@@ -747,9 +743,6 @@ func NewService(opts Options) (*Service, error) {
 	if opts.Budgets == nil {
 		return nil, errors.New("leasecontrol: Budgets is required")
 	}
-	if opts.Tenants == nil {
-		return nil, errors.New("leasecontrol: Tenants is required")
-	}
 	clock := opts.Clock
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
@@ -764,7 +757,6 @@ func NewService(opts Options) (*Service, error) {
 	}
 	svc := &Service{
 		budgets:           opts.Budgets,
-		tenants:           opts.Tenants,
 		auditing:          opts.Auditing,
 		metrics:           opts.Metrics,
 		clock:             clock,
@@ -809,19 +801,15 @@ func (s *Service) ExtendLease(ctx context.Context, req ExtendRequest) (ExtendRes
 		return ExtendResponse{}, fmt.Errorf("leasecontrol: ExtendLease request carries no session id")
 	}
 
-	tenantID, err := s.tenants.TenantOf(ctx, sessionID)
-	if err != nil {
-		if errors.Is(err, ErrSessionNotFound) {
-			return ExtendResponse{}, fmt.Errorf("leasecontrol: ExtendLease for unknown session %s: %w", sessionID, err)
-		}
-		return ExtendResponse{}, fmt.Errorf("leasecontrol: resolve tenant for session %s: %w", sessionID, err)
+	// spec: §8.6 (Extension state) — the rows are read under the tenant
+	// the request carries, so a request without one is refused.
+	tenantID := req.TenantID
+	if tenantID == "" {
+		return ExtendResponse{}, fmt.Errorf("leasecontrol: ExtendLease request for session %s carries no tenant", sessionID)
 	}
 
 	budget, err := s.budgets.TreeBudget(ctx, tenantID, sessionID)
 	if err != nil {
-		if errors.Is(err, ErrSessionNotFound) {
-			return ExtendResponse{}, fmt.Errorf("leasecontrol: no tree budget for session %s: %w", sessionID, err)
-		}
 		return ExtendResponse{}, fmt.Errorf("leasecontrol: load tree budget for session %s: %w", sessionID, err)
 	}
 
@@ -865,12 +853,10 @@ func (s *Service) ExtendLease(ctx context.Context, req ExtendRequest) (ExtendRes
 	// others. allDims is the single enumeration of the extendable set.
 	// F-8.6.1; F-8.6.11; F-8.6.15.
 	var granted Dimensions
-	outcomes := make([]dimOutcome, 0, len(allDims))
 	for _, d := range allDims {
 		ceiling := dimCeiling(d.get(budget.EffectiveMax), d.get(budget.ParentCeiling))
-		g, o := leaseextension.Grant(d.get(budget.Current), d.get(requested), ceiling)
+		g, _ := leaseextension.Grant(d.get(budget.Current), d.get(requested), ceiling)
 		d.set(&granted, g)
-		outcomes = append(outcomes, dimOutcome{requested: d.get(requested), granted: g, outcome: o})
 	}
 
 	newLimits := budget.Current
@@ -889,31 +875,16 @@ func (s *Service) ExtendLease(ctx context.Context, req ExtendRequest) (ExtendRes
 			}
 			return ExtendResponse{}, fmt.Errorf("leasecontrol: apply grant for tree %s: %w", budget.RootSessionID, err)
 		}
-		newLimits = applied
-
-		// §8.6: a granted token-budget extension must also raise
-		// the §8.2 per-tree delegation budget counter so the next
-		// `lenny/delegate_task` admission is gated against the expanded
-		// token pool rather than the parent lease's pre-extension cap. The
-		// leasecontrol ApplyGrant above only moves the in-memory/Postgres
-		// extension view; without this bridge the budget side effect §8.6
-		// promises never reaches admission (F-8.6.3). Best-effort: the
-		// control-plane grant already committed, so a transient treebudget
-		// fault is logged on the span by the reserver rather than failing
-		// the GRANTED response (the next admission falls back to the
-		// pre-extension cap, fail-safe). A nil granter is the Postgres-only
-		// dev posture with no Redis counter.
-		if s.treeGranter != nil && granted.Tokens > 0 {
-			if gerr := s.treeGranter.GrantTokenBudget(ctx, budget.RootSessionID, granted.Tokens); gerr != nil {
-				slog.WarnContext(ctx, "leasecontrol: tree token-budget grant bridge failed",
-					"root_session_id", budget.RootSessionID,
-					"granted_tokens", granted.Tokens,
-					"error", gerr)
-			}
-		}
+		// spec: §8.6 (Extension state) — the grant the store committed is
+		// the grant: the in-transaction clamp can lower it below the amount
+		// computed from the TreeBudget read when another replica's grant
+		// used the headroom since, and a clamp to zero is CEILING_REACHED.
+		granted = applied.Granted
+		newLimits = applied.NewLimits
+		s.bridgeTokenGrant(ctx, budget.RootSessionID, granted.Tokens)
 	}
 
-	combined := combineOutcomes(outcomes)
+	combined := combineOutcomes(appliedOutcomes(requested, granted))
 	status := statusFor(combined)
 	s.auditFull(ctx, tenantID, budget, sessionID, requested, granted,
 		auditOutcomeFor(combined),
@@ -922,6 +893,47 @@ func (s *Service) ExtendLease(ctx context.Context, req ExtendRequest) (ExtendRes
 		Status:  status,
 		Granted: granted,
 	}, nil
+}
+
+// bridgeTokenGrant raises the §8.2 per-tree delegation budget counter by
+// a granted token amount so the next `lenny/delegate_task` admission is
+// gated against the expanded token pool (F-8.6.3). It is best-effort:
+// the control-plane grant already committed, so a treebudget fault is
+// logged rather than failing the response, and the next admission falls
+// back to the pre-extension cap. A nil granter is the Postgres-only dev
+// posture with no Redis counter. spec: §8.6.
+func (s *Service) bridgeTokenGrant(ctx context.Context, rootSessionID string, tokens int64) {
+	if s.treeGranter == nil || tokens <= 0 {
+		return
+	}
+	if err := s.treeGranter.GrantTokenBudget(ctx, rootSessionID, tokens); err != nil {
+		slog.WarnContext(ctx, "leasecontrol: tree token-budget grant bridge failed",
+			"root_session_id", rootSessionID,
+			"granted_tokens", tokens,
+			"error", err)
+	}
+}
+
+// appliedOutcomes derives each dimension's §8.6 outcome from the amount
+// that was applied: the full request is Granted, a positive part of it is
+// PartiallyGranted, and nothing is CeilingReached. A dimension the caller
+// did not request is Granted.
+// spec: §8.6 (In-flight requests)
+func appliedOutcomes(requested, applied Dimensions) []dimOutcome {
+	out := make([]dimOutcome, 0, len(allDims))
+	for _, d := range allDims {
+		req, got := d.get(requested), d.get(applied)
+		o := leaseextension.Granted
+		switch {
+		case req <= 0 || got >= req:
+		case got > 0:
+			o = leaseextension.PartiallyGranted
+		default:
+			o = leaseextension.CeilingReached
+		}
+		out = append(out, dimOutcome{requested: req, granted: got, outcome: o})
+	}
+	return out
 }
 
 // rejectedResponse builds the §8.6 / §15.1 REJECTED ExtendLease response
@@ -1050,9 +1062,8 @@ func (s *Service) resolveCoolOff(ctx context.Context, tenantID, rootSessionID st
 }
 
 // approvalModeProvider is the optional BudgetSource extension that
-// reports the tree's resolved §8.6 approval mode. MemoryBudgetSource
-// implements it; the Postgres-backed source will satisfy it once the
-// dispatcher (F-8.6.2) lands. The handler falls back to
+// reports the tree's resolved §8.6 approval mode. StoreBudgetSource
+// implements it. The handler falls back to
 // DefaultApprovalMode when a source does not provide the mode.
 // F-8.6.10.
 // spec: §8.6
@@ -1137,7 +1148,7 @@ func (s *Service) gate(ctx context.Context, mode ApprovalMode, tenantID string, 
 
 // autoRateLimitProvider is the optional BudgetSource extension that
 // reports the tree's resolved §8.6 maxAutoExtensionsPerMinute.
-// MemoryBudgetSource implements it; a source that does not yields zero,
+// StoreBudgetSource implements it; a source that does not yields zero,
 // which disables the auto-mode rate limit for the tree. The pattern
 // mirrors approvalModeProvider so the core BudgetSource interface stays
 // minimal. F-8.6.7.

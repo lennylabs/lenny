@@ -42,7 +42,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/tests/testinfra/loadgen"
 	"github.com/lennylabs/lenny/tests/testinfra/scenkit"
 )
@@ -101,36 +103,84 @@ func sessionID(i, j int) string {
 // so is raised on extension) or is parent-capped to zero (terminated).
 func headroom(j int) bool { return j%2 == 0 }
 
-func (s *Scenario) Setup(ctx context.Context) error {
-	budgets := leasecontrol.NewMemoryBudgetSource()
+// scenarioSessions is the in-memory session reader the store-backed budget
+// source reads every row from: no session is registered with the source.
+type scenarioSessions struct {
+	mu   sync.Mutex
+	rows map[string]sessionstore.Session
+}
+
+func newScenarioSessions() *scenarioSessions {
+	return &scenarioSessions{rows: map[string]sessionstore.Session{}}
+}
+
+func (s *scenarioSessions) Get(_ context.Context, tenantID, id string) (sessionstore.Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.rows[id]
+	if !ok || r.TenantID != tenantID {
+		return sessionstore.Session{}, sessionstore.ErrNotFound
+	}
+	return r, nil
+}
+
+func (s *scenarioSessions) put(r sessionstore.Session) {
+	s.mu.Lock()
+	s.rows[r.ID] = r
+	s.mu.Unlock()
+}
+
+// seedTrees writes every tree's rows: a root with a 100k token lease and
+// its delegated children. A child without headroom hangs under a parent
+// row whose lease caps it at the root's base, so its extension resolves
+// CEILING_REACHED; a child with headroom hangs under a parent with no
+// lease ceiling.
+func seedTrees(sessions *scenarioSessions, capped func(j int) bool) {
 	for i := 0; i < treeCount; i++ {
 		root := treeID(i)
-		budgets.RegisterTree(root, leasecontrol.TreeConfig{
-			TenantID:           "acme",
-			CurrentTokenBudget: 100_000,
-			DeploymentBase:     2_000_000,
-			DeploymentMax:      4_000_000,
-			// Auto mode would resolve without the elicitor; elicitation mode
-			// with the delay elicitor holds each episode open long enough for
-			// concurrent sessions to batch onto it.
-			ApprovalMode: leasecontrol.ApprovalModeElicitation,
+		sessions.put(sessionstore.Session{
+			ID: root, TenantID: "acme", RootSessionID: root, State: session.StateRunning,
+			DelegationLease: &sessionstore.DelegationLease{MaxTokenBudget: 100_000},
 		})
 		for j := 1; j < sessionsPerTree; j++ {
 			sid := sessionID(i, j)
-			budgets.AddSession(sid, root, "acme")
-			if !headroom(j) {
-				// Parent lease caps the child at its current budget: zero
-				// headroom, so its extension resolves CEILING_REACHED and the
-				// fan-out terminates it.
-				budgets.SetParentLease(sid, leasecontrol.SessionLease{TokenCeiling: 100_000})
+			parent := sid + "-parent"
+			p := sessionstore.Session{ID: parent, TenantID: "acme", RootSessionID: root, State: session.StateRunning, DelegationDepth: 1}
+			if capped(j) {
+				p.DelegationLease = &sessionstore.DelegationLease{MaxTokenBudget: 100_000}
 			}
+			sessions.put(p)
+			sessions.put(sessionstore.Session{
+				ID: sid, TenantID: "acme", RootSessionID: root, ParentSessionID: parent,
+				DelegationDepth: 2, State: session.StateRunning,
+			})
 		}
+	}
+}
+
+// newScenarioSource builds the production store-backed budget source over
+// sessions and a MemoryDenialStore, in elicitation mode so the delay
+// elicitor holds each episode open long enough for concurrent sessions to
+// batch onto it.
+func newScenarioSource(sessions *scenarioSessions) (*leasecontrol.StoreBudgetSource, error) {
+	return leasecontrol.NewStoreBudgetSource(sessions, leasecontrol.NewMemoryDenialStore(nil), leasecontrol.ExtensionConfig{
+		DeploymentBudget:    2_000_000,
+		DeploymentMaxBudget: 4_000_000,
+		ApprovalMode:        leasecontrol.ApprovalModeElicitation,
+	})
+}
+
+func (s *Scenario) Setup(ctx context.Context) error {
+	sessions := newScenarioSessions()
+	seedTrees(sessions, func(j int) bool { return !headroom(j) })
+	budgets, err := newScenarioSource(sessions)
+	if err != nil {
+		return fmt.Errorf("new store-backed budget source: %w", err)
 	}
 
 	s.elicitor = &delayElicitor{delay: 5 * time.Millisecond}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets:  budgets,
-		Tenants:  budgets,
 		Elicitor: s.elicitor,
 		// The episode dispatches its elicitation on a background context so
 		// a caller's cancelled in-path wait never cancels the elicitation.
@@ -165,7 +215,7 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 	// genuine run cancellation surfaces as Terminal, not Pending.
 	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Millisecond)
 	defer cancel()
-	outcome, err := s.svc.ExtendForBudget(ctx, waitCtx, id)
+	outcome, err := s.svc.ExtendForBudget(ctx, waitCtx, "acme", id)
 	if err != nil {
 		s.counters.IncOnError(ctx, "errors", err)
 		return err
@@ -253,28 +303,20 @@ func (s *Scenario) Assert(r *loadgen.Result) error {
 // above treeCount and failing here. It records the observed prompt count.
 // spec: §8.6.
 func (s *Scenario) assertOnePromptPerTree() error {
-	budgets := newSubtreeDenialSource()
-	total := treeCount * sessionsPerTree
-	for i := 0; i < treeCount; i++ {
-		root := treeID(i)
-		budgets.inner.RegisterTree(root, leasecontrol.TreeConfig{
-			TenantID:           "acme",
-			CurrentTokenBudget: 100_000,
-			DeploymentBase:     2_000_000,
-			DeploymentMax:      4_000_000,
-			ApprovalMode:       leasecontrol.ApprovalModeElicitation,
-		})
-		for j := 1; j < sessionsPerTree; j++ {
-			budgets.inner.AddSession(sessionID(i, j), root, "acme")
-		}
+	sessions := newScenarioSessions()
+	seedTrees(sessions, func(int) bool { return false })
+	inner, err := newScenarioSource(sessions)
+	if err != nil {
+		return fmt.Errorf("single-batch phase: new store-backed budget source: %w", err)
 	}
+	budgets := newSubtreeDenialSource(inner)
+	total := treeCount * sessionsPerTree
 
 	// A rejecting barrier elicitor: it blocks every prompt until released
 	// and then rejects. It records the distinct prompt count.
 	el := newBarrierElicitor(false)
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets:        budgets,
-		Tenants:        budgets,
 		Elicitor:       el,
 		EpisodeContext: context.Background,
 	})
@@ -295,7 +337,7 @@ func (s *Scenario) assertOnePromptPerTree() error {
 				reqCtx := context.Background()
 				waitCtx, cancel := context.WithTimeout(reqCtx, 25*time.Millisecond)
 				defer cancel()
-				_, _ = svc.ExtendForBudget(reqCtx, waitCtx, sessionID(i, j))
+				_, _ = svc.ExtendForBudget(reqCtx, waitCtx, "acme", sessionID(i, j))
 			}(i, j)
 		}
 	}
@@ -429,7 +471,7 @@ func (e *barrierElicitor) releaseAll() {
 // subtreeDenialSource is a BudgetSource whose extension-denied flag is
 // scoped per requesting subtree, matching the production Postgres source
 // that keys the flag with a per-row subtree id (§8.6). It
-// wraps a MemoryBudgetSource for the budget math and overrides only the
+// wraps the store-backed source for the budget math and overrides only the
 // denial scope: Deny(requestingSessionID) marks that subtree alone, and
 // TreeBudget(sessionID) reports ExtensionDenied only for that session's
 // own subtree. This lets the single-prompt-per-tree phase drive the
@@ -437,16 +479,17 @@ func (e *barrierElicitor) releaseAll() {
 // siblings, so a sequential dispatch's second-prompt regression surfaces.
 // spec: §8.6.
 type subtreeDenialSource struct {
-	inner  *leasecontrol.MemoryBudgetSource
+	inner  *leasecontrol.StoreBudgetSource
 	mu     sync.Mutex
 	denied map[string]time.Time // requestingSessionID -> cool-off expiry
 }
 
-func newSubtreeDenialSource() *subtreeDenialSource {
-	return &subtreeDenialSource{
-		inner:  leasecontrol.NewMemoryBudgetSource(),
-		denied: map[string]time.Time{},
-	}
+func newSubtreeDenialSource(inner *leasecontrol.StoreBudgetSource) *subtreeDenialSource {
+	return &subtreeDenialSource{inner: inner, denied: map[string]time.Time{}}
+}
+
+func (s *subtreeDenialSource) ApprovalMode(ctx context.Context, tenantID, rootSessionID string) leasecontrol.ApprovalMode {
+	return s.inner.ApprovalMode(ctx, tenantID, rootSessionID)
 }
 
 func (s *subtreeDenialSource) TreeBudget(ctx context.Context, tenantID, sessionID string) (leasecontrol.TreeBudget, error) {
@@ -466,7 +509,7 @@ func (s *subtreeDenialSource) TreeBudget(ctx context.Context, tenantID, sessionI
 	return tb, nil
 }
 
-func (s *subtreeDenialSource) ApplyGrant(ctx context.Context, tenantID, rootSessionID, requestingSessionID string, granted leasecontrol.Dimensions) (leasecontrol.NewLimits, error) {
+func (s *subtreeDenialSource) ApplyGrant(ctx context.Context, tenantID, rootSessionID, requestingSessionID string, granted leasecontrol.Dimensions) (leasecontrol.AppliedGrant, error) {
 	return s.inner.ApplyGrant(ctx, tenantID, rootSessionID, requestingSessionID, granted)
 }
 
@@ -479,10 +522,6 @@ func (s *subtreeDenialSource) Deny(_ context.Context, _ /*tenantID*/, _ /*rootSe
 	s.denied[requestingSessionID] = time.Now().UTC().Add(leasecontrol.DefaultRejectionCoolOff)
 	s.mu.Unlock()
 	return nil
-}
-
-func (s *subtreeDenialSource) TenantOf(ctx context.Context, sessionID string) (string, error) {
-	return s.inner.TenantOf(ctx, sessionID)
 }
 
 // countingReclaimer records the episode fan-out's per-session RaiseBudget

@@ -169,8 +169,8 @@ func (reconciliationResumerStub) ResumePoolReconciliation(context.Context, strin
 // leaseDenialStub satisfies admin.LeaseDenialClearer.
 type leaseDenialStub struct{}
 
-func (leaseDenialStub) ClearSubtreeDenial(context.Context, string, string) (bool, error) {
-	return false, nil
+func (leaseDenialStub) ClearSubtreeDenial(context.Context, string, string, string) error {
+	return nil
 }
 
 // quotaReconcilerStub satisfies admin.QuotaReconciler.

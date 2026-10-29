@@ -31,7 +31,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/export"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/fileexport"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
@@ -309,16 +308,6 @@ type Service struct {
 	// unlimited. Operator-tunable via the gateway Helm value
 	// `gateway.delegation.maxActiveChildrenPerUser`. F-11.1.4.
 	maxActiveChildrenPerUser int
-	// leaseRegistrar, when set, registers every admitted child session
-	// with the §8.6 lease-extension budget source so a later in-process
-	// budget-exhaustion extension (the gateway LLM Proxy's ExtendForBudget
-	// trigger) from the child resolves its tree instead of failing
-	// ErrSessionNotFound. The child is added to its root's tree and its
-	// per-extension ceiling is capped at the parent's own granted lease
-	// (§8.6). Nil leaves extension state unregistered (the
-	// in-process minimal gateway with no GatewayControl listener).
-	// F-15.3.5.
-	leaseRegistrar LeaseChildRegistrar
 	// sessionObjects deletes the file-export objects written under a
 	// child ID whose delegation is refused or fails before its insert.
 	// Nil keeps the reservation, so the owner's erasure reaches them.
@@ -330,38 +319,6 @@ type Service struct {
 // implement it. spec: §12.8 (Lifecycle fence and drain).
 type SessionObjectDeleter interface {
 	DeleteBySession(ctx context.Context, tenantID, sessionID string) (int, error)
-}
-
-// LeaseChildRegistrar registers a delegated child session with the §8.6
-// lease-extension budget source. *leasecontrol.MemoryBudgetSource
-// satisfies it. The delegation Service calls AddSession to bind the
-// child to its root's extension tree and SetParentLease to cap the
-// child's per-extension grant at the parent's own lease (§8.6). F-15.3.5.
-// spec: §8.6
-type LeaseChildRegistrar interface {
-	AddSession(sessionID, rootSessionID, tenantID string)
-	SetParentLease(sessionID string, parent leasecontrol.SessionLease)
-}
-
-// parentLeaseCeiling projects a parent session's granted §8.2
-// DelegationLease onto the §8.6 SessionLease ceiling its
-// children inherit: a child can never extend a dimension beyond what
-// the parent's lease itself granted. A root parent carries no granted
-// lease (nil), which yields the zero ceiling (no per-parent cap; the
-// tree's effective-max ceiling still applies). F-15.3.5.
-// spec: §8.6
-func parentLeaseCeiling(parent sessionstore.Session) leasecontrol.SessionLease {
-	l := parent.DelegationLease
-	if l == nil {
-		return leasecontrol.SessionLease{}
-	}
-	return leasecontrol.SessionLease{
-		TokenCeiling:            l.MaxTokenBudget,
-		MaxAgeCeiling:           int64(l.PerChildMaxAge),
-		ChildrenCeiling:         int64(l.MaxChildrenTotal),
-		ParallelChildrenCeiling: int64(l.MaxParallelChildren),
-		TreeSizeCeiling:         int64(l.MaxTreeSize),
-	}
 }
 
 // Options configures a Service.
@@ -476,14 +433,6 @@ type Options struct {
 	// `gateway.delegation.maxActiveChildrenPerUser`. F-11.1.4.
 	MaxActiveChildrenPerUser int
 
-	// LeaseRegistrar, when set, registers every admitted child session
-	// with the §8.6 lease-extension budget source (AddSession +
-	// SetParentLease) so an in-process budget-exhaustion extension (the
-	// gateway LLM Proxy's ExtendForBudget trigger) from the child resolves
-	// its tree instead of failing ErrSessionNotFound. Nil leaves
-	// extension state unregistered. F-15.3.5.
-	LeaseRegistrar LeaseChildRegistrar
-
 	// InterceptorCooldown, when set, resolves the §8.3 SEC-013 fail-policy
 	// weakening cooldown for the interceptor named by a policy's
 	// `contentPolicy.interceptorRef`. Delegate and the
@@ -561,7 +510,6 @@ func NewService(store sessionstore.Store, opts Options) *Service {
 		exportScanResolver:           opts.ExportScanChainResolver,
 		treeBudget:                   opts.TreeBudgetReserver,
 		maxActiveChildrenPerUser:     opts.MaxActiveChildrenPerUser,
-		leaseRegistrar:               opts.LeaseRegistrar,
 		sessionObjects:               opts.SessionObjects,
 	}
 }
@@ -1179,16 +1127,6 @@ func (s *Service) insertChildSession(ctx context.Context, tenantID string, req R
 	}
 	if err := s.commitChild(ctx, child, reserved); err != nil {
 		return Result{}, err
-	}
-	// §8.6: register the committed child with the lease-extension
-	// budget source so an in-process budget-exhaustion extension (the
-	// gateway LLM Proxy's ExtendForBudget trigger) from the child resolves
-	// its tree (AddSession) and is capped at the parent's own granted lease
-	// (SetParentLease). Done after the row commits so a registered child
-	// always has a persisted backing row. F-15.3.5.
-	if s.leaseRegistrar != nil {
-		s.leaseRegistrar.AddSession(child.ID, rootSessionID, tenantID)
-		s.leaseRegistrar.SetParentLease(child.ID, parentLeaseCeiling(parent))
 	}
 	// §8.2 / §16.1: observe the admitted child's depth onto
 	// the `lenny_delegation_depth` histogram. Depth is invariant once

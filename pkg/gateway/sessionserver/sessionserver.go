@@ -299,24 +299,16 @@ type Server struct {
 	treeArchive              treearchive.Store
 	taskUsage                *resultrollup.Builder
 	treeBudgetReturner       TreeBudgetReturner
-	// leaseRegistrar, when set, registers a newly created root session
-	// with the §8.6 lease-extension budget source so a later in-process
-	// budget-exhaustion extension (the gateway LLM Proxy's ExtendForBudget
-	// trigger) resolves the tree instead of failing ErrSessionNotFound.
-	// leaseExtDefaults carries the deployment-level configuration the root
-	// tree's budget ceiling is resolved from. F-15.3.5.
-	leaseRegistrar     LeaseTreeRegistrar
-	leaseExtDefaults   LeaseExtensionDefaults
-	quotaCheckpointer  QuotaFinalCheckpointer
-	hwmObserver        DelegationHighWatermarkObserver
-	hwmReader          DelegationHighWatermarkReader
-	maxOrphanTasks     int
-	evals              evalstore.Store
-	memory             memorystore.Store
-	experiments        experimentstore.Store
-	pools              poolstore.Store
-	experimentReporter ExperimentRejectionReporter
-	stickyCache        StickyCache
+	quotaCheckpointer        QuotaFinalCheckpointer
+	hwmObserver              DelegationHighWatermarkObserver
+	hwmReader                DelegationHighWatermarkReader
+	maxOrphanTasks           int
+	evals                    evalstore.Store
+	memory                   memorystore.Store
+	experiments              experimentstore.Store
+	pools                    poolstore.Store
+	experimentReporter       ExperimentRejectionReporter
+	stickyCache              StickyCache
 	// externalProviders resolves the §10.7 built-in OpenFeature SDK
 	// providers (launchdarkly, statsig, unleash) for mode:external
 	// targeting. Nil disables the SDK-provider path; only OFREP-targeted
@@ -1344,17 +1336,6 @@ type Options struct {
 	// the decrement (developer mode without Redis-backed counters).
 	TreeBudgetReturner TreeBudgetReturner
 
-	// LeaseRegistrar, when set, registers each newly created root session
-	// with the §8.6 lease-extension budget source (RegisterTree) so an
-	// in-process budget-exhaustion extension (the gateway LLM Proxy's
-	// ExtendForBudget trigger) from the root or its delegated descendants
-	// resolves the tree instead of failing ErrSessionNotFound. Nil leaves
-	// the tree unregistered (the in-process gateway with no GatewayControl
-	// listener). LeaseExtensionDefaults supplies the §8.6 deployment-level
-	// ceiling the root tree is registered with. F-15.3.5.
-	LeaseRegistrar         LeaseTreeRegistrar
-	LeaseExtensionDefaults LeaseExtensionDefaults
-
 	// QuotaCheckpointer, when set, persists the §11.2 final
 	// token-usage checkpoint for the session's (tenant, user) when the
 	// session reaches a terminal state. Nil disables the final write
@@ -1755,8 +1736,6 @@ func New(store sessionstore.Store, opts Options) *Server {
 		treeArchive:                opts.TreeArchive,
 		taskUsage:                  opts.TaskUsage,
 		treeBudgetReturner:         opts.TreeBudgetReturner,
-		leaseRegistrar:             opts.LeaseRegistrar,
-		leaseExtDefaults:           opts.LeaseExtensionDefaults,
 		quotaCheckpointer:          opts.QuotaCheckpointer,
 		hwmReader:                  opts.HighWatermarkReader,
 		hwmObserver:                opts.HighWatermarkObserver,

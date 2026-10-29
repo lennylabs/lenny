@@ -120,15 +120,13 @@ func TestRequireVerifiedPeerInterceptor_NonTLSPeerRejected(t *testing.T) {
 	}
 }
 
-// spec: §8.6; §15.1 — ClearSubtreeDenial clears the
-// extension-denied flag for a known tree and reports found, and reports
-// not-found (without error) for an unknown tree so the admin endpoint
-// answers 404.
-func TestMemoryBudgetSource_ClearSubtreeDenial_Spec8_6(t *testing.T) {
+// spec: §8.6; §15.1 — ClearSubtreeDenial clears the extension-denied
+// flag for the tree under the tenant the caller resolved.
+func TestStoreBudgetSource_ClearSubtreeDenial_Spec8_6(t *testing.T) {
 	const root = "root-1"
 	const tenant = "acme"
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree(root, leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	budgets.seedRoot(root, treeConfig{
 		TenantID:           tenant,
 		CurrentTokenBudget: 100,
 		DeploymentBase:     1000,
@@ -145,12 +143,8 @@ func TestMemoryBudgetSource_ClearSubtreeDenial_Spec8_6(t *testing.T) {
 		t.Fatal("expected the tree to be extension-denied after MarkDenied")
 	}
 
-	found, err := budgets.ClearSubtreeDenial(context.Background(), root, root)
-	if err != nil {
+	if err := budgets.ClearSubtreeDenial(context.Background(), tenant, root, root); err != nil {
 		t.Fatalf("ClearSubtreeDenial: %v", err)
-	}
-	if !found {
-		t.Fatal("ClearSubtreeDenial found=false for a known tree")
 	}
 	tb, err = budgets.TreeBudget(context.Background(), tenant, root)
 	if err != nil {
@@ -158,14 +152,5 @@ func TestMemoryBudgetSource_ClearSubtreeDenial_Spec8_6(t *testing.T) {
 	}
 	if tb.ExtensionDenied {
 		t.Fatal("extension-denied flag still set after ClearSubtreeDenial")
-	}
-
-	// Unknown tree → found=false, no error.
-	found, err = budgets.ClearSubtreeDenial(context.Background(), "missing-root", "missing-sub")
-	if err != nil {
-		t.Fatalf("ClearSubtreeDenial(unknown): unexpected error %v", err)
-	}
-	if found {
-		t.Fatal("ClearSubtreeDenial found=true for an unknown tree")
 	}
 }

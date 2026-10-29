@@ -18,13 +18,11 @@ func fixedClock(t time.Time) func() time.Time {
 	return func() time.Time { return t }
 }
 
-// newService builds a Service over a MemoryBudgetSource, with the
-// budget source serving as the TenantResolver too.
-func newService(t *testing.T, budgets *leasecontrol.MemoryBudgetSource, clock func() time.Time) *leasecontrol.Service {
+// newService builds a Service over the store-backed fixture.
+func newService(t *testing.T, budgets *memBudget, clock func() time.Time) *leasecontrol.Service {
 	t.Helper()
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets: budgets,
-		Tenants: budgets,
 		Clock:   clock,
 		// Trees default to elicitation mode (§8.6); the
 		// auto-approving elicitor lets the grant-math tests exercise the
@@ -39,6 +37,7 @@ func newService(t *testing.T, budgets *leasecontrol.MemoryBudgetSource, clock fu
 
 func extendReq(sessionID string, tokens int64) leasecontrol.ExtendRequest {
 	return leasecontrol.ExtendRequest{
+		TenantID:  "acme",
 		SessionID: sessionID,
 		Requested: leasecontrol.Dimensions{Tokens: tokens},
 	}
@@ -47,8 +46,8 @@ func extendReq(sessionID string, tokens int64) leasecontrol.ExtendRequest {
 // TestExtendLeaseGranted: a request that fits under the ceiling is
 // granted in full and raises the tree budget.
 func TestExtendLeaseGranted(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
@@ -80,8 +79,8 @@ func TestExtendLeaseGranted(t *testing.T) {
 // TestExtendLeasePartiallyGranted: a request that exceeds the remaining
 // headroom is capped to the headroom and reported PARTIALLY_GRANTED.
 func TestExtendLeasePartiallyGranted(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 450_000,
 		DeploymentBase:     500_000,
@@ -106,8 +105,8 @@ func TestExtendLeasePartiallyGranted(t *testing.T) {
 // TestExtendLeaseCeilingReached: a request against a tree already at
 // the ceiling is granted zero and reported CEILING_REACHED.
 func TestExtendLeaseCeilingReached(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 500_000,
 		DeploymentBase:     500_000,
@@ -127,25 +126,23 @@ func TestExtendLeaseCeilingReached(t *testing.T) {
 	}
 }
 
-// TestExtendLeaseLayeredCeiling: the tenant ceiling caps the effective
-// max below the deployment max, so a grant against a high deployment
-// base is bounded by the tenant ceiling.
+// TestExtendLeaseLayeredCeiling: the deployment ceiling caps the
+// effective max below the deployment base, so a grant is bounded by the
+// ceiling.
 func TestExtendLeaseLayeredCeiling(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	// §8.6 example row: runtime sets 2.5M, tenant max 1M, deployment
-	// max 2M. The effective max resolves to the tenant ceiling, 1M.
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	// The deployment base is 2.5M and the deployment max 1M, so the
+	// effective max resolves to the ceiling, 1M.
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 900_000,
-		DeploymentBase:     500_000,
-		DeploymentMax:      2_000_000,
-		TenantMax:          1_000_000,
-		RuntimeBase:        2_500_000,
+		DeploymentBase:     2_500_000,
+		DeploymentMax:      1_000_000,
 	})
 	svc := newService(t, budgets, nil)
 
-	// Headroom against the 1M tenant ceiling is 100K; a 400K request is
-	// capped to 100K.
+	// Headroom against the 1M ceiling is 100K; a 400K request is capped
+	// to 100K.
 	resp, err := svc.ExtendLease(context.Background(), extendReq("root-1", 400_000))
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
@@ -154,7 +151,7 @@ func TestExtendLeaseLayeredCeiling(t *testing.T) {
 		t.Errorf("status = %v, want PARTIALLY_GRANTED", resp.Status)
 	}
 	if resp.Granted.Tokens != 100_000 {
-		t.Errorf("granted = %d, want 100000 (capped by tenant ceiling)", resp.Granted.Tokens)
+		t.Errorf("granted = %d, want 100000 (capped by the deployment ceiling)", resp.Granted.Tokens)
 	}
 }
 
@@ -164,8 +161,8 @@ func TestExtendLeaseLayeredCeiling(t *testing.T) {
 func TestExtendLeaseRejectedDuringCoolOff(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	clock := fixedClock(now)
-	budgets := leasecontrol.NewMemoryBudgetSource().WithClock(clock)
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget().WithClock(clock)
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
@@ -215,18 +212,18 @@ func TestExtendLeaseRejectedDuringCoolOff(t *testing.T) {
 func TestExtendLeaseRejectedResponseCarriesSpec15ErrorDetails_spec_15_1_line_1080(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	clock := fixedClock(now)
-	base := leasecontrol.NewMemoryBudgetSource().WithClock(clock)
-	base.RegisterTree("root-1", leasecontrol.TreeConfig{
+	base := newMemBudget().WithClock(clock)
+	base.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
 		DeploymentMax:      2_000_000,
 		RejectionCoolOff:   90 * time.Second,
 	})
-	base.AddSession("child-2", "root-1", "acme")
+	base.seedChild("child-2", "root-1", "acme")
 	racing := &raceBudgetSource{inner: base, denyOnApply: true}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: racing, Tenants: base, Clock: clock, Elicitor: autoApproveElicitor{},
+		Budgets: racing, Clock: clock, Elicitor: autoApproveElicitor{},
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -259,8 +256,8 @@ func TestExtendLeaseRejectedResponseCarriesSpec15ErrorDetails_spec_15_1_line_108
 func TestExtendLeaseGrantedAfterCoolOffExpiry(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	clk := &movableClock{t: now}
-	budgets := leasecontrol.NewMemoryBudgetSource().WithClock(clk.now)
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget().WithClock(clk.now)
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
@@ -300,8 +297,8 @@ func TestExtendLeaseGrantedAfterCoolOffExpiry(t *testing.T) {
 func TestExtendLeaseClearDenialEndsCoolOff(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	clock := fixedClock(now)
-	budgets := leasecontrol.NewMemoryBudgetSource().WithClock(clock)
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget().WithClock(clock)
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
@@ -322,22 +319,19 @@ func TestExtendLeaseClearDenialEndsCoolOff(t *testing.T) {
 }
 
 // TestExtendLeaseChildSessionResolvesTree: an extension request from a
-// delegated child session resolves the right tree. Per §8.6, the grant applies to the requesting session only — the
-// child's view raises while the root's view stays at the base. The
-// previous implementation bumped the tree-wide counter, violating the
-// scope-isolation contract; F-8.6.12 corrected it. The new assertion
-// pins both views so a regression that re-introduces tree-wide
-// propagation fails loudly.
-// spec: §8.6; F-8.6.12.
+// delegated child resolves its root's tree from the session rows, and the
+// grant lands in the tree's one pool of cumulative grants, so the root and
+// the child read the same raised value.
+// spec: §8.6 (Extension state)
 func TestExtendLeaseChildSessionResolvesTree(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
 		DeploymentMax:      2_000_000,
 	})
-	budgets.AddSession("child-7", "root-1", "acme")
+	budgets.seedChild("child-7", "root-1", "acme")
 	svc := newService(t, budgets, nil)
 
 	resp, err := svc.ExtendLease(context.Background(), extendReq("child-7", 50_000))
@@ -347,60 +341,55 @@ func TestExtendLeaseChildSessionResolvesTree(t *testing.T) {
 	if resp.Status != leasecontrol.StatusGranted {
 		t.Errorf("status = %v, want GRANTED", resp.Status)
 	}
-	childView, _ := budgets.TreeBudget(context.Background(), "acme", "child-7")
-	if childView.Current.Tokens != 150_000 {
-		t.Errorf("child view = %d, want 150000 — the requester sees its own bump", childView.Current.Tokens)
-	}
-	rootView, _ := budgets.TreeBudget(context.Background(), "acme", "root-1")
-	if rootView.Current.Tokens != 100_000 {
-		t.Errorf("root view = %d, want 100000 — extensions apply to the requesting session only (§8.6)",
-			rootView.Current.Tokens)
+	for _, id := range []string{"child-7", "root-1"} {
+		view, err := budgets.TreeBudget(context.Background(), "acme", id)
+		if err != nil {
+			t.Fatalf("TreeBudget(%s): %v", id, err)
+		}
+		if view.Current.Tokens != 150_000 {
+			t.Errorf("%s view = %d, want 150000 from the tree's cumulative grant", id, view.Current.Tokens)
+		}
 	}
 }
 
-// TestExtendLeaseExtensionScopedToRequestingSession_spec_8_6_line_737:
-// directly anchors §8.6. Two siblings extend
-// independently; each sibling's view of the tree budget rises only by
-// its own grant, and a third "existing" sibling that did not extend
-// continues to see the unchanged base. F-8.6.12.
-func TestExtendLeaseExtensionScopedToRequestingSession_spec_8_6_line_737(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root", leasecontrol.TreeConfig{
+// TestExtendLeaseGrantsShareOneTreePool_spec_8_6: grants served for
+// different sessions of one tree add to one cumulative pool bounded by the
+// effective max, so a second sibling's request is clamped by the headroom
+// the first sibling's grant used.
+// spec: §8.6 (Extension state)
+func TestExtendLeaseGrantsShareOneTreePool_spec_8_6(t *testing.T) {
+	budgets := newMemBudget()
+	budgets.seedRoot("root", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
-		DeploymentBase:     1_000_000,
+		DeploymentBase:     300_000,
 		DeploymentMax:      5_000_000,
 	})
-	budgets.AddSession("sib-a", "root", "acme")
-	budgets.AddSession("sib-b", "root", "acme")
-	budgets.AddSession("sib-existing", "root", "acme")
+	budgets.seedChild("sib-a", "root", "acme")
+	budgets.seedChild("sib-b", "root", "acme")
 	svc := newService(t, budgets, nil)
 
-	if _, err := svc.ExtendLease(context.Background(), extendReq("sib-a", 50_000)); err != nil {
+	if _, err := svc.ExtendLease(context.Background(), extendReq("sib-a", 150_000)); err != nil {
 		t.Fatalf("sib-a ExtendLease: %v", err)
 	}
-	if _, err := svc.ExtendLease(context.Background(), extendReq("sib-b", 200_000)); err != nil {
+	resp, err := svc.ExtendLease(context.Background(), extendReq("sib-b", 150_000))
+	if err != nil {
 		t.Fatalf("sib-b ExtendLease: %v", err)
 	}
-
-	ab, _ := budgets.TreeBudget(context.Background(), "acme", "sib-a")
-	bb, _ := budgets.TreeBudget(context.Background(), "acme", "sib-b")
-	eb, _ := budgets.TreeBudget(context.Background(), "acme", "sib-existing")
-	if ab.Current.Tokens != 150_000 {
-		t.Errorf("sib-a view = %d, want 150000 (base + own delta)", ab.Current.Tokens)
+	if resp.Status != leasecontrol.StatusPartiallyGranted || resp.Granted.Tokens != 50_000 {
+		t.Errorf("sib-b = %v granted %d, want PARTIALLY_GRANTED 50000 (the pool's remaining headroom)",
+			resp.Status, resp.Granted.Tokens)
 	}
-	if bb.Current.Tokens != 300_000 {
-		t.Errorf("sib-b view = %d, want 300000 (base + own delta)", bb.Current.Tokens)
-	}
-	if eb.Current.Tokens != 100_000 {
-		t.Errorf("sib-existing view = %d, want 100000 — sibling extensions must not bleed through", eb.Current.Tokens)
+	view, _ := budgets.TreeBudget(context.Background(), "acme", "root")
+	if view.Current.Tokens != 300_000 {
+		t.Errorf("tree view = %d, want the effective max 300000", view.Current.Tokens)
 	}
 }
 
 // TestExtendLeaseUnknownSession: a request for a session the gateway
 // does not know returns an error rather than a grant.
 func TestExtendLeaseUnknownSession(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets := newMemBudget()
 	svc := newService(t, budgets, nil)
 
 	_, err := svc.ExtendLease(context.Background(), extendReq("ghost", 100_000))
@@ -412,7 +401,7 @@ func TestExtendLeaseUnknownSession(t *testing.T) {
 // TestExtendLeaseEmptySessionID: a request with no session id is
 // rejected — the handler cannot resolve a tree without it.
 func TestExtendLeaseEmptySessionID(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets := newMemBudget()
 	svc := newService(t, budgets, nil)
 
 	_, err := svc.ExtendLease(context.Background(), leasecontrol.ExtendRequest{})
@@ -424,8 +413,8 @@ func TestExtendLeaseEmptySessionID(t *testing.T) {
 // TestExtendLeaseZeroRequestGranted: a non-positive request grants
 // nothing and is reported GRANTED, matching leaseextension.Grant.
 func TestExtendLeaseZeroRequestGranted(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
@@ -448,8 +437,8 @@ func TestExtendLeaseZeroRequestGranted(t *testing.T) {
 // TestExtendLeaseAuditRecorded: each decision is reported to the
 // Auditor with the requested and granted amounts and the outcome.
 func TestExtendLeaseAuditRecorded(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 450_000,
 		DeploymentBase:     500_000,
@@ -458,7 +447,6 @@ func TestExtendLeaseAuditRecorded(t *testing.T) {
 	rec := &recordingAuditor{}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets:  budgets,
-		Tenants:  budgets,
 		Auditing: rec,
 		Elicitor: autoApproveElicitor{},
 	})
@@ -490,8 +478,8 @@ func TestExtendLeaseAuditRecorded(t *testing.T) {
 // TestExtendLeaseAuditOutcomeApproved_spec_8_6_line_743: a full grant
 // is audited under the "approved" classification per §8.6.
 func TestExtendLeaseAuditOutcomeApproved_spec_8_6_line_743(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
@@ -499,7 +487,7 @@ func TestExtendLeaseAuditOutcomeApproved_spec_8_6_line_743(t *testing.T) {
 	})
 	rec := &recordingAuditor{}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: budgets, Tenants: budgets, Auditing: rec, Elicitor: autoApproveElicitor{},
+		Budgets: budgets, Auditing: rec, Elicitor: autoApproveElicitor{},
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -517,8 +505,8 @@ func TestExtendLeaseAuditOutcomeApproved_spec_8_6_line_743(t *testing.T) {
 func TestExtendLeaseAuditOutcomeDeniedDuringCoolOff_spec_8_6_line_743(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	clock := fixedClock(now)
-	budgets := leasecontrol.NewMemoryBudgetSource().WithClock(clock)
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget().WithClock(clock)
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
@@ -526,7 +514,7 @@ func TestExtendLeaseAuditOutcomeDeniedDuringCoolOff_spec_8_6_line_743(t *testing
 	})
 	rec := &recordingAuditor{}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: budgets, Tenants: budgets, Auditing: rec, Clock: clock,
+		Budgets: budgets, Auditing: rec, Clock: clock,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -544,8 +532,8 @@ func TestExtendLeaseAuditOutcomeDeniedDuringCoolOff_spec_8_6_line_743(t *testing
 // zero grant against an already-reached ceiling audits under "capped"
 // (§8.6 treats CEILING_REACHED as a cap-to-zero).
 func TestExtendLeaseAuditOutcomeCeilingReachedIsCapped_spec_8_6_line_743(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 500_000,
 		DeploymentBase:     500_000,
@@ -553,7 +541,7 @@ func TestExtendLeaseAuditOutcomeCeilingReachedIsCapped_spec_8_6_line_743(t *test
 	})
 	rec := &recordingAuditor{}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: budgets, Tenants: budgets, Auditing: rec, Elicitor: autoApproveElicitor{},
+		Budgets: budgets, Auditing: rec, Elicitor: autoApproveElicitor{},
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -572,8 +560,8 @@ func TestExtendLeaseAuditOutcomeCeilingReachedIsCapped_spec_8_6_line_743(t *test
 func TestExtendLeaseInFlightDenial(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	clock := fixedClock(now)
-	base := leasecontrol.NewMemoryBudgetSource().WithClock(clock)
-	base.RegisterTree("root-1", leasecontrol.TreeConfig{
+	base := newMemBudget().WithClock(clock)
+	base.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
@@ -585,7 +573,6 @@ func TestExtendLeaseInFlightDenial(t *testing.T) {
 	racing := &raceBudgetSource{inner: base, denyOnApply: true}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets:  racing,
-		Tenants:  base,
 		Clock:    clock,
 		Elicitor: autoApproveElicitor{},
 	})
@@ -611,8 +598,8 @@ func TestExtendLeaseInFlightDenial(t *testing.T) {
 func TestExtendLeaseInFlightDenialCustomCoolOff(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	clock := fixedClock(now)
-	base := leasecontrol.NewMemoryBudgetSource().WithClock(clock)
-	base.RegisterTree("root-1", leasecontrol.TreeConfig{
+	base := newMemBudget().WithClock(clock)
+	base.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
@@ -622,7 +609,6 @@ func TestExtendLeaseInFlightDenialCustomCoolOff(t *testing.T) {
 	racing := &raceBudgetSource{inner: base, denyOnApply: true}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets:  racing,
-		Tenants:  base,
 		Clock:    clock,
 		Elicitor: autoApproveElicitor{},
 	})
@@ -643,30 +629,11 @@ func TestExtendLeaseInFlightDenialCustomCoolOff(t *testing.T) {
 	}
 }
 
-// TestExtendLeaseTenantResolverError: an error from the tenant
-// resolver that is not ErrSessionNotFound is surfaced rather than
-// silently granting.
-func TestExtendLeaseTenantResolverError(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: budgets,
-		Tenants: errTenantResolver{err: errors.New("tenant store down")},
-	})
-	if err != nil {
-		t.Fatalf("NewService: %v", err)
-	}
-
-	if _, err := svc.ExtendLease(context.Background(), extendReq("sess-1", 100_000)); err == nil {
-		t.Fatal("ExtendLease should surface a tenant-resolver error")
-	}
-}
-
 // TestExtendLeaseBudgetSourceError: a non-ErrSessionNotFound error from
 // the budget source's TreeBudget read is surfaced.
 func TestExtendLeaseBudgetSourceError(t *testing.T) {
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets: errBudgetSource{err: errors.New("postgres unreachable")},
-		Tenants: staticTenant("acme"),
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -682,8 +649,8 @@ func TestExtendLeaseBudgetSourceError(t *testing.T) {
 // NewLimits. The handler is wired with deterministic BatchIDGen +
 // PeerIPFn so the test pins the exact strings. F-8.6.10.
 func TestExtendLeaseAuditCarriesSpec_8_6_line_743_fields(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-X", leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	budgets.seedRoot("root-X", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
@@ -693,7 +660,6 @@ func TestExtendLeaseAuditCarriesSpec_8_6_line_743_fields(t *testing.T) {
 	rec := &recordingAuditor{}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets:           budgets,
-		Tenants:           budgets,
 		Auditing:          rec,
 		ServiceInstanceID: "gw-7",
 		BatchIDGen:        func() string { return "batch-stub-1" },
@@ -737,8 +703,8 @@ func TestExtendLeaseAuditCarriesSpec_8_6_line_743_fields(t *testing.T) {
 func TestExtendLeaseAuditDeniedCoolOffApproverIsClient_spec_8_6_line_743(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	clock := fixedClock(now)
-	budgets := leasecontrol.NewMemoryBudgetSource().WithClock(clock)
-	budgets.RegisterTree("root-D", leasecontrol.TreeConfig{
+	budgets := newMemBudget().WithClock(clock)
+	budgets.seedRoot("root-D", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
@@ -748,7 +714,6 @@ func TestExtendLeaseAuditDeniedCoolOffApproverIsClient_spec_8_6_line_743(t *test
 	rec := &recordingAuditor{}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets:  budgets,
-		Tenants:  budgets,
 		Auditing: rec,
 		Clock:    clock,
 	})
@@ -779,8 +744,8 @@ func TestExtendLeaseAuditDeniedCoolOffApproverIsClient_spec_8_6_line_743(t *test
 // chronologically-sortable BatchIDs (the millis prefix advances).
 // F-8.6.10.
 func TestExtendLeaseDefaultBatchIDGenIsChronological_spec_8_6_line_743(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-T", leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	budgets.seedRoot("root-T", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
@@ -788,7 +753,7 @@ func TestExtendLeaseDefaultBatchIDGenIsChronological_spec_8_6_line_743(t *testin
 	})
 	rec := &recordingAuditor{}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: budgets, Tenants: budgets, Auditing: rec, Elicitor: autoApproveElicitor{},
+		Budgets: budgets, Auditing: rec, Elicitor: autoApproveElicitor{},
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -813,15 +778,10 @@ func TestExtendLeaseDefaultBatchIDGenIsChronological_spec_8_6_line_743(t *testin
 }
 
 // TestNewServiceRejectsMissingDeps: the constructor refuses a Service
-// without a BudgetSource or a TenantResolver.
+// without a BudgetSource.
 func TestNewServiceRejectsMissingDeps(t *testing.T) {
 	if _, err := leasecontrol.NewService(leasecontrol.Options{}); err == nil {
 		t.Error("NewService with no Budgets should error")
-	}
-	if _, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: leasecontrol.NewMemoryBudgetSource(),
-	}); err == nil {
-		t.Error("NewService with no Tenants should error")
 	}
 }
 
@@ -855,12 +815,12 @@ type autoApproveElicitor struct{}
 
 func (autoApproveElicitor) Elicit(context.Context, string, string) (bool, error) { return true, nil }
 
-// raceBudgetSource wraps a MemoryBudgetSource and, when denyOnApply is
+// raceBudgetSource wraps a store-backed fixture and, when denyOnApply is
 // set, marks the tree denied just before ApplyGrant runs — modelling a
 // REJECTED outcome persisted between the TreeBudget read and the grant
 // commit (§8.6 in-flight atomic check).
 type raceBudgetSource struct {
-	inner       *leasecontrol.MemoryBudgetSource
+	inner       *memBudget
 	denyOnApply bool
 }
 
@@ -868,7 +828,7 @@ func (r *raceBudgetSource) TreeBudget(ctx context.Context, tenantID, sessionID s
 	return r.inner.TreeBudget(ctx, tenantID, sessionID)
 }
 
-func (r *raceBudgetSource) ApplyGrant(ctx context.Context, tenantID, rootSessionID, requestingSessionID string, granted leasecontrol.Dimensions) (leasecontrol.NewLimits, error) {
+func (r *raceBudgetSource) ApplyGrant(ctx context.Context, tenantID, rootSessionID, requestingSessionID string, granted leasecontrol.Dimensions) (leasecontrol.AppliedGrant, error) {
 	if r.denyOnApply {
 		r.inner.MarkDenied(rootSessionID)
 	}
@@ -883,24 +843,6 @@ func (r *raceBudgetSource) Deny(ctx context.Context, tenantID, rootSessionID, re
 	return r.inner.Deny(ctx, tenantID, rootSessionID, requestingSessionID)
 }
 
-// errTenantResolver is a TenantResolver that always fails, exercising
-// the handler's tenant-resolution error path.
-type errTenantResolver struct {
-	err error
-}
-
-func (e errTenantResolver) TenantOf(context.Context, string) (string, error) {
-	return "", e.err
-}
-
-// staticTenant is a TenantResolver that resolves every session to a
-// fixed tenant.
-type staticTenant string
-
-func (s staticTenant) TenantOf(context.Context, string) (string, error) {
-	return string(s), nil
-}
-
 // errBudgetSource is a BudgetSource whose TreeBudget read always
 // fails, exercising the handler's budget-load error path.
 type errBudgetSource struct {
@@ -911,8 +853,8 @@ func (e errBudgetSource) TreeBudget(context.Context, string, string) (leasecontr
 	return leasecontrol.TreeBudget{}, e.err
 }
 
-func (e errBudgetSource) ApplyGrant(context.Context, string, string, string, leasecontrol.Dimensions) (leasecontrol.NewLimits, error) {
-	return leasecontrol.NewLimits{}, e.err
+func (e errBudgetSource) ApplyGrant(context.Context, string, string, string, leasecontrol.Dimensions) (leasecontrol.AppliedGrant, error) {
+	return leasecontrol.AppliedGrant{}, e.err
 }
 
 func (e errBudgetSource) RejectionCoolOff(context.Context, string, string) time.Duration {
@@ -968,13 +910,13 @@ func TestResolveSuccessCoolOff_spec_8_6_line_675(t *testing.T) {
 	}
 }
 
-// TestMemoryBudgetSourceApprovalModeDefault_spec_8_6_line_674: a tree
+// TestStoreBudgetSourceApprovalModeDefault_spec_8_6_line_674: a tree
 // registered without an explicit ApprovalMode reports the spec-default
 // elicitation mode, satisfying §8.6 even before the
 // dispatcher lands.
-func TestMemoryBudgetSourceApprovalModeDefault_spec_8_6_line_674(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+func TestStoreBudgetSourceApprovalModeDefault_spec_8_6_line_674(t *testing.T) {
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
@@ -989,11 +931,11 @@ func TestMemoryBudgetSourceApprovalModeDefault_spec_8_6_line_674(t *testing.T) {
 	}
 }
 
-// TestMemoryBudgetSourceApprovalModeExplicit_spec_8_6_line_674: an
+// TestStoreBudgetSourceApprovalModeExplicit_spec_8_6_line_674: an
 // explicitly registered mode round-trips unchanged.
-func TestMemoryBudgetSourceApprovalModeExplicit_spec_8_6_line_674(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+func TestStoreBudgetSourceApprovalModeExplicit_spec_8_6_line_674(t *testing.T) {
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
@@ -1024,8 +966,8 @@ func TestDefaultSuccessCoolOff_spec_8_6_line_675(t *testing.T) {
 func TestExtendLeaseRejectedCoolOffActiveError_spec_15_1_line_1080(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	clock := fixedClock(now)
-	budgets := leasecontrol.NewMemoryBudgetSource().WithClock(clock)
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget().WithClock(clock)
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
@@ -1060,8 +1002,8 @@ func TestExtendLeaseRejectedCoolOffActiveError_spec_15_1_line_1080(t *testing.T)
 func TestExtendLeaseInFlightDenialCoolOffActiveError_spec_15_1_line_1080(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	clock := fixedClock(now)
-	base := leasecontrol.NewMemoryBudgetSource().WithClock(clock)
-	base.RegisterTree("root-1", leasecontrol.TreeConfig{
+	base := newMemBudget().WithClock(clock)
+	base.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
@@ -1069,7 +1011,7 @@ func TestExtendLeaseInFlightDenialCoolOffActiveError_spec_15_1_line_1080(t *test
 	})
 	racing := &raceBudgetSource{inner: base, denyOnApply: true}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: racing, Tenants: base, Clock: clock, Elicitor: autoApproveElicitor{},
+		Budgets: racing, Clock: clock, Elicitor: autoApproveElicitor{},
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -1091,8 +1033,8 @@ func TestExtendLeaseInFlightDenialCoolOffActiveError_spec_15_1_line_1080(t *test
 // success and operator tooling treats Error.Code as authoritative.
 // F-8.6.9.
 func TestExtendLeaseGrantedHasNoErrorEnvelope(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
@@ -1114,8 +1056,8 @@ func TestExtendLeaseGrantedHasNoErrorEnvelope(t *testing.T) {
 // CurrentMaxAgeSeconds, and surfaces granted_seconds on the response.
 // F-8.6.11.
 func TestExtendLeaseSecondsDimensionGranted_spec_8_6_line_643(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:               "acme",
 		CurrentTokenBudget:     100_000,
 		DeploymentBase:         500_000,
@@ -1126,6 +1068,7 @@ func TestExtendLeaseSecondsDimensionGranted_spec_8_6_line_643(t *testing.T) {
 	svc := newService(t, budgets, nil)
 
 	resp, err := svc.ExtendLease(context.Background(), leasecontrol.ExtendRequest{
+		TenantID:  "acme",
 		SessionID: "root-1",
 		Requested: leasecontrol.Dimensions{Seconds: 900},
 	})
@@ -1149,8 +1092,8 @@ func TestExtendLeaseSecondsDimensionGranted_spec_8_6_line_643(t *testing.T) {
 // remaining headroom and reported via the seconds dimension; combined
 // outcome rolls up to PARTIALLY_GRANTED. F-8.6.11.
 func TestExtendLeaseSecondsDimensionPartiallyGranted_spec_8_6_line_643(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:               "acme",
 		CurrentTokenBudget:     100_000,
 		DeploymentBase:         500_000,
@@ -1161,6 +1104,7 @@ func TestExtendLeaseSecondsDimensionPartiallyGranted_spec_8_6_line_643(t *testin
 	svc := newService(t, budgets, nil)
 
 	resp, err := svc.ExtendLease(context.Background(), leasecontrol.ExtendRequest{
+		TenantID:  "acme",
 		SessionID: "root-1",
 		Requested: leasecontrol.Dimensions{Seconds: 600}, // headroom is 100s.
 	})
@@ -1179,8 +1123,8 @@ func TestExtendLeaseSecondsDimensionPartiallyGranted_spec_8_6_line_643(t *testin
 // request that hits one dimension's ceiling but fits under the other
 // rolls up to PARTIALLY_GRANTED across both dimensions. F-8.6.11.
 func TestExtendLeaseTokensAndSecondsCombinedOutcome_spec_8_6_line_643(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:               "acme",
 		CurrentTokenBudget:     100_000,
 		DeploymentBase:         500_000,
@@ -1191,6 +1135,7 @@ func TestExtendLeaseTokensAndSecondsCombinedOutcome_spec_8_6_line_643(t *testing
 	svc := newService(t, budgets, nil)
 
 	resp, err := svc.ExtendLease(context.Background(), leasecontrol.ExtendRequest{
+		TenantID:  "acme",
 		SessionID: "root-1",
 		Requested: leasecontrol.Dimensions{
 			Tokens:  50_000, // fully under tokens ceiling
@@ -1212,8 +1157,8 @@ func TestExtendLeaseTokensAndSecondsCombinedOutcome_spec_8_6_line_643(t *testing
 // record carries the additionalMaxAge requested/granted figures so
 // forensic reconstruction sees both dimensions. F-8.6.11.
 func TestExtendLeaseSecondsDimensionAudited_spec_8_6_line_743(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:               "acme",
 		CurrentTokenBudget:     100_000,
 		DeploymentBase:         500_000,
@@ -1223,12 +1168,13 @@ func TestExtendLeaseSecondsDimensionAudited_spec_8_6_line_743(t *testing.T) {
 	})
 	rec := &recordingAuditor{}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: budgets, Tenants: budgets, Auditing: rec, Elicitor: autoApproveElicitor{},
+		Budgets: budgets, Auditing: rec, Elicitor: autoApproveElicitor{},
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
 	if _, err := svc.ExtendLease(context.Background(), leasecontrol.ExtendRequest{
+		TenantID:  "acme",
 		SessionID: "root-1",
 		Requested: leasecontrol.Dimensions{Tokens: 50_000, Seconds: 900},
 	}); err != nil {
@@ -1248,8 +1194,8 @@ func TestExtendLeaseSecondsDimensionAudited_spec_8_6_line_743(t *testing.T) {
 // counter via the Options.Metrics callback, labelled with the audit
 // outcome class. F-8.6.13.
 func TestExtendLeaseDrivesMetricEmitter_spec_16_line_66(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
@@ -1257,7 +1203,7 @@ func TestExtendLeaseDrivesMetricEmitter_spec_16_line_66(t *testing.T) {
 	})
 	rec := &recordingMetrics{}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: budgets, Tenants: budgets, Metrics: rec, Elicitor: autoApproveElicitor{},
+		Budgets: budgets, Metrics: rec, Elicitor: autoApproveElicitor{},
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -1279,8 +1225,8 @@ func TestExtendLeaseDrivesMetricEmitter_spec_16_line_66(t *testing.T) {
 func TestExtendLeaseDrivesMetricOnCoolOffRejection_spec_16_line_66(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	clock := fixedClock(now)
-	budgets := leasecontrol.NewMemoryBudgetSource().WithClock(clock)
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget().WithClock(clock)
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
@@ -1288,7 +1234,7 @@ func TestExtendLeaseDrivesMetricOnCoolOffRejection_spec_16_line_66(t *testing.T)
 	})
 	rec := &recordingMetrics{}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: budgets, Tenants: budgets, Metrics: rec, Clock: clock,
+		Budgets: budgets, Metrics: rec, Clock: clock,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -1310,19 +1256,19 @@ func TestExtendLeaseDrivesMetricOnCoolOffRejection_spec_16_line_66(t *testing.T)
 // deployment/tenant/runtime ceiling has its grant capped at the
 // parent value, not the layered ceiling. F-8.6.15.
 func TestExtendLeaseParentLeaseCeilingCaps_spec_8_6_line_648(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     1_000_000, // layered ceiling 1M
 		DeploymentMax:      2_000_000,
 	})
-	budgets.AddSession("child-2", "root-1", "acme")
+	budgets.seedChild("child-2", "root-1", "acme")
 	// Parent's lease only granted 300K tokens — the child cannot
 	// extend beyond that, even though the layered ceiling is 1M and
 	// the tree's current budget would have permitted a much larger
 	// grant. F-8.6.15.
-	budgets.SetParentLease("child-2", leasecontrol.SessionLease{TokenCeiling: 300_000})
+	budgets.seedParentLease("child-2", parentLease{TokenCeiling: 300_000})
 	svc := newService(t, budgets, nil)
 
 	resp, err := svc.ExtendLease(context.Background(), extendReq("child-2", 500_000))
@@ -1341,15 +1287,15 @@ func TestExtendLeaseParentLeaseCeilingCaps_spec_8_6_line_648(t *testing.T) {
 // when the parent's lease ceiling exceeds the layered ceiling, the
 // layered ceiling still binds — both hard ceilings apply. F-8.6.15.
 func TestExtendLeaseParentLeaseCeilingHonoursLayeredCap_spec_8_6_line_648(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000, // layered ceiling 500K
 		DeploymentMax:      2_000_000,
 	})
-	budgets.AddSession("child-2", "root-1", "acme")
-	budgets.SetParentLease("child-2", leasecontrol.SessionLease{TokenCeiling: 5_000_000})
+	budgets.seedChild("child-2", "root-1", "acme")
+	budgets.seedParentLease("child-2", parentLease{TokenCeiling: 5_000_000})
 	svc := newService(t, budgets, nil)
 
 	resp, err := svc.ExtendLease(context.Background(), extendReq("child-2", 1_000_000))
@@ -1367,8 +1313,8 @@ func TestExtendLeaseParentLeaseCeilingHonoursLayeredCap_spec_8_6_line_648(t *tes
 // TestExtendLeaseParentLeaseCeilingMaxAge_spec_8_6_line_648: the parent
 // ceiling applies to the additionalMaxAge dimension too. F-8.6.15.
 func TestExtendLeaseParentLeaseCeilingMaxAge_spec_8_6_line_648(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:               "acme",
 		CurrentTokenBudget:     100_000,
 		DeploymentBase:         500_000,
@@ -1376,13 +1322,14 @@ func TestExtendLeaseParentLeaseCeilingMaxAge_spec_8_6_line_648(t *testing.T) {
 		CurrentMaxAgeSeconds:   600,
 		EffectiveMaxAgeSeconds: 7200, // layered seconds ceiling
 	})
-	budgets.AddSession("child-2", "root-1", "acme")
+	budgets.seedChild("child-2", "root-1", "acme")
 	// Parent's perChildMaxAge grant was 1800s; child can't extend
 	// beyond that even though the layered ceiling is 7200.
-	budgets.SetParentLease("child-2", leasecontrol.SessionLease{MaxAgeCeiling: 1800})
+	budgets.seedParentLease("child-2", parentLease{MaxAgeCeiling: 1800})
 	svc := newService(t, budgets, nil)
 
 	resp, err := svc.ExtendLease(context.Background(), leasecontrol.ExtendRequest{
+		TenantID:  "acme",
 		SessionID: "child-2",
 		Requested: leasecontrol.Dimensions{Seconds: 5000},
 	})
@@ -1398,14 +1345,14 @@ func TestExtendLeaseParentLeaseCeilingMaxAge_spec_8_6_line_648(t *testing.T) {
 // root session has no parent lease and therefore no extra cap. The
 // layered ceiling alone binds. F-8.6.15.
 func TestExtendLeaseRootSessionHasNoParentCeiling_spec_8_6_line_648(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	budgets.seedRoot("root-1", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
 		DeploymentMax:      2_000_000,
 	})
-	// No SetParentLease for "root-1" — root sessions have no parent.
+	// "root-1" is a root session, so it has no parent row and no parent ceiling.
 	svc := newService(t, budgets, nil)
 
 	resp, err := svc.ExtendLease(context.Background(), extendReq("root-1", 200_000))
@@ -1498,8 +1445,8 @@ func (g *recordingTreeGranter) GrantTokenBudget(_ context.Context, rootSessionID
 // F-8.6.3 gap where the grant raised only the leasecontrol view.
 // spec: §8.6.
 func TestExtendLeaseBridgesTokenGrantToTreeBudget_spec_8_6_643(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-9", leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	budgets.seedRoot("root-9", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
@@ -1508,7 +1455,6 @@ func TestExtendLeaseBridgesTokenGrantToTreeBudget_spec_8_6_643(t *testing.T) {
 	granter := &recordingTreeGranter{}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets:    budgets,
-		Tenants:    budgets,
 		Elicitor:   autoApproveElicitor{},
 		TreeBudget: granter,
 	})
@@ -1537,10 +1483,10 @@ func TestExtendLeaseBridgesTokenGrantToTreeBudget_spec_8_6_643(t *testing.T) {
 // tokens (a non-token dimension, or a ceiling-reached request) must not
 // drive the token-budget bridge. spec: §8.6.
 func TestExtendLeaseNoTokenGrantNoBridge_spec_8_6_643(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets := newMemBudget()
 	// A tree already at its token ceiling: a token request is CEILING_REACHED
 	// and grants nothing.
-	budgets.RegisterTree("root-10", leasecontrol.TreeConfig{
+	budgets.seedRoot("root-10", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 500_000,
 		DeploymentBase:     500_000,
@@ -1549,7 +1495,6 @@ func TestExtendLeaseNoTokenGrantNoBridge_spec_8_6_643(t *testing.T) {
 	granter := &recordingTreeGranter{}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets:    budgets,
-		Tenants:    budgets,
 		Elicitor:   autoApproveElicitor{},
 		TreeBudget: granter,
 	})
@@ -1573,8 +1518,8 @@ func TestExtendLeaseNoTokenGrantNoBridge_spec_8_6_643(t *testing.T) {
 // treebudget fault must not turn a GRANTED response into an error.
 // spec: §8.6.
 func TestExtendLeaseTreeGranterFailureDoesNotFailGrant_spec_8_6_643(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-11", leasecontrol.TreeConfig{
+	budgets := newMemBudget()
+	budgets.seedRoot("root-11", treeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
 		DeploymentBase:     500_000,
@@ -1583,7 +1528,6 @@ func TestExtendLeaseTreeGranterFailureDoesNotFailGrant_spec_8_6_643(t *testing.T
 	granter := &recordingTreeGranter{err: errors.New("redis down")}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets:    budgets,
-		Tenants:    budgets,
 		Elicitor:   autoApproveElicitor{},
 		TreeBudget: granter,
 	})

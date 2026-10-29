@@ -71,8 +71,6 @@ func (w *gatewayWiring) buildSessionServer(
 	experimentProviders *experimentprovider.Cache,
 	usage usagestore.Store,
 	taskUsageBuilder *resultrollup.Builder,
-	sessionLeaseRegistrar sessionserver.LeaseTreeRegistrar,
-	leaseExtDefaults sessionserver.LeaseExtensionDefaults,
 	quotaCheckpointSvc *quotacheckpoint.Service,
 	policyChain *interceptor.Chain,
 	policyAuditSink *policy.AuditSink,
@@ -310,12 +308,7 @@ func (w *gatewayWiring) buildSessionServer(
 		TreeArchive:        w.treeArchive,
 		TaskUsage:          taskUsageBuilder,
 		TreeBudgetReturner: w.treeBudgetReserver,
-		// §8.6: register each root tree's lease-extension budget so a
-		// later in-process budget-exhaustion extension (the gateway LLM
-		// Proxy's ExtendForBudget trigger) resolves it. F-15.3.5.
-		LeaseRegistrar:         sessionLeaseRegistrar,
-		LeaseExtensionDefaults: leaseExtDefaults,
-		QuotaCheckpointer:      quotaCheckpointSvc,
+		QuotaCheckpointer:  quotaCheckpointSvc,
 		// spec: §6.2 (Pod State Machine) — the suspension release checkpoints
 		// the workspace before it releases a suspended session's pod; with no
 		// checkpoint service the pod stays held.

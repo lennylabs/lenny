@@ -16,6 +16,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/podscrub"
 )
@@ -94,8 +95,11 @@ func scrubGatewayClient(t *testing.T, driver *recordingRetireDriver) *gatewaycon
 	if err != nil {
 		t.Fatalf("NewScrubReporter: %v", err)
 	}
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	svc, err := leasecontrol.NewService(leasecontrol.Options{Budgets: budgets, Tenants: budgets, ScrubReports: reporter})
+	budgets, err := leasecontrol.NewStoreBudgetSource(memstore.New(), leasecontrol.NewMemoryDenialStore(nil), leasecontrol.ExtensionConfig{})
+	if err != nil {
+		t.Fatalf("leasecontrol.NewStoreBudgetSource: %v", err)
+	}
+	svc, err := leasecontrol.NewService(leasecontrol.Options{Budgets: budgets, ScrubReports: reporter})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}

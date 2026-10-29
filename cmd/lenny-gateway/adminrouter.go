@@ -119,7 +119,7 @@ func (w *gatewayWiring) buildAdminRouter(
 	customRoles customrolestore.Store,
 	delegationPolicies delegationpolicystore.Store,
 	interceptors interceptorstore.Store,
-	leaseBudgets *leasecontrol.MemoryBudgetSource,
+	leaseBudgets *leasecontrol.StoreBudgetSource,
 	opsEmitter events.EventEmitter,
 	opsEventBuffer *eventbuffer.EventBuffer,
 	sessionSrv *sessionserver.Server,
@@ -374,13 +374,11 @@ func (w *gatewayWiring) buildAdminRouter(
 		adminRouter = adminRouter.WithArtifactLegalHold(w.artifactCatalog)
 	}
 	if leaseBudgets != nil {
-		// §15.1: expose DELETE …/extension-denial backed by the
-		// same leasecontrol budget source the GatewayControl handler reads.
+		// §15.1: expose DELETE …/extension-denial backed by the same
+		// leasecontrol budget source the in-process dispatch reads. The
+		// route resolves the root row through the session store wired
+		// above, which confines a tenant-admin to its own tenant.
 		adminRouter = adminRouter.WithLeaseDenials(leaseBudgets)
-		// §10.2: the same budget source resolves a tree's owning
-		// tenant (TenantOf), so a non-platform-admin caller is confined to
-		// its own tenant before the durable clear runs (ADM-4).
-		adminRouter = adminRouter.WithTenantResolver(leaseBudgets)
 	}
 	// §5.2: surface live poolCondition / idlePodCount on the
 	// admin pool GET when the gateway has a Kubernetes client (an

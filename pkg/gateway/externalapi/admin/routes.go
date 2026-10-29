@@ -696,7 +696,9 @@ func (r *Router) registerRuntimeUpgradeRoutes(mux *http.ServeMux) {
 // registerLeaseDenialRoutes registers the §15.1 / §8.6 extension-denial-clear
 // endpoint.
 func (r *Router) registerLeaseDenialRoutes(mux *http.ServeMux) {
-	if r.leaseDenials == nil {
+	// The handler resolves the root row before the clear, so the route
+	// needs the session store as well as the clearer. spec: §15.1.
+	if r.leaseDenials == nil || r.sessions == nil {
 		return
 	}
 	// §15.1 — clear the §8.6 extension-denied flag on a

@@ -139,10 +139,12 @@ func newConnectorScopeFixture(t *testing.T) *connectorScopeFixture {
 	invoker := connectorinvoke.NewInvoker(connectors, creds, connectorinvoke.New(stub.Client()), nil, authz)
 	bridge := connectortools.New(sessions, connectors, authz, invoker)
 
-	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets, err := leasecontrol.NewStoreBudgetSource(sessions, leasecontrol.NewMemoryDenialStore(nil), leasecontrol.ExtensionConfig{})
+	if err != nil {
+		t.Fatalf("leasecontrol.NewStoreBudgetSource: %v", err)
+	}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets:        budgets,
-		Tenants:        budgets,
 		ConnectorTools: bridge,
 	})
 	if err != nil {

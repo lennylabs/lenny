@@ -49,10 +49,9 @@ func (f *fakeScrubReports) RecordPodScrub(_ context.Context, podID string, faile
 
 func newServiceWithScrub(t *testing.T, sr leasecontrol.ScrubReportService) *leasecontrol.Service {
 	t.Helper()
-	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets := newMemBudget()
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets:      budgets,
-		Tenants:      budgets,
 		ScrubReports: sr,
 	})
 	if err != nil {

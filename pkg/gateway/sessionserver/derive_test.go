@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path"
@@ -18,7 +17,6 @@ import (
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -684,44 +682,6 @@ func TestDeriveCompletedSourceDuringSealWindow_spec_7_1(t *testing.T) {
 	}
 }
 
-// recordingLeaseRegistrar records the §8.6 lease-extension tree
-// registrations the gateway makes for a newly created root session.
-type recordingLeaseRegistrar struct{ roots []string }
-
-func (r *recordingLeaseRegistrar) RegisterTree(rootSessionID string, _ leasecontrol.TreeConfig) {
-	r.roots = append(r.roots, rootSessionID)
-}
-
-// insertFailingStore fails every insert of the row named failID with a
-// plain store error, so the handler answers 500 and has inserted nothing.
-type insertFailingStore struct {
-	sessionstore.Store
-	failID string
-}
-
-var errInsertFailed = errors.New("insert failed")
-
-func (s insertFailingStore) Create(ctx context.Context, row sessionstore.Session) error {
-	if row.ID == s.failID {
-		return errInsertFailed
-	}
-	return s.Store.Create(ctx, row)
-}
-
-func (s insertFailingStore) CreateReserved(ctx context.Context, row sessionstore.Session) error {
-	if row.ID == s.failID {
-		return errInsertFailed
-	}
-	return s.Store.CreateReserved(ctx, row)
-}
-
-func (s insertFailingStore) CreateWithTranscript(ctx context.Context, row sessionstore.Session, sourceID string) error {
-	if row.ID == s.failID {
-		return errInsertFailed
-	}
-	return s.Store.CreateWithTranscript(ctx, row, sourceID)
-}
-
 // rootPathCase is one session-creating path that copies from a source
 // session: derive or one of the replay modes.
 type rootPathCase struct {
@@ -795,13 +755,12 @@ func (c rootPathCase) newStore() (*memstore.Store, *transcriptstore.Memory) {
 // newRootPathServer wires a blob store that holds the case's source
 // snapshot object, because derive and replay copy it and fail closed when
 // the copy cannot run.
-func newRootPathServer(t *testing.T, c rootPathCase, store sessionstore.Store, transcripts *transcriptstore.Memory, reg *recordingLeaseRegistrar) http.Handler {
+func newRootPathServer(t *testing.T, c rootPathCase, store sessionstore.Store, transcripts *transcriptstore.Memory) http.Handler {
 	t.Helper()
 	opts := sessionserver.Options{
 		DevTenantHeader: true,
 		Blobs:           snapshotBlobs(t, c.sourceID, path.Base(c.snapRef)),
 		IDFunc:          func() string { return "sess_new" },
-		LeaseRegistrar:  reg,
 	}
 	if transcripts != nil {
 		opts.Transcripts = transcripts
@@ -812,20 +771,19 @@ func newRootPathServer(t *testing.T, c rootPathCase, store sessionstore.Store, t
 // TestDeriveAndReplayCreateRoots_spec_12_6 pins that derive and every
 // replay mode create an independent root: the row carries no delegation
 // parent, is its own root_session_id, records its lineage in the parent
-// workspace reference, is absent from the source's tree, and is registered
-// once for lease extension. The response still echoes the source id.
+// workspace reference, and is absent from the source's tree. The response
+// still echoes the source id.
 //
 // spec: §12.6 (StoreRouter), §15.1 (Session Replay Semantics), §12.8 step 16,
-// §4.5 (Workspace lineage), §8.6
+// §4.5 (Workspace lineage)
 func TestDeriveAndReplayCreateRoots_spec_12_6(t *testing.T) {
 	for _, c := range rootPathCases() {
 		t.Run(c.name, func(t *testing.T) {
 			ctx := context.Background()
 			store, transcripts := c.newStore()
 			c.seed(t, store)
-			reg := &recordingLeaseRegistrar{}
 
-			rr := c.call(t, newRootPathServer(t, c, store, transcripts, reg))
+			rr := c.call(t, newRootPathServer(t, c, store, transcripts))
 			if rr.Code != http.StatusCreated {
 				t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
 			}
@@ -860,34 +818,6 @@ func TestDeriveAndReplayCreateRoots_spec_12_6(t *testing.T) {
 				if n.ID == "sess_new" {
 					t.Errorf("new session is a node in the source's tree")
 				}
-			}
-			// registerLeaseTree skips a row that carries a parent, so this
-			// discriminates a root from a row still written as a child.
-			if len(reg.roots) != 1 || reg.roots[0] != "sess_new" {
-				t.Errorf("lease registrations = %v, want [sess_new]", reg.roots)
-			}
-		})
-	}
-}
-
-// TestDeriveAndReplayInsertErrorRegistersNoLeaseTree_spec_8_6 pins that a
-// failed insert registers no lease-extension tree on derive or any replay
-// mode.
-//
-// spec: §8.6, §15.1 (Session Replay Semantics)
-func TestDeriveAndReplayInsertErrorRegistersNoLeaseTree_spec_8_6(t *testing.T) {
-	for _, c := range rootPathCases() {
-		t.Run(c.name, func(t *testing.T) {
-			mem, transcripts := c.newStore()
-			c.seed(t, mem)
-			reg := &recordingLeaseRegistrar{}
-
-			rr := c.call(t, newRootPathServer(t, c, insertFailingStore{Store: mem, failID: "sess_new"}, transcripts, reg))
-			if rr.Code != http.StatusInternalServerError {
-				t.Fatalf("status: got %d, want 500; body=%s", rr.Code, rr.Body.String())
-			}
-			if len(reg.roots) != 0 {
-				t.Errorf("lease registrations = %v, want none", reg.roots)
 			}
 		})
 	}

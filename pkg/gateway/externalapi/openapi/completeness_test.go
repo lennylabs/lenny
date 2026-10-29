@@ -457,6 +457,9 @@ func registeredRouteTemplates(t *testing.T) []string {
 		WithConnectorRefresh(connectorRefreshStub{}, nil).
 		WithReconciliationResumer(reconciliationResumerStub{}).
 		WithLeaseDenials(leaseDenialStub{}).
+		// The extension-denial clear resolves the root row, so its route
+		// registers only with a session store wired.
+		WithSessions(memstore.New()).
 		WithQuotaReconciler(quotaReconcilerStub{}).
 		WithPreflight(preflighterStub{}).
 		WithAdminTokenProvisioner(adminTokenStub{}).

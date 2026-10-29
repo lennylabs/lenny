@@ -4,6 +4,7 @@ package main
 
 import (
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -34,16 +35,9 @@ import (
 // wire RPC here. It returns the constructed leasecontrol.Service so the
 // composition root wires the in-process §8.6 budget-exhaustion trigger onto
 // the proxy's sessionbudget enforcer. Its budget state is the
-// caller-supplied MemoryBudgetSource (shared with the §15.1 admin
-// extension-denial clear endpoint so both mutate one set of per-tree
-// denial flags), which doubles as the TenantResolver; a nil budgets
-// argument falls back to a fresh source. The §8.6 durability
-// requirement — persisting the extension-denied flag and cool-off
-// expiry to the delegation_tree_budget Postgres table so a coordinator
-// handoff cannot bypass a user rejection — is met by swapping in a
-// Postgres-backed leasecontrol.BudgetSource with the Wave 1
-// store-persistence work; leasecontrol.Service depends only on the
-// interface.
+// caller-supplied store-backed BudgetSource, shared with the §15.1 admin
+// extension-denial clear endpoint so both act on the same rows. A nil
+// budgets argument with a non-empty addr is an error.
 //
 // tlsCert/tlsKey/clientCA carry the §4.7 mesh credentials (the gateway's
 // own --adapter-tls-* material). When clientCA is set the listener
@@ -66,16 +60,15 @@ import (
 // handshake with no gRPC frame and emits the spec's `pod_identity_mismatch`
 // log. trustDomain empty leaves CA-only verification in place (the
 // local-development path). F-10.3.1 / F-10.3.7 / F-10.3.13.
-func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, elicitor leasecontrol.Elicitor, autoCounter ratelimit.Counter, defaultAutoMaxPerMin int, platformTools leasecontrol.PlatformToolService, connectorTools leasecontrol.ConnectorToolService, treeGranter leasecontrol.TreeBudgetGranter, scrubReports leasecontrol.ScrubReportService, replicaID, tlsCert, tlsKey, clientCA, trustDomain, saTokenAudience string, saTokenVerifier leasecontrol.TokenVerifier, denyList spiffe.DenyChecker, inputWaits inputWaitRecoveryDeps) (*grpc.Server, net.Listener, *leasecontrol.Service, error) {
+func newGatewayControlServer(addr string, budgets *leasecontrol.StoreBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, elicitor leasecontrol.Elicitor, autoCounter ratelimit.Counter, defaultAutoMaxPerMin int, platformTools leasecontrol.PlatformToolService, connectorTools leasecontrol.ConnectorToolService, treeGranter leasecontrol.TreeBudgetGranter, scrubReports leasecontrol.ScrubReportService, replicaID, tlsCert, tlsKey, clientCA, trustDomain, saTokenAudience string, saTokenVerifier leasecontrol.TokenVerifier, denyList spiffe.DenyChecker, inputWaits inputWaitRecoveryDeps) (*grpc.Server, net.Listener, *leasecontrol.Service, error) {
 	if addr == "" {
 		return nil, nil, nil, nil
 	}
 	if budgets == nil {
-		budgets = leasecontrol.NewMemoryBudgetSource()
+		return nil, nil, nil, errors.New("lenny-gateway: GatewayControl listener requires a lease-extension budget source")
 	}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets:           budgets,
-		Tenants:           budgets,
 		Metrics:           metrics,
 		Auditing:          auditor,
 		ServiceInstanceID: replicaID,

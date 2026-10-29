@@ -46,7 +46,7 @@ type consent struct {
 
 // successCoolOffProvider is the optional BudgetSource extension that
 // reports the tree's resolved §8.6 post-approval cool-off
-// duration. MemoryBudgetSource implements it; a source that does not
+// duration. StoreBudgetSource implements it; a source that does not
 // falls back to DefaultSuccessCoolOff. The pattern mirrors
 // approvalModeProvider so the core BudgetSource interface stays minimal.
 // spec: §8.6

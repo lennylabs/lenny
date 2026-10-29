@@ -48,8 +48,8 @@ func (e *DelegatedChildNotCreatedError) Error() string {
 // registerBinding populates via podRegistry.Put. Without it Executor.Send
 // still rejects the child as unbound. registerBinding also persists the pod
 // assignment and workspace root so a fresh replica can recover the binding. As
-// on the create path, recordSessionCreated and registerLeaseTree (§8.6
-// lease-extension budget) run after the successful transition.
+// on the create path, recordSessionCreated runs after the successful
+// transition.
 //
 // On success it returns the child's post-materialization state
 // (session.StateRunning) so the caller builds its task handle from the live
@@ -201,10 +201,6 @@ func (s *Server) MaterializeDelegatedChild(ctx context.Context, tenantID, childI
 		return "", fmt.Errorf("transition delegated child %s to running: %w", childID, err)
 	}
 	s.recordSessionCreated(ctx, updated)
-	// §8.6: register the tree's lease-extension budget. A delegated child
-	// carries a ParentSessionID, so registerLeaseTree no-ops here (the root
-	// registered the tree); the call mirrors the create path for uniformity.
-	s.registerLeaseTree(updated)
 	// Publish the BindResult into the shared podRegistry so
 	// PodExecutor.streamFor resolves the child and persist the pod assignment
 	// and workspace root for cross-replica recovery. Without it Executor.Send

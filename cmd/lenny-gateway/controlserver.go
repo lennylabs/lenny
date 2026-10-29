@@ -56,7 +56,7 @@ func (w *gatewayWiring) buildControlServer(
 	mtlsDeny *mtlsdenylist.DenyList,
 	connectorAuthorizer *connectorauthz.Authorizer,
 	connectorInvoker *connectorinvoke.Invoker,
-	leaseBudgets *leasecontrol.MemoryBudgetSource,
+	leaseBudgets *leasecontrol.StoreBudgetSource,
 	sessionSrv *sessionserver.Server,
 ) {
 	f := w.f
@@ -289,13 +289,15 @@ func (w *gatewayWiring) buildControlServer(
 // packages stay decoupled with no import cycle. The extension does not
 // carry a budget/consumed amount: budget exhaustion asks for as much
 // headroom as the §8.6 ceiling allows, which ExtendForBudget derives from
-// the tree budget, so the seam ignores those parameters. A dispatch error
+// the tree budget, so the seam ignores those parameters. The seam threads
+// the tenant the enforcer holds into the dispatch, which reads the session
+// rows under it (§8.6 Extension state). A dispatch error
 // fails closed to Terminal: an unresolvable or errored extension denies
 // and terminates the session rather than silently granting tokens. spec:
 // §8.6; proposal 0023 S6.
 func leaseExtendSeam(svc *leasecontrol.Service) sessionbudget.ExtendOnExhaustion {
-	return func(reqCtx, waitCtx context.Context, _, sessionID string, _, _ int64) sessionbudget.Outcome {
-		outcome, err := svc.ExtendForBudget(reqCtx, waitCtx, sessionID)
+	return func(reqCtx, waitCtx context.Context, tenantID, sessionID string, _, _ int64) sessionbudget.Outcome {
+		outcome, err := svc.ExtendForBudget(reqCtx, waitCtx, tenantID, sessionID)
 		if err != nil {
 			// Fail closed: a transport fault, an unresolvable session, or a
 			// missing tree budget denies and terminates (§8.6 fail-closed
