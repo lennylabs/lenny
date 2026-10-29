@@ -6,16 +6,20 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math/rand"
 	"net/http"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/orphancleanup"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/orphanfixture"
 )
 
 // staticTenantLister adapts a fixed tenant list to the watchdog's
@@ -397,4 +401,111 @@ func TestCascadeSkipsFallbackForDescendantAnotherWriterEnded_spec_8_10(t *testin
 		"mid": session.StateCancelled, "leaf_a": session.StateRunning, "leaf_b": session.StateRunning,
 	})
 	assertFallbackAudit(t, sink, nil)
+}
+
+// errInjected is the fault the cascade convergence store injects.
+var errInjected = errors.New("injected store fault")
+
+// cascadeFaultStore fails a randomized subset of the List and Update calls
+// while armed. The rng is shared by the cascade walk and the post-terminal
+// hook goroutines, so it is guarded.
+type cascadeFaultStore struct {
+	sessionstore.Store
+
+	mu    sync.Mutex
+	rng   *rand.Rand
+	p     float64
+	armed bool
+}
+
+func (s *cascadeFaultStore) fault() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.armed && s.rng.Float64() < s.p
+}
+
+func (s *cascadeFaultStore) arm(on bool) {
+	s.mu.Lock()
+	s.armed = on
+	s.mu.Unlock()
+}
+
+func (s *cascadeFaultStore) List(ctx context.Context, tenantID string, f sessionstore.ListFilter) ([]sessionstore.Session, error) {
+	if s.fault() {
+		return nil, errInjected
+	}
+	return s.Store.List(ctx, tenantID, f)
+}
+
+func (s *cascadeFaultStore) Update(ctx context.Context, tenantID, id string, fn func(*sessionstore.Session) error) (sessionstore.Session, error) {
+	if s.fault() {
+		return sessionstore.Session{}, errInjected
+	}
+	return s.Store.Update(ctx, tenantID, id, fn)
+}
+
+// spec: §8.10 (Orphan cleanup), §7.2 (Interactive Session Model)
+//
+// The inline cancel_all cascade runs over a store that fails a randomized
+// subset of its List and Update calls, so the walk stops part-way. Orphan
+// cleanup is the retry owner: passes of the sweeper, wired to the gateway's
+// terminal pipeline, reach quiescence within one pass per tree level plus one,
+// after which no live delegated session has a terminal cancel_all parent.
+// Every session receives at most one terminal write and one post-terminal
+// hook, and each session reached from the root through cancel_all ancestors
+// receives exactly one terminal write. The seed is logged.
+func TestCascadeUnderStoreFaultsConvergesThroughOrphanCleanup_spec_8_10(t *testing.T) {
+	seed := time.Now().UnixNano()
+	t.Logf("seed %d", seed)
+	rng := rand.New(rand.NewSource(seed))
+	const maxDepth = 3
+	for round := 0; round < 25; round++ {
+		n := 0
+		newID := func() string { n++; return fmt.Sprintf("r%d_s%02d", round, n) }
+		nodes := orphanfixture.RandomTree(rng, newID, maxDepth, 3)
+		writes := orphanfixture.NewWriteCounter(memstore.New())
+		faults := &cascadeFaultStore{Store: writes, rng: rand.New(rand.NewSource(rng.Int63())), p: 0.35}
+		archive := orphanfixture.NewArchiveCounter()
+		srv := sessionserver.New(faults, sessionserver.Options{DevTenantHeader: true, TreeArchive: archive})
+		orphanfixture.Seed(t, writes, sessionstore.Session{TenantID: "acme", RuntimeRef: "echo"}, nodes)
+
+		ctx := context.Background()
+		end := srv.BeginTerminal(nodes[0].ID)
+		from, row, err := orphanfixture.Cancel(ctx, writes, "acme", nodes[0].ID, time.Now())
+		if err != nil {
+			t.Fatalf("round %d: %v", round, err)
+		}
+		faults.arm(true)
+		srv.OnSessionTerminal(ctx, from, row)
+		end()
+		if err := srv.WaitTerminalWork(ctx); err != nil {
+			t.Fatalf("round %d: WaitTerminalWork: %v", round, err)
+		}
+		faults.arm(false)
+
+		sw := orphancleanup.New(faults, orphancleanup.StaticTenants{"acme"}, orphancleanup.Options{Terminal: srv})
+		converged := false
+		for pass := 0; pass <= maxDepth+1 && !converged; pass++ {
+			rows, err := writes.List(ctx, "acme", sessionstore.ListFilter{})
+			if err != nil {
+				t.Fatalf("round %d: list: %v", round, err)
+			}
+			if len(orphanfixture.LiveUnderTerminalCancelAll(rows)) == 0 {
+				converged = true
+				break
+			}
+			if _, err := sw.Tick(ctx, time.Now()); err != nil {
+				t.Fatalf("round %d pass %d: Tick: %v", round, pass, err)
+			}
+			if err := srv.WaitTerminalWork(ctx); err != nil {
+				t.Fatalf("round %d: WaitTerminalWork: %v", round, err)
+			}
+		}
+		if !converged {
+			rows, _ := writes.List(ctx, "acme", sessionstore.ListFilter{})
+			t.Fatalf("round %d: live sessions under a terminal cancel_all parent after %d passes: %v",
+				round, maxDepth+2, orphanfixture.LiveUnderTerminalCancelAll(rows))
+		}
+		orphanfixture.CheckOnce(t, nodes, writes, archive.Hooks, orphanfixture.CancelAllReach(nodes))
+	}
 }

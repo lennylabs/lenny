@@ -2533,7 +2533,13 @@
         "tests/tier7a_load_local/input_wait_recovery_invariant_test.go::TestInputWaitRecoveryKeepsRowsOnLiveWaits_spec_28_3",
         "tests/tier8_chaos/input_wait_recovery_chaos_test.go::TestStaleInputWaitRowEndsAtMaxSessionAge_spec_6_2",
         "pkg/gateway/mcpfabric/delegationtree/orphancleanup/dispositions_test.go::TestOrphanUnderTerminalCancelAllParentIsCancelledOnFirstPass_spec_8_10",
-        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/dispositions_test.go::TestTwoOrphanSweepersEndEachOrphanOnce_spec_8_10"
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/dispositions_test.go::TestTwoOrphanSweepersEndEachOrphanOnce_spec_8_10",
+        "pkg/gateway/sessionserver/cascade_on_expire_test.go::TestCascadeUnderStoreFaultsConvergesThroughOrphanCleanup_spec_8_10",
+        "pkg/gateway/mcpfabric/mcptools/cancel_release_test.go::TestCancelChildUnderStoreFaultsConvergesThroughOrphanCleanup_spec_8_10",
+        "tests/tier2_component/stores/sessionstore_orphan_membership_test.go::TestTwoOrphanSweepersOverPostgresEndEachOrphanOnce_spec_8_10",
+        "tests/tier7a_load_local/orphan_cascade_sweeper_race_test.go::TestCascadeAndTwoSweepersEndEachSessionOnce_spec_8_10",
+        "tests/tier8_chaos/orphan_cascade_replica_stop_test.go::TestOrphanCleanupCompletesStoppedReplicaCascade_spec_8_10",
+        "tests/testinfra/orphanfixture/orphanfixture_test.go::TestWriteCounterCountsAppliedTerminalWritesOnly_spec_7_2"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -2835,7 +2841,8 @@
         "tests/tier3_contract/sdks/runtime_sdk_test.go",
         "tests/tier11_docs/test_gaps_tracing_context_quote_reconciliation_test.go",
         "tests/tier7a_load_local/elicitation_xreplica_wake_test.go",
-        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTFiledDefectRecordsAreCurrent_spec_10_2"
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTFiledDefectRecordsAreCurrent_spec_10_2",
+        "pkg/gateway/mcpfabric/mcptools/cancel_release_test.go::TestCancelChildUnderStoreFaultsConvergesThroughOrphanCleanup_spec_8_10"
       ],
       "packages": [
         "pkg/delegation/tools"
@@ -2931,7 +2938,15 @@
         "pkg/gateway/mcpfabric/delegationtree/orphancleanup/dispositions_test.go::TestOrphanGaugeIsSelectedMinusAppliedEnds_spec_8_10",
         "pkg/gateway/mcpfabric/delegationtree/orphancleanup/dispositions_test.go::TestOrphanedPredicate_spec_8_10",
         "pkg/gateway/mcpfabric/delegationtree/orphancleanup/dispositions_test.go::TestTwoOrphanSweepersEndEachOrphanOnce_spec_8_10",
-        "pkg/gateway/sessionserver/tree_archive_test.go::TestOrphanCapCountsChildrenOfTerminalMidTreeSession_spec_8_10"
+        "pkg/gateway/sessionserver/tree_archive_test.go::TestOrphanCapCountsChildrenOfTerminalMidTreeSession_spec_8_10",
+        "pkg/gateway/sessionserver/cascade_on_expire_test.go::TestCascadeUnderStoreFaultsConvergesThroughOrphanCleanup_spec_8_10",
+        "pkg/gateway/mcpfabric/mcptools/cancel_release_test.go::TestCancelChildUnderStoreFaultsConvergesThroughOrphanCleanup_spec_8_10",
+        "tests/tier2_component/stores/sessionstore_orphan_membership_test.go::TestDeletedParentLeavesDelegatedChildSelectedAsOrphan_spec_8_10",
+        "tests/tier2_component/stores/sessionstore_orphan_membership_test.go::TestTwoOrphanSweepersOverPostgresEndEachOrphanOnce_spec_8_10",
+        "tests/tier4_integration/derived_session_root_test.go::TestDerivedSessionIsOutsideTheSourceTree_spec_12_6",
+        "tests/tier7a_load_local/orphan_cascade_sweeper_race_test.go::TestCascadeAndTwoSweepersEndEachSessionOnce_spec_8_10",
+        "tests/tier8_chaos/orphan_cascade_replica_stop_test.go::TestOrphanCleanupCompletesStoppedReplicaCascade_spec_8_10",
+        "tests/testinfra/orphanfixture/orphanfixture_test.go::TestLiveUnderTerminalCancelAllNamesOnlyCancelAllOrphans_spec_8_10"
       ],
       "packages": [
         "pkg/delegation/tree",
@@ -4477,7 +4492,9 @@
         "tests/tier2_component/stores/postgrespodregistry_test.go",
         "tests/tier11_docs/cloudevents_alias_reconciliation_test.go",
         "tests/tier11_docs/redis_key_prefix_registry_test.go",
-        "tests/tier2_component/migrations/prod_columns_test.go"
+        "tests/tier2_component/migrations/prod_columns_test.go",
+        "tests/tier2_component/stores/sessionstore_orphan_membership_test.go::TestSessionStoreRootRowIsItsOwnRoot_spec_12_8",
+        "tests/tier4_integration/derived_session_root_test.go::TestDerivedSessionIsOutsideTheSourceTree_spec_12_6"
       ],
       "packages": [
         "pkg/store",
@@ -4692,7 +4709,9 @@
         "pkg/gateway/mcpfabric/mcptools/delegate_parent_freshness_test.go::TestDelegateTaskParentEndedBeforeInsertAnswersParentRevoked_spec_8_2",
         "pkg/gateway/mcpfabric/mcptools/delegator_gate_parent_internal_test.go::TestRequireActiveDelegatorIgnoresTerminalParent_spec_12_8",
         "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTRecordsCloseTheMintFindings_spec_8_2",
-        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTTestGapRecords_spec_8_2"
+        "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTTestGapRecords_spec_8_2",
+        "tests/tier2_component/stores/sessionstore_orphan_membership_test.go::TestSessionStoreRootRowIsItsOwnRoot_spec_12_8",
+        "tests/tier2_component/stores/sessionstore_orphan_membership_test.go::TestDeletedParentLeavesDelegatedChildSelectedAsOrphan_spec_8_10"
       ],
       "packages": [
         "pkg/store",
@@ -5503,7 +5522,8 @@
         "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartWriteStoreErrorAnswersInternal_spec_15_1",
         "pkg/gateway/sessionserver/start_starting_state_test.go::TestServiceModeStartTakesNoLease_spec_10_1_1",
         "sdks/client/go/lenny/start_single_attempt_test.go::TestStartSendsOneRequestOnStartingFailed_spec_15_6",
-        "sdks/client/go/lenny/start_single_attempt_test.go::TestStartSendsOneRequestOnDroppedConnection_spec_15_6"
+        "sdks/client/go/lenny/start_single_attempt_test.go::TestStartSendsOneRequestOnDroppedConnection_spec_15_6",
+        "tests/tier4_integration/derived_session_root_test.go::TestDerivedSessionIsOutsideTheSourceTree_spec_12_6"
       ],
       "packages": [
         "pkg/api/v1/session",

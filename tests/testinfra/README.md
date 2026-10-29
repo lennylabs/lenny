@@ -32,6 +32,7 @@ Each entry is a package under `github.com/lennylabs/lenny/tests/testinfra/<name>
 | [`matrix/`](matrix/) | Contract-test matrix combinatorics. |
 | [`mocks/`](mocks/) | Mock external services: LLM providers, OAuth connector, OTel collector. Subpackages mirror the mocked service names. |
 | [`ports/`](ports/) | Random free-port allocator for subprocess-style tests. |
+| [`orphanfixture/`](orphanfixture/) | §8.10 orphan-cleanup convergence fixture: delegation-tree seeding, per-session terminal-write and post-terminal-hook counters, and the check that no live delegated session is left under a terminal `cancel_all` parent. |
 | [`randctl/`](randctl/) | Deterministic RNG keyed by test name; substitutes for `crypto/rand` in tests. |
 | [`schematest/`](schematest/) | JSON Schema and protobuf round-trip helpers. |
 | [`security/`](security/) | SBOM, cosign verification, ZAP scanner driver, trivy, and kube-bench wrappers. Subpackages: `cosign/`, `kubebench/`, `pentest/`, `sbom/`, `zap/`. |

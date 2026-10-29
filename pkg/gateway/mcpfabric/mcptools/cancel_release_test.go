@@ -5,16 +5,20 @@ package mcptools_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math/rand"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/orphancleanup"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/tests/testinfra/orphanfixture"
 )
 
 // releaseRecordingExecutor records the §6.2 disposition the gateway records per
@@ -222,6 +226,142 @@ func TestCancelChildPrimaryListingErrorFailsTheCall_spec_12_8(t *testing.T) {
 		}
 		if row.State != want {
 			t.Errorf("%s state = %q, want %q", id, row.State, want)
+		}
+	}
+}
+
+// cancelFaultStore fails a randomized subset of the List and Update calls
+// while armed.
+type cancelFaultStore struct {
+	sessionstore.Store
+
+	mu    sync.Mutex
+	rng   *rand.Rand
+	p     float64
+	armed bool
+}
+
+func (s *cancelFaultStore) fault() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.armed && s.rng.Float64() < s.p
+}
+
+func (s *cancelFaultStore) arm(on bool) {
+	s.mu.Lock()
+	s.armed = on
+	s.mu.Unlock()
+}
+
+func (s *cancelFaultStore) List(ctx context.Context, tenantID string, f sessionstore.ListFilter) ([]sessionstore.Session, error) {
+	if s.fault() {
+		return nil, errors.New("injected list fault")
+	}
+	return s.Store.List(ctx, tenantID, f)
+}
+
+func (s *cancelFaultStore) Update(ctx context.Context, tenantID, id string, fn func(*sessionstore.Session) error) (sessionstore.Session, error) {
+	if s.fault() {
+		return sessionstore.Session{}, errors.New("injected update fault")
+	}
+	return s.Store.Update(ctx, tenantID, id, fn)
+}
+
+// sweeperHook adapts the cancel_child terminal fake to the orphan-cleanup
+// terminal hook, so the cancel walk's hooks and the sweeper's hooks are
+// counted together per session.
+type sweeperHook struct{ *hookTerminal }
+
+func (h sweeperHook) OnSessionTerminal(_ context.Context, from session.State, sess sessionstore.Session) {
+	h.mu.Lock()
+	h.calls = append(h.calls, hookCall{id: sess.ID, from: from, to: sess.State})
+	h.mu.Unlock()
+}
+
+func (h *hookTerminal) hooksFor(id string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := 0
+	for _, c := range h.calls {
+		if c.id == id {
+			n++
+		}
+	}
+	return n
+}
+
+// spec: §8.5 (cancel_child cascades per policy), §8.10 (Orphan cleanup), §7.2 (Interactive Session Model)
+//
+// lenny/cancel_child walks a randomized subtree over a store that fails a
+// randomized subset of its List and Update calls, so the walk stops part-way
+// or the call fails. Orphan cleanup completes the interrupted walk: within
+// one pass per tree level plus one, no live delegated session has a terminal
+// cancel_all parent, and every session receives at most one terminal write
+// and one post-terminal hook. The seed is logged.
+func TestCancelChildUnderStoreFaultsConvergesThroughOrphanCleanup_spec_8_10(t *testing.T) {
+	seed := time.Now().UnixNano()
+	t.Logf("seed %d", seed)
+	rng := rand.New(rand.NewSource(seed))
+	const maxDepth = 4
+	for round := 0; round < 40; round++ {
+		n := 0
+		newID := func() string { n++; return fmt.Sprintf("r%d_s%02d", round, n) }
+		// The caller is a live root; the cancel_child target is its depth-1
+		// child, under which the randomized subtree hangs.
+		subtree := orphanfixture.RandomTree(rng, newID, maxDepth-1, 3)
+		nodes := []orphanfixture.Node{{ID: "caller", Policy: session.CascadeCancelAll}}
+		for _, nd := range subtree {
+			if nd.Depth == 0 {
+				nd.Parent = "caller"
+			}
+			nd.Depth++
+			nodes = append(nodes, nd)
+		}
+		writes := orphanfixture.NewWriteCounter(memstore.New())
+		faults := &cancelFaultStore{Store: writes, rng: rand.New(rand.NewSource(rng.Int63())), p: 0.3}
+		hook := newHookTerminal(nil)
+		srv := mcp.NewServer()
+		mcptools.Register(srv, mcptools.Deps{
+			DevTenantFallback: true,
+			Store:             faults,
+			Terminal:          hook,
+			Clock:             time.Now,
+			IDFunc:            func() string { return "sess_mcp" },
+			TenantID:          "acme",
+		})
+		orphanfixture.Seed(t, writes, sessionstore.Session{TenantID: "acme"}, nodes)
+
+		faults.arm(true)
+		_ = call(t, srv.Handler(), "lenny/cancel_child",
+			fmt.Sprintf(`{"parentSessionId":"caller","childSessionId":%q}`, subtree[0].ID))
+		hook.waitSettled(t, 0)
+		faults.arm(false)
+
+		ctx := context.Background()
+		sw := orphancleanup.New(faults, orphancleanup.StaticTenants{"acme"}, orphancleanup.Options{Terminal: sweeperHook{hook}})
+		converged := false
+		for pass := 0; pass <= maxDepth+1; pass++ {
+			rows, err := writes.List(ctx, "acme", sessionstore.ListFilter{})
+			if err != nil {
+				t.Fatalf("round %d: list: %v", round, err)
+			}
+			if len(orphanfixture.LiveUnderTerminalCancelAll(rows)) == 0 {
+				converged = true
+				break
+			}
+			if _, err := sw.Tick(ctx, time.Now()); err != nil {
+				t.Fatalf("round %d pass %d: Tick: %v", round, pass, err)
+			}
+			hook.waitSettled(t, 0)
+		}
+		if !converged {
+			rows, _ := writes.List(ctx, "acme", sessionstore.ListFilter{})
+			t.Fatalf("round %d: live sessions under a terminal cancel_all parent: %v",
+				round, orphanfixture.LiveUnderTerminalCancelAll(rows))
+		}
+		orphanfixture.CheckOnce(t, nodes, writes, hook.hooksFor, nil)
+		if writes.Writes("caller") != 0 {
+			t.Errorf("round %d: cancel_child ended its caller", round)
 		}
 	}
 }
