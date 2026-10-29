@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -55,7 +56,7 @@ func TestLeaseExtensionConfigFromFlags(t *testing.T) {
 // spec: §8.6 (Extension state)
 func TestNewLeaseBudgetSourceReadsSessionStore(t *testing.T) {
 	w := &gatewayWiring{f: leaseFlags("")}
-	if src, err := w.newLeaseBudgetSource(); err != nil || src != nil {
+	if src, err := w.newLeaseBudgetSource(w.newLeaseDenialStore()); err != nil || src != nil {
 		t.Fatalf("no listener: source = %v, err = %v, want nil and no error", src, err)
 	}
 
@@ -68,7 +69,7 @@ func TestNewLeaseBudgetSourceReadsSessionStore(t *testing.T) {
 	}
 	w = &gatewayWiring{f: leaseFlags("127.0.0.1:0")}
 	w.sessions = sessions
-	src, err := w.newLeaseBudgetSource()
+	src, err := w.newLeaseBudgetSource(w.newLeaseDenialStore())
 	if err != nil || src == nil {
 		t.Fatalf("listener: source = %v, err = %v, want a source", src, err)
 	}
@@ -78,5 +79,37 @@ func TestNewLeaseBudgetSourceReadsSessionStore(t *testing.T) {
 	}
 	if tb.Current.Tokens != 100_000 || tb.EffectiveMax.Tokens != 500_000 {
 		t.Fatalf("TreeBudget = current %d max %d, want 100000 500000", tb.Current.Tokens, tb.EffectiveMax.Tokens)
+	}
+}
+
+// failingGrants is a DenialStore whose Grants read fails.
+type failingGrants struct{ leasecontrol.DenialStore }
+
+func (failingGrants) Grants(context.Context, string, string) (leasecontrol.Dimensions, error) {
+	return leasecontrol.Dimensions{}, errors.New("postgres down")
+}
+
+// TestTreeGrantReaderReadsTheSourcesGrants pins that the delegate_task token
+// cap reads the cumulative token grant from the same DenialStore the lease
+// budget source records grants in, and that a read failure is returned for
+// the reservation to fail closed.
+//
+// spec: §8.3, §8.6 (Extension state)
+func TestTreeGrantReaderReadsTheSourcesGrants(t *testing.T) {
+	ctx := context.Background()
+	w := &gatewayWiring{f: leaseFlags("")}
+	denials := w.newLeaseDenialStore()
+	r := treeGrantReader{denials: denials}
+	if got, err := r.TreeTokenGrant(ctx, "acme", "root"); err != nil || got != 0 {
+		t.Fatalf("grant before any extension = %d, %v, want 0", got, err)
+	}
+	if _, err := denials.Grant(ctx, "acme", "root", leasecontrol.Dimensions{Tokens: 40_000}, leasecontrol.Dimensions{Tokens: 1_000_000}); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+	if got, err := r.TreeTokenGrant(ctx, "acme", "root"); err != nil || got != 40_000 {
+		t.Fatalf("grant after an extension = %d, %v, want 40000", got, err)
+	}
+	if _, err := (treeGrantReader{denials: failingGrants{denials}}).TreeTokenGrant(ctx, "acme", "root"); err == nil {
+		t.Fatal("a failing Grants read returned no error")
 	}
 }

@@ -194,7 +194,8 @@ func (w *gatewayWiring) buildSessionDeps() {
 	// listener is enabled via --grpc-addr. One store-backed source serves
 	// the in-process leasecontrol dispatch and the §15.1 admin
 	// extension-denial clear endpoint, so both act on the same rows.
-	leaseBudgets, err := w.newLeaseBudgetSource()
+	leaseDenials := w.newLeaseDenialStore()
+	leaseBudgets, err := w.newLeaseBudgetSource(leaseDenials)
 	if err != nil {
 		log.Fatalf("lenny-gateway: lease-extension budget source: %v", err)
 	}
@@ -229,6 +230,7 @@ func (w *gatewayWiring) buildSessionDeps() {
 	w.callbackDispatcher = callbackDispatcher
 	w.budgetTerminator = budgetTerminator
 	w.sessionBudgetEnforcer = sessionBudgetEnforcer
+	w.leaseDenials = leaseDenials
 	w.leaseBudgets = leaseBudgets
 	w.activityStamper = activityStamper
 	w.slotHealth = slotHealth

@@ -17,6 +17,7 @@ func TestSnapshotReadsReservedCounters_spec_11_2_29(t *testing.T) {
 	ctx := context.Background()
 	if _, err := r.Reserve(ctx, treebudget.Reservation{
 		RootSessionID:   "rootS",
+		CreateTree:      true,
 		ParentSessionID: "rootS",
 		TreeSizeCap:     50,
 		TreeSizeDelta:   1,

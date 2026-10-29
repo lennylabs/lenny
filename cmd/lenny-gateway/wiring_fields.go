@@ -256,8 +256,12 @@ type gatewayWiringFields struct {
 	// across the next Enforcer.Record (proposal 0023 S3/S4). Nil when no
 	// usagestore is wired (the recorder is nil), in which case exhaustion
 	// keeps the §11.2 terminate-immediately posture.
-	proxyUsageRec   *proxyUsageRecorder
-	leaseBudgets    *leasecontrol.StoreBudgetSource
+	proxyUsageRec *proxyUsageRecorder
+	leaseBudgets  *leasecontrol.StoreBudgetSource
+	// leaseDenials is the §8.6 DenialStore behind leaseBudgets. It is built
+	// whether or not the GatewayControl listener is enabled, because the
+	// delegate_task token cap reads the tree's cumulative grants from it.
+	leaseDenials    leasecontrol.DenialStore
 	activityStamper *sessionidle.Stamper
 	slotHealth      *slothealth.Tracker
 

@@ -28,7 +28,7 @@ func TestDefaultBudgetKeyTTLOutlivesTheSuspendedLifetime_spec_8_3(t *testing.T) 
 
 // spec: §8.3 (Delegation Policy and Lease)
 // The Reserver arms created keys with the configured TTL, and RearmTree sets
-// the TTL of the root's tree-wide, high-watermark, grant, and named parents'
+// the TTL of the root's tree-wide, high-watermark, and named parents'
 // keys without creating absent keys or touching another root's keys.
 func TestRearmTreeSetsTheTreesKeyTTLs_spec_8_3(t *testing.T) {
 	ctx := context.Background()
@@ -38,7 +38,7 @@ func TestRearmTreeSetsTheTreesKeyTTLs_spec_8_3(t *testing.T) {
 	r := treebudget.New(cl, 3*time.Hour)
 
 	if _, err := r.Reserve(ctx, treebudget.Reservation{
-		RootSessionID: "root", ParentSessionID: "p1",
+		RootSessionID: "root", ParentSessionID: "p1", CreateTree: true,
 		TreeSizeDelta: 1, TreeMemoryDelta: 1, ParallelChildrenDelta: 1, ChildrenTotalDelta: 1, TokenDelta: 1,
 	}); err != nil {
 		t.Fatalf("Reserve: %v", err)
@@ -66,7 +66,7 @@ func TestRearmTreeSetsTheTreesKeyTTLs_spec_8_3(t *testing.T) {
 			t.Errorf("TTL(%s) = %v, want 3h after the re-arm", k, got)
 		}
 	}
-	for _, k := range []string{"{root}:dlg:parallel_children:p2", "{root}:dlg:token_grant"} {
+	for _, k := range []string{"{root}:dlg:parallel_children:p2"} {
 		if mr.Exists(k) {
 			t.Errorf("RearmTree created the absent key %s", k)
 		}

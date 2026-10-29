@@ -74,6 +74,7 @@ func TestReserveEmitsBudgetReserveSpan_spec_16_3(t *testing.T) {
 	ctx := correlation.With(context.Background(), correlation.Fields{TenantID: "acme"})
 	if _, err := r.Reserve(ctx, treebudget.Reservation{
 		RootSessionID:   "root_span_ok",
+		CreateTree:      true,
 		ParentSessionID: "root_span_ok",
 		TreeSizeCap:     10,
 		TreeSizeDelta:   1,
@@ -114,6 +115,7 @@ func TestReserveRejectedSetsOutcomeAndRecordsError_spec_16_3(t *testing.T) {
 	ctx := context.Background()
 	res := treebudget.Reservation{
 		RootSessionID:   "root_span_reject",
+		CreateTree:      true,
 		ParentSessionID: "root_span_reject",
 		TreeSizeCap:     1,
 		TreeSizeDelta:   1,
@@ -165,6 +167,7 @@ func TestReturnEmitsBudgetReturnSpan_spec_16_3(t *testing.T) {
 	}
 	if _, err := r.Reserve(ctx, treebudget.Reservation{
 		RootSessionID:         "root_span_ret",
+		CreateTree:            true,
 		ParentSessionID:       "root_span_ret",
 		ParallelChildrenCap:   5,
 		ParallelChildrenDelta: 1,

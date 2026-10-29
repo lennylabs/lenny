@@ -30,7 +30,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net"
 	"strings"
 	"time"
@@ -446,27 +445,6 @@ type Service struct {
 	// leaves both scrub-report RPCs returning codes.Unimplemented (the
 	// §8.6-only GatewayControl deployment). spec: §4.7; §6.2.
 	scrubReports ScrubReportService
-
-	// treeGranter bridges a §8.6 GRANTED token-budget extension onto the
-	// §8.2 per-tree delegation budget counter so the next
-	// `lenny/delegate_task` admission is gated against the expanded token
-	// pool, not the parent lease's pre-extension MaxTokenBudget. Nil leaves
-	// the extension affecting only the leasecontrol view (the Postgres-only
-	// dev posture with no Redis treebudget); a wired granter closes the
-	// F-8.6.3 budget-side-effect gap. spec: §8.6.
-	treeGranter TreeBudgetGranter
-}
-
-// TreeBudgetGranter raises the §8.2 per-tree delegation token-budget
-// ceiling when a §8.6 lease extension grants additional tokens.
-// *treebudget.Reserver satisfies it. The seam keeps leasecontrol free of
-// a direct treebudget dependency and lets the Postgres-only dev path run
-// without a Redis budget counter. spec: §8.6; §8.2.
-type TreeBudgetGranter interface {
-	// GrantTokenBudget raises the tree rooted at rootSessionID by delta
-	// tokens. Implementations record it cumulatively so repeated grants
-	// stack. A non-positive delta is a no-op.
-	GrantTokenBudget(ctx context.Context, rootSessionID string, delta int64) error
 }
 
 // MetricEmitter is the §16 counter callback the Service drives on
@@ -716,14 +694,6 @@ type Options struct {
 	// deployment). spec: §4.7; §6.2.
 	ScrubReports ScrubReportService
 
-	// TreeBudget bridges a §8.6 GRANTED token-budget extension onto the
-	// §8.2 per-tree delegation budget counter (*treebudget.Reserver) so a
-	// post-grant `lenny/delegate_task` admission observes the raised token
-	// pool. Nil leaves the extension affecting only the leasecontrol view —
-	// the Postgres-only dev posture that runs no Redis budget counter.
-	// F-8.6.3. spec: §8.6.
-	TreeBudget TreeBudgetGranter
-
 	// EpisodeContext supplies the session-scoped context an ExtendForBudget
 	// extension episode dispatches its ExtendLease elicitation on. §8.6
 	// (proposal 0023) requires the elicitation to survive the proxy's
@@ -772,7 +742,6 @@ func NewService(opts Options) (*Service, error) {
 	svc.platformTools = opts.PlatformTools
 	svc.connectorTools = opts.ConnectorTools
 	svc.scrubReports = opts.ScrubReports
-	svc.treeGranter = opts.TreeBudget
 	svc.episodes = newEpisodeManager(svc, opts.EpisodeContext)
 	return svc, nil
 }
@@ -881,7 +850,6 @@ func (s *Service) ExtendLease(ctx context.Context, req ExtendRequest) (ExtendRes
 		// used the headroom since, and a clamp to zero is CEILING_REACHED.
 		granted = applied.Granted
 		newLimits = applied.NewLimits
-		s.bridgeTokenGrant(ctx, budget.RootSessionID, granted.Tokens)
 	}
 
 	combined := combineOutcomes(appliedOutcomes(requested, granted))
@@ -893,25 +861,6 @@ func (s *Service) ExtendLease(ctx context.Context, req ExtendRequest) (ExtendRes
 		Status:  status,
 		Granted: granted,
 	}, nil
-}
-
-// bridgeTokenGrant raises the §8.2 per-tree delegation budget counter by
-// a granted token amount so the next `lenny/delegate_task` admission is
-// gated against the expanded token pool (F-8.6.3). It is best-effort:
-// the control-plane grant already committed, so a treebudget fault is
-// logged rather than failing the response, and the next admission falls
-// back to the pre-extension cap. A nil granter is the Postgres-only dev
-// posture with no Redis counter. spec: §8.6.
-func (s *Service) bridgeTokenGrant(ctx context.Context, rootSessionID string, tokens int64) {
-	if s.treeGranter == nil || tokens <= 0 {
-		return
-	}
-	if err := s.treeGranter.GrantTokenBudget(ctx, rootSessionID, tokens); err != nil {
-		slog.WarnContext(ctx, "leasecontrol: tree token-budget grant bridge failed",
-			"root_session_id", rootSessionID,
-			"granted_tokens", tokens,
-			"error", err)
-	}
 }
 
 // appliedOutcomes derives each dimension's §8.6 outcome from the amount

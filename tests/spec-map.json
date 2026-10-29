@@ -2848,6 +2848,12 @@
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
         "tests/tier7a_load_local/budget_keys_expired_cleanup_race_test.go::TestBudgetKeysExpiredConcurrentDetectionsEndTheTreeOnce_spec_8_3",
+        "tests/tier2_component/treebudget/sentinel_test.go::TestBudgetScriptsSentinelAndTTLRulesOnRealRedis_spec_8_3",
+        "tests/tier3_contract/rest_mcp_consistency/delegate_budget_error_parity_test.go::TestDelegateTaskBudgetErrorsOnTheWire_spec_8_3",
+        "tests/tier4_integration/delegation_budget_keys_expired_test.go::TestDelegateTaskAfterBudgetKeysExpireFailsTheTree_spec_8_3",
+        "tests/tier4_integration/delegation_budget_keys_expired_test.go::TestDenialStoreGrantsReadsCumulativeExtColumns_spec_8_6",
+        "tests/tier7a_load_local/budget_sentinel_interleaving_test.go::TestBudgetSentinelRandomizedInterleaving_spec_8_3",
+        "tests/tier8_chaos/delegation_budget_datastore_outage_test.go::TestDelegateTaskPostgresOutageFailsClosed_spec_8_3",
         "pkg/delegation/lease/lease_test.go::TestValidateChildSliceRejectsParallelOverrun",
         "pkg/delegation/lease/lease_test.go::TestValidateChildSliceRejectsTokenBudgetOverrun",
         "pkg/delegation/lease/lease_test.go::TestValidateChildSliceWithinBudget",

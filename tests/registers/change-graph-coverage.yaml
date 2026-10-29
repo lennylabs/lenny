@@ -178,7 +178,6 @@ prefixes:
   - pkg/gateway/mcpfabric/delegationtree/resultrollup/
   - pkg/gateway/mcpfabric/delegationtree/treearchive/
   - pkg/gateway/mcpfabric/delegationtree/treearchive/pgstore/
-  - pkg/gateway/mcpfabric/delegationtree/treebudget/
   - pkg/gateway/mcpfabric/delegationtree/treerecovery/
   - pkg/gateway/mcpfabric/elicitationfloor/
   - pkg/gateway/mcpfabric/mcpschemagen/

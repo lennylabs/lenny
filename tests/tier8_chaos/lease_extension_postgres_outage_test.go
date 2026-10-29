@@ -26,7 +26,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol/denialpg"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
@@ -116,8 +115,7 @@ func newExtOutageEnv(t *testing.T) *extOutageEnv {
 }
 
 // service builds a Service over a pool that dials Postgres through a fresh
-// fault proxy, in elicitation mode with el, and with the Redis treebudget
-// granter wired so a grant that commits would touch Redis.
+// fault proxy, in elicitation mode with el.
 func (e *extOutageEnv) service(t *testing.T, el func(*tcpfault.Proxy) leasecontrol.Elicitor) *leasecontrol.Service {
 	t.Helper()
 	proxy, dsn := tcpfault.StartURL(t, e.pg.DSN)
@@ -143,7 +141,6 @@ func (e *extOutageEnv) service(t *testing.T, el func(*tcpfault.Proxy) leasecontr
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets:        src,
 		Elicitor:       el(proxy),
-		TreeBudget:     treebudget.New(e.rd.Client, time.Hour),
 		EpisodeContext: context.Background,
 	})
 	if err != nil {

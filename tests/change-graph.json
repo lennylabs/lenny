@@ -158,6 +158,9 @@
     "tests/tier2_component/tokensigning/": {
       "component": ["tests/tier2_component/tokensigning/..."]
     },
+    "tests/tier2_component/treebudget/": {
+      "component": ["tests/tier2_component/treebudget/..."]
+    },
     "tests/tier2_component/translators/": {
       "component": ["tests/tier2_component/translators/..."]
     },
@@ -1354,6 +1357,14 @@
       "contract": ["tests/tier3_contract/rest_mcp_consistency/...", "tests/tier3_contract/multiprotocol_journey/..."],
       "integration": ["tests/tier4_integration/gateway_require_auth_test.go"],
       "security": ["tests/tier9_security/unauthenticated_tenant_access_test.go"]
+    },
+    "pkg/gateway/mcpfabric/delegationtree/treebudget": {
+      "unit": ["pkg/gateway/mcpfabric/delegationtree/treebudget/...", "pkg/gateway/mcpfabric/delegation/..."],
+      "component": ["tests/tier2_component/treebudget/..."],
+      "contract": ["tests/tier3_contract/rest_mcp_consistency/delegate_budget_error_parity_test.go"],
+      "integration": ["tests/tier4_integration/delegation_budget_keys_expired_test.go"],
+      "load_local": ["tests/tier7a_load_local/budget_sentinel_interleaving_test.go"],
+      "chaos": ["tests/tier8_chaos/delegation_budget_datastore_outage_test.go"]
     },
     "pkg/gateway/mcpfabric/playground": {
       "unit": ["pkg/gateway/mcpfabric/playground/..."],

@@ -2381,6 +2381,17 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 				return mcp.ToolResult{}, mcp.NewToolError("DELEGATION_BUDGET_UNAVAILABLE",
 					err.Error(), nil)
 			}
+			// spec: §8.3 (BUDGET_KEYS_EXPIRED detection and tree
+			// cleanup) — the reservation detected that the tree's
+			// budget keys expired. The tree's accounting state is
+			// irrecoverable, so the delegation fails with the permanent
+			// INVALID_STATE_TRANSITION, as a caller's terminal session
+			// does, rather than the retryable
+			// DELEGATION_BUDGET_UNAVAILABLE.
+			if errors.Is(err, delegation.ErrBudgetKeysExpired) {
+				return mcp.ToolResult{}, mcp.NewToolError("INVALID_STATE_TRANSITION",
+					err.Error(), map[string]any{"reason": "BUDGET_KEYS_EXPIRED"})
+			}
 			// spec: §8.2 — the service-layer defence-in-depth
 			// type gate that mirrors the §10.6 shim. Surface the
 			// canonical code so REST and MCP envelopes match.

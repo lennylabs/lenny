@@ -171,7 +171,7 @@ func identitySites(t *testing.T) map[string][]consumerSite {
 		"bindrelease.New":         2,
 		"eventbuffer.NewEmitter":  1,
 		"cbmw.NewAuditReporter":   2,
-		"newGatewayControlServer": 11,
+		"newGatewayControlServer": 10,
 	}
 	fieldOf := map[string]map[string]bool{
 		"sessionserver.Options":      {"ReplicaID": true},

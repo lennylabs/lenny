@@ -60,7 +60,7 @@ import (
 // handshake with no gRPC frame and emits the spec's `pod_identity_mismatch`
 // log. trustDomain empty leaves CA-only verification in place (the
 // local-development path). F-10.3.1 / F-10.3.7 / F-10.3.13.
-func newGatewayControlServer(addr string, budgets *leasecontrol.StoreBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, elicitor leasecontrol.Elicitor, autoCounter ratelimit.Counter, defaultAutoMaxPerMin int, platformTools leasecontrol.PlatformToolService, connectorTools leasecontrol.ConnectorToolService, treeGranter leasecontrol.TreeBudgetGranter, scrubReports leasecontrol.ScrubReportService, replicaID, tlsCert, tlsKey, clientCA, trustDomain, saTokenAudience string, saTokenVerifier leasecontrol.TokenVerifier, denyList spiffe.DenyChecker, inputWaits inputWaitRecoveryDeps) (*grpc.Server, net.Listener, *leasecontrol.Service, error) {
+func newGatewayControlServer(addr string, budgets *leasecontrol.StoreBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, elicitor leasecontrol.Elicitor, autoCounter ratelimit.Counter, defaultAutoMaxPerMin int, platformTools leasecontrol.PlatformToolService, connectorTools leasecontrol.ConnectorToolService, scrubReports leasecontrol.ScrubReportService, replicaID, tlsCert, tlsKey, clientCA, trustDomain, saTokenAudience string, saTokenVerifier leasecontrol.TokenVerifier, denyList spiffe.DenyChecker, inputWaits inputWaitRecoveryDeps) (*grpc.Server, net.Listener, *leasecontrol.Service, error) {
 	if addr == "" {
 		return nil, nil, nil, nil
 	}
@@ -90,10 +90,6 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.StoreBudgetSourc
 		// per-connector tool calls (against @lenny-connector-<id> sockets)
 		// to the gateway connector-invocation surface. F-9.1.2.
 		ConnectorTools: connectorTools,
-		// §8.6 — propagate a granted token-budget extension onto
-		// the §8.2 per-tree delegation budget counter so admission observes
-		// the raised pool. F-8.6.3.
-		TreeBudget: treeGranter,
 		// §4.7 — the adapter's per-slot and whole-pod scrub reports drive the
 		// recycle-counter writes, the unhealthy-threshold drain ledger, and the
 		// §6.2 recycle disposition. Nil leaves ReportSessionScrub and

@@ -154,6 +154,12 @@ func (w *gatewayWiring) buildMCPSurface(
 		ExportMaterializer:      exportMaterializer,
 		ExportScanChainResolver: exportScanResolver,
 		TreeBudgetReserver:      w.treeBudgetReserver,
+		// §8.3 / §8.6 — the reservation's token cap adds the tree's
+		// cumulative extension grant from the delegation_tree_budget row,
+		// and a reservation detection runs the BUDGET_KEYS_EXPIRED tree
+		// cleanup on the session server.
+		TreeGrants:        treeGrantReader{denials: w.leaseDenials},
+		BudgetKeysExpired: sessionSrv,
 		// §11.1 — per-user active-delegated-children admission cap.
 		// Zero leaves the scope unlimited. F-11.1.4.
 		MaxActiveChildrenPerUser: *delegationMaxActiveChildrenPerUser,

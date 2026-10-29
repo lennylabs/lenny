@@ -127,16 +127,6 @@ func (w *gatewayWiring) buildControlServer(
 	// connectorinvoke surface, which dials the external endpoint with the
 	// gateway-held credential. F-9.1.2.
 	connectorToolBridge := connectortools.New(w.sessions, w.connectors, connectorAuthorizer, connectorInvoker)
-	// §8.6 — bridge a GRANTED token-budget extension onto the §8.2
-	// per-tree delegation budget counter so the next delegate_task admission
-	// is gated against the raised pool (F-8.6.3). Only the concrete
-	// *treebudget.Reserver satisfies the granter; pass a nil interface (not a
-	// typed-nil pointer) on the Postgres-only/no-Redis path so the Service's
-	// nil-granter branch is taken.
-	var leaseTreeGranter leasecontrol.TreeBudgetGranter
-	if w.treeBudgetConcrete != nil {
-		leaseTreeGranter = w.treeBudgetConcrete
-	}
 	// §4.7 — the adapter's per-slot and whole-pod scrub reports reach the
 	// gateway recycle-counter writes, the unhealthy-threshold drain ledger,
 	// and the §6.2 recycle disposition through the ScrubReporter. It
@@ -159,7 +149,7 @@ func (w *gatewayWiring) buildControlServer(
 			log.Fatalf("lenny-gateway: §4.7 scrub-report service: %v", err)
 		}
 	}
-	gatewayCtrlSrv, gatewayCtrlLis, leaseControlSvc, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, leaseElicit, w.rateLimiter, *leaseAutoMaxPerMin, platformToolBridge, connectorToolBridge, leaseTreeGranter, scrubReports, w.replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, *saTokenAudience, w.saTokenVerifier, mtlsDeny, inputWaitRecoveryDeps{sessions: w.sessions, waits: w.inputWaits, events: w.eventBus})
+	gatewayCtrlSrv, gatewayCtrlLis, leaseControlSvc, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, leaseElicit, w.rateLimiter, *leaseAutoMaxPerMin, platformToolBridge, connectorToolBridge, scrubReports, w.replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, *saTokenAudience, w.saTokenVerifier, mtlsDeny, inputWaitRecoveryDeps{sessions: w.sessions, waits: w.inputWaits, events: w.eventBus})
 	if err != nil {
 		log.Fatalf("lenny-gateway: §8.6 GatewayControl listen: %v", err)
 	}
