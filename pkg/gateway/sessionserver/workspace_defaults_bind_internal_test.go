@@ -14,8 +14,15 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/trace"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	ctrlinterceptor "sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
+	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
@@ -24,6 +31,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/sdkwarm"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 
@@ -53,11 +61,18 @@ type wdFixture struct {
 	store    sessionstore.Store
 	runtimes *faultRuntimes
 	nextID   string
+	// cluster and writes are set when wdOpts.claims wires a pod binder.
+	cluster client.Client
+	writes  *kubeWrites
 }
 
 type wdOpts struct {
 	experiments experimentstore.Store
 	chain       *interceptor.Chain
+	// claims wires a pod binder over a fake cluster holding one warm pool
+	// per runtime, so a create route that reaches the §7.1 claim writes a
+	// SandboxClaim the test can count.
+	claims bool
 }
 
 func newWDFixture(t *testing.T, extra []runtimestore.Runtime, opts wdOpts) *wdFixture {
@@ -74,16 +89,81 @@ func newWDFixture(t *testing.T, extra []runtimestore.Runtime, opts wdOpts) *wdFi
 	}
 	f := &wdFixture{store: memstore.New(), runtimes: &faultRuntimes{Store: mem}}
 	clock := func() time.Time { return time.Date(2026, 6, 8, 9, 0, 0, 0, time.UTC) }
-	f.srv = New(f.store, Options{
+	srvOpts := Options{
 		DevTenantHeader: true,
 		Clock:           clock,
 		Runtimes:        f.runtimes,
 		Experiments:     opts.experiments,
 		Interceptors:    opts.chain,
 		IDFunc:          func() string { return f.nextID },
-	})
+	}
+	if opts.claims {
+		f.writes = &kubeWrites{}
+		f.cluster = wdCluster(t, rts, f.writes)
+		srvOpts.PodBinder = &podsession.Binder{Client: f.cluster, Namespace: lookupNS}
+		srvOpts.AgentNamespace = lookupNS
+		srvOpts.DefaultIsolationProfile = isolation.ProfileSandboxed
+	}
+	f.srv = New(f.store, srvOpts)
 	t.Cleanup(f.srv.Close)
 	return f
+}
+
+// wdCluster is a fake cluster holding a warm pool, a template, and one idle
+// sandbox with its pod for each runtime in rts, recording every create,
+// update, and patch in writes.
+func wdCluster(t *testing.T, rts []runtimestore.Runtime, writes *kubeWrites) client.Client {
+	t.Helper()
+	var objs []client.Object
+	for _, rt := range rts {
+		pool, tmpl := rt.Name+"-pool", rt.Name+"-tmpl"
+		objs = append(
+			objs,
+			&lennyv1.SandboxWarmPool{
+				ObjectMeta: metav1.ObjectMeta{Name: pool, Namespace: lookupNS},
+				Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: tmpl, MinWarm: 1, MaxWarm: 5},
+			},
+			&lennyv1.SandboxTemplate{
+				ObjectMeta: metav1.ObjectMeta{Name: tmpl, Namespace: lookupNS},
+				Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: rt.Name, IsolationProfile: string(isolation.ProfileSandboxed)},
+			},
+			&lennyv1.Sandbox{
+				ObjectMeta: metav1.ObjectMeta{Name: rt.Name + "-sbx", Namespace: lookupNS, Labels: map[string]string{warmpool.LabelPool: pool}},
+				Status:     lennyv1.SandboxStatus{Phase: "idle", PodIP: "10.244.0.9"},
+			},
+			&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: rt.Name + "-sbx", Namespace: lookupNS}},
+		)
+	}
+	scheme := claimAtCreateScheme(t)
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add core scheme: %v", err)
+	}
+	record := func(verb string) { writes.add(verb) }
+	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).
+		WithInterceptorFuncs(ctrlinterceptor.Funcs{
+			Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+				record("create")
+				return cl.Create(ctx, obj, opts...)
+			},
+			Update: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+				record("update")
+				return cl.Update(ctx, obj, opts...)
+			},
+			Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+				record("patch")
+				return cl.Patch(ctx, obj, patch, opts...)
+			},
+		}).Build()
+}
+
+// claimCount returns the number of SandboxClaims in the fixture's cluster.
+func (f *wdFixture) claimCount(t *testing.T) int {
+	t.Helper()
+	var claims lennyv1.SandboxClaimList
+	if err := f.cluster.List(context.Background(), &claims, client.InNamespace(lookupNS)); err != nil {
+		t.Fatalf("list claims: %v", err)
+	}
+	return len(claims.Items)
 }
 
 // post sends a create or create-and-start request for runtime with the
@@ -436,7 +516,8 @@ func (f *wdFixture) assertUnbound(t *testing.T, route, id string) {
 // fail-closed composition: a transient read of the runtime or of a derived
 // runtime's base fails every binding request with 503 SERVICE_UNAVAILABLE
 // and Retry-After, and a derived runtime whose base is missing fails it with
-// 500 INTERNAL_ERROR. Each leaves no session state behind.
+// 500 INTERNAL_ERROR. Each leaves no session state behind, and a
+// rejected create route takes no SandboxClaim.
 //
 // spec: 14.1 (WorkspacePlan Schema Versioning), 5.1 (Runtime)
 func TestDefaultsResolveFailureLeavesStateUnchanged_spec_14_1(t *testing.T) {
@@ -470,7 +551,7 @@ func TestDefaultsResolveFailureLeavesStateUnchanged_spec_14_1(t *testing.T) {
 				name += "/no-plan"
 			}
 			t.Run(name, func(t *testing.T) {
-				f := newWDFixture(t, extra, wdOpts{})
+				f := newWDFixture(t, extra, wdOpts{claims: b.route != "finalize"})
 				if fault.arm != "" {
 					// The finalize row is seeded straight into the session
 					// store, so the fault hits only the binding request's
@@ -489,8 +570,32 @@ func TestDefaultsResolveFailureLeavesStateUnchanged_spec_14_1(t *testing.T) {
 					t.Error("SERVICE_UNAVAILABLE carries no Retry-After")
 				}
 				f.assertUnbound(t, b.route, "sess_fail")
+				if b.route != "finalize" {
+					f.assertNoClaim(t, b.route)
+				}
 			})
 		}
+	}
+	// The no-claim assertion above discriminates only if the fixture's
+	// cluster takes a claim when composition succeeds.
+	t.Run("control/claim-reached", func(t *testing.T) {
+		f := newWDFixture(t, extra, wdOpts{claims: true})
+		rr := f.post(t, "/v1/sessions/start", "sess_ok", wdRuntime, "")
+		if n := f.writes.nonDelete(); n == 0 {
+			t.Fatalf("a composing create-and-start wrote nothing to the cluster (status %d, body=%s); the no-claim assertion is vacuous", rr.Code, rr.Body.String())
+		}
+	})
+}
+
+// assertNoClaim checks that a rejected create route reached no §7.1 pod
+// claim: the cluster holds no SandboxClaim and took no write.
+func (f *wdFixture) assertNoClaim(t *testing.T, route string) {
+	t.Helper()
+	if n := f.claimCount(t); n != 0 {
+		t.Errorf("%s left %d SandboxClaims after the rejection, want 0", route, n)
+	}
+	if n := f.writes.nonDelete(); n != 0 {
+		t.Errorf("%s wrote to the cluster after the rejection: %v", route, f.writes.counts)
 	}
 }
 
