@@ -3411,13 +3411,23 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   0109 lands second locates its `derive.go` targets by symbol and quoted text, and 0108 shares no code file with it.
   Its unstaged defects are filed below, in the block for proposal 0109. The next change-proposal run is the
   session-owner authorization proposal below, drafting as 0110.
-- [ ] **Session-owner authorization proposal (new; F-15.1.55 High, F-10.2.30, F-15.1.54)** (queued 2026-10-29
-  after the snapshot-restore proposal and ahead of 0077, because F-15.1.55 lets a built-in adapter client assert
-  the session owner): define the §10.2 per-owner check on `user`-role session reads and the "explicit grant" it
-  promises, bind the adapter session owner to the authenticated principal, and cover `GET /v1/sessions/{id}`,
-  `GET /v1/sessions`, and `GET /v1/responses/{id}`. It may draft before 0108's implementation; its code steps
-  land after 0108's, which edit the Open Responses handlers. It follows 0109 and is the next change-proposal
-  run, drafting as proposal 0110.
+- [x] **Session-owner authorization proposal (F-15.1.55 High, F-10.2.30, F-15.1.54)**
+  (`proposals/0110_fix_session-owner-authorization-plan-10-2-session-owner-authoriz/`): approved 2026-10-29 as
+  proposal 0110, merge `05ed531a5`. A session's owner is the creating principal's subject on every create
+  surface, the adapter `user` field and every other client owner field are never an owner input, session access
+  is scoped to the owner at the sessionserver route wrapper with a `404` to a non-owner, and the §10.2 explicit
+  grant is a custom-role assignment. Its implementation closes F-15.1.55, F-10.2.30, and F-15.1.54, whose
+  BUILD-GAPS owner lines were re-pointed to 0110 with their checklist steps on 2026-10-29. Its three
+  orchestrator decisions are in section 10.3. Implementation order: part A (S1 to S4, S6 to S9, and S13) does
+  not wait for 0108 and may land before 0108's implementation. The steps that touch the Open Responses
+  translator land after 0108's implementation: S5 applies after 0108 S1, S10 after 0108 S8, and S11 after 0108
+  S7, S8, and S10, and S12 and S14 follow them. 0108 lands as staged and its files are not edited. Against
+  0086, 0107, and 0109 there is no semantic dependency: 0110 shares `create_and_start.go`,
+  `delegation/service.go`, `mcptools_register.go`, `derive.go`, `replay.go`, and
+  `docs/operator-guide/security.md` with them at different symbols or sections, and whichever lands second
+  rebases textually. If the A/B split fallback is taken, this entry is rewritten to name the open part. Its
+  unstaged defects are filed below, in the block for proposal 0110. The next change-proposal run is proposal
+  0077, re-derived, below, drafting as 0111.
 - [ ] **Proposal 0077, re-derived** (Draft; owner decision 2026-10-28): pre-materialize workspace content on a
   warm pod, starting with massive git repositories, and extensible to other content later. The owner wants the
   capability built. Settled direction: a pool-level template names a repository and ref; the adapter fills a
@@ -3435,7 +3445,14 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   clones over its own path today), the cache surviving the §5.2 recycle scrub as pod state, cache refresh cadence,
   working-tree checkout cost for very large trees (sparse checkout or a reused tree), and disk sizing. A spike that
   measures delta-fetch-plus-checkout against a cold clone on a large repository opens the run. It follows 0086,
-  which settles when a session's plan binds and pins and how runtime `workspaceDefaults` compose with it.
+  which settles when a session's plan binds and pins and how runtime `workspaceDefaults` compose with it. It
+  follows 0110 and is the next change-proposal run, drafting as proposal 0111.
+- [ ] **Idempotent replay bound to the caller (F-11.5.26, High, security)** (new proposal, queued 2026-10-29
+  after 0111): §11.5 replay is keyed by tenant and key and runs before route authorization, so a second
+  principal in the tenant that sends the same key and body receives the first principal's cached response,
+  including the create response's `uploadToken` and the owner's action responses that 0110's not-found rule
+  hides. The proposal binds the record to the authenticated subject and states what a second principal
+  receives, on REST and on the MCP per-tool path. It does not depend on 0110's implementation.
 
 - [ ] **P2b** (section P2 above): after 0085.
 
@@ -4238,7 +4255,9 @@ filing a duplicate.
     makes the REST and MCP not-delivered DLQ hold conditional on a `running` or `input_required` row, as
     rule 6 states. 0108 reorders the branch for its own kind only.
 - Proposal routing: a session-owner authorization proposal (new, unwritten), after 0108's implementation,
-  which rewrites the Open Responses read and resolution paths.
+  which rewrites the Open Responses read and resolution paths. This proposal is 0110 (approved 2026-10-29,
+  merge `05ed531a5`), whose REC-1 closes all three entries below. Only its Open Responses steps wait for
+  0108's implementation; its part-A steps do not.
   - [ ] **F-15.1.55** (High, existing, annotated): session-create paths take the owner from the request.
     0108's first listed defect, the client-asserted `user` field on the built-in adapters, is this finding's
     adapter face, so it carries a note rather than a new entry.
@@ -4284,6 +4303,45 @@ whose owner lines now name proposal 0109 with their checklist steps.
     the block for proposal 0106.
 - Not filed: **F-4.5.24**, which 0109 lists as a direct fix, was already closed on 2026-10-29
   (`fix/direct-batch-2`); its entry carries a note. Every other listed defect is filed or annotated.
+
+**Defects filed from proposal 0110's unstaged-defect list (2026-10-29).** Proposal 0110 (session-owner
+authorization, approved 2026-10-29, merge `05ed531a5`, implementation pending) lists defects in the shipped
+tree that it does not stage. Its REC-1 files them at implementation; they are filed now, because no defect is
+dropped, and each new BUILD-GAPS entry says 0110's REC-1 updates the entry rather than filing a duplicate. Each
+was re-confirmed against the tree at `05ed531a5`. 0110's REC-1 closes F-15.1.55, F-10.2.30, and F-15.1.54,
+whose owner lines now name proposal 0110 with their checklist steps. The closed F-10.2.4 and F-15.1.32 carry
+notes pointing at their successors.
+
+- Proposal routing, security.
+  - [ ] Its own proposal, queued after 0111 in "Queue after P4b" above, independent of 0110's implementation:
+    **F-11.5.26** (High, security): §11.5 idempotent replay is keyed by tenant and key and runs before route
+    authorization on every `AllowedPaths` route, so a second principal in the tenant that sends the same key
+    and body receives the first principal's cached response, including the create response's `uploadToken`
+    and the owner's finalize, start, resume, derive, and tool-use responses. §11.5 states the key, so binding
+    the record to the caller needs a proposal.
+- Proposal routing, a session permission-gating proposal (new, unwritten), after 0110's implementation, whose
+  CODE-2 and CODE-3 edit `rbac_gate.go` and the MCP tool handlers.
+  - [ ] **F-10.2.31** (Medium): the single-tenant admission of a role-less principal to every session
+    permission (`sessionPermissionGranted`) has no specification statement. The proposal decides between
+    stating it in §10.2 and refusing role-less principals in code (section 10.3, the 0110 decisions).
+  - [ ] **F-10.2.32** (Medium): `CreateSessionService`, `CreateAndStartService`, and the direct-store MCP
+    session tools skip the §10.2 permission matrix, so a `tenant-viewer` creates sessions through MCP and the
+    built-in adapters. It rides with F-10.2.31, because the in-pod MCP principal carries no roles and the
+    matrix states no exemption for it.
+- Proposal routing, other.
+  - [ ] Its own proposal, or the next proposal that edits the §15.1 blob row or §10.2 **Session ownership.**,
+    after 0110's implementation: **F-15.1.64** (Medium, `GET /v1/blobs/{ref...}` checks only the tenant;
+    the proposal chooses between §15.1's `403` and the `404` of **Session ownership.**). It succeeds closed
+    F-15.1.32.
+  - [ ] Its own proposal, or the next proposal that edits the §12.9 controls table, independent of 0110's
+    implementation: **F-12.9.23** (Medium, the §12.9 T4 access control names an "explicit grant" that no
+    section defines, and the §10.2 matrix lets a tenant-admin read a T4 transcript with no grant).
+- Direct-fix queue, after 0110's implementation, whose CODE-3 adds the `SessionAccessible` predicate and
+  edits `mcpsurface.go`.
+  - [ ] **F-15.2.30** (Medium): the native MCP `elicitation/create` reply on the `attach_session` stream has
+    no consumer, because `handleRPC` answers it as an unknown method. The fix routes `elicit:` and
+    `toolapprove:` replies to the existing elicitation and tool-use service calls and refuses a non-owner.
+- Not filed: none. Every listed defect is filed.
 
 **Test-harness direct fixes (2026-10-27).** The unit tier reported a package timeout for
 `pkg/gateway/podlifecycle/podsession` whenever the host was loaded, which hid the results of every
@@ -4461,7 +4519,8 @@ Four findings were missing, and one entry is new:
   in the tenant. It was found by the P5 dossier and is outside P5's scope. First confirm the §15.1 and §13
   read-authorization rule: a direct fix with a tier-9 test if the specification states it, otherwise a
   small proposal. It is independent of the R-steps. Routed on 2026-10-29 to the session-owner authorization
-  proposal with F-10.2.30 and F-15.1.55 (the block for proposal 0108 above).
+  proposal with F-10.2.30 and F-15.1.55 (the block for proposal 0108 above). That proposal is 0110 (approved
+  2026-10-29, merge `05ed531a5`), whose S5, S11, and S12 cover this entry after 0108's implementation.
 - [ ] **TEST-GAPS T-10.3.15** (Medium, filed 2026-10-28): the Kind install runs no `CH-HOLDERFORWARD`
   listener, because the e2e overlay runs `global.devMode: true` with `mtls.enabled: false` and §10.3 NET-072
   disables the forward in that configuration, so no tier-5 test exercises a forward and an off-holder
@@ -4701,6 +4760,19 @@ Answered on 2026-10-01 for the later phases:
   backward-compatibility shims, dual modes, and migration paths while the platform is pre-deployment
   (`.claude/rules/code-best-practices.md`, "Configuration and compatibility") excludes a check whose only
   target is such an adapter. Proposal 0081 added `bind_attempt` to the same request without a gate.
+- Proposal 0110, 2026-10-29, three items decided by the orchestrator under the owner's standing delegation:
+  - The single-tenant role-less admission goes to the defects list. 0110 stages neither a §10.2 statement of
+    the admission nor a code refusal of role-less principals, and its rule 4 limits a role-less principal to
+    its own sessions in every tenancy mode, so its owner rule does not depend on the choice. The choice is
+    filed as F-10.2.31 for a successor proposal.
+  - `await_children` stays an act, so only the owner may call it. The handler begins deadlock tracking
+    (`DeadlockTracker.Begin`) and stamps qualifying activity (`ActivityStamper.Stamp`) on the parent session,
+    and both are side effects beyond a read.
+  - The route wrapper's first read is bounded, with a primary fallback. Before 0110, `/start` and `/resume`
+    read only the bounded primary, so an unbounded read-pool `Get` in the wrapper would let a hung replica
+    hold those routes. The wrapper's first `Get` runs under the `--session-primary-read-timeout` bound
+    (`PrimaryReadBound`), scoped to that `Get` alone; a timeout or replica error falls through to one
+    primary re-read, a primary miss answers `404`, and a primary error answers `500`.
 
 ### 10.4 Related work outside this track
 
@@ -4713,8 +4785,11 @@ the reopened F-7.5.3 and was approved on 2026-10-28 (merge `153a7e23b`), and 008
 2026-10-29 as proposal 0108 (merge `4e5a94071`), and its implementation is unblocked. The snapshot-restore
 proposal (the F-7.1.34 restore half, with F-7.1.33) was approved on 2026-10-29 as proposal 0109 (merge
 `bad91fe31`); its implementation rebases textually against 0086's and locates its `derive.go` targets by
-symbol against 0107's. The next change-proposal run is the session-owner authorization proposal (F-15.1.55,
-F-10.2.30, and F-15.1.54), drafting as 0110 (section 10.2, "Queue after P4b").
+symbol against 0107's. The session-owner authorization proposal (F-15.1.55, F-10.2.30, and F-15.1.54) was
+approved on 2026-10-29 as proposal 0110 (merge `05ed531a5`); its part-A steps do not wait for 0108, and its
+steps that touch the Open Responses translator land after 0108's implementation. The next change-proposal run
+is proposal 0077, re-derived, drafting as 0111, followed by the idempotent-replay proposal for F-11.5.26
+(section 10.2, "Queue after P4b").
 
 The final verification of proposal 0079 (2026-10-03) recorded these conditions, each of which also holds
 on the base commit and none of which is yet filed in BUILD-GAPS:
