@@ -204,6 +204,14 @@ mappings:
     category_name: Identity & Access Management
     activity_id: 4
     activity_name: Delete
+  - event_type: cross_tenant_read
+    match: exact
+    class_uid: 6003
+    class_name: API Activity
+    category_uid: 6
+    category_name: Application Activity
+    activity_id: 2
+    activity_name: Read
   - event_type: delegation.cycle_warning
     match: exact
     class_uid: 2004
