@@ -4216,7 +4216,9 @@
         "tests/tier11_docs/suspension_flag_help_doc_consistency_test.go::TestGatewayFlagHelpMatchesTheSuspensionContract",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOrphanTimeoutAndAbsentAnswerAgree_spec_4_7_1",
         "tests/tier4_integration/concurrent_slot_release_test.go::TestAbandonedCreatedRowTimesOutAndReleasesItsSlot_spec_5_2",
-        "tests/tier11_docs/build_gaps_session_timers_records_currency_test.go::TestSessionTimersOpenFindingsKeepTheirNotes_spec_11_3"
+        "tests/tier11_docs/build_gaps_session_timers_records_currency_test.go::TestSessionTimersOpenFindingsKeepTheirNotes_spec_11_3",
+        "tests/tier2_component/stores/sessionstore_expiry_warning_test.go::TestExpiryWarningOnceAcrossReplicasOverPostgres_spec_11_3",
+        "tests/tier7a_load_local/watchdog_expiry_warning_replica_race_test.go::TestReplicasWarnEachSessionOncePerDeadline_spec_11_3"
       ],
       "packages": [
         "pkg/policy/timeout"
