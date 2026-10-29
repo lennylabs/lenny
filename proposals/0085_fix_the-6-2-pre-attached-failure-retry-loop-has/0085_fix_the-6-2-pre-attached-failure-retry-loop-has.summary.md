@@ -9,7 +9,7 @@
 - `spec/06_warm-pod-model.md` §6.2: the policy's lead sentence defers to its **Scope:** bullet, and the Scope bullet states which request the retry covers (SPEC-1).
 - `spec/15_external-api-surface.md` §15.1: the `SETUP_COMMAND_FAILED` row drops its "recovered with a fresh pod per Section 6.2" clause (SPEC-2).
 - `spec/04_system-components.md` §4.7, `spec/29_communication-scenarios.md` §29.2 step 23, and `spec/28_communication-channels.md` §28.5.3: the `ConfigureWorkspace`-and-`DemoteSDK` failure drops its replacement-claim clause (SPEC-3).
-- `pkg/gateway/podlifecycle/podsession/binder.go` and `pkg/gateway/sessionserver`: comments and test annotations that the spec edits make false are corrected, with no code token change (CODE-1).
+- `pkg/gateway/podlifecycle/podsession/bindlaunch.go` and `pkg/gateway/sessionserver`: comments and test annotations that the spec edits make false are corrected, with no code token change (CODE-1).
 - `pkg/gateway/sessionserver/start_pod_test.go`: the finalize failure test counts SandboxClaim creates (TEST-1).
 - `BUILD-GAPS.md` and `TEST-GAPS.md`: a new OPEN finding records the unbuilt combined-route loop, and T-6.2.10 is retargeted (RECORDS-1).
 
@@ -22,7 +22,7 @@
 - `/{id}/start` and `/resume` are absent from the Scope text because neither runs pre-attached work. The `/start` launch, including concurrent-workspace slot setup, runs in `starting` (proposal 0105), and the §7.3 **Resume driver.** performs the resume restore.
 - SPEC-2 and SPEC-3 delete clauses rather than naming a governing policy, because a named policy would restate the Scope rule.
 - No production behavior changes. The tree already makes one attempt at every persisted-row seam.
-- The `Bind`, `Resume`, and `ErrNoConcurrentSlot` comments in `binder.go` are not edited. `Bind`'s only production caller is the §7.3 resume rebuild, where re-claiming a fresh pod stays correct.
+- The `Bind` comments in `binder.go` and the `Resume` and `ErrNoConcurrentSlot` comments in `resume.go` are not edited. `Bind`'s only production caller is the §7.3 resume rebuild, where re-claiming a fresh pod stays correct.
 - TEST-1 counts SandboxClaim CREATE calls through a wrapper on the binder's client. A count of remaining claims cannot distinguish "no retry" from "a retry that also failed".
 - F-6.2.32 is scoped to `POST /v1/sessions/start`. `POST /v1/sessions` runs only the pre-check and claim before persisting, and §7.1 requires a claim failure there to fail fast.
 - T-6.2.10 is retargeted to the combined route, because its current target, a retry at finalize, is excluded by SPEC-1.
@@ -30,7 +30,7 @@
 **Watch out for.**
 
 - F-6.2.32 cites proposal 0085 and must stay OPEN when 0085 lands. 0085 builds no loop, so the implementation pipeline's step that closes BUILD-GAPS findings referencing the proposal must skip it.
-- 0082's code steps edit `start.go`, `sessionserver.go`, and the `start_pod_test.go` fixture family. S5 and S6 land after them, and every site is located by symbol and quoted text.
+- 0082 changed the `start_pod_test.go` fixture family, so the S6 site is located by symbol and quoted text (see **Impacts on other proposals**).
 
 ## Goals
 
@@ -79,20 +79,23 @@ None yet. The review loops write this section.
 - **`Binder.Launch` implements no `DemoteSDK` fallback.** It reclaims immediately on a `ConfigureWorkspace` error, while the §4.7 row and §29.2 step 23 promise a `DemoteSDK` call and pod-warm fallback. SPEC-3 touches only the replacement clause of those sites.
 - **`attached` is undefined.** The §6.2 policy and §7.2 still use `attached`, which the pod diagram no longer defines after proposal 0002. Settling the boundary is a terminology change outside this fix.
 - **A transient delegated-child materialization failure may surface as `INTERNAL_ERROR`.** This is a lead to verify: `materializeToolError` in `mcptools_register.go` appears to map it that way, and §8.2 states no envelope for it.
+- **The §5.2 slot retry loop re-reads no session row and hard-codes its budget.** `applySlotRetryPolicy` in `pkg/gateway/sessionserver/slot_bind.go:377` retries a failed concurrent-workspace slot without re-reading the session row against §7.2 snapshot-close, and `maxSlotRetries` at `pkg/gateway/sessionserver/slot_bind.go:84` is a constant `1`, while the §5.2 **Slot retry policy (`maxConcurrentSessions > 1`).** reads the budget from `sessionPolicy.slotRetries`. Both exist with or without 0085. 0085 does not stage a fix because SPEC-1's "under this policy" leaves the §5.2 slot loop to its own policy, and the problem statement's scope lens cut it.
+- **The `Binder.Bind` doc comment names the wrong callers.** The comment at `pkg/gateway/podlifecycle/podsession/binder.go:219-221` names "the §4.7 combined create-and-start path and the test harness" as `Bind`'s callers, but its only production caller is the §7.3 snapshotless resume rebuild at `pkg/gateway/sessionserver/pod_launch.go:224`. The drift predates 0085. 0085 does not stage a fix because no SPEC-1, SPEC-2, or SPEC-3 edit makes the comment false, and CODE-1 is limited to comments the spec edits falsify.
 
 ## Impacts on other proposals
 
 | Proposal | Status | What 0085 does to it | What it must do |
 |:--|:--|:--|:--|
-| 0082_fix_two-concurrent-post-v1-sessions-id-finalize-calls-for | Approved; SPEC-1 landed on the parent branch, code steps pending | Resolves the defect 0082 handed on ("The §6.2 pre-attached retry loop does not stop when the session becomes terminal") by making persisted-row seams take no retry, so no stop condition is needed. SPEC-2 edits the §15.1 `SETUP_COMMAND_FAILED` row, which is disjoint from the finalize precondition row 0082 SPEC-1 edited. | Nothing. Its code steps land before 0085's S5 and S6. |
+| 0082_fix_two-concurrent-post-v1-sessions-id-finalize-calls-for | Implemented (implemented-date 2026-09-28) | Resolves the defect 0082 handed on ("The §6.2 pre-attached retry loop does not stop when the session becomes terminal"). SPEC-1 gives persisted-row seams no retry, so no stop condition is needed. SPEC-2 edits the §15.1 `SETUP_COMMAND_FAILED` row, which is disjoint from the finalize precondition row 0082 SPEC-1 edited. Nothing 0082 landed is retired. | Nothing. It is immutable. 0085's S6 applies against the `start_pod_test.go` that 0082 landed. |
 | 0083_fix_four-spec-sites-disagree-on-the-finalize-workspace-failure-envelope | Implemented | Resolves its recorded defect "The §6.2 pre-attached retry does not run at finalize": finalize is exempt. Its separate §5.2 reserved-slot defect is unaffected. | Nothing. It is immutable. |
 | 0007_fix_eager-pod-claim-at-create-and-finalize-materialization | Implemented | Aligns §6.2 with its fail-once finalize design. | Nothing. It is immutable. |
+| 0086_fix_the-gateway-accepts-a-workspaceplan-in-the-body-of | Approved (approved-date 2026-10-28) | Both proposals edit §15.1 and §29.2. 0085 edits the `SETUP_COMMAND_FAILED` catalog row and step 23, and 0086 edits the `WORKSPACE_PLAN_INVALID` and `GIT_CLONE_*` catalog rows and steps 14, 15, and 17, so the edits are disjoint. Every 0086 deliverable keeps its subject. 0086's rule that a finalize rejected for its plan leaves the session `created` applies before any pre-attached work, so it composes with 0085's one-attempt finalize. No new human decision on 0086 is needed. | Nothing. Whichever proposal lands second locates its targets by quoted text. |
 
 ## Deliverable index
 
 - **SPEC-1** (`spec/06_warm-pod-model.md`): scopes the §6.2 pre-attached retry in its lead sentence and **Scope:** bullet.
 - **SPEC-2** (`spec/15_external-api-surface.md`): drops the fresh-pod recovery clause from the §15.1 `SETUP_COMMAND_FAILED` row.
 - **SPEC-3** (`spec/04_system-components.md`, `spec/29_communication-scenarios.md`, `spec/28_communication-channels.md`): drops the replacement-claim clause from the `ConfigureWorkspace`-and-`DemoteSDK` failure at each site.
-- **CODE-1** (`pkg/gateway/podlifecycle/podsession/binder.go`, `pkg/gateway/sessionserver/start.go`, `pkg/gateway/sessionserver/podclaimerror_internal_test.go`, `pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go`): corrects the comments and test annotations the spec edits make false.
+- **CODE-1** (`pkg/gateway/podlifecycle/podsession/bindlaunch.go`, `pkg/gateway/sessionserver/podclaimerror.go`, `pkg/gateway/sessionserver/podclaimerror_internal_test.go`): corrects the comments and test annotations the spec edits make false.
 - **TEST-1** (`pkg/gateway/sessionserver/start_pod_test.go`): pins that a failed finalize claims no replacement pod.
 - **RECORDS-1** (`BUILD-GAPS.md`, `TEST-GAPS.md`): files F-6.2.32 and retargets T-6.2.10.

@@ -12,17 +12,17 @@ No production behavior changes. The tree already makes one attempt at every pers
 - TEST-1 pins the single attempt at `POST /v1/sessions/{id}/finalize`.
 - RECORDS-1 records in BUILD-GAPS that the retry SPEC-1 keeps on `POST /v1/sessions/start` is unbuilt, and retargets TEST-GAPS T-6.2.10 to it.
 
-Locate every site below by symbol and quoted text. The ordering against proposal 0082's code steps is in the summary's **Watch out for.**
+Locate every site below by symbol and quoted text.
 
 ## Staged code changes
 
 ### CODE-1 · comment and annotation sweep
 
-Targets: `pkg/gateway/podlifecycle/podsession/binder.go`, `pkg/gateway/sessionserver/start.go`, `pkg/gateway/sessionserver/podclaimerror_internal_test.go`, and `pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go`. Rewrap each edited comment block with `gofumpt` conventions and change nothing else.
+Targets: `pkg/gateway/podlifecycle/podsession/bindlaunch.go`, `pkg/gateway/sessionserver/podclaimerror.go`, and `pkg/gateway/sessionserver/podclaimerror_internal_test.go`. Rewrap each edited comment block with `gofumpt` conventions and change nothing else.
 
-**(a) `Binder.Bind` stays unchanged.** Leave the `Bind` doc comment ("returned so the gateway can retry on a fresh pod") and the inline comment after `Launch` inside `Bind` ("Surface the error so the caller retries on a fresh pod.") as they are. Also leave the `Resume` doc comment and the `ErrNoConcurrentSlot` comment in `binder.go` as they are.
+**(a) `Binder.Bind` stays unchanged.** Leave the `Bind` doc comment ("returned so the gateway can retry on a fresh pod") and the inline comment after `Launch` inside `Bind` ("Surface the error so the caller retries on a fresh pod.") as they are. Also leave the `Resume` doc comment and the `ErrNoConcurrentSlot` comment in `resume.go` as they are.
 
-**(b) `Binder.Launch` doc comment** (`binder.go`). Replace
+**(b) `Binder.Launch` doc comment** (`bindlaunch.go`). Replace
 
 ```go
 // adapter connection. A launch failure reclaims the pod (and any lease
@@ -34,21 +34,17 @@ with
 
 ```go
 // adapter connection. A launch failure reclaims the pod (and any lease
-// assigned at Prepare) via failPhase and is returned to the caller. Whether
-// the caller re-claims a fresh pod is the caller's policy: the §6.2
-// pre-attached retry applies only inside the §7.1 atomic creation unit, and
-// §7.3 governs a resume rebuild. spec: §4.4 (proposal), §6.1, §5.1, §6.2
-// (pre-attached retry Scope), §7.3.
+// assigned at Prepare) via failPhase and is returned to the caller, whose
+// policy decides whether to re-claim a fresh pod. spec: §4.4 (proposal),
+// §6.1, §5.1, §6.2 (pre-attached retry Scope), §7.3.
 ```
 
-Do not write "only the §7.1 atomic creation unit re-claims a fresh pod". `Launch` is also reached through `Bind` on the resume-rebuild path, where §7.3 re-claims.
-
-**(c) `writeSetupCommandError` doc comment** (`start.go`). Replace
+**(c) `writeSetupCommandError` doc comment** (`podclaimerror.go`). Replace
 
 ```go
 // as Unknown, and Internal/Aborted/ResourceExhausted) is a transient
 // setup-window transport failure that §6.2 recovers on a fresh pod, so it
-// keeps the retryable 503 fallback + Retry-After. The same
+// keeps the retryable 503 fallback + Retry-After.
 ```
 
 with
@@ -56,25 +52,14 @@ with
 ```go
 // as Unknown, and Internal/Aborted/ResourceExhausted) is a transient
 // setup-window transport failure, so it keeps the retryable 503 fallback +
-// Retry-After for a client retry. Under the §6.2 pre-attached retry Scope,
-// only the POST /v1/sessions/start atomic unit also retries it internally on
-// a fresh pod (unbuilt: BUILD-GAPS F-6.2.32). The same
+// Retry-After for a client retry. The §6.2 pre-attached retry Scope decides
+// whether the gateway first retries it on a fresh pod (unbuilt: BUILD-GAPS
+// F-6.2.32).
 ```
 
 and replace the tag line `// §6.2 (transient setup failure retried on a fresh pod).` at the end of the same comment with `// §6.2 (pre-attached retry Scope).`
 
-**(d) Tags on the `/resume` helpers and tests.** §7.3 governs `/resume` recovery and is already cited at each site, so the §6.2 clause is removed:
-
-| Site | Replace | With |
-|:--|:--|:--|
-| `start.go`, `holdOrFailOnResumeError` doc comment | `// spec: §7.3, §6.2 (transient` / `// setup failure retried on a fresh pod). F-7.3.23.` | `// spec: §7.3. F-7.3.23.` |
-| `start.go`, `isTransientPodClaimError` doc comment | `// §7.3 (awaiting_client_action holding state for a retryable resume failure),` / `// §6.2 (transient setup failure retried on a fresh pod).` | `// §7.3 (awaiting_client_action holding state for a retryable resume failure).` |
-| `podclaimerror_internal_test.go`, the annotation above `TestIsTransientPodClaimErrorSetupCommand_spec_7_3` | `// failure), §6.2 (transient setup failure retried on a fresh pod) — the` | `// failure) — the` |
-| `resume_setup_demotion_internal_test.go`, the annotation above `TestHoldOrFailOnResumeErrorSetupCommand_spec_7_3` | `// failure), §15.1 (SETUP_COMMAND_FAILED), §6.2 (transient setup failure` / `// retried on a fresh pod), §7.2.` | `// failure), §15.1 (SETUP_COMMAND_FAILED), §7.2.` |
-
-The `/` in a cell separates two consecutive comment lines.
-
-**(e) `TestWritePodClaimErrorSetupCommandFailed_spec_7_3` annotation** (`podclaimerror_internal_test.go`). `writePodClaimError` serves every route, so the tag becomes route-neutral. Replace `// §6.2 (transient setup failure retried on a fresh pod) — a deterministic` with `// §6.2 (pre-attached retry Scope) — a deterministic`, and replace the closing line `// retryable 503 fallback + Retry-After so §6.2 recovers it on a fresh pod.` with `// retryable 503 fallback + Retry-After for a client retry.`
+**(d) `TestWritePodClaimErrorSetupCommandFailed_spec_7_3` annotation** (`podclaimerror_internal_test.go`). `writePodClaimError` serves every route, so the tag becomes route-neutral. Replace `// §6.2 (transient setup failure retried on a fresh pod) — a deterministic` with `// §6.2 (pre-attached retry Scope) — a deterministic`, and replace the closing line `// retryable 503 fallback + Retry-After so §6.2 recovers it on a fresh pod.` with `// retryable 503 fallback + Retry-After for a client retry.`
 
 ## Staged schema, chart, and migration changes
 
@@ -90,7 +75,7 @@ None.
 ### - [ ] F-6.2.32 — The §6.2 pre-attached retry is unbuilt on the `POST /v1/sessions/start` atomic creation unit [Low] — OPEN
 
 - **Spec:** §6.2 Pod State Machine, **Pre-attached failure retry policy:** **Scope:** as amended by proposal 0085. Within the §7.1 atomic creation unit of `POST /v1/sessions/start`, a pre-attached failure in the claim, prepare/setup, or launch steps is retried up to 2 times on a fresh pod with 500ms and 1s backoff before the row is persisted.
-- **Impl:** `mintClaimStartPersist` (`pkg/gateway/sessionserver/start.go`) runs `claimAtCreate` and `startOnPod` once and rolls back on the first error through `rollbackClaim` (when `createClaimNeedsRollback` holds) or `rollbackBinding`. `runWithQueue` re-enters acquisition only on the pool-exhaustion sentinels, only on a `queue` pool, and holds no pod between attempts.
+- **Impl:** `mintClaimStartPersist` (`pkg/gateway/sessionserver/create_and_start.go`) runs `claimAtCreate` and `startOnPod` once, and on a `startOnPod` error it releases the create-time claim through `rollbackClaim` when `createClaimNeedsRollback` holds. `runWithQueue` re-enters acquisition only on the pool-exhaustion sentinels, only on a `queue` pool, and holds no pod between attempts.
 - **Gap:** Build the loop in mintClaimStartPersist around claimAtCreate and startOnPod, ahead of the coordination-lease acquire and `store.Create`. Each failed attempt releases its pod and any credential lease it minted before the next attempt claims. A failure the policy's **Non-retryable failures:** bullet names, and the deterministic `FailedPrecondition` setup exit that surfaces as `SETUP_COMMAND_FAILED`, returns on the first attempt. Pool exhaustion at the claim keeps its §7.1 and §4.6.1 handling and is not retried by this loop. Exhaustion returns the last attempt's envelope, and success keeps the existing `201` response. A slot failure on a concurrent-workspace pool follows the §5.2 **Slot retry policy** and is outside this finding. Tier 1 covers the attempt count, the backoff, and the non-retryable exit; TEST-GAPS T-6.2.10 covers the integration test.
 ```
 
@@ -147,10 +132,9 @@ CODE-1 changes comments only and needs no new test. Tier 0 and tier 1 on `pkg/ga
 
 ## Files touched on application (non-spec)
 
-- `pkg/gateway/podlifecycle/podsession/binder.go` (CODE-1)
-- `pkg/gateway/sessionserver/start.go` (CODE-1)
+- `pkg/gateway/podlifecycle/podsession/bindlaunch.go` (CODE-1)
+- `pkg/gateway/sessionserver/podclaimerror.go` (CODE-1)
 - `pkg/gateway/sessionserver/podclaimerror_internal_test.go` (CODE-1)
-- `pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go` (CODE-1)
 - `pkg/gateway/sessionserver/start_pod_test.go` (TEST-1)
 - `BUILD-GAPS.md` (RECORDS-1)
 - `TEST-GAPS.md` (RECORDS-1)
