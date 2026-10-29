@@ -8,6 +8,7 @@
 
 - §15: the single-shot paragraph narrows to Chat Completions and points to a new paragraph, **Open Responses conversation sessions.**, which owns the held session, response identity, warm conditions, cold path, and failure rule (SPEC-1, SPEC-2).
 - §29.3: the adapter off-holder row splits so a warm turn on another replica's held session is a forwarding row under the existing **Forwarding.** rules (SPEC-3).
+- §28.5.4: the `CH-HOLDERFORWARD` card's **Messages.** bullet adds a §15 link (SPEC-4).
 - Stores: transcript `Append` returns the last assigned Seq, and the session row carries per-response records and the creating request's runtime ref on the existing request-envelope bundle (CODE-1, CODE-2).
 - Gateway: a new holder-forward kind and listener route, and an Open Responses handler that routes each request warm, forwarded, or cold (CODE-3, CODE-4, CODE-5).
 - Docs: the Open Responses API page describes the held session (DOCS-1).

@@ -2,11 +2,11 @@
 proposal: 0108_fix_proposal-0061-re-derived-plan-item-gateway-runtime-comms
 title: Built-in OpenAI-dialect adapter conversations claim a pod per turn
 kind: fix
-status: Draft
+status: Reviewed
 drafted-date: 2026-10-29
 drafted-by: change-proposal
-reviewed-date: 
-reviewed-by: 
+reviewed-date: 2026-10-29
+reviewed-by: change-proposal
 approved-date: 
 approved-by: 
 implemented-date: 
@@ -17,8 +17,10 @@ implemented-by:
 
 Recorded 2026-10-29.
 
-The adversarial review of this proposal ran one spec review loop. The non-spec review loop did not run.
+The adversarial review ran two loops, one over the spec staging and one over the non-spec staging.
 
-The spec review loop ran 12 rounds and did not converge. The loop ran 5 full-pool sweeps and fixed 31 findings. The findings the loop had not closed when it stopped remain open. The per-round records are in `0108_fix_proposal-0061-re-derived-plan-item-gateway-runtime-comms.review-log.md` in this directory.
+The spec review loop ran 14 rounds and converged. It ran 6 full-pool sweeps.
 
-Because the spec loop did not converge, the run does not establish that the proposal is ready for approval. The status stays Draft.
+The non-spec review loop ran 7 rounds and converged. It ran 2 full-pool sweeps.
+
+The two loops fixed 26 findings. Both loops converged, so the run leaves no findings open. The per-round records are in `0108_fix_proposal-0061-re-derived-plan-item-gateway-runtime-comms.review-log.md` in this directory.
