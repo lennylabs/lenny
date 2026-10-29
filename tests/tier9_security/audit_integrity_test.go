@@ -7,16 +7,18 @@
 // (the gateway runs with a real lenny-postgres, so admin.Router wires
 // the auditstore.Store over the audit_log table). Every audit_log row
 // carries a prev_hash linking it to its predecessor, and the §11.7
-// verifier — reachable through GET /v1/admin/audit-events/verify —
-// walks the per-tenant chain in sequence-number order.
+// verifier walks the per-tenant chain in sequence-number order. §25.9
+// defines no separate verify route: the audit-events list carries the
+// verdict in its chainIntegrityReport and in each OCSF record's
+// unmapped.lenny_chain.integrity.
 //
 // This file asserts two distinct TESTING.md §12.9.10 properties against the live
 // chain:
 //
 //   - Continuity: admin-API activity (bootstrap upserts, which emit
-//     admin.bootstrap.applied audit events) extends the synthetic
-//     tenant's chain, and the verifier reports the resulting chain
-//     "verified" with a row count that matches the events generated.
+//     platform.bootstrap_applied audit events) extends the synthetic
+//     tenant's chain, and the verifier marks every appended row
+//     "verified", with a row count that matches the events generated.
 //     The complementary gap-detection half (a seeded gap IS detected)
 //     is covered by the tier-8 TestAuditChainGapDetection; this file
 //     does not duplicate it.
@@ -30,12 +32,12 @@
 package tier9_security_test
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/common/seqname"
+	"github.com/lennylabs/lenny/tests/testinfra/auditquery"
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 )
 
@@ -43,37 +45,38 @@ import (
 // is persisted in.
 const auditDeployment = "lenny-postgres"
 
-// gatewayDeploymentName is the gateway Deployment whose verify endpoint
-// the continuity test drives.
+// gatewayDeploymentName is the gateway Deployment whose §25.9 audit
+// query the continuity test drives.
 const gatewayDeploymentName = "lenny-gateway"
 
-// spec: 12.9.10
+// spec: 12.9.10, 11.7 (Audit Logging), 25.9 (Audit Log Query API)
 // diagnosis: TESTING.md §12.9.10 audit-chain continuity did not hold. The §11.7
 // chain is Postgres-backed; admin-API activity emits audit events that
 // extend the calling tenant's chain. The test issues N bootstrap
-// upserts as platform-admin against a synthetic tenant, then asserts
-// GET /v1/admin/audit-events/verify reports the chain "verified" and a
-// rowCount that grew by at least N. A non-"verified" result, or a chain
-// that did not grow, means the §11.7 hash chain is not continuous.
+// upserts as platform-admin against a synthetic tenant, then reads the
+// §25.9 audit-events list for the tenant and asserts the
+// chainIntegrityReport counts no broken row, the chain grew by at least N
+// rows, and every new row's unmapped.lenny_chain.integrity is "verified".
+// A broken or unverified row, or a chain that did not grow, means the
+// §11.7 hash chain is not continuous.
 func TestAuditChainContinuity(t *testing.T) {
 	c := kind.InstallLenny(t)
 	if !deploymentReadyT9(t, c, auditDeployment) {
 		t.Skipf("precondition not met: %s is not Ready; the §11.7 chain is Postgres-backed", auditDeployment)
 	}
 	if !deploymentReadyT9(t, c, gatewayDeploymentName) {
-		t.Skipf("precondition not met: %s is not Ready; the verifier is a gateway endpoint", gatewayDeploymentName)
+		t.Skipf("blocked: %s is not Ready; the §25.9 audit query is a gateway endpoint, and the route back is a Ready gateway", gatewayDeploymentName)
 	}
 
 	probe := "t9-auditcont-probe"
 	gatewayIP := startGatewayProbe(t, c, probe)
 	admin := platformAdmin()
 
-	// Synthetic tenant: a dedicated audit chain so the rowCount delta is
+	// Synthetic tenant: a dedicated audit chain so the row-count delta is
 	// attributable to this test's activity. tenant_id on audit_log is not
 	// a foreign key, so the bootstrap upsert (which creates the tenant
 	// row) and the audit events it emits both land cleanly.
 	tenant := "t9-auditcont-tenant"
-	verifyPath := "/v1/admin/audit-events/verify?tenantId=" + tenant
 
 	// Register cleanup before generating state: delete the synthetic
 	// tenant row and its audit_log rows so the shared cluster is clean.
@@ -85,27 +88,25 @@ func TestAuditChainContinuity(t *testing.T) {
 		}
 	})
 
-	// Baseline: the verifier must be reachable, and an empty (or
-	// pre-existing) chain for the synthetic tenant must verify.
-	base := gatewayRequestRetry(t, c, probe, gatewayIP, "GET", verifyPath, admin, "")
-	if base.curlExit != 0 || base.statusCode != 200 {
-		t.Skipf("precondition not met: GET /v1/admin/audit-events/verify is not reachable "+
-			"(curl exit %d, status %d, body %q); the §11.7 verifier endpoint is unavailable",
-			base.curlExit, base.statusCode, base.body)
+	// Baseline: the §25.9 list must answer for the synthetic tenant, and
+	// the chain it reports (empty, or what a prior run left) must hold no
+	// broken row.
+	base, err := readAuditChainT9(t, c, probe, gatewayIP, tenant)
+	if err != nil {
+		t.Fatalf("the §25.9 audit-events list for tenant %s could not be read at baseline: %v", tenant, err)
 	}
-	baseVerify := parseAuditVerify(t, base.body)
-	if baseVerify.Integrity != "verified" {
-		t.Fatalf("TESTING.md §12.9.10 violation: the §11.7 verifier reports integrity %q for the synthetic tenant's "+
-			"baseline chain, expected \"verified\" (detail %q, rowCount %d)",
-			baseVerify.Integrity, baseVerify.Detail, baseVerify.RowCount)
+	if base.Report.Broken != 0 {
+		t.Fatalf("TESTING.md §12.9.10 violation: the §25.9 chainIntegrityReport counts %d broken rows in the synthetic "+
+			"tenant's baseline chain (report %+v)", base.Report.Broken, base.Report)
 	}
-	t.Logf("baseline: synthetic-tenant chain integrity %q, rowCount %d",
-		baseVerify.Integrity, baseVerify.RowCount)
+	t.Logf("baseline: synthetic-tenant chain has %d rows, report %+v", len(base.Events), base.Report)
 
 	// Generate audit events: each bootstrap upsert of the synthetic
-	// tenant emits one admin.bootstrap.applied event onto the *caller's*
+	// tenant emits one platform.bootstrap_applied event onto the *caller's*
 	// tenant chain. The caller's dev-header tenant is the synthetic
-	// tenant, so the events extend that tenant's chain.
+	// tenant, so the events extend that tenant's chain. The audit-of-audit
+	// event each list query emits lands on the querying platform-admin's
+	// own chain, so the reads do not grow this one.
 	const events = 6
 	bootstrapBody := fmt.Sprintf(`{"tenants":[{"id":%q}]}`, tenant)
 	requireTenantAuditSequenceProvisioned(t, c, probe, gatewayIP, pgIP, tenant, bootstrapBody)
@@ -118,32 +119,50 @@ func TestAuditChainContinuity(t *testing.T) {
 				i+1, res.curlExit, res.statusCode, res.body)
 		}
 	}
-	t.Logf("generated %d admin.bootstrap.applied audit events for tenant %s", events, tenant)
+	t.Logf("generated %d platform.bootstrap_applied audit events for tenant %s", events, tenant)
 
-	// Assert: the verifier still reports the chain verified, and the
-	// chain grew by at least `events` rows. The hash chain links every
-	// new row to its predecessor; a "verified" result over the grown
-	// chain proves the new rows extended it without breaking continuity.
-	after := gatewayRequestRetry(t, c, probe, gatewayIP, "GET", verifyPath, admin, "")
-	if after.curlExit != 0 || after.statusCode != 200 {
-		t.Fatalf("the verify endpoint returned curl exit %d / status %d after the audit activity (body %q)",
-			after.curlExit, after.statusCode, after.body)
+	// Assert: no row is broken, the chain grew by at least `events`
+	// rows, and every row appended after the baseline verifies. The §11.7
+	// verifier links each row to its predecessor, so "verified" on every
+	// new row proves the rows extended the chain without breaking it.
+	after, err := readAuditChainT9(t, c, probe, gatewayIP, tenant)
+	if err != nil {
+		t.Fatalf("the §25.9 audit-events list for tenant %s could not be read after the audit activity: %v", tenant, err)
 	}
-	afterVerify := parseAuditVerify(t, after.body)
-	if afterVerify.Integrity != "verified" {
-		t.Errorf("TESTING.md §12.9.10 violation: the §11.7 verifier reports integrity %q after %d audit events were "+
-			"appended, expected \"verified\"; the hash chain lost continuity (breakSeq %d, detail %q)",
-			afterVerify.Integrity, events, afterVerify.BreakSeq, afterVerify.Detail)
+	if after.Report.Broken != 0 {
+		t.Errorf("TESTING.md §12.9.10 violation: the §25.9 chainIntegrityReport counts %d broken rows after %d audit "+
+			"events were appended; the hash chain lost continuity (report %+v)", after.Report.Broken, events, after.Report)
 	}
-	grew := afterVerify.RowCount - baseVerify.RowCount
-	if grew < events {
+	added := after.After(base.MaxSeq())
+	if len(added) < events {
 		t.Errorf("TESTING.md §12.9.10 violation: the synthetic tenant's chain grew by %d rows after %d audit events; "+
 			"expected at least %d — audit events were dropped rather than chained",
-			grew, events, events)
-	} else {
-		t.Logf("TESTING.md §12.9.10 continuity verified: chain grew %d -> %d rows, integrity still %q",
-			baseVerify.RowCount, afterVerify.RowCount, afterVerify.Integrity)
+			len(added), events, events)
 	}
+	for _, ev := range added {
+		if ev.Integrity != "verified" {
+			t.Errorf("TESTING.md §12.9.10 violation: appended row seq %d reports chain integrity %q, expected "+
+				"\"verified\"", ev.Seq, ev.Integrity)
+		}
+	}
+	if !t.Failed() {
+		t.Logf("TESTING.md §12.9.10 continuity verified: chain grew %d -> %d rows, every appended row verified (report %+v)",
+			len(base.Events), len(after.Events), after.Report)
+	}
+}
+
+// readAuditChainT9 reads the tenant's §11.7 chain verdict through the
+// §25.9 audit-events list as platform-admin, over every page of the
+// default look-back window.
+func readAuditChainT9(t *testing.T, c *kind.Cluster, probe, gatewayIP, tenant string) (auditquery.Chain, error) {
+	t.Helper()
+	return auditquery.ReadChain(tenant, "", "", func(path string) (int, []byte, error) {
+		res := gatewayRequestRetry(t, c, probe, gatewayIP, "GET", path, platformAdmin(), "")
+		if res.curlExit != 0 {
+			return 0, nil, fmt.Errorf("curl exit %d (body %q)", res.curlExit, res.body)
+		}
+		return res.statusCode, []byte(res.body), nil
+	})
 }
 
 // spec: 12.9.10
@@ -221,26 +240,6 @@ func TestAuditSequenceMonotonicity(t *testing.T) {
 	t.Logf("TESTING.md §12.9.10 monotonicity verified: %d audit_log rows for tenant %s, "+
 		"sequence_number strictly increasing from %d to %d with no gap",
 		len(seqs), tenant, seqs[0], seqs[len(seqs)-1])
-}
-
-// auditVerifyDoc is the parsed §11.7 verify-endpoint response.
-type auditVerifyDoc struct {
-	Integrity string `json:"integrity"`
-	BreakSeq  uint64 `json:"breakSeq"`
-	Detail    string `json:"detail"`
-	RowCount  int    `json:"rowCount"`
-}
-
-// parseAuditVerify decodes a §11.7 verify response body. An undecodable
-// body fails the test, since every caller depends on the integrity
-// field.
-func parseAuditVerify(t *testing.T, body string) auditVerifyDoc {
-	t.Helper()
-	var doc auditVerifyDoc
-	if err := json.Unmarshal([]byte(body), &doc); err != nil {
-		t.Fatalf("the §11.7 verify response is not valid JSON: %v\nbody: %q", err, body)
-	}
-	return doc
 }
 
 // readAuditSequences reads the audit_log sequence_number column for the

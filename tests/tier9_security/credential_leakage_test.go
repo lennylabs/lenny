@@ -141,7 +141,7 @@ func TestCredentialLeakageEnvironment(t *testing.T) {
 
 	env, err := execContainer(t, c, pod, "runtime", "sh", "-c", credEnvDumpScript)
 	if err != nil {
-		t.Skipf("TESTING.md §12.9.8 (env): could not read the runtime container environment from cred-shell-echo pod %s: %v\noutput:\n%s",
+		t.Skipf("blocked: TESTING.md §12.9.8 (env): could not read the runtime container environment from cred-shell-echo pod %s; the route back is a cred-shell-echo pod whose runtime container accepts exec: %v\noutput:\n%s",
 			pod, err, env)
 	}
 	if !strings.Contains(env, "PATH=") {
