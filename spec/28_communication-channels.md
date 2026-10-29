@@ -460,13 +460,13 @@ gateway replica consumes. The §28.3 channel register places one channel on this
   (§28.3).
 - **Messages.** The adapter-to-gateway events `RATE_LIMITED` (the current credential is rate-limited and a
   fallback is requested), `AUTH_EXPIRED` (the credential lease expired or was rejected by the provider),
-  `PROVIDER_UNAVAILABLE` (the provider endpoint is unreachable), `LEASE_REJECTED` (the runtime cannot use
-  the assigned credential), `CheckpointBarrierAck` carrying `barrier_id` and `checkpoint_ref`,
-  `AdapterTerminating` carrying `session_id` and `reason`, and `FINAL_USAGE_REPORT` as the last message
-  before the stream closes ([§4.7](04_system-components.md#47-runtime-adapter)). The channel additionally
-  carries the slot-failure event a concurrent-session pod emits when a slot's session fails
-  ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) and the signal
-  an agent pod's preStop hook sends to its coordinating replica to have that replica drive the eviction
+  `PROVIDER_UNAVAILABLE` (the provider endpoint is unreachable), `LEASE_REJECTED` (the runtime cannot use the
+  assigned credential), `CheckpointBarrierAck` carrying `barrier_id` and `checkpoint_ref`,
+  `AdapterTerminating` carrying `session_id` and `reason`, and `FINAL_USAGE_REPORT`
+  ([§4.7](04_system-components.md#47-runtime-adapter)). The channel additionally carries the slot-failure
+  event a concurrent-session pod emits when a slot's session fails
+  ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) and the signal an
+  agent pod's preStop hook sends to its coordinating replica to have that replica drive the eviction
   checkpoint ([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)). The specification
   states no message name for either of those two, and it does not state the stream's message envelope in
   prose; the binding is declared in the published protobuf service definition
