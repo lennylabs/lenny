@@ -84,12 +84,7 @@
 
 ## Open decisions for human to make
 
-One decision is open. The review loop reversed an answer that an earlier phase applied, and the two positions stand unreconciled.
-
-- **`marker:0107_fix_the-delegation-tree-s-budget-lifecycle-is-under-specified:`seal.go` `failworkspaceseal`, `derive.go` `persistderivefailure`, the translators' `handlecreatecompletion` and `handlecreate`, and `users.go` `cancelforrevoke`** Approved proposal 0107 CODE-3 lists the translators' `handleCreate` among the terminal writers that run no post-terminal hook, and its hook-dispatch table has no translator row. Should 0108's Open Responses failure exit, `endHeldSession`, stay hookless so that 0107 CODE-3 stays true as written, or should it run the post-terminal hook, which requires the proposal that lands second to amend 0107 CODE-3's list and table?
-  - Position applied by the open-decisions phase: `endHeldSession` in `handleCreate` writes `failed` and calls `releaseSingleShot` without a post-terminal hook. 0107 CODE-3's statement that `handleCreate` runs no post-terminal hook stays true, and the only coordination is a textual merge of the `sessionstore` edits that keeps `handleCreate`, including `endHeldSession`, outside the CODE-3 hook-dispatch table.
-  - Position the proposal carries now, from the review loop: CODE-5 moves the Open Responses terminal writer from `handleCreate` to `serveCold`, which runs no post-terminal hook, and `endHeldSession` opens `BeginTerminal` and runs `AfterTerminalWrite` with nil signals inline under its own claim, calling no `releaseSingleShot` (CODE-5 step 8). The 0107 row under `## Impacts on other proposals` tells the proposal that lands second to name `serveCold` in place of `handleCreate` among 0107 CODE-3's hookless writers and to give `endHeldSession` the dispatch of the CODE-3 `lenny/cancel_session` row. The review log records the reason: only the post-terminal hook runs the §7.2 inbox drain, the §7.3 DLQ drain, and the terminal events.
-  - The human chooses between these two positions. Neither is re-applied until the human decides.
+No decisions are open.
 
 ## Defects in the shipped tree that this proposal does not stage
 
