@@ -13,7 +13,7 @@ components:
 symptoms:
   - "delegation requests rejected with BUDGET_EXHAUSTED"
   - "budget utilization approaching exhaustion for a delegation tree"
-  - "BUDGET_KEYS_EXPIRED returned by Lua script"
+  - "delegate_task fails with INVALID_STATE_TRANSITION after a BUDGET_KEYS_EXPIRED detection"
 tags:
   - delegation
   - budget
@@ -33,7 +33,7 @@ A delegation tree's budget keys in Redis have expired (losing accumulated spend)
 
 ## Trigger
 
-- `DelegationBudgetKeysExpired` — `BUDGET_KEYS_EXPIRED` returned by the budget Lua script.
+- `DelegationBudgetKeysExpired`: a `delegate_task` reservation detected `BUDGET_KEYS_EXPIRED`, meaning the tree's sentinel key `{root_session_id}:dlg:tokens` was absent on the reservation's retry. A budget return that finds the sentinel absent is not a detection and does not raise the alert.
 - `DelegationBudgetNearExhaustion` — budget utilization for a tree crossed the configured warning threshold (see [Metrics Reference](../reference/metrics.html#alert-rules)).
 - Client calls to `/v1/delegations` return `BUDGET_EXHAUSTED`.
 
@@ -73,7 +73,7 @@ Long-running trees with sustained delegation traffic are expected to accumulate 
 
 ### Step 1 — Budget keys expired
 
-The budget key TTL is designed to cap the lifetime of a delegation tree. The gateway sets it to `delegation.budgetKeyTTLSeconds` (default 691200s, 8 days) at tree creation and re-arms it whenever the root session enters or leaves `suspended`, or leaves `awaiting_client_action` for `resume_pending`. `delegation.budgetKeyTTLSeconds` must exceed the suspended-session lifetime `gateway.maxSuspendedSessionSeconds` (default 604800s, 7 days), and the gateway does not start when it does not, so a root that stays `suspended` until it expires never loses its tree's keys. A root that spends longer than the TTL outside `suspended` since the last re-arm meets `BUDGET_KEYS_EXPIRED`. Expiry with an active tree is otherwise a misconfiguration or a Redis-failure event:
+The budget key TTL is designed to cap the lifetime of a delegation tree. The budget reservation script sets it to `delegation.budgetKeyTTLSeconds` (default 691200s, 8 days) on every budget key it creates, including a per-parent key that a later reservation creates, the budget return script keeps the remaining TTL of every key it writes, and the gateway re-arms it whenever the root session enters or leaves `suspended`, or leaves `awaiting_client_action` for `resume_pending`. `delegation.budgetKeyTTLSeconds` must exceed the suspended-session lifetime `gateway.maxSuspendedSessionSeconds` (default 604800s, 7 days), and the gateway does not start when it does not, so a root that stays `suspended` until it expires never loses its tree's keys. A root that spends longer than the TTL outside `suspended` since the last re-arm loses its tree's keys. The loss is detected at the tree's next `delegate_task` reservation: that call fails with the permanent `INVALID_STATE_TRANSITION`, the gateway cancels every non-terminal descendant of the root, and it transitions the root to `failed` with `BUDGET_KEYS_EXPIRED`. Expiry with an active tree is otherwise a misconfiguration or a Redis-failure event:
 
 1. Confirm Redis health; if unhealthy, see [redis-failure](redis-failure.html).
 2. Decide with the tree owner (tenant) whether to:

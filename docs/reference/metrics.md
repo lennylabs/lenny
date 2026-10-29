@@ -246,7 +246,7 @@ These are derived from credential lifecycle counters, not directly named in the 
 | `lenny_delegation_deadlock_resolution_total` | Counter | `pool`, `resolution` | How deadlocks are resolved: `client_input`, `child_cancel`, `timeout`. | Operational monitoring. |
 | `lenny_delegation_deadlock_duration_seconds` | Histogram | `pool` | Time from deadlock detection to resolution. | Operational monitoring. |
 | `lenny_delegation_budget_return_usage_lag_total` | Counter | -- | Budget return unable to read parent's actual usage counter. | Operational monitoring. |
-| `lenny_delegation_budget_keys_expired_total` | Counter | `pool`, `tenant_id` | Lua script returns `BUDGET_KEYS_EXPIRED`. | `DelegationBudgetKeysExpired` alert. |
+| `lenny_delegation_budget_keys_expired_total` | Counter | `pool`, `tenant_id` | Increments on each `BUDGET_KEYS_EXPIRED` detection: a `delegate_task` reservation finds the tree's sentinel key absent on its retry. A budget return that finds the sentinel absent is not a detection. | `DelegationBudgetKeysExpired` alert. |
 | `lenny_delegation_would_have_blocked_total` | Counter | `pool`, `tenant_id`, `layer`, `mode` | Self-recursive delegation hops that the §8.2 three-layer AND gate would have rejected. `layer ∈ {platform, runtime, policy}` (every layer that evaluated `false` at the offending hop); `mode ∈ {enforce, warn}`. Under `mode: enforce` the hop was rejected with `DELEGATION_CYCLE_DETECTED`; under `mode: warn` the hop was admitted with a `delegation.cycle_warning` audit event. Use to size the policy-flip impact before promoting `mode: warn` to `mode: enforce`. Not emitted under `mode: permissive` (cycle detection disabled). | `CycleDetectionWarnModeBlocking` alert (rolled-up `mode="warn"` signal) and `CycleDetectionModeUnsafe` standing alert (`mode: permissive` posture). |
 | `lenny_export_file_scans_total` | Counter | `pool`, `tenant_id`, `policy_name`, `interceptor_ref`, `outcome` | Exported files routed through the `PreExportMaterialization` interceptor when `DelegationPolicy.contentPolicy.scanExportedFiles` is `true`. Outcomes: `admitted`, `modified`, `rejected`, `failed_open`, `failed_closed`. Increments once per file per delegation. | Operational monitoring; operators should alert on persistent `failed_open` volume. |
 | `lenny_export_file_scan_duration_seconds` | Histogram | `pool`, `tenant_id`, `interceptor_ref` | End-to-end wall-clock duration of a `PreExportMaterialization` interceptor call for a single exported file. | Operational monitoring. |
@@ -491,7 +491,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `DataResidencyViolationAttempt` | Cross-border transfer attempt detected | Critical |
 | `PgBouncerAllReplicasDown` | All PgBouncer pods have zero ready replicas (self-managed only) | Critical |
 | `SessionEvictionTotalLoss` | Both MinIO and Postgres unavailable during eviction | Critical |
-| `DelegationBudgetKeysExpired` | `BUDGET_KEYS_EXPIRED` returned by Lua script | Critical |
+| `DelegationBudgetKeysExpired` | A `delegate_task` reservation detects `BUDGET_KEYS_EXPIRED` | Critical |
 | `BillingStreamEntryAgeHigh` | Oldest billing stream entry exceeds 80% of TTL | Critical |
 | `TokenStoreUnavailable` | `rate(lenny_oauth_token_5xx_total{error_type="token_store_unavailable"}[1m]) > 0` sustained > 30s | Critical |
 | `LLMUpstreamEgressAnomaly` | `rate(lenny_gateway_llm_upstream_egress_anomaly_total[1m]) > 0` | Critical |

@@ -114,7 +114,7 @@ While a session is sealed, the adapter writes no `message` frame for it to your 
 | `LEASE_REJECTED` | Runtime cannot use the assigned credential |
 | `CheckpointBarrierAck` | Acknowledges a `CheckpointBarrier` after quiescence and checkpoint flush (fields: `barrier_id`, `checkpoint_ref`) |
 | `AdapterTerminating` | Self-initiated terminal notification (e.g., coordinator-loss hold timeout); lets the gateway transition the session without waiting for the orphan-session reconciler |
-| `FINAL_USAGE_REPORT` | Final lifecycle-stream message sent before the stream closes, after all in-flight `ReportUsage` calls have been flushed |
+| `FINAL_USAGE_REPORT` | Pushed for one session in the session's `Shutdown`, after all in-flight gateway `ReportUsage` pulls have settled (fields: `session_id`). From the session's terminal transition, the gateway waits for it, or for the stream to close, before the delegated child's budget return; the pod or slot release does not wait for that return |
 
 ---
 
