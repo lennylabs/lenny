@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/blobstore/prefixlisttest"
 )
 
 // fakeS3 mirrors the S3 PutObject / GetObject / HeadObject /
@@ -24,6 +25,9 @@ import (
 // scope; the fake stores one body + one tag set per key.
 type fakeS3 struct {
 	objects map[string]*fakeObject
+	// listing controls the prefix-listing pagination and fault injection
+	// the ListByPrefix tests drive (prefixlist_test.go).
+	listing prefixlisttest.FakeListing
 }
 
 type fakeObject struct {
@@ -102,17 +106,28 @@ func (f *fakeS3) DeleteObject(_ context.Context, in *s3.DeleteObjectInput, _ ...
 }
 
 func (f *fakeS3) ListObjectsV2(_ context.Context, in *s3.ListObjectsV2Input, _ ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
-	prefix := awssdk.ToString(in.Prefix)
-	out := &s3.ListObjectsV2Output{}
-	t := false
+	keys := make([]string, 0, len(f.objects))
 	for k := range f.objects {
-		if !strings.HasPrefix(k, prefix) {
-			continue
-		}
-		key := k
-		out.Contents = append(out.Contents, types.Object{Key: &key})
+		keys = append(keys, k)
 	}
-	out.IsTruncated = &t
+	page, next, err := f.listing.Page(keys, awssdk.ToString(in.Prefix), awssdk.ToString(in.ContinuationToken), int(awssdk.ToInt32(in.MaxKeys)))
+	if err != nil {
+		return nil, err
+	}
+	out := &s3.ListObjectsV2Output{IsTruncated: awssdk.Bool(next != "")}
+	if next != "" && !f.listing.DropToken {
+		out.NextContinuationToken = awssdk.String(next)
+	}
+	for _, k := range page {
+		obj := f.objects[k]
+		key := k
+		lm := obj.lastModified
+		out.Contents = append(out.Contents, types.Object{
+			Key:          &key,
+			Size:         awssdk.Int64(int64(len(obj.body))),
+			LastModified: &lm,
+		})
+	}
 	return out, nil
 }
 

@@ -459,11 +459,13 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 	// startup rather than at the first checkpoint attempt.
 	//
 	// spec: §13.2 (capability model).
-	if *f.agentNamespace != "" {
-		if _, ok := objectStore.(blobstore.Presigner); !ok {
-			log.Fatalf("lenny-gateway: §13.2 pod-based sandboxes (--agent-namespace=%q) require a Presigner-capable artifact store, but the resolved backend %T does not implement it (an empty --minio-endpoint falls back to the in-memory store); configure a signing object-store backend",
-				*f.agentNamespace, objectStore)
-		}
+	// The same check requires the prefix listing and per-key delete the
+	// §10.1.7 resume and cleanup paths run (blobstore.CheckpointStore), so a
+	// backend that can mint PUT capabilities but cannot list the chunk prefix
+	// does not boot into a deployment whose resumes restore nothing.
+	if !requireCheckpointStore(*f.agentNamespace, objectStore) {
+		log.Fatalf("lenny-gateway: §13.2 pod-based sandboxes (--agent-namespace=%q) require an artifact store that presigns, lists a chunk prefix, and deletes by key (blobstore.CheckpointStore), but the resolved backend %T does not implement it (an empty --minio-endpoint falls back to the in-memory store); configure a signing object-store backend",
+			*f.agentNamespace, objectStore)
 	}
 
 	// §12.5 / §17.9.7 — the fail-closed replacement for the SigV4
@@ -528,6 +530,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 	w.sessionLogs = sessionLogs
 	w.objectStore = objectStore
 	w.minioStore = minioStore
+	w.checkpointStore = checkpointStoreOf(objectStore)
 	w.blobs = blobs
 	w.blobProbe = blobProbe
 	w.artifactCatalog = artifactCatalog

@@ -3572,6 +3572,7 @@
       "title": "preStop Hook Drain",
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
+        "tests/tier2_component/stores/prefixlist_component_test.go",
         "tests/tier7a_load_local/prestop_no_double_checkpoint_test.go",
         "tests/tier7a_load_local/shutdown_terminal_wait_race_test.go",
         "pkg/gateway/sessionserver/terminal_writers_internal_test.go::TestWaitTerminalWorkWaitsOnTheTerminalClaimRecord_spec_10_1_7",

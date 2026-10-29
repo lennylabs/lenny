@@ -4250,8 +4250,12 @@ whose owner lines now name proposal 0109 with their checklist steps.
   - [ ] **F-15.1.63** (Medium): derive and replay mint no `uploadToken`, although the §15.1 replay response is
     identical to `POST /v1/sessions`. It rides with F-7.1.36, which edits the same create path.
 - Direct-fix queue, independent of 0109's implementation and preferably ahead of it.
-  - [ ] **F-10.1.45** (High): only `miniostore` implements `ListByPrefix`, so the chunk resolver is nil on
+  - [x] **F-10.1.45** (High): only `miniostore` implements `ListByPrefix`, so the chunk resolver is nil on
     S3, GCS, and Azure, a resume restores no chunks there, and after 0109 derive and replay answer `500` there.
+    Closed 2026-10-29 by direct fix on `fix/f-10-1-45`: every backend implements a paginated, tenant-scoped
+    `ListByPrefix`, each production backend asserts `blobstore.CheckpointStore`, the gateway wires the
+    resolver and the chunk cleanup seams from that one store, and a pod-based deployment refuses to start on a
+    backend that is not one.
 - Proposal routing.
   - [ ] Its own proposal, after 0109's implementation: **F-7.3.36** (Medium, a derived or replayed session
     resumed before its own first checkpoint restores the source's checkpoint through the Resume RPC, carrying
