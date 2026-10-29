@@ -4,7 +4,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: The state-entry migration lands as 0195
 
-**Status:** proposed
+**Status:** accepted: the owner pre-accepted the renumbering; migrations 0192 to 0194 hold unrelated changes (2026-10-29, orchestrator under the owner's delegation)
 
 **What the proposal says.** The CODE-1 targets name `migrations/0192_sessions_state_entered_at.up.sql` and `migrations/0192_sessions_state_entered_at.down.sql` as the next free number after 0191. Summary decision D13 also places the `input_wait_id` column in migration 0192.
 
@@ -16,7 +16,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: TEST-1 item 12 covers only the StateEnteredAt round trip
 
-**Status:** proposed
+**Status:** resolved: a later step added `Session.InputWaitID`, its pgstore read and write wiring in `Create`, `Update`, and the row scan, and `TestSessionStoreRoundTripsInputWaitID_spec_7_2` in `tests/tier2_component/stores/sessionstore_state_entry_test.go`, which checks the round trip through `Update`, `Get`, and `GetByID` (2026-10-29, orchestrator under the owner's delegation)
 
 **What the proposal says.** TEST-1 item 12 requires the pgstore test to check that an `InputWaitID` written through `Update` reads back through `Get` and `GetByID`, alongside the `StateEnteredAt` check.
 
@@ -28,7 +28,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: A watchdog listing error skips one listing rather than the tenant
 
-**Status:** proposed
+**Status:** accepted: skipping only the failed listing keeps more of the pass running, as §10.1.1 **Primary:** requires (2026-10-29, orchestrator under the owner's delegation)
 
 **What the proposal says.** CODE-4 item 1 in the non-spec changes states: "A per-tenant List error skips that tenant."
 
@@ -40,7 +40,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: The session_expiry counter fires synchronously before hook dispatch
 
-**Status:** proposed
+**Status:** accepted: the counter is a metric increment outside the terminal pipeline, and the audit-chain order on the dispatched goroutine is unchanged (2026-10-29, orchestrator under the owner's delegation)
 
 **What the proposal says.** CODE-4 item 2 lists the hooks the dispatched goroutine runs: the awaiting notifier, where present, and then `recordCompleted`. Before the change, the order was the awaiting audit, then the `session_expiry` counter, then the terminal hook.
 
@@ -52,7 +52,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: The gateway onTick log callbacks change outside the CODE-4 targets
 
-**Status:** proposed
+**Status:** accepted: the callbacks follow from `Tick` returning a joined error while still applying writes (2026-10-29, orchestrator under the owner's delegation)
 
 **What the proposal says.** CODE-4 targets only the `watchdog`, `orphancleanup`, and `orphansession` packages.
 
@@ -64,7 +64,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: Each sweeper counts dispatched hook goroutines for its tests
 
-**Status:** proposed
+**Status:** accepted: the wait group is unexported and reachable only from in-package tests through `export_test.go` (2026-10-29, orchestrator under the owner's delegation)
 
 **What the proposal says.** CODE-4 does not mention test-observability hooks.
 
@@ -76,7 +76,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: The unstaged defects already had BUILD-GAPS entries
 
-**Status:** proposed
+**Status:** accepted: the ten defects are tracked under their 2026-10-27 entries (2026-10-29, orchestrator under the owner's delegation)
 
 **What the proposal says.** REC-1 item 5 in the non-spec changes (REC-1 Records) directs the implementor to file a new BUILD-GAPS entry for each defect the summary lists under "Defects in the shipped tree that this proposal does not stage".
 
@@ -88,7 +88,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: F-5.2.57 gains an owner note and loses its P3 routing
 
-**Status:** proposed
+**Status:** accepted: the F-5.2.57 note and the routing change remove a stale P3 owner (2026-10-29, orchestrator under the owner's delegation)
 
 **What the proposal says.** REC-1 item 6 directs the implementor to leave F-10.1.36, F-5.2.57, and F-7.2.43 open, and to record an owner note on F-7.2.43 only.
 
@@ -100,7 +100,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: A landed commit body names the SPEC-2 deliverable label
 
-**Status:** proposed
+**Status:** accepted (history is not rewritten) (2026-10-29, orchestrator under the owner's delegation)
 
 **What the proposal says.** The proposal's deliverable ids, such as SPEC-2, name parts of the proposal document. The implementation pipeline keeps those ids out of source, comments, tests, and commit messages, and describes each change by its behavior and its specification section instead.
 
