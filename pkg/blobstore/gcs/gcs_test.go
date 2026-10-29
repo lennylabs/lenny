@@ -14,11 +14,15 @@ import (
 	"cloud.google.com/go/storage"
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/blobstore/prefixlisttest"
 )
 
 // fakeGCS mirrors the GCS object surface in memory.
 type fakeGCS struct {
 	objects map[string]*fakeObject
+	// listing controls the prefix-listing pagination and fault injection
+	// the ListByPrefix tests drive (prefixlist_test.go).
+	listing prefixlisttest.FakeListing
 }
 
 type fakeObject struct {

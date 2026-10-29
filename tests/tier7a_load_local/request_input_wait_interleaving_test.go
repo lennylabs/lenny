@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -57,10 +58,14 @@ type liveWait struct {
 	done      chan struct{}
 }
 
-func (c *waitConn) start(t *testing.T, store sessionstore.Store, requestID string) *liveWait {
+// start parks a wait on c and returns it once its entry write names it. The
+// gateway generates the requestId (§15.4), so start learns it as the one
+// pending request on c that was not pending before the call.
+func (c *waitConn) start(t *testing.T, store sessionstore.Store) *liveWait {
 	t.Helper()
-	w := &liveWait{conn: c, requestID: requestID, done: make(chan struct{})}
-	args := fmt.Sprintf(`{"sessionId":%q,"requestId":%q,"parts":[{"type":"text","inline":"q"}]}`, waitSession, requestID)
+	w := &liveWait{conn: c, done: make(chan struct{})}
+	before := c.reg.PendingForSession(waitSession)
+	args := fmt.Sprintf(`{"sessionId":%q,"parts":[{"type":"text","inline":"q"}]}`, waitSession)
 	ctx := inputwaitrecovery.NewContext(context.Background(), c.gen)
 	go func() {
 		defer close(w.done)
@@ -69,8 +74,8 @@ func (c *waitConn) start(t *testing.T, store sessionstore.Store, requestID strin
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		for _, p := range c.reg.PendingDetailsForSession(waitSession) {
-			if p.RequestID == requestID {
-				w.waitID = p.WaitID
+			if !slices.Contains(before, p.RequestID) {
+				w.requestID, w.waitID = p.RequestID, p.WaitID
 			}
 		}
 		if w.waitID != "" {
@@ -80,7 +85,7 @@ func (c *waitConn) start(t *testing.T, store sessionstore.Store, requestID strin
 		}
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatalf("wait %s/%s never applied its entry write", c.name, requestID)
+	t.Fatalf("wait %s/%s never applied its entry write", c.name, w.requestID)
 	return nil
 }
 
@@ -148,9 +153,9 @@ func seedWaitSession(t *testing.T) sessionstore.Store {
 // and over the registries of the connection the adapter left and its next
 // connection, the row diverged from the entry and exit rules. Either an
 // earlier wait's exit returned a later wait's row to running, an exit did not
-// re-point the row to a wait still live on its connection, a reused
-// requestId on the next connection let the left connection's exit apply, or
-// the row named a wait no registry holds once every wait had ended.
+// re-point the row to a wait still live on its connection, the left
+// connection's exit applied to a wait the next connection entered, or the row
+// named a wait no registry holds once every wait had ended.
 func TestRequestInputWaitsFollowEntryAndExitRules_spec_7_2(t *testing.T) {
 	for _, conns := range []int{1, 2} {
 		t.Run(fmt.Sprintf("%d registries", conns), func(t *testing.T) {
@@ -168,13 +173,7 @@ func TestRequestInputWaitsFollowEntryAndExitRules_spec_7_2(t *testing.T) {
 			for step := 0; step < 120; step++ {
 				if len(live) == 0 || (len(live) < 4 && rng.Intn(2) == 0) {
 					c := cs[rng.Intn(len(cs))]
-					// Request IDs are drawn from a small set, so the next
-					// connection reuses the left connection's requestId.
-					reqID := fmt.Sprintf("req-%d", rng.Intn(3))
-					if c.reg.Pending(waitSession, reqID) {
-						continue
-					}
-					w := c.start(t, store, reqID)
+					w := c.start(t, store)
 					live = append(live, w)
 					model.enter(w)
 				} else {
@@ -229,7 +228,7 @@ func TestConcurrentRequestInputWaitsEndRunning_spec_7_2(t *testing.T) {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
-				args := fmt.Sprintf(`{"sessionId":%q,"requestId":"r%d-%d","parts":[{"type":"text","inline":"q"}]}`, waitSession, round, i)
+				args := fmt.Sprintf(`{"sessionId":%q,"parts":[{"type":"text","inline":"q"}]}`, waitSession)
 				ctx, cancel := context.WithTimeout(inputwaitrecovery.NewContext(context.Background(), c.gen), time.Duration(1+i)*time.Millisecond)
 				defer cancel()
 				_, _, _ = c.srv.DispatchTool(ctx, "lenny/request_input", json.RawMessage(args))

@@ -129,7 +129,8 @@ type ChunkCatalogReleaser interface {
 // its chunk_object_key_prefix (ListObjectsV2 semantics) and hard-deletes each
 // one by key after its artifact_store row is soft-deleted. A missing key is a
 // no-op on delete (delete-on-absent, S3-compatible semantics), so a re-run
-// over an already-reclaimed checkpoint never errors. miniostore.Store
+// over an already-reclaimed checkpoint never errors. Every
+// blobstore.CheckpointStore (the MinIO, S3, GCS, and Azure Blob stores)
 // satisfies it via ListByPrefix and HardDeleteObject.
 type ChunkObjectStore interface {
 	ListByPrefix(ctx context.Context, u blobstore.URI) ([]blobstore.BlobInfo, error)

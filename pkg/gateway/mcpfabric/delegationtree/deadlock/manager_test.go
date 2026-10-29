@@ -14,13 +14,20 @@ import (
 )
 
 type fakeMetrics struct {
-	detected    int
-	resolutions []string
-	durations   []float64
+	detected      int
+	detectedPools []string
+	resolutions   []string
+	resolvedPools []string
+	durations     []float64
 }
 
-func (f *fakeMetrics) IncDelegationDeadlockDetected(string) { f.detected++ }
-func (f *fakeMetrics) ObserveDelegationDeadlockResolution(resolution string, seconds float64) {
+func (f *fakeMetrics) IncDelegationDeadlockDetected(pool string) {
+	f.detected++
+	f.detectedPools = append(f.detectedPools, pool)
+}
+
+func (f *fakeMetrics) ObserveDelegationDeadlockResolution(pool, resolution string, seconds float64) {
+	f.resolvedPools = append(f.resolvedPools, pool)
 	f.resolutions = append(f.resolutions, resolution)
 	f.durations = append(f.durations, seconds)
 }
@@ -40,7 +47,7 @@ func TestManagerDetectsAndCachesEvent_spec_8_8_985(t *testing.T) {
 	m := &fakeMetrics{}
 	mgr := deadlock.NewManager(120*time.Second, m)
 	t0 := base
-	if to := mgr.Observe(deadlockedSnap(), t0); len(to) != 0 {
+	if to, _ := mgr.Observe(deadlockedSnap(), t0); len(to) != 0 {
 		t.Fatalf("first Observe returned timeouts %+v, want none", to)
 	}
 	if m.detected != 1 {
@@ -92,7 +99,7 @@ func TestManagerTimeoutFiresDeepestTasks_spec_8_8_981(t *testing.T) {
 	m := &fakeMetrics{}
 	mgr := deadlock.NewManager(120*time.Second, m)
 	mgr.Observe(deadlockedSnap(), base)
-	to := mgr.Observe(deadlockedSnap(), base.Add(120*time.Second))
+	to, _ := mgr.Observe(deadlockedSnap(), base.Add(120*time.Second))
 	if len(to) != 1 {
 		t.Fatalf("Observe at timeout returned %d actions, want 1", len(to))
 	}
@@ -113,31 +120,61 @@ func TestManagerTimeoutFiresDeepestTasks_spec_8_8_981(t *testing.T) {
 	}
 }
 
-// TestManagerResolvedWhenNoLongerDetected_spec_8_8_997 covers the root
-// breaking the deadlock before willTimeoutAt: the next sweep no longer
-// detects it, so the manager records a `resolved` resolution and emits no
-// timeout.
-func TestManagerResolvedWhenNoLongerDetected_spec_8_8_997(t *testing.T) {
+// TestManagerClearanceReturnedWhenNoLongerDetected_spec_16_1 covers the
+// root breaking the deadlock before willTimeoutAt: the next sweep no longer
+// detects it, so Observe returns a Clearance carrying the root's pool, the
+// first-detection time, and each member's answered count at the last
+// detecting sweep, records no resolution itself (§16.1 lists no `resolved`
+// value), and emits no timeout.
+//
+// spec: §16.1 (Metrics), §8.8 (Subtree deadlock detection)
+func TestManagerClearanceReturnedWhenNoLongerDetected_spec_16_1(t *testing.T) {
 	m := &fakeMetrics{}
 	mgr := deadlock.NewManager(120*time.Second, m)
-	mgr.Observe(deadlockedSnap(), base)
+	p := node("P", session.StateRunning, []string{"C"})
+	p.Pool = "pool-a"
+	c := node("C", session.StateRunning, nil, "r1")
+	c.Answered = 2
+	mgr.Observe(snap(p, c), base)
+	if !reflect.DeepEqual(m.detectedPools, []string{"pool-a"}) {
+		t.Errorf("detection pools = %v, want [pool-a]", m.detectedPools)
+	}
 	// The root answered the child's request_input — C is no longer blocked.
-	resolved := snap(
-		node("P", session.StateRunning, []string{"C"}),
-		node("C", session.StateRunning, nil),
-	)
-	to := mgr.Observe(resolved, base.Add(40*time.Second))
+	c.PendingInputs, c.Answered = nil, 3
+	to, cleared := mgr.Observe(snap(p, c), base.Add(40*time.Second))
 	if len(to) != 0 {
 		t.Fatalf("Observe after resolution returned timeouts %+v, want none", to)
 	}
-	if !reflect.DeepEqual(m.resolutions, []string{"resolved"}) {
-		t.Errorf("resolutions = %v, want [resolved]", m.resolutions)
+	want := []deadlock.Clearance{{
+		Root: "P", TenantID: "acme", Pool: "pool-a", DetectedAt: base,
+		Answered: map[string]int{"P": 0, "C": 2},
+	}}
+	if !reflect.DeepEqual(cleared, want) {
+		t.Errorf("cleared = %+v, want %+v", cleared, want)
 	}
-	if len(m.durations) != 1 || m.durations[0] != 40 {
-		t.Errorf("durations = %v, want [40]", m.durations)
+	if len(m.resolutions) != 0 {
+		t.Errorf("Observe alone recorded resolutions %v, want none", m.resolutions)
 	}
 	if _, ok := mgr.Event("P"); ok {
 		t.Errorf("Event(P) should be cleared after resolution")
+	}
+}
+
+// TestManagerTimeoutCarriesRootPool_spec_16_1 pins that a timed-out action
+// carries the deadlocked root's pool, the label the detector records the
+// `timeout` resolution under.
+//
+// spec: §16.1 (Metrics), §8.8 (Subtree deadlock detection)
+func TestManagerTimeoutCarriesRootPool_spec_16_1(t *testing.T) {
+	mgr := deadlock.NewManager(120*time.Second, &fakeMetrics{})
+	p := node("P", session.StateRunning, []string{"C"})
+	p.Pool = "pool-root"
+	c := node("C", session.StateRunning, nil, "r1")
+	c.Pool = "pool-child"
+	mgr.Observe(snap(p, c), base)
+	to, _ := mgr.Observe(snap(p, c), base.Add(120*time.Second))
+	if len(to) != 1 || to[0].Pool != "pool-root" {
+		t.Fatalf("timeout actions = %+v, want one carrying pool-root", to)
 	}
 }
 
@@ -157,13 +194,13 @@ func TestDetectorRunOnceFailsDeepestTask_spec_8_8_981(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	lookup := func(_ context.Context, _ /*tenant*/, sessionID string) (session.State, bool) {
+	lookup := func(_ context.Context, _ /*tenant*/, sessionID string) (deadlock.NodeInfo, bool) {
 		// Both P and C are live and running; C's input_required signal is
 		// carried by the request_input registry, not the coarse row state.
 		if sessionID == "P" || sessionID == "C" {
-			return session.StateRunning, true
+			return deadlock.NodeInfo{State: session.StateRunning, Pool: "pool-" + sessionID}, true
 		}
-		return "", false
+		return deadlock.NodeInfo{}, false
 	}
 	var failed []string
 	fail := func(_ context.Context, tenant, sessionID string) bool {
@@ -195,6 +232,9 @@ func TestDetectorRunOnceFailsDeepestTask_spec_8_8_981(t *testing.T) {
 	if !reflect.DeepEqual(m.resolutions, []string{"timeout"}) || len(m.durations) != 1 || m.durations[0] != 120 {
 		t.Errorf("resolutions = %v durations = %v, want [timeout] [120]", m.resolutions, m.durations)
 	}
+	if !reflect.DeepEqual(m.detectedPools, []string{"pool-P"}) || !reflect.DeepEqual(m.resolvedPools, []string{"pool-P"}) {
+		t.Errorf("pools detected %v resolved %v, want the root's pool-P on both", m.detectedPools, m.resolvedPools)
+	}
 }
 
 // twoDeepestDetector builds a detector over a live tracker and registry in
@@ -212,8 +252,8 @@ func twoDeepestDetector(t *testing.T, m *fakeMetrics, fail deadlock.FailFunc) *d
 			t.Fatalf("Register %s: %v", id, err)
 		}
 	}
-	lookup := func(context.Context, string, string) (session.State, bool) {
-		return session.StateRunning, true
+	lookup := func(context.Context, string, string) (deadlock.NodeInfo, bool) {
+		return deadlock.NodeInfo{State: session.StateRunning}, true
 	}
 	return deadlock.NewDetector(deadlock.NewManager(120*time.Second, m), tracker, reg, lookup, fail)
 }

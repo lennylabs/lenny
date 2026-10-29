@@ -82,7 +82,7 @@ func TestRequestInputWaitOutlastsIdleBoundOffHolder_spec_7_2(t *testing.T) {
 	done := make(chan map[string]any, 1)
 	go func() {
 		done <- h.GatewayControlCall(ctx, waiter, id, "lenny/request_input",
-			`{"requestId":"req-idle","parts":[{"type":"text","inline":"continue?"}]}`)
+			`{"parts":[{"type":"text","inline":"continue?"}]}`)
 	}()
 	deadline := time.Now().Add(10 * time.Second)
 	for h.Row(id).State != session.StateInputRequired {
@@ -101,7 +101,13 @@ func TestRequestInputWaitOutlastsIdleBoundOffHolder_spec_7_2(t *testing.T) {
 		t.Fatalf("after the idle bound the row is %q, want input_required: the idle sweep acted on a waiting session", st)
 	}
 
-	if err := waiter.InputWaits.Resolve(id, "req-idle", "yes"); err != nil {
+	// The gateway generated the requestId (§15.4); the waiter's registry
+	// holds the one pending request.
+	pending := waiter.InputWaits.PendingForSession(id)
+	if len(pending) != 1 {
+		t.Fatalf("pending requests on the waiter = %v, want one", pending)
+	}
+	if err := waiter.InputWaits.Resolve(id, pending[0], "yes"); err != nil {
 		t.Fatalf("answer the wait: %v", err)
 	}
 	select {

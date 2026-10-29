@@ -51,9 +51,11 @@ func activeRunning(t *testing.T, store sessionstore.Store, id, tenant string, bo
 // session stays non-terminal at warning time (sweepMaxAge expires it later).
 // F-11.3.5.
 func TestExpiryWarningFiresWithinWindow_spec_11_3_240(t *testing.T) {
-	store := memstore.New()
 	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := born.Add(6901 * time.Second) // 299s before the 7200s platform cap.
+	// The store stamps the claim write at the pass instant, as the primary
+	// does in production, so the write accrues no extra active age.
+	store := memstore.NewWithClock(func() time.Time { return now })
 	activeRunning(t, store, "sess", "acme", born, now)
 	hook := &captureExpiryWarning{}
 	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
@@ -77,6 +79,9 @@ func TestExpiryWarningFiresWithinWindow_spec_11_3_240(t *testing.T) {
 	if row.State != session.StateRunning {
 		t.Errorf("state at warning time: got %q, want running (not yet expired)", row.State)
 	}
+	if row.ExpiryWarnedCapSeconds != 7200 {
+		t.Errorf("ExpiryWarnedCapSeconds = %d, want the warned 7200s deadline recorded on the row", row.ExpiryWarnedCapSeconds)
+	}
 }
 
 // A session further than the window from its deadline is not yet warned.
@@ -99,10 +104,11 @@ func TestExpiryWarningNotBeforeWindow_spec_11_3_240(t *testing.T) {
 }
 
 // The warning fires at most once per session across repeated ticks inside the
-// window.
+// window, because the first tick records the warned deadline on the row.
 func TestExpiryWarningDedupsAcrossTicks_spec_11_3_240(t *testing.T) {
-	store := memstore.New()
 	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	clock := born.Add(6901 * time.Second)
+	store := memstore.NewWithClock(func() time.Time { return clock })
 	hook := &captureExpiryWarning{}
 	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
 		WithTerminalHook(hook)
@@ -114,6 +120,7 @@ func TestExpiryWarningDedupsAcrossTicks_spec_11_3_240(t *testing.T) {
 	}
 	// Keep the session active so the idle sweep never reaps it before the
 	// second tick, and tick again still inside the window.
+	clock = born.Add(6902 * time.Second)
 	mustUpdateActivity(t, store, "acme", "sess", born.Add(6902*time.Second).Add(-30*time.Second))
 	res, err := w.Tick(context.Background(), born.Add(6902*time.Second))
 	if err != nil {
@@ -155,7 +162,7 @@ func TestExpiryWarningRespectsResolverCap_spec_11_3_240(t *testing.T) {
 	}
 }
 
-// A terminal session is never warned (and is pruned from the dedup set).
+// A terminal session is never warned.
 func TestExpiryWarningSkipsTerminalSessions_spec_11_3_240(t *testing.T) {
 	store := memstore.New()
 	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

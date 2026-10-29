@@ -40,6 +40,9 @@ type objectClient interface {
 	Update(ctx context.Context, key string, metadata map[string]string) error
 	Delete(ctx context.Context, key string) error
 	List(ctx context.Context) ([]string, error)
+	// ListPage returns one page of the objects under prefix and the next
+	// page token ("" on the last page).
+	ListPage(ctx context.Context, prefix, pageToken string, pageSize int) ([]*storage.ObjectAttrs, string, error)
 	SignedURL(object, method string, expires time.Time) (string, error)
 }
 
@@ -179,6 +182,9 @@ var (
 	_ blobstore.Store      = (*Store)(nil)
 	_ blobstore.Tombstoner = (*Store)(nil)
 	_ blobstore.Presigner  = (*Store)(nil)
+	// spec: §10.1.7 — the chunked checkpoint model needs every
+	// production backend to presign, list a chunk prefix, and delete by key.
+	_ blobstore.CheckpointStore = (*Store)(nil)
 )
 
 // New returns a Store. Returns an error when cfg.Bucket is empty or

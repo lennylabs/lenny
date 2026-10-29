@@ -51,6 +51,21 @@ func deleteSeqs(rows []Row, seqs ...uint64) []Row {
 	return out
 }
 
+// redactSeqs rewrites the payload of every listed row in place and marks it
+// Redacted, keeping its pre-redaction Hash, as the §12.8 dead-letter
+// redaction does. The case supplies the receipt.
+func redactSeqs(rows []Row, seqs ...uint64) []Row {
+	for _, s := range seqs {
+		for i := range rows {
+			if rows[i].Seq == s {
+				rows[i].Payload = json.RawMessage(`{"redacted":true}`)
+				rows[i].Redacted = true
+			}
+		}
+	}
+	return rows
+}
+
 // TestVerifyRowsClassifiesByLinkBeforeSequence pins the §25.9 per-row
 // chainIntegrity classification of every chain condition the audit-events
 // list can surface. The prev_hash linkage decides between a benign gap
@@ -61,7 +76,8 @@ func deleteSeqs(rows []Row, seqs ...uint64) []Row {
 // reported gap_suspected and chainIntegrityReport.broken stayed 0.
 //
 // spec: 25.9 (Audit Log Query API, Chain gap detection), 11.7 (Audit
-// Logging, Authoritative total order)
+// Logging, Authoritative total order), 12.8 (Compliance Interfaces, OCSF
+// dead-letter PII redaction)
 func TestVerifyRowsClassifiesByLinkBeforeSequence(t *testing.T) {
 	t.Parallel()
 	type want = map[uint64]ChainIntegrity
@@ -71,6 +87,9 @@ func TestVerifyRowsClassifiesByLinkBeforeSequence(t *testing.T) {
 		receipts map[uint64]RedactionReceipt
 		want     want
 		broken   int
+		// verify, when set, is the collapsed Verify verdict the case
+		// expects in addition to the broken-or-not agreement.
+		verify ChainIntegrity
 	}{
 		{
 			name: "intact chain verifies every row",
@@ -173,6 +192,91 @@ func TestVerifyRowsClassifiesByLinkBeforeSequence(t *testing.T) {
 			broken: 1,
 		},
 		{
+			// BUILD-GAPS F-25.9.22: the redaction keeps row 2's Hash, which
+			// row 3 linked to. With row 3 deleted, row 4 links to the absent
+			// row 3 rather than to row 2, so the link check run through the
+			// redacted predecessor marks row 4 broken.
+			name: "deleted row directly after a receipted redaction is broken",
+			rows: func() []Row {
+				rows := redactSeqs(classifyFixture(4), 2)
+				return deleteSeqs(rows, 3)
+			},
+			receipts: map[uint64]RedactionReceipt{2: {RedactedSeq: 2, Signature: "kms-sig"}},
+			want:     want{1: ChainVerified, 2: ChainRedactedGDPR, 4: ChainBroken},
+			broken:   1,
+		},
+		{
+			name: "deleted row after two consecutive receipted redactions is broken",
+			rows: func() []Row {
+				rows := redactSeqs(classifyFixture(5), 2, 3)
+				return deleteSeqs(rows, 4)
+			},
+			receipts: map[uint64]RedactionReceipt{
+				2: {RedactedSeq: 2, Signature: "kms-sig"},
+				3: {RedactedSeq: 3, Signature: "kms-sig"},
+			},
+			want:   want{1: ChainVerified, 2: ChainRedactedGDPR, 3: ChainRedactedGDPR, 5: ChainBroken},
+			broken: 1,
+		},
+		{
+			name: "consecutive receipted redactions keep the chain linked",
+			rows: func() []Row { return redactSeqs(classifyFixture(4), 2, 3) },
+			receipts: map[uint64]RedactionReceipt{
+				2: {RedactedSeq: 2, Signature: "kms-sig"},
+				3: {RedactedSeq: 3, Signature: "kms-sig"},
+			},
+			want:   want{1: ChainVerified, 2: ChainRedactedGDPR, 3: ChainRedactedGDPR, 4: ChainVerified},
+			verify: ChainRedactedGDPR,
+		},
+		{
+			name:     "receipted redaction of the genesis row keeps its successor linked",
+			rows:     func() []Row { return redactSeqs(classifyFixture(3), 1) },
+			receipts: map[uint64]RedactionReceipt{1: {RedactedSeq: 1, Signature: "kms-sig"}},
+			want:     want{1: ChainRedactedGDPR, 2: ChainVerified, 3: ChainVerified},
+			verify:   ChainRedactedGDPR,
+		},
+		{
+			name: "deleted row after a receipted genesis redaction is broken",
+			rows: func() []Row {
+				return deleteSeqs(redactSeqs(classifyFixture(3), 1), 2)
+			},
+			receipts: map[uint64]RedactionReceipt{1: {RedactedSeq: 1, Signature: "kms-sig"}},
+			want:     want{1: ChainRedactedGDPR, 3: ChainBroken},
+			broken:   1,
+		},
+		{
+			name: "nextval rollback directly after a receipted redaction is gap_suspected",
+			rows: func() []Row {
+				rows := redactSeqs(classifyFixture(2), 2)
+				// Sequence 3 was rolled back; the sequence-4 row links to
+				// row 2's preserved pre-redaction hash.
+				r := Row{
+					ID: "00000000-0000-4000-8000-000000000004", Seq: 4, TenantID: "acme",
+					EventType: "admin.tenant.updated", EventSchemaVersion: DefaultEventSchemaVersion,
+					Payload: json.RawMessage(`{"step":4}`), Timestamp: ts().Add(3 * time.Minute),
+					PrevHash: LinkHash(rows[1]),
+				}
+				r.Hash = ComputeHash(r)
+				return append(rows, r)
+			},
+			receipts: map[uint64]RedactionReceipt{2: {RedactedSeq: 2, Signature: "kms-sig"}},
+			want:     want{1: ChainVerified, 2: ChainRedactedGDPR, 4: ChainGapSuspected},
+			verify:   ChainRedactedGDPR,
+		},
+		{
+			// A redaction that re-sealed the row's Hash breaks the link its
+			// successor carries; §12.8 writes no new hash into any row.
+			name: "redaction that re-sealed the row's hash breaks its successor",
+			rows: func() []Row {
+				rows := redactSeqs(classifyFixture(3), 2)
+				rows[1].Hash = ComputeHash(rows[1])
+				return rows
+			},
+			receipts: map[uint64]RedactionReceipt{2: {RedactedSeq: 2, Signature: "kms-sig"}},
+			want:     want{1: ChainVerified, 2: ChainVerified, 3: ChainBroken},
+			broken:   1,
+		},
+		{
 			name: "cross-tenant row is broken",
 			rows: func() []Row {
 				rows := classifyFixture(3)
@@ -219,6 +323,9 @@ func TestVerifyRowsClassifiesByLinkBeforeSequence(t *testing.T) {
 			v := ChainFromRows("acme", rows, receipts).Verify()
 			if (tc.broken > 0) != (v.Integrity == ChainBroken) {
 				t.Errorf("Verify = %q (%s), want broken=%v", v.Integrity, v.Detail, tc.broken > 0)
+			}
+			if tc.verify != "" && v.Integrity != tc.verify {
+				t.Errorf("Verify = %q (%s), want %q", v.Integrity, v.Detail, tc.verify)
 			}
 		})
 	}

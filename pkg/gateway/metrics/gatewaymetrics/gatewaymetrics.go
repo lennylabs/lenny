@@ -976,25 +976,27 @@ func (m *Metrics) IncDelegationTreeCycleDetected(tenantID, source string) {
 
 // IncDelegationDeadlockDetected increments the §8.8
 // `lenny_delegation_deadlock_detected_total` counter once per
-// newly-detected deadlocked subtree root, scoped by tenant. F-8.8.6.
-func (m *Metrics) IncDelegationDeadlockDetected(tenantID string) {
+// newly-detected deadlocked subtree root, labelled by the root's pool.
+// spec: §16.1 (Metrics), §8.8. F-8.8.6, F-8.8.22.
+func (m *Metrics) IncDelegationDeadlockDetected(pool string) {
 	if m == nil {
 		return
 	}
-	m.delegationDeadlockDetected.WithLabelValues(tenantID).Inc()
+	m.delegationDeadlockDetected.WithLabelValues(pool).Inc()
 }
 
 // ObserveDelegationDeadlockResolution closes out one tracked §8.8
 // deadlock: it increments `lenny_delegation_deadlock_resolution_total`
-// and records the detection-to-resolution latency on
-// `lenny_delegation_deadlock_duration_seconds`, both labelled by the
-// `resolution` outcome (`resolved` | `timeout`). F-8.8.6.
-func (m *Metrics) ObserveDelegationDeadlockResolution(resolution string, seconds float64) {
+// labelled by the root's pool and the resolution (`client_input` |
+// `child_cancel` | `timeout`), and records the detection-to-resolution
+// latency on `lenny_delegation_deadlock_duration_seconds`, labelled by the
+// pool alone. spec: §16.1 (Metrics), §8.8. F-8.8.6, F-8.8.22.
+func (m *Metrics) ObserveDelegationDeadlockResolution(pool, resolution string, seconds float64) {
 	if m == nil {
 		return
 	}
-	m.delegationDeadlockResolution.WithLabelValues(resolution).Inc()
-	m.delegationDeadlockDuration.WithLabelValues(resolution).Observe(seconds)
+	m.delegationDeadlockResolution.WithLabelValues(pool, resolution).Inc()
+	m.delegationDeadlockDuration.WithLabelValues(pool).Observe(seconds)
 }
 
 // ObserveDelegationParallelChildrenHighWatermark records the §8.3 maximum simultaneous in-flight children for one delegation tree

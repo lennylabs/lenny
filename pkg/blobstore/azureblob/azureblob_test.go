@@ -17,11 +17,15 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blob"
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/blobstore/prefixlisttest"
 )
 
 // fakeBlob mirrors the Azure Blob surface in memory.
 type fakeBlob struct {
 	objects map[string]*fakeObject
+	// listing controls the prefix-listing pagination and fault injection
+	// the ListByPrefix tests drive (prefixlist_test.go).
+	listing prefixlisttest.FakeListing
 }
 
 type fakeObject struct {

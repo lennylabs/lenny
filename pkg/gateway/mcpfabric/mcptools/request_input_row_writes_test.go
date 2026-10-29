@@ -112,11 +112,12 @@ type callResult struct {
 	err error
 }
 
-// start dispatches lenny/request_input with requestID on ctx and returns the
-// channel its result arrives on.
-func (r *inputRig) start(ctx context.Context, requestID string) <-chan callResult {
+// start dispatches lenny/request_input on ctx and returns the channel its
+// result arrives on. The gateway generates the requestId (§15.4); a test reads
+// it back with waitPending.
+func (r *inputRig) start(ctx context.Context) <-chan callResult {
 	out := make(chan callResult, 1)
-	args := fmt.Sprintf(`{"sessionId":%q,"requestId":%q,"parts":[{"type":"text","inline":"ok?"}]}`, rowSessionID, requestID)
+	args := fmt.Sprintf(`{"sessionId":%q,"parts":[{"type":"text","inline":"ok?"}]}`, rowSessionID)
 	go func() {
 		res, _, err := r.srv.DispatchTool(ctx, "lenny/request_input", json.RawMessage(args))
 		out <- callResult{res, err}
@@ -196,15 +197,15 @@ func TestRequestInputEntryWriteOnRunningRow_spec_7_2(t *testing.T) {
 	r := newInputRig(t, session.StateRunning, time.Minute)
 	ctx, cancel := context.WithCancel(r.connCtx())
 	defer cancel()
-	done := r.start(ctx, "req-1")
-	waitPending(t, r.reg, rowSessionID, "req-1")
+	done := r.start(ctx)
+	req := waitPending(t, r.reg, rowSessionID)
 	row := r.row(t)
 	pend := r.reg.PendingDetailsForSession(rowSessionID)
 	if row.State != session.StateInputRequired || len(pend) != 1 || row.InputWaitID != pend[0].WaitID || row.InputWaitID == "" {
 		t.Fatalf("row = %s/%q, pending %+v; want input_required naming the pending wait", row.State, row.InputWaitID, pend)
 	}
-	if row.InputWaitID == "req-1" {
-		t.Error("the row names the caller's requestId; the wait identity must come from the gateway's ID source")
+	if row.InputWaitID == req {
+		t.Error("the row names the requestId; the wait identity is a separate gateway-assigned wait ID")
 	}
 	running, _ := r.store.List(context.Background(), "acme", sessionstore.ListFilter{State: session.StateRunning})
 	if len(running) != 0 {
@@ -227,8 +228,8 @@ func TestRequestInputEntryWriteOnInputRequiredRow_spec_7_2(t *testing.T) {
 	r := newInputRig(t, session.StateInputRequired, time.Minute)
 	ctx, cancel := context.WithCancel(r.connCtx())
 	defer cancel()
-	done := r.start(ctx, "req-1")
-	waitPending(t, r.reg, rowSessionID, "req-1")
+	done := r.start(ctx)
+	_ = waitPending(t, r.reg, rowSessionID)
 	row := r.row(t)
 	if row.State != session.StateInputRequired || row.InputWaitID != r.reg.PendingDetailsForSession(rowSessionID)[0].WaitID {
 		t.Errorf("row = %s/%q, want input_required naming the new wait", row.State, row.InputWaitID)
@@ -253,9 +254,9 @@ func TestRequestInputEntryWriteSupersededOnOtherStates_spec_7_2(t *testing.T) {
 	} {
 		t.Run(string(st), func(t *testing.T) {
 			r := newInputRig(t, st, time.Minute)
-			done := r.start(r.connCtx(), "req-1")
-			waitPending(t, r.reg, rowSessionID, "req-1")
-			if err := r.reg.Resolve(rowSessionID, "req-1", "yes"); err != nil {
+			done := r.start(r.connCtx())
+			req := waitPending(t, r.reg, rowSessionID)
+			if err := r.reg.Resolve(rowSessionID, req, "yes"); err != nil {
 				t.Fatalf("resolve: %v", err)
 			}
 			if res := waitResult(t, done); res.err != nil || res.res.IsError {
@@ -278,8 +279,8 @@ func TestRequestInputEntryWriteSupersededOnOtherStates_spec_7_2(t *testing.T) {
 // spec: §7.2 (Session state machine)
 func TestRequestInputWithoutConnectionRecordWritesNothing_spec_7_2(t *testing.T) {
 	r := newInputRig(t, session.StateRunning, time.Minute)
-	done := r.start(context.Background(), "req-1")
-	waitPending(t, r.reg, rowSessionID, "req-1")
+	done := r.start(context.Background())
+	req := waitPending(t, r.reg, rowSessionID)
 	pend := r.reg.PendingDetailsForSession(rowSessionID)
 	if len(pend) != 1 || pend[0].Persisted || pend[0].WaitID != "" {
 		t.Errorf("pending = %+v, want one unpersisted wait", pend)
@@ -287,7 +288,7 @@ func TestRequestInputWithoutConnectionRecordWritesNothing_spec_7_2(t *testing.T)
 	if row := r.row(t); row.State != session.StateRunning || row.InputWaitID != "" {
 		t.Errorf("row = %s/%q, want running with no wait named", row.State, row.InputWaitID)
 	}
-	_ = r.reg.Resolve(rowSessionID, "req-1", "yes")
+	_ = r.reg.Resolve(rowSessionID, req, "yes")
 	waitResult(t, done)
 	if sc := r.statusChanges(); len(sc) != 0 {
 		t.Errorf("status_change = %v, want none", sc)
@@ -301,12 +302,12 @@ func TestRequestInputWithoutConnectionRecordWritesNothing_spec_7_2(t *testing.T)
 //
 // spec: §7.2 (Session state machine), §6.2 (Pod State Machine)
 func TestRequestInputExitWriteRestoresRunning_spec_7_2(t *testing.T) {
-	ends := map[string]func(r *inputRig, cancel context.CancelFunc){
-		"reply":          func(r *inputRig, _ context.CancelFunc) { _ = r.reg.Resolve(rowSessionID, "req-1", "yes") },
-		"peer cancel":    func(r *inputRig, _ context.CancelFunc) { r.reg.Cancel(rowSessionID, "req-1") },
-		"context ending": func(_ *inputRig, cancel context.CancelFunc) { cancel() },
-		"close":          func(r *inputRig, _ context.CancelFunc) { r.reg.Close() },
-		"timeout":        func(*inputRig, context.CancelFunc) {},
+	ends := map[string]func(r *inputRig, req string, cancel context.CancelFunc){
+		"reply":          func(r *inputRig, req string, _ context.CancelFunc) { _ = r.reg.Resolve(rowSessionID, req, "yes") },
+		"peer cancel":    func(r *inputRig, req string, _ context.CancelFunc) { r.reg.Cancel(rowSessionID, req) },
+		"context ending": func(_ *inputRig, _ string, cancel context.CancelFunc) { cancel() },
+		"close":          func(r *inputRig, _ string, _ context.CancelFunc) { r.reg.Close() },
+		"timeout":        func(*inputRig, string, context.CancelFunc) {},
 	}
 	for name, end := range ends {
 		t.Run(name, func(t *testing.T) {
@@ -317,9 +318,9 @@ func TestRequestInputExitWriteRestoresRunning_spec_7_2(t *testing.T) {
 			r := newInputRig(t, session.StateRunning, timeout)
 			ctx, cancel := context.WithCancel(r.connCtx())
 			defer cancel()
-			done := r.start(ctx, "req-1")
-			waitPending(t, r.reg, rowSessionID, "req-1")
-			end(r, cancel)
+			done := r.start(ctx)
+			req := waitPending(t, r.reg, rowSessionID)
+			end(r, req, cancel)
 			waitResult(t, done)
 			row := r.row(t)
 			if row.State != session.StateRunning || row.LastAgentActivityAt.IsZero() {
@@ -343,20 +344,20 @@ func TestRequestInputExitWriteRestoresRunning_spec_7_2(t *testing.T) {
 // spec: §7.2 (Session state machine)
 func TestRequestInputExitWriteRepointsToAnotherPersistedWait_spec_7_2(t *testing.T) {
 	r := newInputRig(t, session.StateRunning, time.Minute)
-	first := r.start(r.connCtx(), "req-1")
-	waitPending(t, r.reg, rowSessionID, "req-1")
-	second := r.start(r.connCtx(), "req-2")
-	waitPending(t, r.reg, rowSessionID, "req-2")
+	first := r.start(r.connCtx())
+	req1 := waitPending(t, r.reg, rowSessionID)
+	second := r.start(r.connCtx())
+	req2 := waitPending(t, r.reg, rowSessionID, req1)
 	var secondWait string
 	for _, p := range r.reg.PendingDetailsForSession(rowSessionID) {
-		if p.RequestID == "req-2" {
+		if p.RequestID == req2 {
 			secondWait = p.WaitID
 		}
 	}
 	if row := r.row(t); row.InputWaitID != secondWait {
 		t.Fatalf("row names %q, want the later wait %q", row.InputWaitID, secondWait)
 	}
-	_ = r.reg.Resolve(rowSessionID, "req-2", "b")
+	_ = r.reg.Resolve(rowSessionID, req2, "b")
 	waitResult(t, second)
 	row := r.row(t)
 	pend := r.reg.PendingDetailsForSession(rowSessionID)
@@ -366,7 +367,7 @@ func TestRequestInputExitWriteRepointsToAnotherPersistedWait_spec_7_2(t *testing
 	if sc := r.statusChanges(); len(sc) != 1 {
 		t.Errorf("status_change = %v, want only the entry's", sc)
 	}
-	_ = r.reg.Resolve(rowSessionID, "req-1", "a")
+	_ = r.reg.Resolve(rowSessionID, req1, "a")
 	waitResult(t, first)
 	if row := r.row(t); row.State != session.StateRunning {
 		t.Errorf("state after the last exit = %s, want running", row.State)
@@ -385,13 +386,13 @@ func TestRequestInputExitWriteSuperseded_spec_7_2(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newInputRig(t, session.StateRunning, time.Minute)
-			done := r.start(r.connCtx(), "req-1")
-			waitPending(t, r.reg, rowSessionID, "req-1")
+			done := r.start(r.connCtx())
+			req := waitPending(t, r.reg, rowSessionID)
 			before, err := r.store.Update(context.Background(), "acme", rowSessionID, mutate)
 			if err != nil {
 				t.Fatal(err)
 			}
-			_ = r.reg.Resolve(rowSessionID, "req-1", "yes")
+			_ = r.reg.Resolve(rowSessionID, req, "yes")
 			waitResult(t, done)
 			row := r.row(t)
 			if row.State != before.State || row.InputWaitID != before.InputWaitID {
@@ -412,10 +413,12 @@ func TestRequestInputExitWriteSuperseded_spec_7_2(t *testing.T) {
 func TestRequestInputRegistrationRefusedWritesNothing_spec_7_2(t *testing.T) {
 	t.Run("duplicate", func(t *testing.T) {
 		r := newInputRig(t, session.StateRunning, time.Minute)
-		if _, err := r.reg.Register(rowSessionID, "req-1", nil); err != nil {
+		// The rig's ID source makes the handler's first generated ID
+		// id1, so the gateway-assigned requestId is req_id1.
+		if _, err := r.reg.Register(rowSessionID, "req_id1", nil); err != nil {
 			t.Fatal(err)
 		}
-		res := waitResult(t, r.start(r.connCtx(), "req-1"))
+		res := waitResult(t, r.start(r.connCtx()))
 		if !res.res.IsError {
 			t.Errorf("duplicate call = %+v, want an error result", res)
 		}
@@ -426,7 +429,7 @@ func TestRequestInputRegistrationRefusedWritesNothing_spec_7_2(t *testing.T) {
 	t.Run("closed", func(t *testing.T) {
 		r := newInputRig(t, session.StateRunning, time.Minute)
 		r.reg.Close()
-		res := waitResult(t, r.start(r.connCtx(), "req-1"))
+		res := waitResult(t, r.start(r.connCtx()))
 		if !res.res.IsError {
 			t.Errorf("call after Close = %+v, want an error result", res)
 		}
@@ -450,11 +453,11 @@ func TestRequestInputEntryWriteFailureCancelsAndRestores_spec_7_2(t *testing.T) 
 		t.Run(name, func(t *testing.T) {
 			r := newInputRig(t, session.StateRunning, time.Minute)
 			r.store.faults[1] = fault
-			res := waitResult(t, r.start(r.connCtx(), "req-1"))
+			res := waitResult(t, r.start(r.connCtx()))
 			if !res.res.IsError {
 				t.Errorf("call = %+v, want the entry error", res)
 			}
-			if r.reg.Pending(rowSessionID, "req-1") {
+			if len(r.reg.PendingForSession(rowSessionID)) != 0 {
 				t.Error("the wait is still registered after a failed entry write")
 			}
 			if row := r.row(t); row.State != session.StateRunning {
@@ -478,9 +481,9 @@ func TestRequestInputEntryWriteFailureCancelsAndRestores_spec_7_2(t *testing.T) 
 func TestRequestInputExitWriteFailureRearmsReplica_spec_7_2(t *testing.T) {
 	r := newInputRig(t, session.StateRunning, time.Minute)
 	r.store.faults[2] = faultBeforeCommit
-	done := r.start(r.connCtx(), "req-1")
-	waitPending(t, r.reg, rowSessionID, "req-1")
-	_ = r.reg.Resolve(rowSessionID, "req-1", "yes")
+	done := r.start(r.connCtx())
+	req := waitPending(t, r.reg, rowSessionID)
+	_ = r.reg.Resolve(rowSessionID, req, "yes")
 	waitResult(t, done)
 	if r.gen.Load() != 2 {
 		t.Errorf("generation = %d, want 2 after a failed exit write", r.gen.Load())

@@ -95,7 +95,6 @@ type recoveryRig struct {
 	servers []*inputwaitrig.Server
 	pods    []*recoveryPod
 	waits   []*recoveryWait
-	reqs    int
 }
 
 func newRecoveryRig(t *testing.T, rng *rand.Rand, servers int) *recoveryRig {
@@ -150,10 +149,9 @@ func (r *recoveryRig) enter() {
 	p := r.pods[r.rng.Intn(len(r.pods))]
 	srv := r.servers[p.server]
 	sessionID := p.sessions[r.rng.Intn(len(p.sessions))]
-	r.reqs++
-	reqID := fmt.Sprintf("req-%d", r.reqs)
-	done := inputwaitrig.RequestInput(context.Background(), p.conn, sessionID, reqID)
-	srv.WaitPending(r.t, sessionID, reqID)
+	before := srv.Waits.PendingForSession(sessionID)
+	done := inputwaitrig.RequestInput(context.Background(), p.conn, sessionID)
+	reqID := srv.WaitPending(r.t, sessionID, before...)
 	var waitID string
 	for _, pd := range srv.Waits.PendingDetailsForSession(sessionID) {
 		if pd.RequestID == reqID {

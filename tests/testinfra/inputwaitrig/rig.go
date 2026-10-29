@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -249,12 +250,12 @@ type Result struct {
 }
 
 // RequestInput starts lenny/request_input for sessionID on c and returns the
-// channel its result arrives on.
-func RequestInput(ctx context.Context, c adapterv1.GatewayControlClient, sessionID, requestID string) <-chan Result {
+// channel its result arrives on. The gateway generates the requestId (§15.4);
+// WaitPending returns it once the wait is registered.
+func RequestInput(ctx context.Context, c adapterv1.GatewayControlClient, sessionID string) <-chan Result {
 	out := make(chan Result, 1)
 	args, _ := json.Marshal(map[string]any{
-		"requestId": requestID,
-		"parts":     []map[string]any{{"type": "text", "inline": "continue?"}},
+		"parts": []map[string]any{{"type": "text", "inline": "continue?"}},
 	})
 	go func() {
 		resp, err := c.CallPlatformTool(ctx, &adapterv1.CallPlatformToolRequest{
@@ -267,17 +268,21 @@ func RequestInput(ctx context.Context, c adapterv1.GatewayControlClient, session
 	return out
 }
 
-// WaitPending blocks until (sessionID, requestID) is registered on s.
-func (s *Server) WaitPending(t testing.TB, sessionID, requestID string) {
+// WaitPending blocks until sessionID holds a pending request on s whose id is
+// not in seen, and returns that gateway-generated request id.
+func (s *Server) WaitPending(t testing.TB, sessionID string, seen ...string) string {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if s.Waits.Pending(sessionID, requestID) {
-			return
+		for _, id := range s.Waits.PendingForSession(sessionID) {
+			if !slices.Contains(seen, id) {
+				return id
+			}
 		}
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatalf("inputwaitrig: %s/%s never became pending", sessionID, requestID)
+	t.Fatalf("inputwaitrig: no new request became pending on %s", sessionID)
+	return ""
 }
 
 // StatusChanges returns the states of the status_change events s's bus

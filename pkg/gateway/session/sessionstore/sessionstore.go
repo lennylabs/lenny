@@ -407,6 +407,17 @@ type Session struct {
 	// spec: §6.2 (Pod State Machine).
 	StateEnteredAt time.Time
 
+	// ExpiryWarnedCapSeconds is the expiry_warned_cap_seconds column: the
+	// effective maxSessionAge cap, in whole seconds, for which the gateway
+	// last sent the §11.3 session_expiring_soon warning, or zero when it has
+	// sent none. The watchdog's expiry-warning sweep sets it inside the
+	// locked-row Update that claims the warning, and only the replica whose
+	// write applied sends it, so every replica's sweep sends one warning per
+	// session per deadline. A cap that changes after the warning makes the
+	// row due again for the new deadline.
+	// spec: §11.3 (Session expiry warning); §10.1.1 (Primary:).
+	ExpiryWarnedCapSeconds int64
+
 	// InputWaitID is the input_wait_id column: the identity of the live
 	// lenny/request_input wait an input_required row stands for. The gateway
 	// assigns the identity when it registers the wait, and only the

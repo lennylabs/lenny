@@ -90,6 +90,12 @@ func (m poolPolicyMirror) PoolPolicy(ctx context.Context, name string) (podsessi
 		// PoolMatch. The recycle-path Shutdown delivers them to the adapter.
 		mirror.CleanupCommands = sp.CleanupCommands
 		mirror.CleanupTimeoutSeconds = sp.CleanupTimeoutSeconds
+		// §5.2 Slot retry policy: the concurrent-workspace slot retry budget.
+		// Copied so the mirror does not alias the stored policy.
+		if sp.SlotRetries != nil {
+			n := *sp.SlotRetries
+			mirror.SlotRetries = &n
+		}
 		if r := sp.Recycle; r != nil {
 			// spec: §5.2 (Recycle lifecycle) — recycle.enabled itself is
 			// gateway-enforced and poolstore-sourced for every scrub

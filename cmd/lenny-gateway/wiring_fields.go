@@ -510,4 +510,10 @@ type gatewayWiringFields struct {
 	// gateway-leader gate, so only the leader runs it. Nil without the
 	// mirror.
 	orphanSessionReconciler *orphansession.Reconciler
+	// checkpointStore is objectStore as the §10.1.7 chunked-checkpoint
+	// surface (checkpointStoreOf): the chunk resolver, the checkpoint
+	// driver, the partial cleaner, and the backstop sweep read it. Nil on a
+	// backend that cannot presign, which startup refuses for a pod-based
+	// deployment.
+	checkpointStore blobstore.CheckpointStore
 }

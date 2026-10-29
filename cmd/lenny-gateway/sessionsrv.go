@@ -7,12 +7,10 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
@@ -110,28 +108,22 @@ func (w *gatewayWiring) buildSessionServer(
 	envVarBlocklistCSV := f.envVarBlocklistCSV
 
 	// spec: §10.1.7 — the resume path resolves the checkpoint's
-	// chunk set and mints one presigned GET capability per chunk. It needs
-	// a Presigner-capable and prefix-listing object store; the in-memory
-	// dev backend implements neither, so the resolver stays nil there and
-	// the resume carries no chunks (the §13.2 startup fail-closed already
-	// requires a Presigner-capable backend for pod-based deployments).
-	var resumeChunkResolver sessionserver.ResumeChunkResolver
-	presigner, presignerOK := w.objectStore.(blobstore.Presigner)
-	lister, listerOK := w.objectStore.(resumechunks.ChunkLister)
-	if presignerOK && listerOK {
-		resumeChunkResolver = &resumechunks.Resolver{
-			Manifests:                        w.partialManifests,
-			Presigner:                        presigner,
-			Lister:                           lister,
-			TTL:                              time.Duration(*f.checkpointCapabilityTTLSeconds) * time.Second,
-			PartialRecoveryThresholdFraction: *f.partialRecoveryThresholdFraction,
-		}
-	}
+	// chunk set and mints one presigned GET capability per chunk. Every
+	// production backend is a blobstore.CheckpointStore, and startup refuses
+	// a pod-based deployment on any other backend, so the resolver is nil
+	// only on a dev gateway whose in-memory or filesystem store cannot
+	// presign; that gateway runs no pods and has no chunks to restore.
+	resumeChunkResolver := newResumeChunkResolver(
+		w.checkpointStore,
+		w.partialManifests,
+		time.Duration(*f.checkpointCapabilityTTLSeconds)*time.Second,
+		*f.partialRecoveryThresholdFraction,
+	)
 
 	// §4.4 / §12.5 GC rule 4 — the resume-path cleaner releases each
 	// confirmed chunk through the cataloging decorator (blobsCataloged) and
-	// deletes the object (minioStore). Assign only the non-nil concrete stores
-	// so a nil *cataloging.Store / *miniostore.Store is not wrapped in a
+	// deletes the object (checkpointStore). Assign only the non-nil stores
+	// so a nil *cataloging.Store or CheckpointStore is not wrapped in a
 	// non-nil interface, which the cleaner's nil guard then skips (dev-mode).
 	partialCleaner := &checkpointer.PartialCleaner{
 		Store:              w.partialManifests,
@@ -141,8 +133,8 @@ func (w *gatewayWiring) buildSessionServer(
 	if w.blobsCataloged != nil {
 		partialCleaner.Catalog = w.blobsCataloged
 	}
-	if w.minioStore != nil {
-		partialCleaner.Objects = w.minioStore
+	if w.checkpointStore != nil {
+		partialCleaner.Objects = w.checkpointStore
 	}
 
 	// spec: §11.2, §10.1.1 — every replica sweeps the per-session budget

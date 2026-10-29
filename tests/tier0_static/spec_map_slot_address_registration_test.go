@@ -342,6 +342,7 @@ var slotAddressCaseFiles = []string{
 	"pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go",
 	"pkg/gateway/sessionserver/slot_holder_predicate_internal_test.go",
 	"pkg/gateway/sessionserver/slothealth_inject_internal_test.go",
+	"pkg/gateway/sessionserver/slot_retry_budget_test.go",
 	"pkg/gateway/sessionserver/slotretry_hook_error_test.go",
 	"pkg/gateway/sessionserver/slotretry_load_test.go",
 	"pkg/gateway/sessionserver/slotretry_test.go",

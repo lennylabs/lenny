@@ -316,11 +316,11 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 		// rows are never finalised or swept. Active only when the durable
 		// catalog, object store, and manifest store are all wired (Postgres
 		// mode); the in-memory dev gateway has no catalog and skips it.
-		if w.partialManifests != nil && w.blobsCataloged != nil && w.minioStore != nil {
+		if w.partialManifests != nil && w.blobsCataloged != nil && w.checkpointStore != nil {
 			backstopRelease := checkpointer.BackstopReclaim{
 				Manifests:          w.partialManifests,
 				Catalog:            w.blobsCataloged,
-				Objects:            w.minioStore,
+				Objects:            w.checkpointStore,
 				Quota:              w.storageCounter,
 				TombstoneRetention: gcTombstoneRetention,
 				Metrics:            w.gwMetrics,

@@ -323,9 +323,9 @@ func TestRequestInputEmitsPartsOnEventStream_spec_8_5_F_8_5_12(t *testing.T) {
 	done := make(chan map[string]any, 1)
 	go func() {
 		done <- call(t, h, "lenny/request_input",
-			`{"sessionId":"sess_i","requestId":"req-1","parts":[{"type":"text","text":"hi"}]}`)
+			`{"sessionId":"sess_i","parts":[{"type":"text","text":"hi"}]}`)
 	}()
-	waitPending(t, reg, "sess_i", "req-1")
+	req := waitPending(t, reg, "sess_i")
 	hist := bus.History("sess_i", 0)
 	if len(hist) != 1 || hist[0].Type != "elicitation_request" {
 		t.Fatalf("history = %+v, want one elicitation_request event", hist)
@@ -336,7 +336,7 @@ func TestRequestInputEmitsPartsOnEventStream_spec_8_5_F_8_5_12(t *testing.T) {
 	if strings.Contains(hist[0].Data, `"prompt"`) {
 		t.Errorf("event data = %q still carries legacy `prompt` field", hist[0].Data)
 	}
-	reg.Cancel("sess_i", "req-1")
+	reg.Cancel("sess_i", req)
 	select {
 	case <-done:
 	case <-time.After(time.Second):
