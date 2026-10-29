@@ -301,9 +301,9 @@ func (st *dlgLossStack) buildTree(t *testing.T, r *dlgLossReplica) dlgLossTree {
 		tr.slices[c] = 5000 + i
 	}
 	for i, c := range tr.children {
-		g := st.delegate(t, r, c, "worker-2", 6000+int64(i))
+		g := st.delegate(t, r, c, "worker-2", 3000+int64(i))
 		tr.grand = append(tr.grand, g)
-		tr.slices[g] = 6000 + int64(i)
+		tr.slices[g] = 3000 + int64(i)
 	}
 	return tr
 }
@@ -609,10 +609,10 @@ func TestRedisOutageDuringABudgetReturn_spec_8_3(t *testing.T) {
 	ctx := context.Background()
 	root := st.seedRoot(t)
 	child := st.delegate(t, a, root, "worker-1", 5000)
-	grand := st.delegate(t, a, child, "worker-2", 6000)
+	grand := st.delegate(t, a, child, "worker-2", 3000)
 	before := st.budgetKeys(t, root)
-	if before["{"+root+"}:dlg:tree_size"] != "2" || before["{"+root+"}:dlg:tokens"] != "11000" {
-		t.Fatalf("budget keys before the outage = %v, want tree_size 2 and tokens 11000", before)
+	if before["{"+root+"}:dlg:tree_size"] != "2" || before["{"+root+"}:dlg:tokens"] != "8000" {
+		t.Fatalf("budget keys before the outage = %v, want tree_size 2 and tokens 8000", before)
 	}
 
 	a.enforcer.Record(ctx, ctx, dlgLossTenant, grand, 100, 100)
@@ -650,8 +650,8 @@ func TestRedisOutageDuringABudgetReturn_spec_8_3(t *testing.T) {
 	if c.err == nil || errors.Is(c.err, treebudget.ErrBudgetKeysExpired) {
 		t.Errorf("return during the outage err = %v, want a Redis error", c.err)
 	}
-	if c.r.RootSessionID != root || c.r.ParentSessionID != child || c.r.TokenDelta != 6000 {
-		t.Errorf("return = %+v, want root %s, parent %s, token delta 6000", c.r, root, child)
+	if c.r.RootSessionID != root || c.r.ParentSessionID != child || c.r.TokenDelta != 3000 {
+		t.Errorf("return = %+v, want root %s, parent %s, token delta 3000", c.r, root, child)
 	}
 	if !a.enforcer.Allow(grand) {
 		t.Error("the enforcer still tracks the ended child; the budget forget did not run")
@@ -676,7 +676,7 @@ func TestRedisOutageDuringABudgetReturn_spec_8_3(t *testing.T) {
 			t.Errorf("session %s = %q after the outage, want running", id, s)
 		}
 	}
-	st.delegate(t, a, child, "worker-3", 7000)
+	st.delegate(t, a, child, "worker-3", 2000)
 	if v := st.budgetKeys(t, root)["{"+root+"}:dlg:tree_size"]; v != "3" {
 		t.Errorf("tree_size after a delegation on the recovered keys = %q, want 3", v)
 	}
