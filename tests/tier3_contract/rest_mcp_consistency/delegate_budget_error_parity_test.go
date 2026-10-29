@@ -6,6 +6,7 @@ package rest_mcp_consistency_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http/httptest"
 	"sync"
 	"testing"
@@ -102,13 +103,37 @@ func wantTriple(code string) restErrorTriple {
 	return restErrorTriple{Code: code, Category: string(cat), Retryable: retryable}
 }
 
+// mcpErrorDetails returns the raw `details` member of the lenny/error
+// envelope a tool result carries, or nil when the envelope has none.
+func mcpErrorDetails(t *testing.T, res map[string]any) json.RawMessage {
+	t.Helper()
+	contents, _ := res["content"].([]any)
+	for _, c := range contents {
+		block, _ := c.(map[string]any)
+		if block["type"] != "lenny/error" {
+			continue
+		}
+		text, _ := block["text"].(string)
+		var env struct {
+			Details json.RawMessage `json:"details"`
+		}
+		if err := json.Unmarshal([]byte(text), &env); err != nil {
+			t.Fatalf("lenny/error decode: %v\ntext=%s", err, text)
+		}
+		return env.Details
+	}
+	t.Fatalf("MCP tool result missing lenny/error content block: %v", contents)
+	return nil
+}
+
 // spec: §8.3 (BUDGET_KEYS_EXPIRED detection and tree cleanup), §15.2.1
 // (REST/MCP Consistency Contract), §12.4
 // diagnosis: lenny/delegate_task on a tree whose budget keys expired did not
 // return the permanent INVALID_STATE_TRANSITION with retryable false and the
 // classifier's category, its triple differs from the REST
 // INVALID_STATE_TRANSITION triple, or the reservation detection ran no
-// cleanup. The DELEGATION_BUDGET_UNAVAILABLE case pins that a counter outage
+// cleanup, or its envelope carried a details object neither §8.3 nor §15.1
+// defines. The DELEGATION_BUDGET_UNAVAILABLE case pins that a counter outage
 // keeps the retryable code, so the two budget errors stay distinct on the
 // wire.
 func TestDelegateTaskBudgetErrorsOnTheWire_spec_8_3(t *testing.T) {
@@ -116,10 +141,16 @@ func TestDelegateTaskBudgetErrorsOnTheWire_spec_8_3(t *testing.T) {
 
 	t.Run("keys expired", func(t *testing.T) {
 		url, mr, cleanup := newBudgetDelegateMCP(t)
-		got := decodeMCPError(t, mcpCall(t, url, "lenny/delegate_task", args))
+		res := mcpCall(t, url, "lenny/delegate_task", args)
+		got := decodeMCPError(t, res)
 		want := wantTriple("INVALID_STATE_TRANSITION")
 		if got != want || got.Retryable {
 			t.Fatalf("MCP triple = %+v, want %+v with retryable false", got, want)
+		}
+		// §8.3 and §15.1 define no details for this error, so the
+		// envelope carries no details object.
+		if details := mcpErrorDetails(t, res); details != nil {
+			t.Fatalf("MCP details = %s, want absent", details)
 		}
 		if keys := mr.Keys(); len(keys) != 0 {
 			t.Fatalf("a detection wrote budget keys %v", keys)

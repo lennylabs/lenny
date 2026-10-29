@@ -91,6 +91,11 @@ func TestDelegateTaskBudgetErrorMapping_spec_8_3(t *testing.T) {
 			if env["retryable"] != tc.wantRetryable {
 				t.Fatalf("retryable = %v, want %v", env["retryable"], tc.wantRetryable)
 			}
+			// spec: §8.3 defines no details for either budget error, so the
+			// envelope carries none.
+			if details, ok := env["details"]; ok {
+				t.Fatalf("details = %v, want absent", details)
+			}
 		})
 	}
 }

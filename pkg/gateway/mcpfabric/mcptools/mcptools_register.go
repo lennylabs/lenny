@@ -2390,7 +2390,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			// DELEGATION_BUDGET_UNAVAILABLE.
 			if errors.Is(err, delegation.ErrBudgetKeysExpired) {
 				return mcp.ToolResult{}, mcp.NewToolError("INVALID_STATE_TRANSITION",
-					err.Error(), map[string]any{"reason": "BUDGET_KEYS_EXPIRED"})
+					err.Error(), nil)
 			}
 			// spec: §8.2 — the service-layer defence-in-depth
 			// type gate that mirrors the §10.6 shim. Surface the
