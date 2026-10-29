@@ -982,3 +982,7 @@ FACT: The wrapper's tenant source `s.resolveTenant(r)` is the same one handleGet
 ### [non-spec-recheck.1.review-test-coverage.1]
 FACT: the r13 delta is only the summary Impacts-table 0108 Status cell ("Approved (approved-date 2026-10-29; not yet implemented)"); it changes no behavior and needs no test. The r12-prefix delta (CODE-2 substep 2 primary re-read, S7 tiers, removed edge-case line) is pinned by TEST-1 item 1's last bullet (both reads fail -> 500, no handler; replica miss + primary hit -> alice's /start and /resume reach the handler). EVIDENCE: non-spec-changes.md:69, :187
 FACT: a tier-1 fake can drive the replica-miss/primary-hit split by implementing sessionstore.PrimaryReader (GetPrimary), which ReadPrimary prefers over the Update fallback. EVIDENCE: pkg/gateway/session/sessionstore/primary_read.go:23-28, :73-76; pkg/gateway/sessionserver/sessionserver.go:1976
+
+### [orchestrator.decisions-2026-10-29]
+
+- DECISION (orchestrator under the owner's standing delegation, 2026-10-29): open decision 1 takes the recommendation. 0110 stages neither the §10.2 statement nor the code refusal, and the single-tenant role-less admission joins the defects list for a successor proposal. The refuted item 4 is settled as `await_children` stays act=true, because the handler begins deadlock tracking (`DeadlockTracker.Begin`) and stamps qualifying activity (`ActivityStamper.Stamp`) on the parent. Both are side effects on the session, beyond a read.
