@@ -6,10 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 
+	"google.golang.org/grpc"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -59,8 +63,9 @@ func seedDelegatedChild(t *testing.T, store sessionstore.Store, id, plan string)
 // materializeCluster builds the envtest warm-pool cluster, the bufconn adapter
 // dialer, and the adapter's workspace root the §8.2 materialization bind path
 // drives an idle Sandbox through. It reuses the start_pod_test warm-pool
-// fixtures (one idle "sbx-1" in "echo-pool").
-func materializeCluster(t *testing.T) (client.Client, func(string) (*adapterclient.Client, error), string) {
+// fixtures (one idle "sbx-1" in "echo-pool"). adapterOpts are passed to the
+// adapter's gRPC server, so a test can observe the calls the gateway makes.
+func materializeCluster(t *testing.T, adapterOpts ...grpc.ServerOption) (client.Client, func(string) (*adapterclient.Client, error), string) {
 	t.Helper()
 	wsRoot := t.TempDir()
 	adapterSrv := adapter.New("adapter-test")
@@ -72,7 +77,7 @@ func materializeCluster(t *testing.T) (client.Client, func(string) (*adapterclie
 		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
 	)
-	return cluster, podBindAdapterDialer(t, adapterSrv), wsRoot
+	return cluster, podBindAdapterDialer(t, adapterSrv, adapterOpts...), wsRoot
 }
 
 // materializeCredStores wires a single-provider (anthropic_direct) tenant
@@ -171,6 +176,9 @@ func (*recordingAssigner) Release(string) error { return nil }
 type updateFaultStore struct {
 	sessionstore.Store
 	fail bool
+	// onFail, when set, runs just before the injected fault returns, so a
+	// test can end the request context at the moment the commit fails.
+	onFail func()
 }
 
 // GetPrimary forwards the primary read, so the injected fault reaches only
@@ -184,6 +192,9 @@ func (s *updateFaultStore) GetPrimary(ctx context.Context, tenantID, id string) 
 
 func (s *updateFaultStore) Update(ctx context.Context, tenantID, id string, mut func(*sessionstore.Session) error) (sessionstore.Session, error) {
 	if s.fail {
+		if s.onFail != nil {
+			s.onFail()
+		}
 		return sessionstore.Session{}, errors.New("injected transition-persist fault")
 	}
 	return s.Store.Update(ctx, tenantID, id, mut)
@@ -581,5 +592,137 @@ func TestMaterializeDelegatedChildPersistFailureReleasesBinding_spec_8_2(t *test
 	}
 	if row.State != session.StateCreated {
 		t.Errorf("child state = %q, want created (non-running after the failed transition)", row.State)
+	}
+}
+
+// cancellingAssigner fails every AssignProto after ending the request context,
+// so the materializer's claim rollback runs on a context that has already
+// ended, as it does when the delegating client disconnects mid-bind.
+type cancellingAssigner struct {
+	failingAssigner
+	cancel context.CancelFunc
+}
+
+func (a cancellingAssigner) AssignProto(tenantID, sessionID, provider, pool string, gen int64) (*adapterv1.CredentialLease, error) {
+	a.cancel()
+	return a.failingAssigner.AssignProto(tenantID, sessionID, provider, pool, gen)
+}
+
+// shutdownCounter is a gRPC server interceptor counting the adapter Shutdown
+// calls that reach the adapter.
+func shutdownCounter(n *atomic.Int32) grpc.ServerOption {
+	return grpc.UnaryInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo, h grpc.UnaryHandler) (any, error) {
+		if strings.HasSuffix(info.FullMethod, "/Shutdown") {
+			n.Add(1)
+		}
+		return h(ctx, req)
+	})
+}
+
+// spec: §7.1 (Atomicity of session creation (steps 2–8)), §4.6.1 (Orphaned
+// SandboxClaim detection)
+// diagnosis: each of the materializer's rollback paths must reach the binder
+// when the request context ended before the rollback ran: the claim rollback
+// after a failed launch, the binding rollback after a refused coordination
+// lease, and the binding and lease rollback after a failed running-commit. A
+// failure here means a rollback ran on the cancelled request context, so the
+// adapter Shutdown never left the gateway, the claim stayed, or the lease
+// stayed held, and a cancelled delegate_task stranded a claimed pod.
+func TestMaterializeDelegatedChildRollbacksSurviveCancelledRequest_spec_7_1(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		// arm wires the fault that fails the materialization and ends the
+		// request context through cancel at the moment of the fault.
+		arm func(cancel context.CancelFunc, store *updateFaultStore, binder *podsession.Binder, leases *componentLeaseStore, childID string)
+		// credPools wires a credential pool so the launch reaches the
+		// assigner.
+		credPools    bool
+		wantShutdown bool
+		wantLeaseOff bool
+	}{
+		{
+			name: "launch failure rolls back the create-time claim",
+			arm: func(cancel context.CancelFunc, _ *updateFaultStore, binder *podsession.Binder, _ *componentLeaseStore, _ string) {
+				binder.Credentials = cancellingAssigner{cancel: cancel}
+			},
+			credPools: true,
+		},
+		{
+			name: "refused coordination lease rolls back the binding",
+			arm: func(cancel context.CancelFunc, _ *updateFaultStore, _ *podsession.Binder, leases *componentLeaseStore, childID string) {
+				leases.holders[clk("acme", childID)] = "replica-b"
+				leases.onAcquire = cancel
+			},
+			wantShutdown: true,
+		},
+		{
+			name: "failed running-commit rolls back the binding and the lease",
+			arm: func(cancel context.CancelFunc, store *updateFaultStore, _ *podsession.Binder, _ *componentLeaseStore, _ string) {
+				store.fail = true
+				store.onFail = cancel
+			},
+			wantShutdown: true,
+			wantLeaseOff: true,
+		},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			childID := fmt.Sprintf("child-cancelled-%d", i)
+			store := &updateFaultStore{Store: memstore.New()}
+			seedDelegatedChild(t, store, childID, "")
+			var shutdowns atomic.Int32
+			cluster, dial, _ := materializeCluster(t, shutdownCounter(&shutdowns))
+			binder := podBindBinder(cluster, dial)
+			leases := newComponentLeaseStore()
+			opts := sessionserver.Options{
+				DevTenantHeader:         true,
+				IDFunc:                  func() string { return "unused" },
+				DefaultIsolationProfile: isolation.ProfileSandboxed,
+				PodBinder:               binder,
+				PodRegistry:             podsession.NewRegistry(),
+				AgentNamespace:          podTestNS,
+				CoordinationLeaseStore:  leases,
+				ReplicaID:               "replica-a",
+			}
+			if tc.credPools {
+				tenants, runtimes, credPools := materializeCredStores(t, credentialpoolstore.CredentialActive)
+				opts.Tenants, opts.Runtimes, opts.CredentialPools = tenants, runtimes, credPools
+				opts.CredentialRouter = credrouter.NewDefault()
+			}
+			srv := sessionserver.New(store, opts)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			tc.arm(cancel, store, binder, leases, childID)
+
+			if _, err := srv.MaterializeDelegatedChild(ctx, "acme", childID); err == nil {
+				t.Fatal("MaterializeDelegatedChild = nil, want the injected failure")
+			}
+			if ctx.Err() == nil {
+				t.Fatal("the request context was not cancelled before the rollback; the fault did not fire")
+			}
+
+			var claim lennyv1.SandboxClaim
+			if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err == nil {
+				t.Errorf("per-pod claim still present after the rollback; the claimed pod leaked")
+			}
+			if tc.wantShutdown && shutdowns.Load() == 0 {
+				t.Errorf("adapter Shutdown never reached the adapter: the binding rollback ran on the cancelled request context")
+			}
+			if tc.wantLeaseOff {
+				if _, err := leases.Get(context.Background(), "acme", childID); !errors.Is(err, leasestore.ErrNotFound) {
+					t.Errorf("coordination lease still held after the rollback: err=%v", err)
+				}
+			}
+			store.fail = false
+			row, err := store.Get(context.Background(), "acme", childID)
+			if err != nil {
+				t.Fatalf("get child row: %v", err)
+			}
+			if row.State != session.StateCreated {
+				t.Errorf("child state = %q, want created", row.State)
+			}
+		})
 	}
 }

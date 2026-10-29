@@ -20,11 +20,18 @@ import (
 // disabled, so the last release deletes the claim rather than recycling a
 // pod whose binding was never published. Best-effort: a release error is
 // logged and swallowed, and the §4.6.1 orphan-claim GC bounds a claim it
-// leaves.
+// leaves. The rollback runs detached from the caller's cancellation, so a
+// client disconnect or a parent teardown cannot strand the claim; the §7.1
+// release allowance bounds it, and the §4.6.1 orphan-claim GC bounds a crash
+// mid-rollback.
 //
-// spec: §7.1 (atomic-creation rollback); §4.6.3 (SandboxClaim: a release
-// that ends the occupancy without reuse); §5.2 (Recycle lifecycle).
+// spec: §7.1 (Atomicity of session creation (steps 2–8)); §7.1 (Terminal
+// pipeline context: release allowance bounds the release); §4.6.1 (Orphaned
+// SandboxClaim detection); §4.6.3 (SandboxClaim: a release that ends the
+// occupancy without reuse); §5.2 (Recycle lifecycle).
 func (s *Server) rollbackBinding(ctx context.Context, result *podsession.BindResult) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.streamFailureReportTimeout)
+	defer cancel()
 	if result == nil || s.podBinder == nil {
 		return
 	}
@@ -106,11 +113,18 @@ func createClaimNeedsRollback(claim *podsession.ClaimResult, err error) bool {
 // claim is deleted by name. No lease is assigned at create, so the lease
 // revoke inside ReclaimClaimed is a no-op here. Best-effort: the §4.6.1
 // orphan-claim GC reclaims a claim a release error leaves behind, so the
-// error is logged and swallowed.
+// error is logged and swallowed. The rollback runs detached from the
+// caller's cancellation, so a client disconnect or a parent teardown cannot
+// strand the claim; the §7.1 release allowance bounds it, and the §4.6.1
+// orphan-claim GC bounds a crash mid-rollback.
 //
-// spec: §7.1 (atomic-creation rollback); §4.6.3 (SandboxClaim: a release
-// that ends the occupancy without reuse); §5.2 (Slot assignment atomicity).
+// spec: §7.1 (Atomicity of session creation (steps 2–8)); §7.1 (Terminal
+// pipeline context: release allowance bounds the release); §4.6.1 (Orphaned
+// SandboxClaim detection); §4.6.3 (SandboxClaim: a release that ends the
+// occupancy without reuse); §5.2 (Slot assignment atomicity).
 func (s *Server) rollbackClaim(ctx context.Context, claim *podsession.ClaimResult, sessionID string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.streamFailureReportTimeout)
+	defer cancel()
 	if claim == nil || s.podBinder == nil {
 		return
 	}
