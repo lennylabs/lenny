@@ -3260,7 +3260,8 @@ Proposals, second wave:
 
 Proposals, third wave:
 
-- [ ] **P4. Delegation tree and budget lifecycle** (split; P4a and P4b done as proposals; P4a implemented 2026-10-29), after P2.
+- [ ] **P4. Delegation tree and budget lifecycle** (split; P4a and P4b done as proposals; P4a implemented and finalized 2026-10-29 on
+  `impl/0106-delegation-tree`, merge into this branch pending), after P2.
   - **Outcome (P4a).** Proposal 0106
     (`proposals/0106_fix_the-delegation-tree-s-membership-and-lifecycle-are-under/`) was approved 2026-10-27
     (merge `d52dc1834`). Derive and replay create independent roots registered for lease extension, tree
@@ -3280,9 +3281,14 @@ Proposals, third wave:
     F-8.10.19 to F-8.10.23, F-8.10.25, and F-8.10.26 with resolution notes naming the commits and tests.
     F-8.10.17 is closed on 0104's implementation (merge `aab694190`), whose creation fence refuses a child of
     a terminal or absent parent, with 0106's sweeper as the one-interval backstop. F-8.8.18 closes on the
-    answered-wait re-check; dropping a wait on a pod loss was outside 0106's validated problem and is not part
-    of it. The filed defects F-4.2.17, F-4.5.21, F-8.8.22, and F-8.10.28 are confirmed in place, and F-8.8.22
-    and F-8.10.28 are no longer blocked on 0106. Position: P4b (proposal 0107) is the next implementation of
+    answered-wait re-check; 0106 staged no pod-loss drop, and the `lenny/request_input` handler already
+    cancels its wait when the runtime call ends. The filed defects F-4.2.17, F-4.5.21, F-8.8.22, and F-8.10.28
+    are confirmed in place, and F-8.8.22 and F-8.10.28 are no longer blocked on 0106. The implementation was
+    finalized on 2026-10-29: the proposal status is Implemented, its deviations are adjudicated (the
+    `maxLevelRecoverySeconds` flag help text deviation is resolved by `fee24e1bf`, and the rest are accepted),
+    the findings above are closed, F-4.2.17, F-4.5.21, F-7.2.35, F-8.2.32, F-8.8.22, and F-8.10.28 stay open
+    with a 2026-10-29 note, and the branch carries the integration branch at `9aa7b50c7`, merge into this
+    branch pending. Position: P4b (proposal 0107) is the next implementation of
     the third wave; it runs after 0105 and 0106 (its D15), both now implemented.
   - **Outcome (P4b).** Proposal 0107
     (`proposals/0107_fix_the-delegation-tree-s-budget-lifecycle-is-under-specified/`) was approved 2026-10-28
