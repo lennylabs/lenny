@@ -5,6 +5,7 @@ package orphansession_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -67,12 +68,18 @@ func (f *fakeFallback) PodPhase(_ context.Context, _, podID, _ string) (string, 
 	return r.phase, r.found, nil
 }
 
-type fakeTerminal struct{ called []string }
+type fakeTerminal struct {
+	// mu guards called, which dispatched hook goroutines append to.
+	mu     sync.Mutex
+	called []string
+}
 
 // BeginTerminal opens no claim; the fake records only the terminal hook.
 func (*fakeTerminal) BeginTerminal(string) func() { return func() {} }
 
 func (f *fakeTerminal) OnSessionTerminal(_ context.Context, _ session.State, s sessionstore.Session) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.called = append(f.called, s.ID)
 }
 
@@ -139,6 +146,7 @@ func TestTick_orphanViaFreshMirror_spec10_1_line51(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	r.WaitDispatched()
 	if n != 1 {
 		t.Fatalf("failed count = %d, want 1", n)
 	}

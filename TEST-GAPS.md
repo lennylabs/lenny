@@ -8437,6 +8437,16 @@ Proposal 0017 ("re-architect §17.4 Embedded Mode to run the full production sta
 - **Suggested test:** Retry the cluster start on a port-binding error with fresh ports, as `ports.StartRetrying` does for the subprocess harnesses, and pin it with a test that occupies the first probed port.
 - **Owner:** the test-infrastructure direct-fix queue.
 
+### - [x] T-17.4.40 — The subprocess readiness check counts an exited process as owning its address, so a gateway that lost its port to another process can be handed back as ready [Low] — RESOLVED
+- **Resolution:** Fixed directly on `impl/0105-session-timers` during the integration of proposal 0105, with no product change. `ports.Held` returns `HolderOther` rather than `HolderUnknown` when `/proc/net/tcp` lists a listener on the port and `/proc/<pid>/fd` no longer exists, because a readable `/proc/net/tcp` shows the platform exposes ownership and a missing descriptor directory shows the process has exited. `ports.Ready` therefore reports false for an exited process, the readiness probe keeps polling, and the next poll's exit check returns the bind refusal wrapped in `ports.ErrAddrInUse`, so the start runs again on fresh addresses. Test: tier 1 `TestHeldNamesTheHolderOfALoopbackListener` in `tests/testinfra/ports/subprocess_test.go` now pins that a missing pid reads a held port as another's, is not ready on it, and reads a released port as unheld. `TestGatewayHarnessRestartsOnAnOccupiedAddress` and the other occupied-address restart tests in `tests/tier4_integration` passed with `-count=5`.
+- **Spec/Doc:** TESTING.md §12.4 Tier 4 — Integration; TESTING.md §17.10 Flake budget.
+- **Existing tests:** `TestGatewayHarnessRestartsOnAnOccupiedAddress` in `tests/tier4_integration/subprocess_port_retry_test.go`; `TestHeldNamesTheHolderOfALoopbackListener` in `tests/testinfra/ports/subprocess_test.go`.
+- **Evidence:** A full tier-4 run on 2026-10-29 failed `TestGatewayHarnessRestartsOnAnOccupiedAddress/REST_address` with "the process kept the occupied address", and the test passed in isolation. The gateway exits on the bind refusal of the occupied REST address. The `cmd.Wait` goroutine in `tests/testinfra/gateway/gateway.go` reaps it before it closes `exited`, so `waitReady` can see no exit, receive the occupier's answer to the HTTP probe, and call `ports.Ready` after `/proc/<pid>` is gone. `socketInodes` then failed, `Held` returned `HolderUnknown`, and `Ready` counted `HolderUnknown` as ready.
+- **Gap:** Under load, a harness start that lost an address returns a process that is not serving, and the test talks to the occupier.
+- **Dependencies:** none.
+- **Suggested test:** Pin the exited-process case of `ports.Held` at tier 1.
+- **Owner:** the test-infrastructure direct-fix queue.
+
 ## §17.5 Cloud Portability <a id="t-17.5"></a>
 **Spec file:** `spec/17_deployment-topology.md`
 **Reviewed:** 2026-07-06

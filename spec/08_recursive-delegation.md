@@ -43,7 +43,7 @@ The gateway augments the delegation `TaskSpec` with routing metadata (resolved r
 | `maxChildrenTotal`    | int  | Max children the child may spawn      |
 | `maxTreeSize`         | int  | Contribution limit toward the tree-wide pod cap |
 | `maxParallelChildren` | int  | Max concurrent children for the child |
-| `perChildMaxAge`      | int  | Max wall-clock seconds for the child  |
+| `perChildMaxAge`      | int  | Max wall-clock seconds for the child, counted from the child session's creation |
 
 All fields are optional. Defaults are derived from the deployer-configured `DelegationPolicy` ([Section 8.3](#83-delegation-policy-and-lease)). In practice, most runtimes omit `lease_slice` entirely and let the policy defaults apply — no existing agent framework (LangChain/LangGraph, CrewAI, AutoGen) implements LLM-driven budget allocation at delegation time. The `lease_slice` parameter exists for runtimes that want to request tighter constraints than the defaults (the gateway rejects any `lease_slice` that exceeds the parent's remaining budget).
 
@@ -844,6 +844,7 @@ input_required → running               (request timeout — maxRequestInputWai
 input_required → running               (request cancelled by parent via lenny/cancel_child or equivalent)
 input_required → cancelled             (parent cancels while awaiting input)
 input_required → expired               (deadline reached while awaiting input)
+input_required → completed             (client terminate while awaiting input)
 input_required → failed                (non-retryable failure while awaiting input)
 input_required → failed                (BUDGET_KEYS_EXPIRED detected while awaiting input — see §8.3)
 ```

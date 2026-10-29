@@ -288,10 +288,16 @@ export class Client {
 
   /**
    * start calls POST /v1/sessions/{id}/start, transitioning a ready
-   * session to running.
+   * session through starting to running. It sends the request once and
+   * retries neither an error response nor a transport failure, whatever
+   * the client's retry policy: a /start that fails after the gateway
+   * wrote starting leaves the session failed, so a repeated /start is
+   * refused, and neither a 5xx nor a transport failure tells the client
+   * whether that write happened. Recover from a failed start by creating
+   * a new session.
    */
   async start(id: string, opts: RequestOptions = {}): Promise<Session> {
-    return this.transition('POST', id, 'start', opts);
+    return this.transition('POST', id, 'start', opts, 1);
   }
 
   /**
@@ -458,19 +464,21 @@ export class Client {
   /**
    * transition issues a no-body state-mutating call. action is the
    * trailing path segment (finalize, start, ...); an empty action
-   * targets the bare /v1/sessions/{id} path for DELETE.
+   * targets the bare /v1/sessions/{id} path for DELETE. maxAttempts
+   * overrides the retry policy's attempt limit when set.
    */
   private async transition(
     method: string,
     id: string,
     action: string,
     opts: RequestOptions,
+    maxAttempts?: number,
   ): Promise<Session> {
     let path = `/v1/sessions/${encodeURIComponent(id)}`;
     if (action) {
       path += `/${action}`;
     }
-    return this.do<Session>(method, path, undefined, opts);
+    return this.do<Session>(method, path, undefined, opts, maxAttempts);
   }
 
   /**
@@ -478,17 +486,21 @@ export class Client {
    * (when defined), sends the request, retries retryable failures per
    * the client's retry policy, and parses a 2xx response. A non-2xx
    * response is parsed into and thrown as an {@link ApiError}.
+   * maxAttempts overrides the policy's attempt limit when set; 1 sends
+   * the request once.
    */
   private async do<T>(
     method: string,
     path: string,
     body: unknown,
     opts: RequestOptions,
+    maxAttempts?: number,
   ): Promise<T> {
     const bodyText = body !== undefined ? JSON.stringify(body) : undefined;
     const policy = this.retry;
+    const attempts = maxAttempts ?? policy.maxAttempts;
     let lastErr: unknown;
-    for (let attempt = 1; attempt <= policy.maxAttempts; attempt++) {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
       if (attempt > 1) {
         await this.sleep(delayForAttempt(policy, attempt - 1, this.rng), opts.signal);
       }
@@ -514,7 +526,7 @@ export class Client {
       }
       const apiErr = decodeApiError(status, respBody);
       lastErr = apiErr;
-      if (apiErr.retryable && attempt < policy.maxAttempts) {
+      if (apiErr.retryable && attempt < attempts) {
         continue;
       }
       throw apiErr;

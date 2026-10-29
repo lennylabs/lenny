@@ -180,7 +180,6 @@ func forwardedSites() []siteCase {
 		{"terminate in resume_pending", http.MethodPost, "/v1/sessions/sess-1/terminate", "", siteRow(session.StateResumePending, "")},
 		{"terminate in awaiting_client_action", http.MethodPost, "/v1/sessions/sess-1/terminate", "", siteRow(session.StateAwaitingClientAction, "")},
 		{"interrupt in running", http.MethodPost, "/v1/sessions/sess-1/interrupt", "", running},
-		{"interrupt in input_required", http.MethodPost, "/v1/sessions/sess-1/interrupt", "", siteRow(session.StateInputRequired, "pod-1")},
 		{"upload-to-session in running", http.MethodPost, "/v1/sessions/sess-1/upload-to-session", `{"files":[{"path":"a.txt","content":"YQ=="}]}`, upload},
 		{"held-pod resume", http.MethodPost, "/v1/sessions/sess-1/resume", "", siteRow(session.StateSuspended, "pod-1")},
 		{"message in running", http.MethodPost, "/v1/sessions/sess-1/messages", `{"messages":[{"role":"user","content":"hi"}]}`, running},
@@ -223,6 +222,34 @@ func TestOffHolderRoutesForwardBeforeAnyLocalEffect_spec_29_3(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestOffHolderInterruptInInputRequiredIsRefusedWithoutForward_spec_15_1 pins
+// the §15.1 interrupt row on the off-holder path: the row admits running
+// alone, so an interrupt of a session waiting in input_required is refused on
+// the serving replica with 409 INVALID_STATE_TRANSITION before any forward,
+// and the serving replica writes nothing and holds nothing. Before the
+// interrupt row dropped input_required, the serving replica forwarded this
+// interrupt to the coordinator.
+//
+// spec: 15.1 (REST API), 7.2 (Session state machine), 29.3 (Interactive
+// message send)
+func TestOffHolderInterruptInInputRequiredIsRefusedWithoutForward_spec_15_1(t *testing.T) {
+	m := gatewaypki.Mint(t)
+	got := make(chan capturedRequest, 1)
+	addr := startTLSServer(t, serverTLSFor(t, m, gatewayLeaf(m)), recordingCoordinator(got))
+	row := siteRow(session.StateInputRequired, "pod-1")
+	r := newSiteRig(t, m, addr, row)
+	rec := r.do(http.MethodPost, "/v1/sessions/sess-1/interrupt", "")
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "INVALID_STATE_TRANSITION") {
+		t.Fatalf("response = %d %s, want 409 INVALID_STATE_TRANSITION", rec.Code, rec.Body.String())
+	}
+	select {
+	case req := <-got:
+		t.Errorf("the serving replica forwarded %s %s; the precondition must refuse before any forward", req.method, req.uri)
+	default:
+	}
+	r.assertNoLocalEffect(t, row.State)
 }
 
 // TestUndeliveredOffHolderRoutesFailClosed_spec_29_3 pins rules 6 and 7 on

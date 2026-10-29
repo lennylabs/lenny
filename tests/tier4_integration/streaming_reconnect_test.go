@@ -213,7 +213,11 @@ func TestStreamingReconnectResumesExactlyFromCursor(t *testing.T) {
 
 	transition(id, "finalize") // status_change(ready) — exactly one event.
 	f1 := waitStreamingReconnectFrame(t, live, 5*time.Second)
-	transition(id, "start") // status_change(running) — exactly one event.
+	// The start publishes status_change(starting) at its ready → starting
+	// write and status_change(running) at its commit; f2 is the starting
+	// frame, and the running frame follows it in the replay after the
+	// reconnect (spec: §7.2 Session state machine: ready → starting).
+	transition(id, "start")
 	f2 := waitStreamingReconnectFrame(t, live, 5*time.Second)
 
 	if f2.Seq <= f1.Seq {

@@ -301,15 +301,18 @@ var preconditionTable = map[Endpoint]endpointRule{
 	EndpointFinalize: {baseStates: []State{StateCreated}},
 	EndpointStart:    {baseStates: []State{StateReady}},
 	EndpointInterrupt: {
-		// §7.2 — input_required is a sub-state of running where
-		// the agent is blocked in lenny/request_input; an interrupt must
-		// still suspend the underlying session, so the precondition
-		// admits both running and input_required.
-		baseStates: []State{StateRunning, StateInputRequired},
+		// spec: §15.1 — the interrupt row admits running alone. A session
+		// waiting in lenny/request_input is input_required, and its wait is
+		// held only by the replica holding the pod's LNK-GWCONTROL
+		// connection, so an interrupt that suspended the session would leave
+		// that wait live; the interrupt answers 409 INVALID_STATE_TRANSITION
+		// instead.
+		baseStates: []State{StateRunning},
 	},
 	EndpointTerminate: {
-		// §7.2 input_required → cancelled requires terminate to
-		// accept the sub-state too. spec: §7.2 (Interactive Session
+		// spec: §7.2 (Session state machine) — terminate admits
+		// input_required on the input_required → completed terminate edge.
+		// spec: §7.2 (Interactive Session
 		// Model), §15.1 — terminate from the internal `resuming`
 		// transient is admitted, as DELETE admits it, and yields
 		// `completed` like terminate from resume_pending.

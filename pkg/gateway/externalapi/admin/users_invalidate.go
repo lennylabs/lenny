@@ -196,7 +196,8 @@ func (r *Router) runFullRevokeFanOut(ctx context.Context, tenantID, userID, reas
 }
 
 // reclaimRevokedPreRunning reclaims the pod or the slot of each cancelled
-// session whose pre-revoke state is created, finalizing, or ready, and then
+// session whose pre-revoke state is created, finalizing, ready, or starting,
+// and then
 // ends every terminal claim the cancel writes opened. The claims keep this
 // replica's own coordination Sweeper and resume tail from releasing a
 // cancelled session's binding before the reclaim runs: the reclaim skips a
@@ -218,11 +219,15 @@ func (r *Router) reclaimRevokedPreRunning(ctx context.Context, revoked []Revoked
 }
 
 // revokedPreRunning reports whether a pre-revoke state is one in which the
-// session never started: the gateway may have claimed a pod or a slot for
-// it, and no runtime session runs on it.
+// session never reached running: the gateway may have claimed a pod or a slot
+// for it, and no committed runtime session runs on it. A `starting` session
+// is mid-launch; the reclaim skips it on the replica that published its
+// binding, and reclaims it by name elsewhere.
+// spec: §11.4 step 4 (User Invalidation), §7.2 (Session state machine:
+// starting)
 func revokedPreRunning(st session.State) bool {
 	switch st {
-	case session.StateCreated, session.StateFinalizing, session.StateReady:
+	case session.StateCreated, session.StateFinalizing, session.StateReady, session.StateStarting:
 		return true
 	default:
 		return false

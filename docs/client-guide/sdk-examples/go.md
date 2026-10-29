@@ -223,6 +223,9 @@ The client retries a retryable error on its own, following the retry policy.
 `DefaultRetryPolicy` retries up to three times with exponential backoff,
 jitter, a 200-millisecond base delay, and a 5-second cap. A transport-level
 failure such as a connection refusal or a DNS error is retried the same way.
+`Start` sends its request once and is not retried, because a start can fail
+after the session has left `ready`; the caller reads the session and creates a
+new session when it is `failed`, as [State Machines](../../reference/state-machines.md) describes.
 Override the policy with `WithRetryPolicy`:
 
 ```go fragment

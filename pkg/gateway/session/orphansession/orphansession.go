@@ -31,7 +31,10 @@ package orphansession
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
+	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -175,6 +178,12 @@ type Reconciler struct {
 	interval   time.Duration
 	staleAfter time.Duration
 	clock      func() time.Time
+
+	// dispatched counts the terminal-hook goroutines dispatchTerminal has
+	// started and that have not returned. Tests wait on it to observe a
+	// pass's hooks; production observes the same work through the terminal
+	// claims each goroutine holds.
+	dispatched sync.WaitGroup
 }
 
 // New returns a Reconciler. mirror is required; the rest are optional
@@ -209,6 +218,16 @@ func New(sessions sessionstore.Store, tenants TenantLister, mirror MirrorReader,
 // the mirror (or the Kubernetes fallback when the mirror is stale or
 // missing), and transitions the session when the pod has terminated.
 // A per-pool mirror-lag gauge is published once per pool per Tick.
+//
+// A failure to list one tenant's rows skips that tenant, and a failed write
+// of one session skips that session. Each is logged with the tenant_id and,
+// for a row, the session_id, and the pass goes on. Tick returns errors.Join
+// of every collected error, so a non-nil error does not mean the pass
+// stopped; the next pass evaluates a failed session again. The failed count
+// is the writes that applied; their terminal hooks run on goroutines that own
+// the writes' terminal claims and may still be running when Tick returns.
+//
+// spec: §10.1.4; §10.1.1 (Primary:); §7.1 (Terminal pipeline context:).
 func (r *Reconciler) Tick(ctx context.Context) (int, error) {
 	tenants, err := r.tenants.ListTenants(ctx)
 	if err != nil {
@@ -219,32 +238,55 @@ func (r *Reconciler) Tick(ctx context.Context) (int, error) {
 	// consistent across a pool's sessions.
 	lagByPool := map[string]float64{}
 	failed := 0
+	var errs []error
 	for _, tenantID := range tenants {
-		rows, err := r.sessions.List(ctx, tenantID, sessionstore.ListFilter{})
+		n, err := r.reconcileTenant(ctx, tenantID, lagByPool)
+		failed += n
 		if err != nil {
-			return failed, err
-		}
-		for _, row := range rows {
-			if !eligible(row) {
-				continue
-			}
-			orphaned, err := r.isOrphaned(ctx, row, lagByPool)
-			if err != nil {
-				// A transient mirror / Kubernetes read error must not
-				// abort the whole sweep or, worse, force a false
-				// transition. Log and move on; the next Tick reattempts.
-				log.Printf("orphansession: resolve pod phase for session %s: %v", row.ID, err)
-				continue
-			}
-			if !orphaned {
-				continue
-			}
-			if r.failOrphan(ctx, tenantID, row) {
-				failed++
-			}
+			errs = append(errs, err)
 		}
 	}
-	return failed, nil
+	return failed, errors.Join(errs...)
+}
+
+// reconcileTenant runs the reconcile over one tenant's rows and returns the
+// count it forced to `failed` and the joined errors of the tenant's pass. A
+// listing error returns at once with no rows reconciled; a failed write is
+// collected and the pass goes on to the next row.
+// spec: §10.1.4; §10.1.1 (Primary:).
+func (r *Reconciler) reconcileTenant(ctx context.Context, tenantID string, lagByPool map[string]float64) (int, error) {
+	rows, err := r.sessions.List(ctx, tenantID, sessionstore.ListFilter{})
+	if err != nil {
+		slog.Warn("orphansession: list a tenant's sessions", "tenant_id", tenantID, "error", err)
+		return 0, fmt.Errorf("orphansession: list sessions: tenant %s: %w", tenantID, err)
+	}
+	failed := 0
+	var errs []error
+	for _, row := range rows {
+		if !eligible(row) {
+			continue
+		}
+		orphaned, err := r.isOrphaned(ctx, row, lagByPool)
+		if err != nil {
+			// A transient mirror / Kubernetes read error must not
+			// abort the whole sweep or, worse, force a false
+			// transition. Log and move on; the next Tick reattempts.
+			log.Printf("orphansession: resolve pod phase for session %s: %v", row.ID, err)
+			continue
+		}
+		if !orphaned {
+			continue
+		}
+		applied, err := r.failOrphan(ctx, tenantID, row)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if applied {
+			failed++
+		}
+	}
+	return failed, errors.Join(errs...)
 }
 
 // eligible reports whether a session row is a §10.1.4 orphan
@@ -346,20 +388,22 @@ func (r *Reconciler) fallbackOrphaned(ctx context.Context, row sessionstore.Sess
 // failOrphan transitions an orphaned session to `failed` with the §10.1
 // reason and runs the terminal pipeline. It is a funnel terminal writer: it
 // opens the terminal claim before its Update, writes only over a locked row
-// that is still an orphan candidate naming the listed pod, and records the Terminated fact in the write, so two replicas
-// running this pass cannot double-fail a session, and it runs the terminal
-// hook with fromState from the locked row exactly when its write applied.
-// Returns true when this call performed the transition.
+// that is still an orphan candidate naming the listed pod, and records the
+// Terminated fact in the write, so two replicas running this pass cannot
+// double-fail a session. When its write applied, it hands the claim to
+// dispatchTerminal, whose goroutine runs the terminal hook with fromState
+// from the locked row and then ends the claim. A superseded or missing row
+// ends the claim at once and reports false with no error. A store error ends
+// the claim at once, is logged with the tenant and session IDs, and is
+// returned for the pass to collect.
 //
-// spec: §10.1.4; §7.2 (Interactive Session Model).
-func (r *Reconciler) failOrphan(ctx context.Context, tenantID string, row sessionstore.Session) bool {
+// spec: §10.1.4; §7.2 (Interactive Session Model); §10.1.1 (Primary:).
+func (r *Reconciler) failOrphan(ctx context.Context, tenantID string, row sessionstore.Session) (bool, error) {
 	end := func() {}
 	if r.terminal != nil {
 		end = r.terminal.BeginTerminal(row.ID)
 	}
-	defer end()
 	var from session.State
-	now := r.clock()
 	updated, err := r.sessions.Update(ctx, tenantID, row.ID, func(s *sessionstore.Session) error {
 		// spec: §6.2 (Pod State Machine), §10.1.4 (Coordinator-Loss
 		// Detection and Hold State) — the locked row must still be an orphan
@@ -373,27 +417,51 @@ func (r *Reconciler) failOrphan(ctx context.Context, tenantID string, row sessio
 		s.State = session.StateFailed
 		s.FailureClass = session.FailureClassRuntime
 		s.FailureReason = orphanReason
-		sessionstore.MarkTerminated(s, from, now)
+		// spec: §5.2 (Slot assignment atomicity) — the stamp reads the clock
+		// inside this row's Update, because the dispatched hooks of earlier
+		// rows, seal included, may have run past the pass's start.
+		sessionstore.MarkTerminated(s, from, r.clock())
 		return nil
 	})
-	if errors.Is(err, errOrphanSuperseded) {
-		return false
+	if errors.Is(err, errOrphanSuperseded) || errors.Is(err, sessionstore.ErrNotFound) {
+		end()
+		return false, nil
 	}
 	if err != nil {
-		log.Printf("orphansession: fail orphan session %s: %v", row.ID, err)
-		return false
+		end()
+		slog.Warn("orphansession: fail an orphan session", "tenant_id", tenantID, "session_id", row.ID, "error", err)
+		return false, fmt.Errorf("orphansession: fail orphan: tenant %s session %s: %w", tenantID, row.ID, err)
 	}
 	if r.metrics != nil {
 		r.metrics.IncOrphanSessionReconciliation()
 	}
-	if r.terminal != nil {
-		// from is the locked row's pre-terminal state (§4.6); the §10.1
-		// orphan path only fails post-attached (running) sessions, so this
-		// routes their teardown through the executor recycle path rather
-		// than the pre-running by-name reclaim.
-		r.terminal.OnSessionTerminal(ctx, from, updated)
-	}
-	return true
+	r.dispatchTerminal(ctx, end, func(hctx context.Context) {
+		if r.terminal != nil {
+			// from is the locked row's pre-terminal state (§4.6); the §10.1
+			// orphan path only fails post-attached (running) sessions, so
+			// this routes their teardown through the executor recycle path
+			// rather than the pre-running by-name reclaim.
+			r.terminal.OnSessionTerminal(hctx, from, updated)
+		}
+	})
+	return true, nil
+}
+
+// dispatchTerminal hands an applied orphan transition's open claim to a
+// goroutine that runs the terminal hooks and then ends the claim. The hooks
+// receive a context that keeps ctx's values and drops its cancellation, so
+// the end of the pass does not cut a terminal pipeline that has started, and
+// the open claim is what the gateway's shutdown wait observes.
+//
+// spec: §7.1 (Terminal pipeline context:); §10.1.1 (Primary:).
+func (r *Reconciler) dispatchTerminal(ctx context.Context, end func(), hooks func(context.Context)) {
+	hctx := context.WithoutCancel(ctx)
+	r.dispatched.Add(1)
+	go func() {
+		defer r.dispatched.Done()
+		defer end()
+		hooks(hctx)
+	}()
 }
 
 // Run drives Tick on the configured interval until ctx is done. onTick,

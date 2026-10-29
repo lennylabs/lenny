@@ -64,13 +64,15 @@ func mustGet(t *testing.T, store sessionstore.Store, id string) sessionstore.Ses
 	return row
 }
 
-// spec: 6.2 (maxSessionAge timer behavior across states)
+// spec: 6.2 (maxSessionAge timer behavior across states), 7.2 (Session State
+// Machine)
 //
 // The watchdog expires by active age. A session older than the cap by wall
 // clock and under it by active time survives; a session whose active age is
 // over the cap expires. A suspended row over the cap is not expired, and
-// resume_pending and awaiting_client_action rows over the cap are expired as
-// before. A paused row older than the cap by wall clock with no active age
+// starting, resume_pending, resuming, and awaiting_client_action rows over the
+// cap are expired with `expired:deadline` on their §7.2 maxSessionAge expiry
+// edges. A paused row older than the cap by wall clock with no active age
 // survives.
 func TestSweepMaxAgeUsesActiveAge_spec_6_2(t *testing.T) {
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
@@ -86,13 +88,15 @@ func TestSweepMaxAgeUsesActiveAge_spec_6_2(t *testing.T) {
 		{"running old by wall clock, young by active time", session.StateRunning, 3 * time.Hour, 30 * time.Minute, 10 * time.Minute, false},
 		{"running over the cap by active time", session.StateRunning, 3 * time.Hour, time.Hour, 90 * time.Minute, true},
 		{"input_required over the cap by active time", session.StateInputRequired, 3 * time.Hour, 2 * time.Hour, time.Minute, true},
-		{"starting counts toward the cap", session.StateStarting, time.Hour, time.Minute, 2 * time.Hour, true},
+		{"starting counts toward the cap", session.StateStarting, time.Minute, 30 * time.Second, 2 * time.Hour, true},
 		{"running at the cap is not over it", session.StateRunning, 4 * time.Hour, time.Hour, time.Hour, false},
 		{"suspended over the cap is never expired", session.StateSuspended, 48 * time.Hour, 24 * time.Hour, 3 * time.Hour, false},
 		{"resume_pending over the cap is expired", session.StateResumePending, 4 * time.Hour, time.Minute, 3 * time.Hour, true},
 		{"awaiting_client_action over the cap is expired", session.StateAwaitingClientAction, 4 * time.Hour, time.Minute, 3 * time.Hour, true},
 		{"resume_pending old by wall clock with no active age", session.StateResumePending, 10 * time.Hour, time.Minute, 0, false},
 		{"resuming paused for hours", session.StateResuming, 10 * time.Hour, time.Minute, time.Hour, false},
+		{"resuming over the cap is expired", session.StateResuming, 4 * time.Hour, time.Minute, 3 * time.Hour, true},
+		{"awaiting_client_action under the cap", session.StateAwaitingClientAction, 10 * time.Hour, time.Minute, time.Hour, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -188,6 +192,7 @@ func TestSweepMaxAgeRechecksLockedRow_spec_6_2(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Tick: %v", err)
 			}
+			w.WaitDispatched()
 			got := mustGet(t, mem, "sess_stale")
 			if got.State != stored.State || !got.UpdatedAt.Equal(stored.UpdatedAt) {
 				t.Fatalf("superseded row was written: state %q UpdatedAt %v, want %q %v", got.State, got.UpdatedAt, stored.State, stored.UpdatedAt)

@@ -32,6 +32,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/serviceidentity"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/orphansession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionlogstore"
@@ -493,4 +494,10 @@ type gatewayWiringFields struct {
 	// elector to the gateway-leader elector and launches it. Nil when no
 	// receipt sink is wired.
 	tenantDeletion *tenantDeletionRunner
+	// orphanSessionReconciler is the §10.1.4 orphan-session reconciler
+	// startReconcilerWorkers builds when the Postgres agent_pod_state
+	// mirror is wired. startLeaderElectedSweeps registers it on the
+	// gateway-leader gate, so only the leader runs it. Nil without the
+	// mirror.
+	orphanSessionReconciler *orphansession.Reconciler
 }

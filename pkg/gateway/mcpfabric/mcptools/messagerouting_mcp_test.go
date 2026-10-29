@@ -102,9 +102,13 @@ func TestSendMessageRouting_SuspendedHoldsAndResumes_spec_7_2_path6(t *testing.T
 }
 
 // TestSendMessageRouting_SuspendedWithPendingInputWaitResumes_spec_7_2_path6
-// pins that §7.2 path 6 wins for a suspended target whose runtime was
-// interrupted while blocked in lenny/request_input: the wait stays in the
-// registry, yet the message is held in the DLQ and the session resumed.
+// pins that §7.2 path 6 wins for a suspended target that still holds an
+// unpersisted lenny/request_input wait: the wait stays in the registry, yet
+// the message is held in the DLQ and the session resumed. The fixture
+// registers the wait with Register, as a call served without a GatewayControl
+// connection record does, so the row was running when it was suspended; an
+// interrupt of a session whose wait is persisted in input_required is refused
+// under the §15.1 interrupt row.
 // Routing it to the inbox would leave the session suspended with the
 // message unread.
 //

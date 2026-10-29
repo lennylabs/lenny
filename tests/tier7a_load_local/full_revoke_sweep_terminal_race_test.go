@@ -83,7 +83,9 @@ type heldStart struct {
 
 // startHeldBeforeCommit finalizes a created session and starts it on r with
 // its running commit held, and returns once the start registered its
-// binding. The session's pre-revoke state stays ready while r binds it.
+// binding. The start wrote starting before its launch, so the session's
+// pre-revoke state is starting while r binds it (spec: §7.2 Session state
+// machine: ready → starting).
 func startHeldBeforeCommit(t *testing.T, h *lifecycleharness.Harness, r *lifecycleharness.Replica, id string) *heldStart {
 	t.Helper()
 	if code, body := h.Do(r, http.MethodPost, "/v1/sessions/"+id+"/finalize", nil); code != http.StatusOK {
@@ -107,14 +109,14 @@ func startHeldBeforeCommit(t *testing.T, h *lifecycleharness.Harness, r *lifecyc
 	if _, ok := r.Registry.Get(id); !ok {
 		t.Fatalf("the held start of %s registered no binding", id)
 	}
-	if st := h.Row(id).State; st != session.StateReady {
-		t.Fatalf("held start's session = %s, want ready", st)
+	if st := h.Row(id).State; st != session.StateStarting {
+		t.Fatalf("held start's session = %s, want starting", st)
 	}
 	return hs
 }
 
 // revokeRound is one round's sessions: running sessions, a created session
-// with no binding, and a ready session whose start is held.
+// with no binding, and a starting session whose start is held.
 type revokeRound struct {
 	running []string
 	created string

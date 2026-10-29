@@ -76,7 +76,9 @@ func interruptPrimaryCases() []interruptPrimaryCase {
 				wantHTTP: http.StatusConflict, wantCode: "INVALID_STATE_TRANSITION",
 				wantAdapter: 0, wantState: st,
 			}
-			if st == session.StateRunning || st == session.StateInputRequired {
+			// spec: §15.1 — the interrupt row admits running alone; an
+			// input_required session answers 409 with no adapter call.
+			if st == session.StateRunning {
 				c.wantAdapter = 1
 				if ad == adapterv1.InterruptResponse_STATUS_BUSY {
 					c.wantCode = "INTERRUPT_BUSY"
@@ -111,9 +113,10 @@ func interruptPrimaryCases() []interruptPrimaryCase {
 // answers 409 INVALID_STATE_TRANSITION with the row's current state, never
 // reaches the adapter, and is left unchanged, even when the adapter would
 // answer STATUS_BUSY. A hard-deleted row answers 404 and an unreadable primary
-// fails closed with 500, neither reaching the adapter. A running or
-// input_required row still reaches the adapter exactly once, and BUSY there
-// keeps its 409 INTERRUPT_BUSY.
+// fails closed with 500, neither reaching the adapter. A running row still
+// reaches the adapter exactly once, and BUSY there keeps its 409
+// INTERRUPT_BUSY; an input_required row answers 409 INVALID_STATE_TRANSITION
+// without reaching the adapter (§15.1 interrupt row).
 //
 // Before the fix the terminal rows answered 409 INTERRUPT_BUSY against a
 // STATUS_BUSY adapter, which told the client to retry an interrupt no retry

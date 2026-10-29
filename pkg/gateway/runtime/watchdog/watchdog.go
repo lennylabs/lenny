@@ -7,7 +7,8 @@
 //
 // The watchdog is store-agnostic: it sweeps every session reachable
 // via the SessionStore interface, computes the elapsed time in the
-// current state from the row's UpdatedAt, and applies the §6.2
+// current state from the row's StateEnteredAt (the §6.2 state_entered_at
+// instant the store stamps on every state change), and applies the §6.2
 // transition when the budget is exhausted. The transition is a
 // regular sessionstore.Update so the row's UpdatedAt advances and
 // downstream watchers see the change.
@@ -89,8 +90,8 @@ const (
 // Default budgets per the §11.3 timeout table. Each is operator-tunable
 // through the matching Config field. The `runtime.maxSessionAgeSeconds`
 // per-runtime override (§5.1) further caps a runtime's session lifetime
-// below the platform default; the watchdog applies the per-row UpdatedAt
-// or createdAt comparison against the effective deadline.
+// below the platform default; the watchdog compares the row's active age
+// against the effective deadline.
 const (
 	// DefaultMaxCreatedStateSeconds is the §11.3 default for
 	// the `created` pre-running state: 300s.
@@ -338,9 +339,10 @@ func (s StaticTenants) ListTenants(_ context.Context) ([]string, error) { return
 type TerminalHook interface {
 	// BeginTerminal opens the writer's terminal claim for the session before
 	// its terminal Update and returns the idempotent function that ends it.
-	// The watchdog calls the end function after OnSessionTerminal returns
-	// when its write applied, and at once on a not-applied sentinel or a
-	// store error. spec: §7.2 (Interactive Session Model).
+	// When its write applied, the watchdog calls the end function on the
+	// goroutine that runs OnSessionTerminal, after it returns; on a
+	// not-applied sentinel or a store error it calls it at once.
+	// spec: §7.2 (Interactive Session Model); §7.1 (Terminal pipeline context:).
 	BeginTerminal(sessionID string) (end func())
 	// fromState is the session's pre-terminal state, read on the locked row
 	// the watchdog forced to its terminal value. The terminal pod-release
@@ -548,6 +550,12 @@ type Watchdog struct {
 	suspender    IdleSuspender
 	backlog      BacklogResumer
 
+	// dispatched counts the terminal-hook goroutines dispatchTerminal has
+	// started and that have not returned. Tests wait on it to observe a
+	// pass's hooks; production observes the same work through the terminal
+	// claims each goroutine holds.
+	dispatched sync.WaitGroup
+
 	// warnedMu guards warned, the §11.3 expiry-warning dedup set.
 	warnedMu sync.Mutex
 	// warned holds the session ids the expiry-warning sweep has already
@@ -708,106 +716,137 @@ type Result struct {
 }
 
 // Tick runs a single sweep against every tenant returned by the
-// configured TenantLister at the supplied now. Returns the count of
-// sessions transitioned to `failed` and the per-reason breakdown.
+// configured TenantLister at the supplied now and returns the counts of the
+// transitions it applied.
+//
+// A failure to list one tenant's rows for one sub-sweep skips that listing,
+// and a failed write of one row skips that row. Each is logged with the
+// tenant_id and, for a row, the session_id, and the pass goes on to the next
+// row, sub-sweep, and tenant. Tick returns errors.Join of every collected
+// error, so a non-nil error does not mean the pass stopped. The next pass
+// evaluates a failed row again, and the locked-row re-check turns a write
+// that applied despite its error into a superseded write on that pass. A
+// ListTenants error ends the pass, because there is nothing to sweep.
+//
+// A terminal write's hooks run on a goroutine that owns the write's terminal
+// claim (dispatchTerminal), so a slow terminal pipeline does not delay the
+// next row. The Result counts the writes when they apply, before their hooks
+// finish.
 //
 // Tick is idempotent: a second sweep with the same `now` does not
 // re-transition rows that the first sweep already moved to `failed`.
+//
+// spec: §10.1.1 (Primary:); §7.1 (Terminal pipeline context:).
 func (w *Watchdog) Tick(ctx context.Context, now time.Time) (Result, error) {
 	res := Result{PerReason: map[string]int{}, PerResumingOutcome: map[string]int{}}
 	tenants, err := w.tenants.ListTenants(ctx)
 	if err != nil {
 		return res, err
 	}
+	var errs []error
 	for _, tenant := range tenants {
-		// We scan every state separately so the store can use a
-		// state-indexed query in production. The minimal in-memory
-		// store does the filter in-process; the contract is the same.
-		for _, st := range []session.State{
-			session.StateCreated,
-			session.StateFinalizing,
-			session.StateReady,
-			session.StateStarting,
-		} {
-			rows, err := w.store.List(ctx, tenant, sessionstore.ListFilter{State: st})
-			if err != nil {
-				return res, err
-			}
-			for _, row := range rows {
-				if !w.elapsed(row.UpdatedAt, st, now) {
-					continue
-				}
-				reason := w.reasonForState(st)
-				end := w.beginTerminal(row.ID)
-				updated, err := w.store.Update(ctx, tenant, row.ID, func(r *sessionstore.Session) error {
-					if r.State != st {
-						// spec: §7.2 — the locked row left the listed
-						// state; leave it alone.
-						return sessionstore.ErrSuperseded
-					}
-					r.State = session.StateFailed
-					r.FailureClass = w.classForReason(reason)
-					r.FailureReason = reason
-					// spec: §5.2 (Slot assignment atomicity) — the stamp reads the clock
-					// inside this row's Update, because an earlier row's post-terminal
-					// hook, seal included, ran after the pass's now was read.
-					sessionstore.MarkTerminated(r, st, w.clock())
-					return nil
-				})
-				if errors.Is(err, sessionstore.ErrSuperseded) {
-					end()
-					continue
-				}
-				if err != nil {
-					end()
-					return res, err
-				}
-				res.ForcedFailures++
-				res.PerReason[reason]++
-				// st is the pre-running state the sweep timed out
-				// (created/finalizing/ready/starting), the §4.6 pre-terminal
-				// state the reclaim path keys off.
-				w.recordCompleted(ctx, st, updated)
-				end()
-			}
-		}
-		// spec: §6.2 and §6.2
-		// (resume_pending wall-clock cap). The resuming sweep runs
-		// before resume_pending so a resuming → resume_pending retry
-		// that lands inside the same Tick does not get re-swept by the
-		// resume_pending sweep in the same call (UpdatedAt advances on
-		// the resume_pending write, but defence-in-depth: ordering is
-		// stable regardless).
-		if err := w.sweepResuming(ctx, tenant, now, &res); err != nil {
-			return res, err
-		}
-		if err := w.sweepResumePending(ctx, tenant, now, &res); err != nil {
-			return res, err
-		}
+		errs = append(errs, w.sweepTenant(ctx, tenant, now, &res))
+	}
+	return res, errors.Join(errs...)
+}
+
+// sweepTenant runs every sub-sweep over one tenant in order and returns the
+// joined errors of all of them. A sub-sweep's error does not stop the
+// sub-sweeps after it. spec: §10.1.1 (Primary:).
+func (w *Watchdog) sweepTenant(ctx context.Context, tenant string, now time.Time, res *Result) error {
+	return errors.Join(
+		w.sweepPreRunning(ctx, tenant, now, res),
+		// spec: §6.2 (resume_pending wall-clock cap). The resuming sweep runs
+		// before resume_pending so a resuming → resume_pending retry that
+		// lands inside the same Tick does not get re-swept by the
+		// resume_pending sweep in the same call (StateEnteredAt moves on the
+		// resume_pending write, but the ordering is stable regardless).
+		w.sweepResuming(ctx, tenant, now, res),
+		w.sweepResumePending(ctx, tenant, now, res),
 		// spec: §11.3 — warn the client and pod 5 minutes before
 		// maxSessionAge. Runs before sweepMaxAge so the warning fires while
 		// the session is still non-terminal (sweepMaxAge expires it on a
 		// later tick once the deadline passes). F-11.3.5.
-		if err := w.sweepExpiryWarning(ctx, tenant, now, &res); err != nil {
-			return res, err
+		w.sweepExpiryWarning(ctx, tenant, now, res),
+		w.sweepMaxAge(ctx, tenant, now, res),
+		w.sweepAwaitingClientAction(ctx, tenant, now, res),
+		w.sweepIdle(ctx, tenant, now, res),
+		w.sweepSuspended(ctx, tenant, now, res),
+		w.sweepDLQExpiry(ctx, tenant, now, res),
+	)
+}
+
+// preRunningStates are the states the §6.2 / §11.3 pre-running budgets bound.
+// Each is listed separately so the store can use a state-indexed query.
+var preRunningStates = []session.State{
+	session.StateCreated,
+	session.StateFinalizing,
+	session.StateReady,
+	session.StateStarting,
+}
+
+// sweepPreRunning fails every row of tenant that has stayed in a pre-running
+// state past its budget. A listing error skips that state and a write error
+// skips that row; both are collected and the sweep goes on.
+// spec: §6.2 (Pod State Machine); §10.1.1 (Primary:).
+func (w *Watchdog) sweepPreRunning(ctx context.Context, tenant string, now time.Time, res *Result) error {
+	var errs []error
+	for _, st := range preRunningStates {
+		rows, err := w.store.List(ctx, tenant, sessionstore.ListFilter{State: st})
+		if err != nil {
+			errs = append(errs, listError(tenant, st, err))
+			continue
 		}
-		if err := w.sweepMaxAge(ctx, tenant, now, &res); err != nil {
-			return res, err
-		}
-		if err := w.sweepAwaitingClientAction(ctx, tenant, now, &res); err != nil {
-			return res, err
-		}
-		if err := w.sweepIdle(ctx, tenant, now, &res); err != nil {
-			return res, err
-		}
-		if err := w.sweepSuspended(ctx, tenant, now, &res); err != nil {
-			return res, err
-		}
-		if err := w.sweepDLQExpiry(ctx, tenant, now, &res); err != nil {
-			return res, err
+		for _, row := range rows {
+			if !w.elapsed(row.StateEnteredAt, st, now) {
+				continue
+			}
+			if err := w.failPreRunning(ctx, tenant, st, row, now, res); err != nil {
+				errs = append(errs, err)
+			}
 		}
 	}
-	return res, nil
+	return errors.Join(errs...)
+}
+
+// failPreRunning writes `failed` over one row listed in the pre-running state
+// st, guarded on the locked row still being in st past its budget, and hands
+// the terminal hooks to dispatchTerminal when the write applied.
+// spec: §6.2 (Pod State Machine); §10.1.1 (Primary:).
+func (w *Watchdog) failPreRunning(ctx context.Context, tenant string, st session.State, row sessionstore.Session, now time.Time, res *Result) error {
+	reason := w.reasonForState(st)
+	end := w.beginTerminal(row.ID)
+	updated, err := w.store.Update(ctx, tenant, row.ID, func(r *sessionstore.Session) error {
+		if r.State != st || !w.elapsed(r.StateEnteredAt, st, now) {
+			// spec: §10.1.1 (Primary:) — the locked row left the listed
+			// state, or re-entered it inside the budget; leave it alone.
+			return sessionstore.ErrSuperseded
+		}
+		r.State = session.StateFailed
+		r.FailureClass = w.classForReason(reason)
+		r.FailureReason = reason
+		// spec: §5.2 (Slot assignment atomicity) — the stamp reads the clock
+		// inside this row's Update, because the dispatched hooks of earlier
+		// rows, seal included, may have run past the pass's now.
+		sessionstore.MarkTerminated(r, st, w.clock())
+		return nil
+	})
+	if superseded(err, sessionstore.ErrSuperseded) {
+		end()
+		return nil
+	}
+	if err != nil {
+		end()
+		return rowError(tenant, row.ID, "fail a session past its pre-running budget", err)
+	}
+	res.ForcedFailures++
+	res.PerReason[reason]++
+	// st is the pre-running state the sweep timed out, the §4.6 pre-terminal
+	// state the reclaim path keys off.
+	w.dispatchTerminal(ctx, end, func(hctx context.Context) {
+		w.recordCompleted(hctx, st, updated)
+	})
+	return nil
 }
 
 // sweepDLQExpiry runs the §7.2 dead-letter-queue TTL sweep over every
@@ -816,19 +855,21 @@ func (w *Watchdog) Tick(ctx context.Context, now time.Time) (Result, error) {
 // held message of a `suspended` session; those are delivered after the
 // session's next resume (§7.2 delivery path 6 Held messages. and Backlog
 // resume.), and the terminal drain removes what remains when the
-// suspended-session lifetime ends the session. A row whose UpdatedAt is less
-// than DefaultDLQTTL before now is skipped, so an entry expires at the later
+// suspended-session lifetime ends the session. A row whose StateEnteredAt is
+// less than DefaultDLQTTL before now is skipped, so an entry expires at the later
 // of its score and the row's entry to its state plus the TTL (§7.2 delivery
 // path 6 Delivery of held messages.). The coordinator emits a
 // `message_expired(dlq_ttl_expired)` event per expired entry. A per-session
 // sweep error is dropped so a transient Redis blip on one session does not
-// stall the tick; the next tick retries. No-op when messaging is not wired.
+// stall the tick; the next tick retries. A listing error skips that state and
+// is collected. No-op when messaging is not wired.
 //
 // spec: §7.2 (Interactive Session Model).
 func (w *Watchdog) sweepDLQExpiry(ctx context.Context, tenant string, now time.Time, res *Result) error {
 	if w.messaging == nil {
 		return nil
 	}
+	var errs []error
 	for _, st := range []session.State{
 		session.StateResumePending,
 		session.StateResuming,
@@ -836,10 +877,11 @@ func (w *Watchdog) sweepDLQExpiry(ctx context.Context, tenant string, now time.T
 	} {
 		rows, err := w.store.List(ctx, tenant, sessionstore.ListFilter{State: st})
 		if err != nil {
-			return err
+			errs = append(errs, listError(tenant, st, err))
+			continue
 		}
 		for _, row := range rows {
-			if now.Sub(row.UpdatedAt) < sessioninbox.DefaultDLQTTL {
+			if now.Sub(row.StateEnteredAt) < sessioninbox.DefaultDLQTTL {
 				continue
 			}
 			expired, serr := w.messaging.SweepExpired(ctx, tenant, row.ID)
@@ -849,7 +891,7 @@ func (w *Watchdog) sweepDLQExpiry(ctx context.Context, tenant string, now time.T
 			res.DLQExpired += expired
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // sweepResumePending implements the §6.2 wall-clock cap. A
@@ -861,7 +903,9 @@ func (w *Watchdog) sweepDLQExpiry(ctx context.Context, tenant string, now time.T
 //
 // Reset semantics: a session that traverses resume_pending → resuming →
 // resume_pending (one retry round-trip) gets a fresh budget on
-// re-entry because UpdatedAt advances on the resume_pending write. The
+// re-entry because the store moves StateEnteredAt on the resume_pending
+// write. A write that leaves the row in resume_pending does not restart the
+// window. The
 // maxSessionAge cap does not bound the cumulative case, because its timer is
 // paused in resume_pending and resuming (§6.2 maxSessionAge timer behavior
 // across states); the retry budget does, since each re-entry from resuming
@@ -873,48 +917,51 @@ func (w *Watchdog) sweepDLQExpiry(ctx context.Context, tenant string, now time.T
 // session's coordination lease. The driver applies the active-age check, so
 // the watchdog and tree recovery apply one check. The window-expiry write
 // takes effect only when the locked row is still resume_pending and its
-// UpdatedAt is past the window; otherwise the mutator returns
+// StateEnteredAt is past the window; otherwise the mutator returns
 // errResumePendingSuperseded and the sweep counts no timeout and sends no
-// notification.
+// notification. A missing row is treated the same way. A listing error or
+// another write error is collected and the sweep goes on to the next row.
 //
 // spec: §6.2 (Pod State Machine); §7.3 (Resume driver).
 func (w *Watchdog) sweepResumePending(ctx context.Context, tenant string, now time.Time, res *Result) error {
 	rows, err := w.store.List(ctx, tenant,
 		sessionstore.ListFilter{State: session.StateResumePending})
 	if err != nil {
-		return err
+		return listError(tenant, session.StateResumePending, err)
 	}
 	platformCap := time.Duration(w.cfg.MaxResumePendingSeconds) * time.Second
 	driver, _ := w.terminal.(ResumeDriver)
+	var errs []error
 	for _, row := range rows {
-		if now.Sub(row.UpdatedAt) <= EffectiveMaxResumeWindow(row, platformCap) {
+		if now.Sub(row.StateEnteredAt) <= EffectiveMaxResumeWindow(row, platformCap) {
 			if driver != nil {
 				driver.DriveResume(ctx, row)
 			}
 			continue
 		}
 		updated, err := w.store.Update(ctx, tenant, row.ID, func(r *sessionstore.Session) error {
-			if r.State != session.StateResumePending || now.Sub(r.UpdatedAt) <= EffectiveMaxResumeWindow(*r, platformCap) {
+			if r.State != session.StateResumePending || now.Sub(r.StateEnteredAt) <= EffectiveMaxResumeWindow(*r, platformCap) {
 				return errResumePendingSuperseded
 			}
 			r.State = session.StateAwaitingClientAction
 			return nil
 		})
-		if errors.Is(err, errResumePendingSuperseded) {
+		if superseded(err, errResumePendingSuperseded) {
 			continue
 		}
 		if err != nil {
-			return err
+			errs = append(errs, rowError(tenant, row.ID, "move a session past its resume window to awaiting_client_action", err))
+			continue
 		}
 		res.ResumePendingTimeouts++
 		w.notifyAwaitingClientActionEntered(ctx, updated)
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // errResumePendingSuperseded is the window-expiry mutator's not-applied
-// sentinel: the locked row left resume_pending, or a later write restarted
-// its window. spec: §6.2 (Pod State Machine).
+// sentinel: the locked row left resume_pending, or left and re-entered it,
+// which restarts its window. spec: §6.2 (Pod State Machine).
 var errResumePendingSuperseded = errors.New("watchdog: resume_pending window expiry superseded on the locked row")
 
 // errResumingSuperseded is the resuming watchdog's not-applied sentinel: the
@@ -922,9 +969,9 @@ var errResumePendingSuperseded = errors.New("watchdog: resume_pending window exp
 // the sweep listed. spec: §6.2 (Pod State Machine), §7.3 (Retry and Resume).
 var errResumingSuperseded = errors.New("watchdog: resuming exit superseded on the locked row")
 
-// sweepResuming implements the §6.2 resuming watchdog. A session whose
-// last row update (UpdatedAt) is older than MaxResumingSeconds without the
-// resume completing branches on retry budget:
+// sweepResuming implements the §6.2 resuming watchdog. A session that
+// entered resuming (StateEnteredAt) more than MaxResumingSeconds ago without
+// the resume completing branches on retry budget:
 //
 //   - RetryCount < effective maxRetries: transition to resume_pending
 //     and increment RetryCount; fire the §16.1 retry-attempt metric and
@@ -941,7 +988,9 @@ var errResumingSuperseded = errors.New("watchdog: resuming exit superseded on th
 // RetryCount. A row a failure report already moved, or that re-entered
 // resuming at a higher generation, is left unchanged with no notification,
 // so two watchdogs exit one incarnation at most once and RetryCount never
-// exceeds maxRetries. The exit writes no coordination_generation.
+// exceeds maxRetries. A missing row is left the same way. The exit writes no
+// coordination_generation. A listing error or another write error is
+// collected and the sweep goes on to the next row.
 //
 // The §6.2 non-retryable branch is independent of the watchdog: the resume
 // driver reports a non-retryable failure through the failure funnel. The
@@ -952,11 +1001,12 @@ func (w *Watchdog) sweepResuming(ctx context.Context, tenant string, now time.Ti
 	rows, err := w.store.List(ctx, tenant,
 		sessionstore.ListFilter{State: session.StateResuming})
 	if err != nil {
-		return err
+		return listError(tenant, session.StateResuming, err)
 	}
 	budget := time.Duration(w.cfg.MaxResumingSeconds) * time.Second
+	var errs []error
 	for _, row := range rows {
-		if now.Sub(row.UpdatedAt) <= budget {
+		if now.Sub(row.StateEnteredAt) <= budget {
 			continue
 		}
 		updated, err := w.store.Update(ctx, tenant, row.ID, func(r *sessionstore.Session) error {
@@ -971,11 +1021,12 @@ func (w *Watchdog) sweepResuming(ctx context.Context, tenant string, now time.Ti
 			}
 			return nil
 		})
-		if errors.Is(err, errResumingSuperseded) {
+		if superseded(err, errResumingSuperseded) {
 			continue
 		}
 		if err != nil {
-			return err
+			errs = append(errs, rowError(tenant, row.ID, "exit a session past its resuming budget", err))
+			continue
 		}
 		res.ResumingTimeouts++
 		if updated.State == session.StateResumePending {
@@ -986,7 +1037,7 @@ func (w *Watchdog) sweepResuming(ctx context.Context, tenant string, now time.Ti
 		res.PerResumingOutcome[ResumingExhaustedOutcome]++
 		w.notifyAwaitingClientActionEntered(ctx, updated)
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // notifyAwaitingClientActionEntered fires the AwaitingClientActionEntryNotifier
@@ -1075,14 +1126,21 @@ func effectiveMaxRetries(row sessionstore.Session, deployerDefault int) int {
 
 // sweepAwaitingClientAction expires every session for the tenant that
 // has waited in awaiting_client_action longer than the §11.3
-// maxAwaitingClientAction deadline, measured from the row's UpdatedAt
+// maxAwaitingClientAction deadline, measured from the row's StateEnteredAt
 // (the instant it entered the state). §7.3 governs the transition:
-// awaiting_client_action → expired when the deadline is exhausted.
+// awaiting_client_action → expired when the deadline is exhausted. The
+// expiry write re-checks the state and the deadline on the locked row, so a
+// row that left and re-entered the state after the listing is left alone,
+// and it stamps `expired:deadline` over any reason an earlier recovery left.
+// A missing row is treated as superseded. A listing error or another write
+// error is collected and the sweep goes on to the next row. The awaiting
+// expiry notifier and the terminal hook run on dispatchTerminal's goroutine.
 //
 // Reset semantics: a session that traverses awaiting_client_action →
 // resume_pending → running and later re-enters awaiting_client_action
-// gets a fresh 900s budget because UpdatedAt advances on the
-// re-entering write. The §11.3 spec text is silent on whether the
+// gets a fresh 900s budget because the store moves StateEnteredAt on the
+// re-entering write. A write that leaves the row in the state does not
+// restart the budget. The §11.3 spec text is silent on whether the
 // deadline is per-entry or cumulative; the gateway implements the
 // per-entry interpretation because §7.3 frames the deadline as the
 // inactivity timeout on a single client-action cycle rather than as a
@@ -1096,57 +1154,70 @@ func (w *Watchdog) sweepAwaitingClientAction(ctx context.Context, tenant string,
 	rows, err := w.store.List(ctx, tenant,
 		sessionstore.ListFilter{State: session.StateAwaitingClientAction})
 	if err != nil {
-		return err
+		return listError(tenant, session.StateAwaitingClientAction, err)
 	}
 	deadline := time.Duration(w.cfg.MaxAwaitingClientActionSeconds) * time.Second
+	var errs []error
 	for _, row := range rows {
-		if now.Sub(row.UpdatedAt) <= deadline {
+		if now.Sub(row.StateEnteredAt) <= deadline {
 			continue
 		}
-		end := w.beginTerminal(row.ID)
-		updated, err := w.store.Update(ctx, tenant, row.ID, func(r *sessionstore.Session) error {
-			if r.State != session.StateAwaitingClientAction {
-				// spec: §7.2 — the locked row left the state; leave it.
-				return sessionstore.ErrSuperseded
-			}
-			r.State = session.StateExpired
-			// spec: §8.8 — stamp the `expired:deadline` prefix
-			// on the row so the MCP adapter surfaces `failed` with the
-			// `expired:*` error code. The awaiting-client-action sweep
-			// is the §7.3 wall-clock deadline. F-8.8.8.
-			if r.FailureReason == "" {
-				r.FailureReason = string(session.FailureExpiredDeadline)
-			}
-			// spec: §5.2 (Slot assignment atomicity) — the stamp reads the clock
-			// inside this row's Update, because an earlier row's post-terminal
-			// hook, seal included, ran after the pass's now was read.
-			sessionstore.MarkTerminated(r, session.StateAwaitingClientAction, w.clock())
-			return nil
-		})
-		if errors.Is(err, sessionstore.ErrSuperseded) {
-			end()
-			continue
+		if err := w.expireAwaiting(ctx, tenant, row, now, deadline, res); err != nil {
+			errs = append(errs, err)
 		}
-		if err != nil {
-			end()
-			return err
+	}
+	return errors.Join(errs...)
+}
+
+// expireAwaiting writes the §7.3 deadline expiry of one listed
+// awaiting_client_action row, guarded on the locked row, and dispatches its
+// hooks when the write applied.
+// spec: §7.3 (Retry and Resume); §10.1.1 (Primary:).
+func (w *Watchdog) expireAwaiting(ctx context.Context, tenant string, row sessionstore.Session, now time.Time, deadline time.Duration, res *Result) error {
+	end := w.beginTerminal(row.ID)
+	updated, err := w.store.Update(ctx, tenant, row.ID, func(r *sessionstore.Session) error {
+		if r.State != session.StateAwaitingClientAction || now.Sub(r.StateEnteredAt) <= deadline {
+			// spec: §10.1.1 (Primary:) — the locked row left the state,
+			// or re-entered it inside the deadline; leave it.
+			return sessionstore.ErrSuperseded
 		}
-		// spec: §7.3 — fire the awaiting-action-specific
-		// audit hook BEFORE the generic terminal hook so the
+		r.State = session.StateExpired
+		// spec: §8.8 — stamp the `expired:deadline` prefix
+		// on the row so the MCP adapter surfaces `failed` with the
+		// `expired:*` error code. The awaiting-client-action sweep
+		// is the §7.3 wall-clock deadline, and its own reason replaces
+		// any reason an earlier recovery left on the row. F-8.8.8.
+		r.FailureReason = string(session.FailureExpiredDeadline)
+		// spec: §5.2 (Slot assignment atomicity) — the stamp reads the clock
+		// inside this row's Update, because the dispatched hooks of
+		// earlier rows, seal included, may have run past the pass's now.
+		sessionstore.MarkTerminated(r, session.StateAwaitingClientAction, w.clock())
+		return nil
+	})
+	if superseded(err, sessionstore.ErrSuperseded) {
+		end()
+		return nil
+	}
+	if err != nil {
+		end()
+		return rowError(tenant, row.ID, "expire a session past its awaiting_client_action deadline", err)
+	}
+	res.Expirations++
+	// spec: §16.1.1 — the §7.3 awaiting_client_action wall-clock
+	// deadline is a `maxResumeWindowSeconds` reclamation; its
+	// `expired:deadline` failure reason shares the age-cap series, so
+	// the session_expiry counter stamps `max_session_age`. F-7.3.25.
+	w.notifySessionExpiry(ctx, updated, ExpiryReasonMaxSessionAge)
+	w.dispatchTerminal(ctx, end, func(hctx context.Context) {
+		// spec: §7.3 — fire the awaiting-action-specific audit hook
+		// BEFORE the generic terminal hook so the
 		// `session.expired_in_awaiting_action` row precedes the
 		// `session.expired` row in the §11.7 chain. F-7.3.25.
 		if notifier, ok := w.terminal.(AwaitingClientActionExpiryNotifier); ok {
-			notifier.OnSessionExpiredFromAwaitingClientAction(ctx, updated)
+			notifier.OnSessionExpiredFromAwaitingClientAction(hctx, updated)
 		}
-		res.Expirations++
-		// spec: §16.1.1 — the §7.3 awaiting_client_action wall-clock
-		// deadline is a `maxResumeWindowSeconds` reclamation; its
-		// `expired:deadline` failure reason shares the age-cap series, so
-		// the session_expiry counter stamps `max_session_age`. F-7.3.25.
-		w.notifySessionExpiry(ctx, updated, ExpiryReasonMaxSessionAge)
-		w.recordCompleted(ctx, session.StateAwaitingClientAction, updated)
-		end()
-	}
+		w.recordCompleted(hctx, session.StateAwaitingClientAction, updated)
+	})
 	return nil
 }
 
@@ -1171,10 +1242,11 @@ var idleClockRunningStates = []session.State{
 // be idle-suspended. A session that cannot be idle-suspended, and every idle
 // session on a gateway with no suspender, is transitioned to `expired` with
 // reason `expired:idle`, as before. A resolver error skips the row this
-// tick.
+// tick. A listing error and a failed expiry write are collected, and the
+// sweep goes on to the next row.
 //
 // The idle anchor is `LastAgentActivityAt`; when it is zero (no qualifying
-// event recorded yet) the sweep falls back to UpdatedAt, the instant the
+// event recorded yet) the sweep falls back to StateEnteredAt, the instant the
 // session entered the current state. The sweep reads the anchor; it sets
 // nothing on it.
 //
@@ -1183,8 +1255,9 @@ func (w *Watchdog) sweepIdle(ctx context.Context, tenant string, now time.Time, 
 	platformCap := w.cfg.MaxIdleSeconds
 	rows, err := w.store.List(ctx, tenant, sessionstore.ListFilter{State: session.StateRunning})
 	if err != nil {
-		return err
+		return listError(tenant, session.StateRunning, err)
 	}
+	var errs []error
 	for _, row := range rows {
 		capSeconds := platformCap
 		if w.idleResolver != nil {
@@ -1195,11 +1268,8 @@ func (w *Watchdog) sweepIdle(ctx context.Context, tenant string, now time.Time, 
 		if capSeconds <= 0 {
 			continue
 		}
-		anchor := row.LastAgentActivityAt
-		if anchor.IsZero() {
-			anchor = row.UpdatedAt
-		}
-		if now.Sub(anchor) <= time.Duration(capSeconds)*time.Second {
+		idleCap := time.Duration(capSeconds) * time.Second
+		if !idleElapsed(row, now, idleCap) {
 			continue
 		}
 		suspend, ok := w.idleSuspendable(ctx, row)
@@ -1211,11 +1281,11 @@ func (w *Watchdog) sweepIdle(ctx context.Context, tenant string, now time.Time, 
 			res.IdleSuspensions++
 			continue
 		}
-		if err := w.expireIdle(ctx, tenant, row, now, res); err != nil {
-			return err
+		if err := w.expireIdle(ctx, tenant, row, now, idleCap, res); err != nil {
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // idleSuspendable reports whether an idle row goes to the idle suspender.
@@ -1239,17 +1309,40 @@ func (w *Watchdog) idleSuspendable(ctx context.Context, row sessionstore.Session
 	return suspendable, true
 }
 
+// idleAnchor is the instant the row's §6.2 `maxClientIdleSeconds` clock
+// runs from: its last qualifying activity, or, when none is recorded, the
+// instant it entered its current state.
+// spec: §6.2 (maxClientIdleSeconds clock behavior across states).
+func idleAnchor(row sessionstore.Session) time.Time {
+	if row.LastAgentActivityAt.IsZero() {
+		return row.StateEnteredAt
+	}
+	return row.LastAgentActivityAt
+}
+
+// idleElapsed reports whether row has been idle longer than idleCap at now.
+// spec: §6.2 (maxClientIdleSeconds clock behavior across states).
+func idleElapsed(row sessionstore.Session, now time.Time, idleCap time.Duration) bool {
+	return now.Sub(idleAnchor(row)) > idleCap
+}
+
 // expireIdle writes the idle expiry of a `running` session that cannot be
 // idle-suspended. The write is a terminal writer on the funnel path, guarded
-// on the locked row still being `running`; a guard miss changes nothing.
-// spec: §6.2 (maxClientIdleSeconds clock behavior across states).
-func (w *Watchdog) expireIdle(ctx context.Context, tenant string, row sessionstore.Session, now time.Time, res *Result) error {
+// on the locked row still being `running` and still idle past idleCap at now,
+// so an activity stamp or a re-entry to `running` that lands after the
+// listing keeps the row. A guard miss or a missing row changes nothing and
+// ends the claim at once. The write stamps `expired:idle` over any reason an
+// earlier recovery left on the row. When the write applied, the claim passes
+// to dispatchTerminal's goroutine, which ends it after the hooks return; a
+// function-level deferred end would close it while the hooks still run.
+// spec: §6.2 (maxClientIdleSeconds clock behavior across states); §10.1.1 (Primary:).
+func (w *Watchdog) expireIdle(ctx context.Context, tenant string, row sessionstore.Session, now time.Time, idleCap time.Duration, res *Result) error {
 	var from session.State
 	end := w.beginTerminal(row.ID)
-	defer end()
 	updated, err := w.store.Update(ctx, tenant, row.ID, func(r *sessionstore.Session) error {
-		if !isIdleClockRunning(r.State) {
-			// spec: §7.2 — the locked row left `running`; leave it.
+		if !isIdleClockRunning(r.State) || !idleElapsed(*r, now, idleCap) {
+			// spec: §10.1.1 (Primary:) — the locked row left `running`, or
+			// is inside the idle cap; leave it.
 			return sessionstore.ErrSuperseded
 		}
 		from = r.State
@@ -1257,27 +1350,29 @@ func (w *Watchdog) expireIdle(ctx context.Context, tenant string, row sessionsto
 		// spec: §8.8 — the open-ended `expired:*` prefix distinguishes
 		// idle reclamation from the active-time `maxSessionAge` cap
 		// (`expired:deadline`). F-11.3.7.
-		if r.FailureReason == "" {
-			r.FailureReason = string(session.FailureExpiredIdle)
-		}
+		r.FailureReason = string(session.FailureExpiredIdle)
 		// spec: §5.2 (Slot assignment atomicity) — the stamp reads the clock
-		// inside this row's Update, because an earlier row's post-terminal
-		// hook, seal included, ran after the pass's now was read.
+		// inside this row's Update, because the dispatched hooks of earlier
+		// rows, seal included, may have run past the pass's now.
 		sessionstore.MarkTerminated(r, from, w.clock())
 		return nil
 	})
-	if errors.Is(err, sessionstore.ErrSuperseded) {
+	if superseded(err, sessionstore.ErrSuperseded) {
+		end()
 		return nil
 	}
 	if err != nil {
-		return err
+		end()
+		return rowError(tenant, row.ID, "expire an idle session", err)
 	}
 	res.IdleExpirations++
 	res.Expirations++
 	// spec: §16.1.1 — the idle expiry stamps the `max_idle_time` reason on
 	// the session_expiry counter. F-11.3.7.
 	w.notifySessionExpiry(ctx, updated, ExpiryReasonMaxIdleTime)
-	w.recordCompleted(ctx, from, updated)
+	w.dispatchTerminal(ctx, end, func(hctx context.Context) {
+		w.recordCompleted(hctx, from, updated)
+	})
 	return nil
 }
 
@@ -1295,95 +1390,157 @@ func isIdleClockRunning(st session.State) bool {
 }
 
 // errMaxAgeSuperseded is the sentinel the sweepMaxAge mutator returns when the
-// locked row no longer qualifies for expiry: it is terminal, it is suspended,
-// or its active age recomputed on the locked row is at or under the cap.
-// Returning an error aborts the Update, so the row is not rewritten, its
-// UpdatedAt does not advance, and the sweep runs no expiry side effect for it.
-// spec: §6.2 (maxSessionAge timer behavior across states).
+// locked row no longer qualifies for expiry under either leg: it is terminal,
+// or its active age recomputed on the locked row is at or under the cap (or
+// the row is suspended, which no age cap expires) and it is not past its
+// perChildMaxAge. Returning an error aborts the Update, so the row is not
+// rewritten, its UpdatedAt does not advance, and the sweep runs no expiry side
+// effect for it.
+// spec: §6.2 (maxSessionAge timer behavior across states); §8.2.
 var errMaxAgeSuperseded = errors.New("watchdog: maxSessionAge expiry superseded on the locked row")
 
-// sweepMaxAge expires every non-terminal session for the tenant whose active
-// session age exceeds its effective maxSessionAge cap. Active age is
-// sessionstore.ActiveAge: the accumulated_session_age_seconds the store
-// accrues on every write, plus the time since the last write while the row is
-// in a counting state (starting, running, input_required). Time in suspended,
-// resume_pending, resuming, and awaiting_client_action does not count, so a
-// session older than the cap by wall clock and under it by active time
-// survives.
+// sweepMaxAge expires every non-terminal session for the tenant that is past
+// either of two wall-clock bounds.
 //
-// The cap is EffectiveAgeCap: the platform cap (w.cfg.MaxSessionAgeSeconds),
-// tightened by the per-runtime / per-pool resolver and by the per-session
-// retryPolicy.maxSessionAgeSeconds (F-7.3.24).
+// The age leg expires a session whose active session age exceeds its
+// effective maxSessionAge cap. Active age is sessionstore.ActiveAge: the
+// accumulated_session_age_seconds the store accrues on every write, plus the
+// time since the last write while the row is in a counting state (starting,
+// running, input_required). Time in suspended, resume_pending, resuming, and
+// awaiting_client_action does not count, so a session older than the cap by
+// wall clock and under it by active time survives. The cap is
+// EffectiveAgeCap: the platform cap (w.cfg.MaxSessionAgeSeconds), tightened by
+// the per-runtime / per-pool resolver and by the per-session
+// retryPolicy.maxSessionAgeSeconds (F-7.3.24). A suspended row is never
+// expired by the age leg, because its timer is paused and its own suspended
+// lifetime bounds it.
 //
-// A suspended row is never listed for expiry, because no age cap expires a
-// suspended session; its timer is paused and its own suspended lifetime bounds
-// it. The listed row comes from a read-pool listing and only selects the row:
-// the mutator re-checks the locked row, recomputes its active age with the
-// sweep's now, and returns errMaxAgeSuperseded when the locked row is
-// terminal, suspended, or at or under the cap. On that sentinel the sweep
-// writes nothing, runs no side effect, and goes on to the next row. Any other
-// Update error ends the tick.
+// An over-cap starting, resume_pending, resuming, or awaiting_client_action
+// row is still expired by the age leg. Its age stopped accruing when it left a
+// counting state, so it is over the cap only when it left that state already
+// past it, and §7.2 lists a maxSessionAge expiry edge from each of those
+// states (resume_pending → expired and awaiting_client_action → expired among
+// them). Leaving an over-cap resume_pending row would not let it recover:
+// DriveResume's readResumable refuses an over-cap row, so the row would only
+// wait out maxResumeWindowSeconds.
 //
-// An over-cap resume_pending or awaiting_client_action row is still expired
-// here: its age stopped accruing when it left a counting state, so it is over
-// the cap only when it left that state already past it.
+// The lease leg expires a delegated child past its perChildMaxAge: the slice
+// its parent granted, stored on the child's own row, counted in wall-clock
+// time from the child's creation in every non-terminal state, suspended
+// included (leaseDue). Reading the child's own stored slice keeps a later
+// lease extension of the parent from moving an existing child's bound.
 //
-// spec: §6.2 (maxSessionAge timer behavior across states); §11.3.
+// The listed row comes from a read-pool listing and only selects the row: the
+// mutator recomputes both legs on the locked row with the sweep's now and
+// returns errMaxAgeSuperseded when neither holds. On that sentinel, or on a
+// missing row, the sweep writes nothing, runs no side effect, and goes on to
+// the next row. A listing error or any other Update error is collected and
+// the sweep goes on. The write stamps `expired:lease` when only the
+// lease leg holds and `expired:deadline` otherwise, replacing any reason an
+// earlier recovery left, and the §16.1.1 max_session_age expiry notification
+// fires only when the age leg holds.
+//
+// spec: §6.2 (maxSessionAge timer behavior across states); §7.2; §8.2; §10.1.1
+// (Primary:); §11.3.
 func (w *Watchdog) sweepMaxAge(ctx context.Context, tenant string, now time.Time, res *Result) error {
 	rows, err := w.store.List(ctx, tenant, sessionstore.ListFilter{})
 	if err != nil {
-		return err
+		return listError(tenant, "", err)
 	}
 	platformCap := time.Duration(w.cfg.MaxSessionAgeSeconds) * time.Second
+	var errs []error
 	for _, row := range rows {
-		if !maxAgeExpirable(row.State) {
+		if session.IsTerminal(row.State) {
 			continue
 		}
 		ageCap := EffectiveAgeCap(ctx, w.ageResolver, platformCap, row)
-		if sessionstore.ActiveAge(row, now) <= ageCap {
+		if !maxAgeDue(row, ageCap, now) && !perChildMaxAgeDue(row, now) {
 			continue
 		}
-		var from session.State
-		end := w.beginTerminal(row.ID)
-		updated, err := w.store.Update(ctx, tenant, row.ID, func(r *sessionstore.Session) error {
-			if !maxAgeExpirable(r.State) || sessionstore.ActiveAge(*r, now) <= ageCap {
-				return errMaxAgeSuperseded
-			}
-			from = r.State
-			r.State = session.StateExpired
-			// spec: §8.8 — stamp the `expired:deadline` prefix
-			// for the §11.3 maxSessionAge cap so the MCP adapter
-			// surfaces `failed` with the `expired:*` error code. F-8.8.8.
-			if r.FailureReason == "" {
-				r.FailureReason = string(session.FailureExpiredDeadline)
-			}
-			// spec: §5.2 (Slot assignment atomicity) — the stamp reads the clock
-			// inside this row's Update, because an earlier row's post-terminal
-			// hook, seal included, ran after the pass's now was read.
-			sessionstore.MarkTerminated(r, from, w.clock())
-			return nil
-		})
-		if errors.Is(err, errMaxAgeSuperseded) {
-			end()
-			continue
+		if err := w.expireMaxAge(ctx, tenant, row, ageCap, now, res); err != nil {
+			errs = append(errs, err)
 		}
-		if err != nil {
-			end()
-			return err
-		}
-		res.Expirations++
-		// spec: §16.1.1 — the maxSessionAge age-cap expiry stamps the
-		// `max_session_age` reason on the session_expiry counter.
-		w.notifySessionExpiry(ctx, updated, ExpiryReasonMaxSessionAge)
-		// spec: §4.6 — from is the locked row's pre-terminal state.
-		// sweepMaxAge can force a running/resuming session to expired;
-		// passing the true pre-terminal state keeps its teardown on the
-		// §6.2 executor recycle path rather than the pre-running by-name
-		// reclaim.
-		w.recordCompleted(ctx, from, updated)
-		end()
 	}
+	return errors.Join(errs...)
+}
+
+// expireMaxAge writes the age-leg or lease-leg expiry of one listed row,
+// recomputing both legs on the locked row, and dispatches its hooks when the
+// write applied.
+// spec: §6.2 (maxSessionAge timer behavior across states); §8.2; §10.1.1
+// (Primary:).
+func (w *Watchdog) expireMaxAge(ctx context.Context, tenant string, row sessionstore.Session, ageCap time.Duration, now time.Time, res *Result) error {
+	var from session.State
+	var ageDue bool
+	end := w.beginTerminal(row.ID)
+	updated, err := w.store.Update(ctx, tenant, row.ID, func(r *sessionstore.Session) error {
+		if session.IsTerminal(r.State) {
+			return errMaxAgeSuperseded
+		}
+		ageDue = maxAgeDue(*r, ageCap, now)
+		if !ageDue && !perChildMaxAgeDue(*r, now) {
+			return errMaxAgeSuperseded
+		}
+		from = r.State
+		r.State = session.StateExpired
+		// spec: §8.8, §8.2 — stamp the `expired:*` prefix the MCP adapter
+		// surfaces: `expired:lease` when only the perChildMaxAge leg holds,
+		// `expired:deadline` for the §11.3 maxSessionAge cap otherwise.
+		// The stamp is unconditional so an earlier recovery's reason does
+		// not survive the expiry.
+		r.FailureReason = string(session.FailureExpiredDeadline)
+		if !ageDue {
+			r.FailureReason = string(session.FailureExpiredLease)
+		}
+		// spec: §5.2 (Slot assignment atomicity) — the stamp reads the clock
+		// inside this row's Update, because the dispatched hooks of
+		// earlier rows, seal included, may have run past the pass's now.
+		sessionstore.MarkTerminated(r, from, w.clock())
+		return nil
+	})
+	if superseded(err, errMaxAgeSuperseded) {
+		end()
+		return nil
+	}
+	if err != nil {
+		end()
+		return rowError(tenant, row.ID, "expire a session past its age or lease bound", err)
+	}
+	res.Expirations++
+	if ageDue {
+		// spec: §16.1.1 — the maxSessionAge age-cap expiry stamps the
+		// `max_session_age` reason on the session_expiry counter. A
+		// perChildMaxAge expiry is not a platform clock and fires none.
+		w.notifySessionExpiry(ctx, updated, ExpiryReasonMaxSessionAge)
+	}
+	// spec: §4.6 — from is the locked row's pre-terminal state.
+	// sweepMaxAge can force a running/resuming session to expired;
+	// passing the true pre-terminal state keeps its teardown on the
+	// §6.2 executor recycle path rather than the pre-running by-name
+	// reclaim.
+	w.dispatchTerminal(ctx, end, func(hctx context.Context) {
+		w.recordCompleted(hctx, from, updated)
+	})
 	return nil
+}
+
+// maxAgeDue reports whether row is past its maxSessionAge cap by active age
+// in a state the age leg may expire.
+// spec: §6.2 (maxSessionAge timer behavior across states).
+func maxAgeDue(row sessionstore.Session, ageCap time.Duration, now time.Time) bool {
+	return maxAgeExpirable(row.State) && sessionstore.ActiveAge(row, now) > ageCap
+}
+
+// perChildMaxAgeDue reports whether row is a delegated child that has lived
+// longer than the perChildMaxAge its stored slice grants, counted in wall-clock
+// time from its creation. A root session, a child with no stored slice, and a
+// child whose slice carries no perChildMaxAge are never due.
+// spec: §8.2.
+func perChildMaxAgeDue(row sessionstore.Session, now time.Time) bool {
+	if row.ParentSessionID == "" || row.DelegationLease == nil || row.DelegationLease.PerChildMaxAge <= 0 {
+		return false
+	}
+	return now.Sub(row.CreatedAt) > time.Duration(row.DelegationLease.PerChildMaxAge)*time.Second
 }
 
 // maxAgeExpirable reports whether sweepMaxAge may expire a row in st: any
@@ -1424,7 +1581,7 @@ func (w *Watchdog) sweepExpiryWarning(ctx context.Context, tenant string, now ti
 	}
 	rows, err := w.store.List(ctx, tenant, sessionstore.ListFilter{})
 	if err != nil {
-		return err
+		return listError(tenant, "", err)
 	}
 	window := time.Duration(w.cfg.ExpiryWarningSeconds) * time.Second
 	platformCap := time.Duration(w.cfg.MaxSessionAgeSeconds) * time.Second
@@ -1656,17 +1813,15 @@ func (w *Watchdog) treeRoot(ctx context.Context, sess sessionstore.Session) stri
 	return cur.ID
 }
 
-// elapsed reports whether row (currently in state st) has been in
-// that state longer than the configured budget. The state-entry
-// timestamp is approximated by the row's UpdatedAt — the store
-// updates this on every state transition, so the first sweep after
-// the transition correctly observes the elapsed time.
-func (w *Watchdog) elapsed(updatedAt time.Time, st session.State, now time.Time) bool {
+// elapsed reports whether a row that entered state st at enteredAt (its
+// StateEnteredAt) has been in that state at least the configured budget.
+// spec: §6.2 (Pod State Machine).
+func (w *Watchdog) elapsed(enteredAt time.Time, st session.State, now time.Time) bool {
 	budget := w.budgetFor(st)
 	if budget == 0 {
 		return false
 	}
-	return now.Sub(updatedAt) >= time.Duration(budget)*time.Second
+	return now.Sub(enteredAt) >= time.Duration(budget)*time.Second
 }
 
 // budgetFor returns the configured budget (in seconds) for the given

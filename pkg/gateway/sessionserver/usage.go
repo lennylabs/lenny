@@ -457,16 +457,17 @@ func (s *Server) afterTerminalRelease(ctx context.Context, sess sessionstore.Ses
 }
 
 // isPreRunningClaimState reports whether st is one of the §4.6 pre-running
-// states (created/finalizing/ready) in which a session holds a pod claimed at
-// /create but never launched a runtime, so the durable binding is the persisted
-// SandboxName alone. It deliberately excludes `starting`: a `starting` session
-// is mid-launch and the launching replica holds (or is establishing) a live
-// BindResult, so its teardown follows the §6.2 executor-release recycle path
-// rather than the by-name reclaim. spec: §4.6 (durable binding, scoped to
-// created/finalizing/ready).
+// states (created/finalizing/ready/starting) in which a session holds a pod
+// claimed at /create, so the durable binding is the persisted SandboxName. A
+// `starting` row is mid-launch: the replica that launched it holds the live
+// BindResult once it publishes, and terminalReclaimPreRunning defers to that
+// binding through the executor release, while a replica without the binding
+// (the starting watchdog, full_revoke, or a failed launch elsewhere)
+// reclaims the claim by name. spec: §4.6 (durable binding), §7.2 (Session
+// state machine: starting → failed).
 func isPreRunningClaimState(st session.State) bool {
 	switch st {
-	case session.StateCreated, session.StateFinalizing, session.StateReady:
+	case session.StateCreated, session.StateFinalizing, session.StateReady, session.StateStarting:
 		return true
 	}
 	return false
@@ -483,14 +484,16 @@ func (s *Server) lookupBinding(sessionID string) (*podsession.BindResult, bool) 
 
 // terminalReclaimPreRunning releases the pod a session claimed at /create
 // and revokes any lease the finalize barrier assigned when the session
-// reaches a terminal state before it ever launched (created/finalizing/ready).
-// Such a session registered no live BindResult, so the executor release path
+// reaches a terminal state before it ever launched
+// (created/finalizing/ready/starting) on a replica that holds no binding for
+// it. Such a session registered no live BindResult here, so the executor release path
 // (PodExecutor.Release) keys off the empty registry and returns early, leaking
 // the claim and the lease. It reports true when it ran the reclaim so the
 // caller skips the no-bind executor release.
 //
 // The discriminator is the pre-terminal state, not the mere absence of a local
-// BindResult: the reclaim is scoped to created/finalizing/ready (fromState),
+// BindResult: the reclaim is scoped to created/finalizing/ready/starting
+// (fromState),
 // where the §4.6 durable binding is the persisted SandboxName alone. A
 // running/resuming session is excluded even when this replica holds no live
 // BindResult: the per-replica registry (registry.go) misses a
@@ -507,13 +510,15 @@ func (s *Server) lookupBinding(sessionID string) (*podsession.BindResult, bool) 
 // session's slot member and deletes the shared claim only when that release
 // empties the set, so a live sibling keeps its pod; on an exclusive pool it
 // deletes the claim by name. The terminal writers that reach this call are
-// DELETE, terminate, cancel_child, the watchdog's created, finalizing, and
-// ready timeouts, and the finalize failure write. The lease revoke inside
+// DELETE, terminate, cancel_child, the watchdog's created, finalizing, ready,
+// and starting timeouts, the finalize failure write, and the /start failure
+// write. The lease revoke inside
 // ReclaimClaimed is a no-op for a created session that never assigned one and
 // mandatory for a finalizing/ready session that always holds one (§7.1 step
 // 23).
 //
-// spec: §15.1; §4.6 (durable binding, created/finalizing/ready scope); §4.6.3
+// spec: §15.1; §4.6 (durable binding, created/finalizing/ready/starting
+// scope); §4.6.3
 // (SandboxClaim: a release that ends the occupancy without reuse); §5.2 (Slot
 // assignment atomicity); §6.2 (pre-attached disposition); §7.1 step 23
 // (lease release).

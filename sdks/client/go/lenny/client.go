@@ -221,9 +221,16 @@ func (c *Client) Finalize(ctx context.Context, id string, opts ...RequestOption)
 }
 
 // Start calls POST /v1/sessions/{id}/start, transitioning a ready
-// session to running.
+// session through starting to running. It sends the request once and
+// retries neither an error response nor a transport failure, whatever the
+// Client's retry policy: a /start that fails after the gateway wrote
+// starting leaves the session failed, so a repeated /start is refused, and
+// neither a 5xx nor a transport failure tells the client whether that write
+// happened. Recover from a failed Start by creating a new session.
+//
+// spec: §15.1 (/start), §15.6 (Client SDKs), §7.2 (starting → failed)
 func (c *Client) Start(ctx context.Context, id string, opts ...RequestOption) (*Session, error) {
-	return c.transition(ctx, http.MethodPost, id, "start", opts...)
+	return c.transitionAttempts(ctx, http.MethodPost, id, "start", 1, opts...)
 }
 
 // Interrupt calls POST /v1/sessions/{id}/interrupt, transitioning a
@@ -251,12 +258,18 @@ func (c *Client) Resume(ctx context.Context, id string, opts ...RequestOption) (
 // trailing path segment (finalize, start, ...); an empty action
 // targets the bare /v1/sessions/{id} path for DELETE.
 func (c *Client) transition(ctx context.Context, method, id, action string, opts ...RequestOption) (*Session, error) {
+	return c.transitionAttempts(ctx, method, id, action, c.retry.MaxAttempts, opts...)
+}
+
+// transitionAttempts is transition with the request loop's attempt limit
+// given explicitly.
+func (c *Client) transitionAttempts(ctx context.Context, method, id, action string, maxAttempts int, opts ...RequestOption) (*Session, error) {
 	path := "/v1/sessions/" + url.PathEscape(id)
 	if action != "" {
 		path += "/" + action
 	}
 	var out Session
-	if err := c.do(ctx, method, path, nil, &out, opts...); err != nil {
+	if err := c.doAttempts(ctx, method, path, nil, &out, maxAttempts, opts...); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -397,6 +410,12 @@ func (c *Client) DismissElicitation(ctx context.Context, id, elicitationID strin
 // the Client's retry policy, and decodes a 2xx response into out.
 // A non-2xx response is decoded into an *APIError.
 func (c *Client) do(ctx context.Context, method, path string, body, out any, opts ...RequestOption) error {
+	return c.doAttempts(ctx, method, path, body, out, c.retry.MaxAttempts, opts...)
+}
+
+// doAttempts is the request loop of do, making at most maxAttempts
+// attempts; a maxAttempts of 1 sends the request once.
+func (c *Client) doAttempts(ctx context.Context, method, path string, body, out any, maxAttempts int, opts ...RequestOption) error {
 	var ro requestOptions
 	for _, opt := range opts {
 		opt(&ro)
@@ -413,7 +432,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any, opt
 
 	policy := c.retry
 	var lastErr error
-	for attempt := 1; attempt <= policy.MaxAttempts; attempt++ {
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if attempt > 1 {
 			delay := policy.delayForAttempt(attempt-1, c.rng)
 			if err := sleepCtx(ctx, delay); err != nil {
@@ -441,7 +460,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any, opt
 
 		apiErr := decodeAPIError(status, respBody)
 		lastErr = apiErr
-		if apiErr.Retryable && attempt < policy.MaxAttempts {
+		if apiErr.Retryable && attempt < maxAttempts {
 			continue
 		}
 		return apiErr

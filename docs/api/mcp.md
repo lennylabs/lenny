@@ -589,7 +589,7 @@ Query the current state of a session, including whether it is suspended, awaitin
 }
 ```
 
-Possible `status` values: `created`, `finalizing`, `ready`, `starting`, `running`, `suspended`, `resume_pending`, `awaiting_client_action`, `completed`, `failed`, `cancelled`, `expired`.
+Possible `status` values: `created`, `finalizing`, `ready`, `starting`, `running`, `input_required`, `suspended`, `resume_pending`, `awaiting_client_action`, `completed`, `failed`, `cancelled`, `expired`.
 
 **Error codes:**
 
@@ -1034,6 +1034,7 @@ Lenny sessions map to MCP Tasks as follows:
 | `ready` | Task in progress (setup complete) |
 | `starting` | Task in progress |
 | `running` | Task in progress (streaming output) |
+| `input_required` | Task requires input |
 | `suspended` | Task paused |
 | `resume_pending` | Task in progress (resuming) |
 | `awaiting_client_action` | Task requires input |

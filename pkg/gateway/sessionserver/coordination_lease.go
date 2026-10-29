@@ -19,8 +19,13 @@ import (
 // (single-call /start, delegated-child materialize, checkpoint-restore
 // resume) call it directly before the running-commit or the direct
 // podRegistry.Put, so a peer sweep never reads a committed running-pod row
-// with an unheld lease as adoptable. leasestore.Acquire is idempotent for
-// the same holder, so a later registerBinding on a hoisted path self-renews.
+// with an unheld lease as adoptable. The two-step POST
+// /v1/sessions/{id}/start (handleStart, through launchAndPublish) is also a
+// direct caller: when the row names a pod, it acquires the lease after the
+// ready → starting write and before launchOnPod, so a live foreign holder
+// fails the start closed before anything launches. leasestore.Acquire is
+// idempotent for the same holder, so a later registerBinding on a hoisted
+// path, including the two-step /start, self-renews the lease.
 //
 // A nil leaseStore or an empty replicaID (the in-memory / dev posture with
 // no Redis leasestore) makes it a no-op, leaving the bind to publish as
@@ -30,7 +35,8 @@ import (
 // aborts the bind.
 //
 // spec: §4.6.1 (coordinating replica holds the lease), §10.1 (per-session
-// coordination lease; fail-closed on a live foreign holder).
+// coordination lease; fail-closed on a live foreign holder), §15.1
+// (POST /v1/sessions/{id}/start), §10.1.1 (Primary:).
 func (s *Server) acquireCoordinationLease(ctx context.Context, tenantID, sessionID string) error {
 	if s.leaseStore == nil || s.replicaID == "" {
 		return nil
@@ -53,7 +59,10 @@ func (s *Server) acquireCoordinationLease(ctx context.Context, tenantID, session
 // materialize store.Update): those paths acquire the lease ahead of the
 // running-commit, so a commit failure would otherwise strand a held lease
 // with no binding, decoupling the lease holder from the binding holder
-// that §4.6.1 co-location keeps unified. On the durable delegated-child
+// that §4.6.1 co-location keeps unified. The two-step /start is the other
+// rollback caller: abandonStart releases the lease, detached from the
+// request, on every /start exit that follows the ready → starting write,
+// after failStarting has failed the session. On the durable delegated-child
 // StateCreated row the strand is not self-healing (a peer Sweeper's
 // priorHolder-renew branch keeps renewing the orphaned lease), so the
 // explicit release is required rather than left to the 60s TTL.
@@ -66,7 +75,8 @@ func (s *Server) acquireCoordinationLease(ctx context.Context, tenantID, session
 // even if the release write is lost.
 //
 // spec: §4.6.1 (coordinating replica holds the lease), §10.1 (per-session
-// coordination lease).
+// coordination lease), §15.1 (POST /v1/sessions/{id}/start), §7.2
+// (starting → failed).
 func (s *Server) releaseCoordinationLease(ctx context.Context, tenantID, sessionID string) {
 	if s.leaseStore == nil || s.replicaID == "" {
 		return

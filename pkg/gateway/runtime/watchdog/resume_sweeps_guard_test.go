@@ -60,9 +60,11 @@ func seedState(t *testing.T, store sessionstore.Store, id string, st session.Sta
 // TestSweepResumePendingDrivesInsideTheWindowAndGuardsExpiry_spec_7_3 asserts
 // that the watchdog hands every resume_pending row inside its window to the
 // resume driver, expires a row whose window passed, and applies the expiry
-// only when the locked row is still resume_pending with UpdatedAt past the
-// window: a row a later write superseded keeps that write's UpdatedAt and
-// gets no timeout count and no notification.
+// only when the locked row is still resume_pending with StateEnteredAt past
+// the window: a row that left the state, or left and re-entered it, after the
+// listing keeps the concurrent write and gets no timeout count and no
+// notification. A write that leaves the row in resume_pending does not
+// restart the window, so that row is still expired.
 //
 // spec: §6.2 (Pod State Machine), §7.3 (Resume driver)
 func TestSweepResumePendingDrivesInsideTheWindowAndGuardsExpiry_spec_7_3(t *testing.T) {
@@ -96,16 +98,22 @@ func TestSweepResumePendingDrivesInsideTheWindowAndGuardsExpiry_spec_7_3(t *test
 	for _, tc := range []struct {
 		name  string
 		write func(r *sessionstore.Session)
+		// reenter writes resume_pending again after write, so the row
+		// re-enters the state after the listing.
+		reenter bool
 	}{
-		{"window restarted by a later write", func(*sessionstore.Session) {}},
-		{"row moved to resuming", func(r *sessionstore.Session) { r.State = session.StateResuming; r.CoordinationGeneration++ }},
+		{"window restarted by a re-entry", func(r *sessionstore.Session) {
+			r.State = session.StateResuming
+			r.CoordinationGeneration++
+		}, true},
+		{"row moved to resuming", func(r *sessionstore.Session) { r.State = session.StateResuming; r.CoordinationGeneration++ }, false},
 		{"row cancelled", func(r *sessionstore.Session) {
 			r.State = session.StateCancelled
 			sessionstore.MarkTerminated(r, session.StateResumePending, time.Now())
-		}},
+		}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			inner := memstore.New()
+			inner := memstore.NewWithClock(func() time.Time { return now })
 			seedState(t, inner, "sess", session.StateResumePending, born, nil)
 			var written sessionstore.Session
 			store := &afterListStore{Store: inner, state: session.StateResumePending, after: func() {
@@ -113,6 +121,12 @@ func TestSweepResumePendingDrivesInsideTheWindowAndGuardsExpiry_spec_7_3(t *test
 					tc.write(r)
 					return nil
 				})
+				if tc.reenter {
+					written, _ = inner.Update(context.Background(), "acme", "sess", func(r *sessionstore.Session) error {
+						r.State = session.StateResumePending
+						return nil
+					})
+				}
 			}}
 			hook := &driverHook{}
 			w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).WithTerminalHook(hook)
@@ -131,6 +145,30 @@ func TestSweepResumePendingDrivesInsideTheWindowAndGuardsExpiry_spec_7_3(t *test
 			}
 		})
 	}
+
+	// spec: §6.2 (Pod State Machine) — the window runs from the entry to
+	// resume_pending, so a same-state write after the listing does not
+	// restart it and the expiry still applies.
+	t.Run("same-state write does not restart the window", func(t *testing.T) {
+		inner := memstore.NewWithClock(func() time.Time { return now })
+		seedState(t, inner, "sess", session.StateResumePending, born, nil)
+		store := &afterListStore{Store: inner, state: session.StateResumePending, after: func() {
+			if _, err := inner.Update(context.Background(), "acme", "sess", func(*sessionstore.Session) error { return nil }); err != nil {
+				t.Errorf("same-state write: %v", err)
+			}
+		}}
+		hook := &driverHook{}
+		w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).WithTerminalHook(hook)
+		res, err := w.Tick(context.Background(), now)
+		if err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+		got, _ := inner.Get(context.Background(), "acme", "sess")
+		if got.State != session.StateAwaitingClientAction || res.ResumePendingTimeouts != 1 || len(hook.awaitingEntry) != 1 {
+			t.Errorf("row %q, timeouts %d, notifications %d; want awaiting_client_action, 1, and 1",
+				got.State, res.ResumePendingTimeouts, len(hook.awaitingEntry))
+		}
+	})
 }
 
 // TestSweepResumingExitsOnlyTheListedIncarnation_spec_6_2 asserts that the
@@ -241,6 +279,7 @@ func TestIdleExpiryOfARowWithAnEarlierReasonRunsTheHook_spec_7_2(t *testing.T) {
 	if _, err := w.Tick(context.Background(), born.Add(time.Hour)); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	w.WaitDispatched()
 	got, _ := store.Get(context.Background(), "acme", "sess")
 	if got.State != session.StateExpired || got.TerminatedAt.IsZero() {
 		t.Errorf("row = %q (terminated %v), want expired with the Terminated fact", got.State, got.TerminatedAt)

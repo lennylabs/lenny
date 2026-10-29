@@ -590,3 +590,14 @@ Client(sys.argv[2], tenant_id="acme").send_messages(
 		t.Errorf("encoded message payload carries a slotId key: %s", got)
 	}
 }
+
+// spec: 15.6 (Client SDKs), 15.1 (/start), 7.2 (starting → failed)
+// diagnosis: the Python SDK start retried a retryable 503 STARTING_FAILED
+// under its default retry policy. A failed /start leaves the session failed,
+// so a repeated /start is refused; start must send its request once.
+func TestPythonClientStartMakesOneAttempt_spec_15_6(t *testing.T) {
+	requirePython3(t)
+	ts, stub := newStartingFailedStub(t)
+	h := spawnPythonHelper(t, ts.URL)
+	assertSingleAttemptStart(t, h, stub)
+}

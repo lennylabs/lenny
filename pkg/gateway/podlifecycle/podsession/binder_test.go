@@ -338,6 +338,11 @@ func newBinder(ns string, c client.Client, dial func(string) (*adapterclient.Cli
 // credential-assignment path. It returns a fixed proxy-mode lease per
 // pool and records every Assign call, or fails when err is set.
 type fakeAssigner struct {
+	// mu guards the recording slices, which the watchdog's dispatched
+	// terminal-hook goroutines append to concurrently. A test reads them
+	// after the terminal claims close, which orders the reads after every
+	// append.
+	mu sync.Mutex
 	// err, when non-nil, is returned by every AssignProto call.
 	err error
 	// failFrom, when positive, makes the failFrom-th AssignProto call and
@@ -376,6 +381,8 @@ type throughCall struct {
 }
 
 func (a *fakeAssigner) AssignProto(pool, session, spiffe, tenant string, generation int64) (*adapterv1.CredentialLease, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.calls = append(a.calls, assignerCall{pool: pool, session: session, spiffe: spiffe, tenant: tenant, generation: generation})
 	if a.err != nil {
 		return nil, a.err
@@ -397,16 +404,22 @@ func (a *fakeAssigner) AssignProto(pool, session, spiffe, tenant string, generat
 }
 
 func (a *fakeAssigner) ReleaseSession(sessionID string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.released = append(a.released, sessionID)
 	return nil
 }
 
 func (a *fakeAssigner) ReleaseThrough(sessionID string, generation int64) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.through = append(a.through, throughCall{session: sessionID, generation: generation})
 	return nil
 }
 
 func (a *fakeAssigner) Release(leaseID string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.leaseReleases = append(a.leaseReleases, leaseID)
 	return nil
 }

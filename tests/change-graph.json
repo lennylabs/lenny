@@ -964,6 +964,21 @@
       "chaos": ["tests/tier8_chaos/credential_rotation_ceiling_test.go"],
       "security": ["tests/tier9_security/credential_rotation_cotenant_inflight_gate_test.go"]
     },
+    "pkg/gateway/gatewaycontrol/inputwaitrecovery": {
+      "unit": ["pkg/gateway/gatewaycontrol/inputwaitrecovery/...", "pkg/gateway/mcpfabric/mcptools/...", "cmd/lenny-gateway/..."],
+      "integration": [
+        "tests/tier4_integration/request_input_persisted_wait_integration_test.go",
+        "tests/tier4_integration/session_suspended_input_wait_integration_test.go"
+      ],
+      "load_local": ["tests/tier7a_load_local/request_input_wait_interleaving_test.go"],
+      "chaos": ["tests/tier8_chaos/input_wait_recovery_chaos_test.go"],
+      "security": ["tests/tier9_security/input_wait_recovery_pod_scope_test.go"]
+    },
+    "tests/testinfra/inputwaitrig": {
+      "unit": ["tests/testinfra/inputwaitrig/..."],
+      "chaos": ["tests/tier8_chaos/input_wait_recovery_chaos_test.go"],
+      "security": ["tests/tier9_security/input_wait_recovery_pod_scope_test.go"]
+    },
     "tests/testinfra/heartbeatsilence": {
       "unit": ["tests/testinfra/heartbeatsilence/..."],
       "e2e_kind": ["tests/tier5_e2e_kind/stream_failure_kind_test.go"]

@@ -32,11 +32,13 @@ type terminalWriter struct {
 // terminalWriterInventory is the terminal writer inventory as the code
 // spells it. A writer whose mutator lives in a helper names the helper:
 // writeTerminal is the shared mutator of expireSession, failSession,
-// failFinalizing, and cancelCascadedChild; cancelNode and cancelSession are
+// failFinalizing, failStarting, and cancelCascadedChild; cancelNode and cancelSession are
 // the mutators of cancelSubtree and the lenny/cancel_session handler;
-// expireOrphan is sweepTenant's; expireIdle is sweepIdle's and
-// expireSuspendedIfDue is sweepSuspended's; transitionTerminate is applied
-// inside handleTerminalWrite's mutator.
+// expireOrphan is sweepTenant's; failPreRunning is sweepPreRunning's,
+// expireAwaiting is sweepAwaitingClientAction's, expireMaxAge is
+// sweepMaxAge's, expireIdle is sweepIdle's, and expireSuspendedIfDue is
+// sweepSuspended's; transitionTerminate is applied inside
+// handleTerminalWrite's mutator.
 var terminalWriterInventory = []terminalWriter{
 	{"pkg/gateway/sessionserver/session_transitions.go", "handleDelete", "handleTerminalWrite"},
 	{"pkg/gateway/sessionserver/session_transitions.go", "transitionTerminate", "handleTerminalWrite"},
@@ -44,11 +46,11 @@ var terminalWriterInventory = []terminalWriter{
 	{"pkg/gateway/sessionserver/session_terminal.go", "writeTerminal", ""},
 	{"pkg/gateway/sessionserver/derive.go", "persistDeriveFailure", ""},
 	{"pkg/gateway/sessionserver/seal.go", "failWorkspaceSeal", ""},
-	{"pkg/gateway/runtime/watchdog/watchdog.go", "Tick", "Tick"},
-	{"pkg/gateway/runtime/watchdog/watchdog.go", "sweepAwaitingClientAction", "sweepAwaitingClientAction"},
+	{"pkg/gateway/runtime/watchdog/watchdog.go", "failPreRunning", "failPreRunning"},
+	{"pkg/gateway/runtime/watchdog/watchdog.go", "expireAwaiting", "expireAwaiting"},
 	{"pkg/gateway/runtime/watchdog/watchdog.go", "expireIdle", "expireIdle"},
 	{"pkg/gateway/runtime/watchdog/suspended.go", "expireSuspendedIfDue", "expireSuspendedIfDue"},
-	{"pkg/gateway/runtime/watchdog/watchdog.go", "sweepMaxAge", "sweepMaxAge"},
+	{"pkg/gateway/runtime/watchdog/watchdog.go", "expireMaxAge", "expireMaxAge"},
 	{"pkg/gateway/session/orphansession/orphansession.go", "failOrphan", "failOrphan"},
 	{"pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go", "expireOrphan", "expireOrphan"},
 	{"pkg/gateway/mcpfabric/mcptools/mcptools.go", "cancelNode", "cancelNode"},
@@ -82,7 +84,7 @@ func storeWriteCall(n string) bool {
 
 // writeTerminalCallers are the hook-path writers that write through
 // writeTerminal, each opening its claim before the call.
-var writeTerminalCallers = []string{"cancelCascadedChild", "expireSession", "failFinalizing", "failSession"}
+var writeTerminalCallers = []string{"cancelCascadedChild", "expireSession", "failFinalizing", "failSession", "failStarting"}
 
 var terminalStateNames = map[string]bool{
 	"StateCompleted": true, "StateFailed": true, "StateCancelled": true, "StateExpired": true,

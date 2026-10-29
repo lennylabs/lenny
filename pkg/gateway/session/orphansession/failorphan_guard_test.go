@@ -84,6 +84,7 @@ func TestFailOrphanLockedRowGuard_spec_10_1_4(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Tick: %v", err)
 			}
+			r.WaitDispatched()
 			want := 0
 			if tc.wantFail {
 				want = 1

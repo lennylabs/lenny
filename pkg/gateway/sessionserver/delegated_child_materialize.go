@@ -178,7 +178,7 @@ func (s *Server) MaterializeDelegatedChild(ctx context.Context, tenantID, childI
 		if rr.State != session.StateCreated {
 			return errStartSuperseded
 		}
-		transitionStart(rr)
+		transitionStart(rr, s.clock())
 		if claimed {
 			rr.ExecutionMode = level.ExecutionMode
 			rr.ScrubPolicy = level.ScrubPolicy

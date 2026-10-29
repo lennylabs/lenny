@@ -167,7 +167,18 @@ func (w *gatewayWiring) finalShutdownSteps() []shutdownStep {
 				_ = w.llmProxySrv.Shutdown(ctx)
 			}
 		}},
+		// spec: §7.2 (Session state machine), §28.3 (Link register) — close
+		// the input-wait registry before the GatewayControl server stops, so
+		// every pending lenny/request_input wait ends and takes its exit
+		// write, and no wait stays live on this replica once GOAWAY moves the
+		// adapter's next call to another replica. GracefulStop returns after
+		// each handler's exit write, before the postgres step closes the
+		// pool. GracefulStop is the server's only GOAWAY source, because the
+		// server sets no MaxConnectionAge.
 		{"gateway-control", func(context.Context) {
+			if w.inputWaits != nil {
+				w.inputWaits.Close()
+			}
 			if w.gatewayCtrlSrv != nil {
 				w.gatewayCtrlSrv.GracefulStop()
 			}

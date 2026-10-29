@@ -279,7 +279,8 @@
         "pkg/gateway/checkpoint/checkpointretention/checkpointretention_test.go",
         "pkg/gateway/runtime/adapterclient/client_test.go",
         "tests/tier3_contract/checkpoint_stream/checkpoint_stream_wire_test.go",
-        "tests/tier4_integration/checkpoint_grant_remint_test.go"
+        "tests/tier4_integration/checkpoint_grant_remint_test.go",
+        "pkg/gateway/checkpoint/checkpointer/freshness_test.go::TestFreshnessReaperCountsInputRequiredSessions_spec_4_4"
       ],
       "packages": [
         "pkg/store/event",
@@ -425,7 +426,10 @@
         "pkg/gateway/sessionserver/start_pod_test.go",
         "tests/tier5_e2e_kind/eager_claim_e2e_test.go",
         "pkg/gateway/podlifecycle/podsession/binder_phases_test.go",
-        "pkg/gateway/podlifecycle/podclaim/maxpoduptime_test.go"
+        "pkg/gateway/podlifecycle/podclaim/maxpoduptime_test.go",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartLaunchFailureBeforeTheBinderReclaimsByName_spec_7_2",
+        "pkg/gateway/sessionserver/terminal_reclaim_internal_test.go::TestTerminalReclaimPreRunningReclaimsUnboundStartingSession_spec_7_2",
+        "pkg/gateway/sessionserver/terminal_reclaim_internal_test.go::TestTerminalReclaimPreRunningLeavesBoundStartingSessionToExecutor_spec_7_2"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -555,7 +559,8 @@
         "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedAfterARecordedReleaseFreesTheSlot_spec_7_1",
         "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedCountsASessionInItsPostTerminalWindow_spec_7_1",
         "tests/tier4_integration/concurrent_slot_release_test.go::TestCrossReplicaTerminalWriteRecordsTheReleaseOnTheBindingReplica_spec_7_1",
-        "tests/tier7a_load_local/slot_release_departure_race_test.go::TestPostTerminalReseedRacesConcurrentReservations_spec_7_1"
+        "tests/tier7a_load_local/slot_release_departure_race_test.go::TestPostTerminalReseedRacesConcurrentReservations_spec_7_1",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartBindingRegistrationErrorRollsBackBeforeTheFailedWrite_spec_7_2"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -1821,7 +1826,9 @@
         "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedCountsASessionInItsPostTerminalWindow_spec_7_1",
         "tests/tier4_integration/concurrent_slot_release_test.go::TestCrossReplicaTerminalWriteRecordsTheReleaseOnTheBindingReplica_spec_7_1",
         "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedStopsCountingASessionPastThePostTerminalCap_spec_7_1",
-        "tests/tier7a_load_local/slot_release_departure_race_test.go::TestPostTerminalReseedRacesConcurrentReservations_spec_7_1"
+        "tests/tier7a_load_local/slot_release_departure_race_test.go::TestPostTerminalReseedRacesConcurrentReservations_spec_7_1",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestIncompleteRecoveryRunsAgain_spec_28_3",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestServiceModeStartTakesNoLease_spec_10_1_1"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -1941,6 +1948,11 @@
       "title": "Pod State Machine",
       "spec_file": "spec/06_warm-pod-model.md",
       "tests": [
+        "tests/tier4_integration/start_starting_state_integration_test.go::TestStartLaunchOutlastingTheReadyWindowEndsRunning_spec_6_2",
+        "tests/tier4_integration/start_starting_state_integration_test.go::TestStartingWatchdogFiresWhileTheLaunchIsHeld_spec_6_2",
+        "tests/tier4_integration/start_starting_state_integration_test.go::TestStartLaunchFailureInsideTheBinderFailsTheSession_spec_7_2",
+        "tests/tier8_chaos/starting_watchdog_reclaim_chaos_test.go::TestStartingWatchdogOnAReplicaWithoutTheBindingReclaimsByName_spec_6_2",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartCommitRestartsTheIdleClock_spec_6_2",
         "tests/tier2_component/controllers/warmpool_terminated_adapter_test.go::TestWarmingPodWithTerminatedAdapterIsFailedReclaimedAndReplaced",
         "tests/tier2_component/controllers/warmpool_terminated_adapter_test.go::TestIdlePodWithTerminatedAdapterIsRetiredAndReplaced",
         "tests/tier2_component/controllers/warmpool_terminated_adapter_test.go::TestClaimedPodWithTerminatedAdapterGoesThroughReleasePath",
@@ -2081,7 +2093,24 @@
         "tests/tier7a_load_local/slot_release_paths_race_test.go",
         "tests/tier7a_load_local/stale_slot_reaper_race_test.go",
         "tests/tier8_chaos/slot_counter_redis_outage_test.go::TestRedisRestartLosingTheSlotSets_spec_5_2",
-        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildAdapterReadinessProbeOnEverySidecarPod_spec_4_7_9"
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildAdapterReadinessProbeOnEverySidecarPod_spec_4_7_9",
+        "pkg/gateway/session/sessionstore/state_entry_test.go::TestStampStateEntryMovesOnlyOnStateChange_spec_6_2",
+        "pkg/gateway/session/sessionstore/memstore/state_entry_test.go::TestCreateStampsStateEntryAtCreation_spec_6_2",
+        "pkg/gateway/session/sessionstore/memstore/state_entry_test.go::TestUpdateStampsStateEntryOnlyOnStateChange_spec_6_2",
+        "pkg/gateway/session/sessionstore/memstore/state_entry_test.go::TestStateEntryTracksLastStateChangeAcrossHistory_spec_6_2",
+        "tests/tier1_unit/lifecycle/stepped_store_test.go::TestSteppedClockStoreCarriesSteppedStateEntry_spec_6_2",
+        "tests/tier2_component/migrations/prod_columns_test.go::TestSessionStateEnteredAtMigration_spec_6_2",
+        "tests/tier2_component/stores/sessionstore_state_entry_test.go::TestSessionStoreStampsStateEntry_spec_6_2",
+        "pkg/gateway/runtime/watchdog/state_entry_anchor_test.go::TestWatchdogMeasuresEachDeadlineFromStateEntry_spec_6_2",
+        "pkg/gateway/sessionserver/resume_window_anchor_internal_test.go::TestResumeWindowLeftRunsFromStateEntry_spec_6_2",
+        "pkg/gateway/mcpfabric/mcptools/request_input_row_writes_test.go::TestRequestInputEntryWriteOnRunningRow_spec_7_2",
+        "pkg/gateway/mcpfabric/mcptools/request_input_row_writes_test.go::TestRequestInputExitWriteRestoresRunning_spec_7_2",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartWriteStoreErrorAnswersInternal_spec_15_1",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartFindsAnotherWritersTerminalState_spec_7_2",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartFailedWriteStoreErrorLeavesStartingForTheWatchdog_spec_6_2",
+        "tests/tier11_docs/build_gaps_session_timers_records_currency_test.go::TestSessionTimersRecordsResolveTheirMembers_spec_6_2",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestStaleRowWithNoLaterCallEndsAtMaxSessionAge_spec_6_2",
+        "tests/tier8_chaos/input_wait_recovery_chaos_test.go::TestStaleInputWaitRowEndsAtMaxSessionAge_spec_6_2"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -2287,7 +2316,10 @@
         "tests/tier7a_load_local/derive_failure_fence_race_test.go",
         "tests/tier11_docs/build_gaps_terminal_pipeline_records_currency_test.go::TestTerminalPipelineRecordsCloseTheirMembers_spec_7_1",
         "tests/tier11_docs/build_gaps_terminal_pipeline_records_currency_test.go::TestTerminalPipelineRecordParsers_spec_7_1",
-        "tests/tier8_chaos/holder_forward_chaos_test.go::TestLostBindReleaseFanOutHoldsErasureUntilReleaseOrWindowCap_spec_28_5_7"
+        "tests/tier8_chaos/holder_forward_chaos_test.go::TestLostBindReleaseFanOutHoldsErasureUntilReleaseOrWindowCap_spec_28_5_7",
+        "pkg/gateway/runtime/watchdog/pass_continuation_test.go::TestDispatchedHookOutlivesThePassContext_spec_7_1",
+        "tests/tier8_chaos/sweep_fault_continuation_test.go::TestBlockingTerminalHookHoldsItsClaimWithoutDelayingThePass_spec_7_1",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartLaunchFailureInsideTheBinderFailsTheSession_spec_7_2"
       ],
       "packages": [
         "pkg/session"
@@ -2298,6 +2330,30 @@
       "title": "Interactive Session Model",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
+        "tests/tier3_contract/rest_sessions/start_starting_state_contract_test.go::TestStartLaunchFailureAnswersStartingFailedAndFailsTheSession_spec_15_1",
+        "tests/tier3_contract/rest_sessions/start_starting_state_contract_test.go::TestSecondStartWhileTheFirstIsHeldAnswersStarting_spec_15_1",
+        "tests/tier3_contract/rest_sessions/start_starting_state_contract_test.go::TestStartStreamsStartingBeforeRunning_spec_7_2",
+        "tests/tier4_integration/start_starting_state_integration_test.go::TestStartLaunchOutlastingTheReadyWindowEndsRunning_spec_6_2",
+        "tests/tier4_integration/start_starting_state_integration_test.go::TestStartingWatchdogFiresWhileTheLaunchIsHeld_spec_6_2",
+        "tests/tier4_integration/start_starting_state_integration_test.go::TestStartLaunchFailureInsideTheBinderFailsTheSession_spec_7_2",
+        "tests/tier7a_load_local/start_concurrent_replicas_race_test.go::TestConcurrentStartsAcrossReplicasOneWins_spec_15_1",
+        "tests/tier8_chaos/starting_watchdog_reclaim_chaos_test.go::TestStartingWatchdogOnAReplicaWithoutTheBindingReclaimsByName_spec_6_2",
+        "tests/tier9_security/full_revoke_starting_reclaim_test.go::TestFullRevokeReclaimsARevokedUsersStartingSession_spec_11_4",
+        "tests/tier11_docs/session_transition_doc_reconciliation_test.go::TestSessionDocsCarryStartFailureAndInputRequiredTerminate_spec_7_2",
+        "tests/tier4_integration/request_input_persisted_wait_integration_test.go::TestRequestInputWaitOutlastsIdleBoundOffHolder_spec_7_2",
+        "tests/tier7a_load_local/request_input_wait_interleaving_test.go::TestRequestInputWaitsFollowEntryAndExitRules_spec_7_2",
+        "tests/tier7a_load_local/request_input_wait_interleaving_test.go::TestConcurrentRequestInputWaitsEndRunning_spec_7_2",
+        "tests/tier8_chaos/input_wait_recovery_chaos_test.go::TestInputWaitRecoveredOnReconnectToAnotherReplica_spec_7_2",
+        "tests/tier8_chaos/input_wait_recovery_chaos_test.go::TestInputWaitRecoveredAfterWaiterKilled_spec_7_2",
+        "tests/tier8_chaos/input_wait_recovery_chaos_test.go::TestInputWaitConvergesAfterExitWriteLostToPostgresOutage_spec_7_2",
+        "tests/tier8_chaos/input_wait_recovery_chaos_test.go::TestGracefulShutdownDrainsInputWaits_spec_7_2",
+        "tests/tier2_component/stores/sessionstore_state_entry_test.go::TestSessionStoreRoundTripsInputWaitID_spec_7_2",
+        "tests/tier2_component/stores/sessionstore_state_entry_test.go::TestSessionStoreKeepsInputWaitIDOutsideInputRequired_spec_7_2",
+        "tests/tier7a_load_local/slot_release_departure_race_test.go::TestRecycleRebindRacesAByNameDelete_spec_5_2",
+        "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestStartSlotBindRefusalAnswersRetryableFallback_spec_4_7_1",
+        "tests/tier3_contract/sdks/go_client_test.go::TestGoClientStartMakesOneAttempt_spec_15_6",
+        "tests/tier3_contract/sdks/python_client_test.go::TestPythonClientStartMakesOneAttempt_spec_15_6",
+        "tests/tier3_contract/sdks/typescript_client_test.go::TestTypeScriptClientStartMakesOneAttempt_spec_15_6",
         "tests/tier11_docs/session_suspension_reader_doc_reconciliation_test.go",
         "tests/tier2_component/stores/sessionstore_podless_suspended_test.go::TestSessionStoreListPodlessSuspended_spec_7_2",
         "tests/tier2_component/migrations/prod_columns_test.go::TestPodlessSuspendedIndexMigration_spec_7_2",
@@ -2407,7 +2463,66 @@
         "pkg/gateway/sessionserver/holder_forward_sites_test.go::TestUndeliveredMessageHoldAnswersEachDLQOutcome_spec_29_3",
         "pkg/gateway/mcpfabric/mcptools/messaging_handler_test.go::TestForwardedSendSkipsTheSenderLimitsOnTheCoordinator_spec_29_3",
         "tests/tier8_chaos/holder_forward_chaos_test.go::TestCoordinatorCrashAfterReadingAForwardIsRefusedAndNotHeld_spec_29_3",
-        "pkg/gateway/sessionserver/held_undelivered_forward_internal_test.go::TestHoldUndeliveredForwardHoldsWithTheRecoveringTTL_spec_29_3"
+        "pkg/gateway/sessionserver/held_undelivered_forward_internal_test.go::TestHoldUndeliveredForwardHoldsWithTheRecoveringTTL_spec_29_3",
+        "tests/tier2_component/migrations/prod_columns_test.go::TestSessionStateEnteredAtMigration_spec_6_2",
+        "pkg/gateway/runtime/watchdog/terminal_stamp_test.go::TestWatchdogExpiryWritersStampTheirOwnReason_spec_7_2",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/terminal_stamp_test.go::TestOrphanCleanupStampsItsOwnReasonOverAFunnelReason_spec_7_2",
+        "tests/tier3_contract/rest_sessions/start_starting_state_contract_test.go",
+        "tests/tier4_integration/start_starting_state_integration_test.go",
+        "tests/tier8_chaos/starting_watchdog_reclaim_chaos_test.go",
+        "cmd/lenny-gateway/input_wait_recovery_wiring_test.go::TestGatewayControlShutdownClosesInputWaitsBeforeGracefulStop_spec_28_3",
+        "cmd/lenny-gateway/input_wait_recovery_wiring_test.go::TestGatewayControlRecovererWiring_spec_28_3",
+        "cmd/lenny-gateway/input_wait_recovery_wiring_test.go::TestGatewayControlServerInstallsInputWaitRecovery_spec_28_3",
+        "pkg/api/v1/session/session_test.go::TestValidateInterruptAdmitsRunning_spec_7_2",
+        "pkg/api/v1/session/session_test.go::TestUploadAndStaleDeriveKeepRefusingInputRequired_spec_15_1",
+        "pkg/gateway/checkpoint/checkpointer/freshness_test.go::TestFreshnessReaperCountsInputRequiredSessions_spec_4_4",
+        "pkg/gateway/environment/translator/open_responses_test.go::TestOpenResponsesInputRequiredIsInProgress_spec_7_2",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestRecoveryRestoresStaleRowOnFirstCall_spec_28_3",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestRecoveryRepointsToPendingPersistedWait_spec_28_3",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestRecoverySupersededRows_spec_28_3",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestFailedExitWriteRearmsEveryConnection_spec_28_3",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestRecoveryOnAnotherReplicaAfterProcessExit_spec_28_3",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestRecoveryKeepsAWaitPendingHere_spec_28_3",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestIncompleteRecoveryRunsAgain_spec_28_3",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestCloseEndsWaitsAndRestoresRows_spec_28_3",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestStaleRowWithNoLaterCallEndsAtMaxSessionAge_spec_6_2",
+        "pkg/gateway/mcpfabric/delegation/service_test.go::TestDelegateAdmitsInputRequiredParent_spec_7_2",
+        "pkg/gateway/mcpfabric/mcptools/request_input_row_writes_test.go::TestRequestInputEntryWriteOnRunningRow_spec_7_2",
+        "pkg/gateway/mcpfabric/mcptools/request_input_row_writes_test.go::TestRequestInputEntryWriteOnInputRequiredRow_spec_7_2",
+        "pkg/gateway/mcpfabric/mcptools/request_input_row_writes_test.go::TestRequestInputEntryWriteSupersededOnOtherStates_spec_7_2",
+        "pkg/gateway/mcpfabric/mcptools/request_input_row_writes_test.go::TestRequestInputWithoutConnectionRecordWritesNothing_spec_7_2",
+        "pkg/gateway/mcpfabric/mcptools/request_input_row_writes_test.go::TestRequestInputExitWriteRestoresRunning_spec_7_2",
+        "pkg/gateway/mcpfabric/mcptools/request_input_row_writes_test.go::TestRequestInputExitWriteRepointsToAnotherPersistedWait_spec_7_2",
+        "pkg/gateway/mcpfabric/mcptools/request_input_row_writes_test.go::TestRequestInputExitWriteSuperseded_spec_7_2",
+        "pkg/gateway/mcpfabric/mcptools/request_input_row_writes_test.go::TestRequestInputRegistrationRefusedWritesNothing_spec_7_2",
+        "pkg/gateway/mcpfabric/mcptools/request_input_row_writes_test.go::TestRequestInputEntryWriteFailureCancelsAndRestores_spec_7_2",
+        "pkg/gateway/mcpfabric/mcptools/request_input_row_writes_test.go::TestRequestInputExitWriteFailureRearmsReplica_spec_7_2",
+        "pkg/gateway/session/inputwait/inputwait_test.go::TestRegisterPersistedCarriesWaitIdentity_spec_7_2",
+        "pkg/gateway/session/inputwait/inputwait_test.go::TestCloseCancelsEveryWaitAndRefusesRegistration_spec_7_2",
+        "pkg/gateway/sessionserver/eval_test.go::TestEvalAdmitsInputRequiredSession_spec_10_7",
+        "pkg/gateway/sessionserver/holder_forward_sites_test.go::TestOffHolderInterruptInInputRequiredIsRefusedWithoutForward_spec_15_1",
+        "pkg/gateway/sessionserver/start_setup_output_internal_test.go::TestStartSetupOutputStoreErrorStillCommitsRunning_spec_7_5",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartEntryPreconditionRefusalTakesNoLease_spec_15_1",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartLosingConcurrentWriteAnswersStarting_spec_15_1",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartForeignLeaseHolderFailsTheSession_spec_7_2",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartLaunchFailureBeforeTheBinderReclaimsByName_spec_7_2",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartLaunchFailureInsideTheBinderFailsTheSession_spec_7_2",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartBindingRegistrationErrorRollsBackBeforeTheFailedWrite_spec_7_2",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartCommitStoreErrorFailsOrKeepsRunning_spec_7_2",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartFindsAnotherWritersTerminalState_spec_7_2",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartFailedWriteStoreErrorLeavesStartingForTheWatchdog_spec_6_2",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartPublishesStartingBeforeTheLaunch_spec_7_2",
+        "pkg/gateway/sessionserver/terminal_reclaim_internal_test.go::TestTerminalReclaimPreRunningReclaimsUnboundStartingSession_spec_7_2",
+        "pkg/gateway/sessionserver/terminal_reclaim_internal_test.go::TestTerminalReclaimPreRunningLeavesBoundStartingSessionToExecutor_spec_7_2",
+        "pkg/session/state/state_test.go::TestValidTransitionsOmitTheRemovedStartingResumePendingEdge_spec_7_2",
+        "pkg/session/state/state_test.go::TestValidTransitionsAdmitEveryAnyStateTerminalWriter_spec_7_2",
+        "sdks/client/go/lenny/start_single_attempt_test.go::TestStartSendsOneRequestOnStartingFailed_spec_15_6",
+        "cmd/lenny-gateway/any_state_terminal_writers_test.go::TestForceTerminateFromRecoveryAndPreRunningStatesWritesFailed_spec_7_2",
+        "cmd/lenny-gateway/any_state_terminal_writers_test.go::TestBudgetTerminatorFromRecoveryAndPausedStatesWritesExpired_spec_7_2",
+        "tests/tier11_docs/build_gaps_session_timers_records_currency_test.go::TestSessionTimersFiledDefectsAreConfirmed_spec_7_2",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestRearmDuringRecoveryLeavesConnectionUnrecovered_spec_28_3",
+        "tests/tier7a_load_local/input_wait_recovery_invariant_test.go::TestInputWaitRecoveryKeepsRowsOnLiveWaits_spec_28_3",
+        "tests/tier8_chaos/input_wait_recovery_chaos_test.go::TestStaleInputWaitRowEndsAtMaxSessionAge_spec_6_2"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -2515,7 +2630,8 @@
         "tests/tier4_integration/concurrent_slot_release_test.go::TestOldCoordinatorDeleteAfterPeerResumeEvictsItsStaleBinding_spec_10_1_5",
         "tests/tier7a_load_local/slot_release_departure_race_test.go::TestEmptyingReleaseRacesAReservation_spec_5_2",
         "tests/tier7a_load_local/slot_release_departure_race_test.go::TestResumeClaimDeleteRacesASlotJoin_spec_5_2",
-        "tests/tier7a_load_local/slot_release_departure_race_test.go::TestRecycleRebindRacesAByNameDelete_spec_5_2"
+        "tests/tier7a_load_local/slot_release_departure_race_test.go::TestRecycleRebindRacesAByNameDelete_spec_5_2",
+        "pkg/gateway/session/sessionstore/last_seq_test.go::TestLastSeqCounterSeedsASecondReplicaBus_spec_7_3"
       ],
       "packages": [
         "pkg/session/resume",
@@ -2553,7 +2669,9 @@
         "pkg/adapter/workspace/setup_test.go",
         "pkg/adapter/staging_test.go",
         "pkg/gateway/runtime/adapterclient/client_test.go",
-        "pkg/gateway/sessionserver/start_pod_test.go"
+        "pkg/gateway/sessionserver/start_pod_test.go",
+        "pkg/gateway/sessionserver/start_setup_output_internal_test.go::TestStartSetupOutputStoreErrorStillCommitsRunning_spec_7_5",
+        "pkg/gateway/sessionserver/start_setup_output_internal_test.go::TestStartSetupOutputNothingToPersist_spec_7_5"
       ],
       "packages": [
         "pkg/setup"
@@ -2587,6 +2705,10 @@
       "title": "Delegation Mechanism \u2014 cycle detection and maxDepth",
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
+        "pkg/gateway/runtime/watchdog/per_child_max_age_test.go::TestSweepMaxAgeExpiresChildPastPerChildMaxAge_spec_8_2",
+        "pkg/gateway/runtime/watchdog/per_child_max_age_test.go::TestSweepMaxAgeLeavesRowsWithinOrWithoutPerChildMaxAge_spec_8_2",
+        "pkg/gateway/runtime/watchdog/per_child_max_age_test.go::TestSweepMaxAgeChildPastBothBoundsTakesDeadline_spec_8_2",
+        "pkg/gateway/runtime/watchdog/per_child_max_age_test.go::TestSweepMaxAgeRechecksPerChildMaxAgeOnLockedRow_spec_8_2",
         "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTRecordsCloseTheMintFindings_spec_8_2",
         "tests/tier11_docs/build_gaps_pod_no_jwt_records_currency_test.go::TestPodNoJWTTestGapRecords_spec_8_2",
         "tests/tier4_integration/held_attach_stream_multi_turn_test.go::TestDelegateTaskThenAFollowUpOnTheHeldStream_spec_28_5_1",
@@ -2619,7 +2741,8 @@
         "tests/tier9_security/delegation_child_materialization_cred_test.go::TestDelegatedChildMaterializationCredentialDelivery",
         "pkg/gateway/mcpfabric/delegation/child_identity_test.go::TestDelegatedChildIdentityIsItsSessionRow_spec_8_2",
         "pkg/gateway/mcpfabric/mcptools/delegate_parent_freshness_test.go::TestDelegateTaskParentEndedBeforeInsertAnswersParentRevoked_spec_8_2",
-        "pkg/gateway/mcpfabric/mcptools/delegator_gate_parent_internal_test.go::TestRequireActiveDelegatorIgnoresTerminalParent_spec_12_8"
+        "pkg/gateway/mcpfabric/mcptools/delegator_gate_parent_internal_test.go::TestRequireActiveDelegatorIgnoresTerminalParent_spec_12_8",
+        "pkg/gateway/mcpfabric/delegation/service_test.go::TestDelegateAdmitsInputRequiredParent_spec_7_2"
       ],
       "packages": [
         "pkg/delegation/cycle",
@@ -2667,7 +2790,8 @@
         "tests/tier7a_load_local/credential_lookup_flapping_race_test.go",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPodReleasePointersLinkTheClaimRule_spec_4_6_3",
         "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderMCPToolCallsForwardAsToolCalls_spec_29_3",
-        "pkg/gateway/mcpfabric/mcptools/messaging_handler_test.go::TestForwardedSendSkipsTheSenderLimitsOnTheCoordinator_spec_29_3"
+        "pkg/gateway/mcpfabric/mcptools/messaging_handler_test.go::TestForwardedSendSkipsTheSenderLimitsOnTheCoordinator_spec_29_3",
+        "tests/tier11_docs/build_gaps_session_timers_records_currency_test.go::TestSessionTimersNotesKeepTheirRecords_spec_8_3"
       ],
       "packages": [
         "pkg/delegation/lease",
@@ -2739,6 +2863,7 @@
       "title": "TaskRecord and TaskResult \u2014 state machine",
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
+        "tests/tier11_docs/session_transition_doc_reconciliation_test.go::TestMCPDocsListInputRequiredStatus_spec_8_8",
         "tests/tier2_component/lifecycle/lifecycle_cells_test.go::TestTerminalWriterCellsOnPostgres_spec_7_2",
         "tests/tier1_unit/lifecycle/terminal_writers_test.go::TestTerminalWriterCells_spec_7_2",
         "pkg/session/state/state_test.go::TestMCPProtocolStateSessionMapping_spec_8_8_871",
@@ -2778,7 +2903,11 @@
         "pkg/gateway/sessionserver/treerecovery_driver_internal_test.go::TestTreeRecoverySelectsExactlyResumePendingNodes_spec_8_10",
         "pkg/gateway/sessionserver/treerecovery_driver_internal_test.go::TestTreeRecoveryReattachWaitsForTheRestoreOutcome_spec_8_10",
         "tests/tier4_integration/delegation_tree_resume_peer_child_test.go::TestTreeRecoveryLeavesAPeerBoundChildRunning_spec_8_10",
-        "tests/tier7a_load_local/tree_reattach_resume_delete_race_test.go::TestTreeReattachRacingWatchdogDriverClaimsOnePod_spec_8_10"
+        "tests/tier7a_load_local/tree_reattach_resume_delete_race_test.go::TestTreeReattachRacingWatchdogDriverClaimsOnePod_spec_8_10",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup_test.go::TestOrphanCascadeWindowCountsFromRootTerminatedAt_spec_8_10",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup_test.go::TestOrphanCleanupSkipsRootWithZeroTerminatedAt_spec_8_10",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup_test.go::TestOrphanCascadeWindowBoundary_spec_8_10",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/pass_continuation_test.go::TestOrphanCleanupTenantListingFailure_spec_8_10"
       ],
       "packages": [
         "pkg/delegation/tree",
@@ -3056,7 +3185,8 @@
         "tests/tier7a_load_local/credential_lookup_flapping_race_test.go",
         "tests/tier7a_load_local/elicitation_xreplica_wake_test.go",
         "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestTenantSuspendDrainsSessionsOnTwoReplicas_spec_12_8",
-        "tests/tier11_docs/build_gaps_terminal_pipeline_records_currency_test.go::TestTerminalPipelineDeparturesAreRecorded_spec_10_1_7"
+        "tests/tier11_docs/build_gaps_terminal_pipeline_records_currency_test.go::TestTerminalPipelineDeparturesAreRecorded_spec_10_1_7",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartForeignLeaseHolderFailsTheSession_spec_7_2"
       ],
       "packages": [
         "pkg/gateway"
@@ -3067,6 +3197,7 @@
       "title": "Stateless Replicas and Per-Session Coordination",
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
+        "tests/tier4_integration/request_input_persisted_wait_integration_test.go::TestRequestInputWaitOutlastsIdleBoundOffHolder_spec_7_2",
         "tests/tier2_component/leases/composite_holder_pgstore_test.go::TestCompositeHolderValueRoundTripsThroughPostgres_spec_10_1_1",
         "cmd/lenny-gateway/coordination_holder_wiring_test.go::TestEveryLeaseAndMirrorConsumerReceivesTheHolderValue_spec_10_1_1",
         "cmd/lenny-gateway/coordination_holder_wiring_test.go::TestCrashTakeoverReadoptReleasesTheLeaseHeldUnderTheHolderValue_spec_10_1_1",
@@ -3111,7 +3242,19 @@
         "pkg/gateway/sessionserver/holder_forward_decode_internal_test.go::TestDecodeToolForwardResponseRejectsUndecodableResponses_spec_29_3",
         "pkg/gateway/sessionserver/holder_forward_decode_internal_test.go::TestStreamBodyReportsWriteAndReadFailures_spec_29_3",
         "pkg/gateway/sessionserver/holder_forward_decode_internal_test.go::TestForwardRequestBuildFailuresAreReported_spec_29_3",
-        "pkg/gateway/sessionserver/holder_forward_decode_internal_test.go::TestHolderForwardClientDoesNotFollowRedirects_spec_29_3"
+        "pkg/gateway/sessionserver/holder_forward_decode_internal_test.go::TestHolderForwardClientDoesNotFollowRedirects_spec_29_3",
+        "pkg/gateway/runtime/watchdog/state_entry_anchor_test.go::TestPreRunningExpiryRechecksTheBudgetOnTheLockedRow_spec_10_1_1",
+        "pkg/gateway/runtime/watchdog/state_entry_anchor_test.go::TestAwaitingExpiryRechecksTheDeadlineOnTheLockedRow_spec_10_1_1",
+        "pkg/gateway/runtime/watchdog/state_entry_anchor_test.go::TestIdleExpiryRechecksTheIdleCapOnTheLockedRow_spec_10_1_1",
+        "tests/tier7a_load_local/watchdog_replica_sweep_race_test.go::TestTwoWatchdogsEndEachSessionOnce_spec_10_1_1",
+        "pkg/gateway/runtime/watchdog/pass_continuation_test.go::TestEverySubSweepContinuesPastAFailedWrite_spec_10_1_1",
+        "pkg/gateway/runtime/watchdog/pass_continuation_test.go::TestAFailedListingSkipsOnlyThatListing_spec_10_1_1",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/pass_continuation_test.go::TestOrphanCleanupContinuesPastListAndWriteFailures_spec_10_1_1",
+        "pkg/gateway/session/orphansession/pass_continuation_test.go::TestReconcilerContinuesPastListAndWriteFailures_spec_10_1_1",
+        "tests/tier7a_load_local/watchdog_replica_sweep_race_test.go::TestTwoWatchdogsAndOrphanCleanupEndEachSessionOnce_spec_10_1_1",
+        "tests/tier8_chaos/sweep_fault_continuation_test.go::TestSweepsContinuePastListAndWriteFaults_spec_10_1_1",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestServiceModeStartTakesNoLease_spec_10_1_1",
+        "tests/tier11_docs/build_gaps_session_timers_records_currency_test.go::TestSessionTimersPlanEntryStatesTheLandedDesign_spec_10_1_1"
       ],
       "packages": [
         "pkg/gateway"
@@ -3182,7 +3325,12 @@
         "tests/tier9_security/adapter_hold_termination_surface_test.go::TestSharedPlatformMCPRefusesAfterCoordinatorLostTermination_spec_10_1",
         "tests/tier9_security/adapter_hold_termination_surface_test.go::TestSharedPlatformMCPRefusesBetweenHoldTerminatedMembers_spec_10_1",
         "pkg/adapter/holdstate_test.go",
-        "tests/tier9_security/adapter_hold_termination_surface_test.go::TestCoordinatorLostTerminationEndsTheKeptRuntime_spec_10_1_4"
+        "tests/tier9_security/adapter_hold_termination_surface_test.go::TestCoordinatorLostTerminationEndsTheKeptRuntime_spec_10_1_4",
+        "pkg/gateway/session/orphansession/pass_continuation_test.go::TestReconcilerTenantListingFailure_spec_10_1_4",
+        "cmd/lenny-gateway/orphan_session_leader_test.go::TestOrphanSessionReconcilerRegistersOnTheLeaderGate_spec_10_1_4",
+        "cmd/lenny-gateway/orphan_session_leader_test.go::TestOrphanSessionReconcilerRunsOnlyWhileLeaderAndClearsLagOnLoss_spec_10_1_4",
+        "pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_orphan_test.go::TestClearAgentPodStateMirrorLagDeletesEveryPoolSeries_spec_10_1_4",
+        "tests/tier8_chaos/orphan_session_leader_handoff_test.go::TestOrphanSessionReconcilerHandsOffFaultedRowsToTheNextLeader_spec_10_1_4"
       ],
       "packages": [
         "pkg/gateway"
@@ -3616,7 +3764,8 @@
         "pkg/gateway/eventbuffer/...",
         "pkg/gateway/sessionserver/events_test.go",
         "tests/tier2_component/coordination/sweep_test.go",
-        "tests/tier4_integration/streaming_reconnect_test.go::TestStreamingReconnectResumesExactlyFromCursor"
+        "tests/tier4_integration/streaming_reconnect_test.go::TestStreamingReconnectResumesExactlyFromCursor",
+        "pkg/gateway/session/sessionstore/last_seq_test.go::TestLastSeqCounterSeedsASecondReplicaBus_spec_7_3"
       ],
       "packages": [
         "pkg/gateway/reliability"
@@ -3641,7 +3790,8 @@
         "tests/tier4_integration/schema_migration_journey_test.go::TestSchemaMigrationJourney_ExpandGateContract",
         "tests/tier4_integration/schema_migration_journey_test.go::TestSchemaMigrationJourney_GatewayCoexistsAcrossExpandStepAndRestart",
         "tests/tier2_component/migrations/checkpoint_slot_id_drop_test.go",
-        "tests/tier5_e2e_kind/admission_test.go"
+        "tests/tier5_e2e_kind/admission_test.go",
+        "tests/tier2_component/migrations/prod_columns_test.go::TestSessionStateEnteredAtMigration_spec_6_2"
       ],
       "packages": [
         "pkg/runtime/upgrade/state"
@@ -3706,7 +3856,8 @@
         "tests/tier2_component/stores/experimentstore_test.go",
         "tests/tier2_component/stores/evalstore_test.go",
         "tests/tier2_component/evalaggregates/eval_aggregates_test.go",
-        "pkg/gateway/sessionserver/eval_test.go::TestEvalRateLimitFixedWindowBoundary_spec_10_7"
+        "pkg/gateway/sessionserver/eval_test.go::TestEvalRateLimitFixedWindowBoundary_spec_10_7",
+        "pkg/gateway/sessionserver/eval_test.go::TestEvalAdmitsInputRequiredSession_spec_10_7"
       ],
       "packages": [
         "pkg/experiment"
@@ -3863,7 +4014,8 @@
         "pkg/gateway/checkpoint/partialmanifeststore/partialmanifeststore_test.go",
         "tests/tier3_contract/checkpoint_stream/checkpoint_stream_wire_test.go",
         "tests/tier2_component/migrations/prod_columns_test.go",
-        "tests/tier2_component/translators/openai_singleshot_lifecycle_test.go"
+        "tests/tier2_component/translators/openai_singleshot_lifecycle_test.go",
+        "cmd/lenny-gateway/any_state_terminal_writers_test.go::TestBudgetTerminatorFromRecoveryAndPausedStatesWritesExpired_spec_7_2"
       ],
       "packages": [
         "pkg/quota",
@@ -3886,7 +4038,8 @@
         "tests/tier8_chaos/stream_failure_chaos_test.go::TestPodGRPCPartitionEvictsWithUnavailableAndKeepsTheRow_spec_28_5_1",
         "tests/tier11_docs/suspension_flag_help_doc_consistency_test.go::TestGatewayFlagHelpMatchesTheSuspensionContract",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOrphanTimeoutAndAbsentAnswerAgree_spec_4_7_1",
-        "tests/tier4_integration/concurrent_slot_release_test.go::TestAbandonedCreatedRowTimesOutAndReleasesItsSlot_spec_5_2"
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestAbandonedCreatedRowTimesOutAndReleasesItsSlot_spec_5_2",
+        "tests/tier11_docs/build_gaps_session_timers_records_currency_test.go::TestSessionTimersOpenFindingsKeepTheirNotes_spec_11_3"
       ],
       "packages": [
         "pkg/policy/timeout"
@@ -3897,6 +4050,8 @@
       "title": "User Invalidation",
       "spec_file": "spec/11_policy-and-controls.md",
       "tests": [
+        "tests/tier9_security/full_revoke_starting_reclaim_test.go::TestFullRevokeReclaimsARevokedUsersStartingSession_spec_11_4",
+        "tests/tier7a_load_local/slot_release_departure_race_test.go::TestRecycleRebindRacesAByNameDelete_spec_5_2",
         "pkg/gateway/externalapi/admin/...",
         "pkg/gateway/sessionserver/...",
         "tests/tier2_component/slotrelease/revoke_double_teardown_test.go",
@@ -3932,7 +4087,8 @@
         "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestUserErasureReleasesTheRemoteBindingOnBindRelease_spec_12_8",
         "tests/tier4_integration/impersonation_admin_cascade_test.go::TestFullRevokeOfPlatformAdminRevokesItsBearersOnEveryReplica_spec_13_3",
         "tests/tier9_security/impersonation_admin_cascade_test.go::TestFullRevokeOfPlatformAdminRevokesItsImpersonationBearers_spec_13_3",
-        "tests/tier4_integration/impersonation_revocation_cross_replica_test.go::TestImpersonationSessionIsSharedAcrossReplicas_spec_13_3"
+        "tests/tier4_integration/impersonation_revocation_cross_replica_test.go::TestImpersonationSessionIsSharedAcrossReplicas_spec_13_3",
+        "tests/tier9_security/full_revoke_starting_reclaim_test.go"
       ],
       "packages": [
         "pkg/auth/invalidate"
@@ -5163,7 +5319,8 @@
         "tests/tier5_e2e_kind/mcp_conformance_test.go",
         "tests/tier5_e2e_kind/openai_conformance_test.go",
         "tests/tier2_component/translators/openai_singleshot_lifecycle_test.go",
-        "tests/tier4_integration/delegation_child_materialization_test.go"
+        "tests/tier4_integration/delegation_child_materialization_test.go",
+        "pkg/gateway/environment/translator/open_responses_test.go::TestOpenResponsesInputRequiredIsInProgress_spec_7_2"
       ],
       "packages": [
         "pkg/api/v1/session",
@@ -5192,6 +5349,15 @@
       "title": "REST API",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier3_contract/rest_sessions/start_starting_state_contract_test.go::TestStartLaunchFailureAnswersStartingFailedAndFailsTheSession_spec_15_1",
+        "tests/tier3_contract/rest_sessions/start_starting_state_contract_test.go::TestSecondStartWhileTheFirstIsHeldAnswersStarting_spec_15_1",
+        "tests/tier3_contract/rest_sessions/start_starting_state_contract_test.go::TestStartStreamsStartingBeforeRunning_spec_7_2",
+        "tests/tier7a_load_local/start_concurrent_replicas_race_test.go::TestConcurrentStartsAcrossReplicasOneWins_spec_15_1",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartCommitRestartsTheIdleClock_spec_6_2",
+        "tests/tier11_docs/session_transition_doc_reconciliation_test.go::TestStartingFailedCatalogRowCreatesANewSession_spec_15_1",
+        "tests/tier3_contract/sdks/go_client_test.go::TestGoClientStartMakesOneAttempt_spec_15_6",
+        "tests/tier3_contract/sdks/python_client_test.go::TestPythonClientStartMakesOneAttempt_spec_15_6",
+        "tests/tier3_contract/sdks/typescript_client_test.go::TestTypeScriptClientStartMakesOneAttempt_spec_15_6",
         "tests/tier11_docs/impersonation_revocation_docs_test.go::TestReaderDocsDescribeImpersonationRevocation_spec_13_3",
         "tests/tier3_contract/admin_impersonation/openapi_document_test.go::TestServedDocumentImpersonationDeleteResponses_spec_15_1",
         "tests/tier11_docs/shared_jwt_signing_docs_test.go::TestErrorCatalogKMSSigningUnavailableRow_spec_15",
@@ -5300,7 +5466,20 @@
         "tests/tier4_integration/impersonation_revocation_cross_replica_test.go::TestImpersonationSessionIsSharedAcrossReplicas_spec_13_3",
         "tests/tier9_security/ops_revocation_enforcement_test.go::TestImpersonationBearerRefusals_spec_13_3",
         "pkg/gateway/mcpfabric/mcptools/delegate_parent_freshness_test.go::TestDelegateTaskParentEndedBeforeInsertAnswersParentRevoked_spec_8_2",
-        "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestSessionCreationIndependentOfKMSSigning_spec_10_2"
+        "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestSessionCreationIndependentOfKMSSigning_spec_10_2",
+        "tests/tier3_contract/rest_sessions/start_starting_state_contract_test.go",
+        "tests/tier4_integration/start_starting_state_integration_test.go",
+        "tests/tier7a_load_local/start_concurrent_replicas_race_test.go",
+        "pkg/api/v1/session/session_test.go::TestValidateInterruptAdmitsRunning_spec_7_2",
+        "pkg/api/v1/session/session_test.go::TestUploadAndStaleDeriveKeepRefusingInputRequired_spec_15_1",
+        "pkg/gateway/sessionserver/holder_forward_sites_test.go::TestOffHolderInterruptInInputRequiredIsRefusedWithoutForward_spec_15_1",
+        "pkg/gateway/sessionserver/start_setup_output_internal_test.go::TestStartSetupOutputStoreErrorStillCommitsRunning_spec_7_5",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartEntryPreconditionRefusalTakesNoLease_spec_15_1",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartLosingConcurrentWriteAnswersStarting_spec_15_1",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartWriteStoreErrorAnswersInternal_spec_15_1",
+        "pkg/gateway/sessionserver/start_starting_state_test.go::TestServiceModeStartTakesNoLease_spec_10_1_1",
+        "sdks/client/go/lenny/start_single_attempt_test.go::TestStartSendsOneRequestOnStartingFailed_spec_15_6",
+        "sdks/client/go/lenny/start_single_attempt_test.go::TestStartSendsOneRequestOnDroppedConnection_spec_15_6"
       ],
       "packages": [
         "pkg/api/v1/session",
@@ -5317,6 +5496,7 @@
       "title": "MCP API",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier11_docs/session_transition_doc_reconciliation_test.go",
         "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardCarriesTheRecordedCredentialOnEverySurface_spec_29_3",
         "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardToolCallReturnsEachCoordinatorResponseToTheClient_spec_29_3",
         "tests/tier11_docs/resume_override_api_doc_reconciliation_test.go",
@@ -5338,6 +5518,7 @@
       "title": "REST/MCP Consistency Contract",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier3_contract/rest_mcp_consistency/resume_interrupt_parity_test.go::TestInterruptToolAndRESTRefuseInputRequired_spec_15_2_1",
         "tests/tier3_contract/rest_mcp_consistency/caller_check_parity_test.go::TestCreateSessionCallerCheckParity_spec_15_2_1",
         "pkg/gateway/mcpfabric/mcp/...",
         "tests/tier3_contract/rest_mcp_consistency/error_matrix_test.go",
@@ -5563,10 +5744,14 @@
       "title": "Client SDKs",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier11_docs/session_transition_doc_reconciliation_test.go::TestSDKRetriesParagraphSaysStartSendsOnce_spec_15_6",
         "tests/tier3_contract/sdks/go_client_test.go",
         "tests/tier3_contract/sdks/python_client_test.go",
         "tests/tier3_contract/sdks/typescript_client_test.go",
-        "tests/tier3_contract/sdks/harness/..."
+        "tests/tier3_contract/sdks/harness/...",
+        "sdks/client/go/lenny/start_single_attempt_test.go::TestStartSendsOneRequestOnStartingFailed_spec_15_6",
+        "sdks/client/go/lenny/start_single_attempt_test.go::TestStartSendsOneRequestOnDroppedConnection_spec_15_6",
+        "sdks/client/go/lenny/start_single_attempt_test.go::TestFinalizeStillRetriesUnderThePolicy_spec_15_6"
       ],
       "packages": [
         "sdks/client/go",
@@ -6440,7 +6625,8 @@
       "tests": [
         "cmd/lenny-ctl/...",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPodReleasePointersLinkTheClaimRule_spec_4_6_3",
-        "tests/tier7a_load_local/creation_fence_race_test.go::TestCreationFenceRaceAgainstMarkerAndDrain_spec_12_8"
+        "tests/tier7a_load_local/creation_fence_race_test.go::TestCreationFenceRaceAgainstMarkerAndDrain_spec_12_8",
+        "cmd/lenny-gateway/any_state_terminal_writers_test.go::TestForceTerminateFromRecoveryAndPreRunningStatesWritesFailed_spec_7_2"
       ],
       "packages": [
         "cmd/lenny-ctl"
@@ -7650,13 +7836,34 @@
       "title": "Registers",
       "spec_file": "spec/28_communication-channels.md",
       "tests": [
+        "tests/tier9_security/input_wait_recovery_pod_scope_test.go::TestInputWaitRecoveryIsScopedToThePeerPod_spec_28_3",
+        "tests/tier8_chaos/input_wait_recovery_chaos_test.go::TestInputWaitRecoveredAfterWaiterKilled_spec_7_2",
         "tests/tier0_static/identifier_resolution_test.go",
         "tests/tier0_static/matrix_completeness_test.go",
         "tests/tier11_docs/spec_28_register_writers_test.go",
         "tests/tier11_docs/spec_28_ownership_test.go",
         "tests/tier4_integration/credential_lifecycle_test.go::TestRuntimeOpsManifestKeyResolvesTheOperationsSocket",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestSlotOccupancyIsAKeyedSetAtEverySite_spec_5_2",
-        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOccupancyEndingReleasePredicateAtEverySite_spec_4_6_3"
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOccupancyEndingReleasePredicateAtEverySite_spec_4_6_3",
+        "cmd/lenny-gateway/input_wait_recovery_wiring_test.go::TestGatewayControlShutdownClosesInputWaitsBeforeGracefulStop_spec_28_3",
+        "cmd/lenny-gateway/input_wait_recovery_wiring_test.go::TestGatewayControlRecovererWiring_spec_28_3",
+        "cmd/lenny-gateway/input_wait_recovery_wiring_test.go::TestGatewayControlServerInstallsInputWaitRecovery_spec_28_3",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestRecoveryRestoresStaleRowOnFirstCall_spec_28_3",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestRecoveryRepointsToPendingPersistedWait_spec_28_3",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestRecoverySupersededRows_spec_28_3",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestRecoveryNeedsASessionScopedCall_spec_28_3",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestFailedExitWriteRearmsEveryConnection_spec_28_3",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestRecoveryOnAnotherReplicaAfterProcessExit_spec_28_3",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestRecoveryKeepsAWaitPendingHere_spec_28_3",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestIncompleteRecoveryRunsAgain_spec_28_3",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestCloseEndsWaitsAndRestoresRows_spec_28_3",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestStaleRowWithNoLaterCallEndsAtMaxSessionAge_spec_6_2",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestNewContextRecordIsNotRecovered_spec_28_3",
+        "pkg/gateway/mcpfabric/mcptools/request_input_row_writes_test.go::TestRequestInputExitWriteFailureRearmsReplica_spec_7_2",
+        "pkg/gateway/session/inputwait/inputwait_test.go::TestCloseCancelsEveryWaitAndRefusesRegistration_spec_7_2",
+        "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestRearmDuringRecoveryLeavesConnectionUnrecovered_spec_28_3",
+        "tests/tier7a_load_local/input_wait_recovery_invariant_test.go::TestInputWaitRecoveryKeepsRowsOnLiveWaits_spec_28_3",
+        "tests/tier8_chaos/input_wait_recovery_chaos_test.go::TestStaleInputWaitRowEndsAtMaxSessionAge_spec_6_2"
       ],
       "packages": [],
       "blocked_until_phase": "0",

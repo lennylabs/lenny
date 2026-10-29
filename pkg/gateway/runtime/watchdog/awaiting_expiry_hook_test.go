@@ -46,6 +46,7 @@ func TestSweepAwaitingClientActionFiresExpiryHook_spec_7_3_25(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	w.WaitDispatched()
 	if res.Expirations != 1 {
 		t.Fatalf("expected 1 expiration, got %d", res.Expirations)
 	}
@@ -82,6 +83,7 @@ func TestSweepMaxAgeDoesNotFireAwaitingHook_spec_7_3_25(t *testing.T) {
 	if _, err := w.Tick(context.Background(), born.Add(3*time.Hour)); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	w.WaitDispatched()
 	if len(hook.awaitingCalls) != 0 {
 		t.Errorf("F-7.3.25: maxAge sweep must not fire awaiting hook, got %d calls", len(hook.awaitingCalls))
 	}
@@ -155,38 +157,6 @@ func TestSweepMaxAgeStampsExpiredDeadline_spec_8_8_867(t *testing.T) {
 	}
 }
 
-// TestSweepDoesNotOverwriteExistingFailureReason_spec_8_8_867 verifies
-// that when an earlier writer has already stamped a non-empty
-// FailureReason on a soon-to-be-expired row, the watchdog leaves the
-// existing value alone. The MCP boundary will surface that earlier
-// reason rather than the watchdog's default deadline prefix. F-8.8.8.
-func TestSweepDoesNotOverwriteExistingFailureReason_spec_8_8_867(t *testing.T) {
-	store := memstore.New()
-	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	if err := store.Create(context.Background(), sessionstore.Session{
-		ID:            "sess_aw_pre",
-		TenantID:      "acme",
-		State:         session.StateAwaitingClientAction,
-		CreatedAt:     born,
-		UpdatedAt:     born,
-		FailureReason: string(session.FailureExpiredBudget),
-	}); err != nil {
-		t.Fatalf("seed sess_aw_pre: %v", err)
-	}
-	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
-		WithTerminalHook(&captureExpiryHook{})
-	if _, err := w.Tick(context.Background(), born.Add(20*time.Minute)); err != nil {
-		t.Fatalf("Tick: %v", err)
-	}
-	got, err := store.Get(context.Background(), "acme", "sess_aw_pre")
-	if err != nil {
-		t.Fatalf("Get sess_aw_pre: %v", err)
-	}
-	if got.FailureReason != string(session.FailureExpiredBudget) {
-		t.Errorf("FailureReason = %q, want %q (pre-stamped reason preserved)", got.FailureReason, session.FailureExpiredBudget)
-	}
-}
-
 func TestTerminalHookWithoutAwaitingNotifierStillFiresTerminal_spec_7_3_25(t *testing.T) {
 	store := memstore.New()
 	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -198,6 +168,7 @@ func TestTerminalHookWithoutAwaitingNotifierStillFiresTerminal_spec_7_3_25(t *te
 	if _, err := w.Tick(context.Background(), born.Add(20*time.Minute)); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	w.WaitDispatched()
 	if len(hook.calls) != 1 {
 		t.Errorf("F-7.3.25: terminal hook should fire once for the expired session, got %d", len(hook.calls))
 	}

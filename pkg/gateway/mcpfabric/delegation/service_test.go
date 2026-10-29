@@ -1950,3 +1950,25 @@ func TestDelegateCooldownDefaultsTo60sWhenOptionZero_spec_8_3_181(t *testing.T) 
 		t.Errorf("CooldownSeconds = %d, want %d", cdErr.CooldownSeconds, int(delegation.DefaultInterceptorWeakeningCooldown/time.Second))
 	}
 }
+
+// TestDelegateAdmitsInputRequiredParent_spec_7_2 pins that delegation
+// admission admits a parent waiting in input_required, a §7.2 sub-state of
+// running, as it admits a running parent. Before the gate read the sub-state,
+// a parent blocked in lenny/request_input was refused ErrParentNotRunning.
+//
+// spec: §7.2 (Session state machine), §8.2 (Delegation Mechanism)
+func TestDelegateAdmitsInputRequiredParent_spec_7_2(t *testing.T) {
+	store := memstore.New()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_parent", TenantID: "acme", State: session.StateInputRequired,
+		UserID: "user_alice", RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc := delegation.NewService(store, delegation.Options{IDFunc: func() string { return "sess_child" }})
+	if child := delegateChild(t, svc); child.ParentSessionID != "sess_parent" {
+		t.Errorf("child parent = %q, want sess_parent", child.ParentSessionID)
+	}
+}

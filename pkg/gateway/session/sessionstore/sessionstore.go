@@ -395,6 +395,25 @@ type Session struct {
 	// spec: §6.2 (maxSessionAge timer behavior across states).
 	AccumulatedSessionAgeSeconds float64
 
+	// StateEnteredAt is the §6.2 state_entered_at column: the instant the
+	// session entered its current state. Create sets it to CreatedAt, and
+	// both stores set it inside Update through StampStateEntry, so no caller
+	// writes it directly. Each per-state deadline measured from the
+	// session's entry to a state reads it; UpdatedAt advances on every write
+	// and cannot anchor such a deadline.
+	// spec: §6.2 (Pod State Machine).
+	StateEnteredAt time.Time
+
+	// InputWaitID is the input_wait_id column: the identity of the live
+	// lenny/request_input wait an input_required row stands for. The gateway
+	// assigns the identity when it registers the wait, and only the
+	// lenny/request_input entry and exit writes and the connection recovery
+	// write it. Every rule that reads it also requires the row to be
+	// input_required, so a value left on a row in another state is never
+	// read. Empty persists as NULL.
+	// spec: §7.2 (Session state machine), §28.3 (Link register).
+	InputWaitID string
+
 	// LastSuccessfulCheckpointAt is the wall-clock instant the
 	// gateway recorded its most recent successful checkpoint for
 	// this session — regardless of trigger (periodic, eviction,
@@ -717,7 +736,9 @@ type DelegationLease struct {
 	MaxTreeMemoryBytes int64 `json:"maxTreeMemoryBytes,omitempty"`
 	// MaxParallelChildren caps concurrent in-flight children.
 	MaxParallelChildren int `json:"maxParallelChildren,omitempty"`
-	// PerChildMaxAge is the wall-clock seconds budget per descendant.
+	// PerChildMaxAge is the wall-clock seconds the session holding this
+	// slice may live, counted from its creation.
+	// spec: §8.2
 	PerChildMaxAge int `json:"perChildMaxAge,omitempty"`
 
 	// The fields below are the §8.10 lease-scoped policy
@@ -1283,6 +1304,22 @@ func AccrueSessionAge(prev session.State, prevUpdatedAt time.Time, row *Session,
 		return
 	}
 	row.AccumulatedSessionAgeSeconds += now.Sub(prevUpdatedAt).Seconds()
+}
+
+// StampStateEntry sets row.StateEnteredAt to now when the write changes the
+// session's state, and restores the stored value otherwise, so a mutator can
+// neither forget nor forge the state-entry instant. prev and prevEntered are
+// the state and StateEnteredAt the row carried before the write.
+//
+// Both stores call it inside Update, after the mutator returns, with the same
+// now the UpdatedAt stamp and AccrueSessionAge use.
+// spec: §6.2 (Pod State Machine)
+func StampStateEntry(prev session.State, prevEntered time.Time, row *Session, now time.Time) {
+	if row.State != prev {
+		row.StateEnteredAt = now
+		return
+	}
+	row.StateEnteredAt = prevEntered
 }
 
 // ActiveAge returns the §6.2 active session age of row at now: the

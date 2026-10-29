@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -255,6 +256,14 @@ func (p *Process) stop(t testing.TB, sig os.Signal) {
 func (p *Process) Stop(t testing.TB) {
 	t.Helper()
 	p.stop(t, os.Interrupt)
+}
+
+// Terminate ends the gateway with SIGTERM, the signal a Kubernetes pod
+// deletion sends, and waits for it to exit. The gateway runs the same
+// shutdown sequence it runs on SIGINT.
+func (p *Process) Terminate(t testing.TB) {
+	t.Helper()
+	p.stop(t, syscall.SIGTERM)
 }
 
 // Kill ends the gateway with SIGKILL and waits for it to exit, as a crash

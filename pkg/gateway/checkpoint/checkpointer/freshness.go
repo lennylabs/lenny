@@ -205,10 +205,12 @@ func (r *FreshnessReaper) reportError(tenantID string, err error) {
 // suspension release and holds no pod whose workspace an eviction can lose.
 // spec: §4.4 (Event / Checkpoint Store) — "Every active session MUST have a
 // successful checkpoint recorded within the last
-// periodicCheckpointIntervalSeconds"; §6.2 (Pod State Machine).
+// periodicCheckpointIntervalSeconds"; §6.2 (Pod State Machine). input_required
+// is a §7.2 sub-state of running, so a session waiting in lenny/request_input
+// counts as running does (§7.2 Session state machine).
 func isActiveForFreshness(row sessionstore.Session) bool {
 	switch row.State {
-	case session.StateRunning, session.StateStarting,
+	case session.StateRunning, session.StateInputRequired, session.StateStarting,
 		session.StateAwaitingClientAction, session.StateResumePending:
 		return true
 	case session.StateSuspended:

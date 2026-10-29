@@ -234,7 +234,7 @@ func (s *Server) AfterRevokeWrite(ctx context.Context, row sessionstore.Session)
 
 // ReclaimRevokedPreRunning is the §11.4 full_revoke pre-running reclaim. The
 // admin router calls it for each session the revoke cancelled from created,
-// finalizing, or ready, while the session's terminal claim from the cancel
+// finalizing, ready, or starting, while the session's terminal claim from the cancel
 // write is still open on this replica. It reclaims the pod or the slot the
 // session claimed through the post-terminal hook's pre-running reclaim,
 // which skips a session whose binding this replica holds; the full_revoke

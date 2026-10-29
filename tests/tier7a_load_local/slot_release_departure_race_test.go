@@ -425,16 +425,25 @@ func (o recycleRebindOrder) String() string {
 	return [...]string{"delete before the recycle", "delete after the recycle", "delete after the rebind"}[o]
 }
 
+// The by-name delete comes from the writer's full_revoke. A DELETE of a
+// starting session is forwarded to the replica holding its coordination
+// lease, which is the peer that binds it, so a DELETE never reaches the
+// by-name reclaim on a replica without the binding. The full_revoke write
+// runs on the replica that serves it, and its pre-running reclaim deletes
+// the claim by name there.
+//
 // spec: §5.2 (Recycle lifecycle), §4.6.3 (SandboxClaim: a release that ends
 // the occupancy without reuse), §4.6.1 (within-hold rebind), §7.3 (Resume
-// flow after pod failure)
-// diagnosis: on an exclusive recycling pool, a ready session's /start bound
-// on a peer, the writer's terminal write deleted the claim by name, the
-// peer's terminal binding release recycled the pod, and a successor rebound
-// the reserved pod before the writer's delete landed; the successor then
-// stayed bound to a pod whose claim was gone instead of taking its own
-// pod-failure path, the writer's delete did not end the claim, or a harness
-// invariant failed.
+// flow after pod failure), §11.4 (User Invalidation), §29.3 (Interactive
+// message send) Forwarding, §7.2 (Session state machine: ready → starting)
+// diagnosis: on an exclusive recycling pool, a session's /start bound on a
+// peer and wrote starting, the writer's full_revoke cancelled the session and
+// deleted the claim by name, the peer's terminal binding release recycled the
+// pod, and a successor rebound the reserved pod before the writer's delete
+// landed; the successor then stayed bound to a pod whose claim was gone
+// instead of taking its own pod-failure path, the writer's delete did not end
+// the claim, or a harness invariant failed. A revoke that made no by-name
+// delete means starting is missing from the full_revoke pre-running states.
 func TestRecycleRebindRacesAByNameDelete_spec_5_2(t *testing.T) {
 	seed := time.Now().UnixNano()
 	t.Logf("seed %d", seed)
@@ -473,14 +482,15 @@ func TestRecycleRebindRacesAByNameDelete_spec_5_2(t *testing.T) {
 
 // recycleRebindRound runs one round and returns the successor session, or
 // "" when the order leaves no reserved pod to rebind and the successor was
-// not needed. The writer's by-name delete of the ready session's claim is
-// held until the round's order point, after a random jitter.
+// not needed. The writer's by-name delete of the starting session's claim,
+// made by its full_revoke, is held until the round's order point, after a
+// random jitter.
 func recycleRebindRound(t *testing.T, h *lifecycleharness.Harness, rng *rand.Rand, round int, order recycleRebindOrder,
 	writer, peer *lifecycleharness.Replica,
 ) string {
 	t.Helper()
-	ready := h.CreateSession(writer)
-	pod := h.Row(ready).PodAssignment
+	revoked := h.CreateSession(writer)
+	pod := h.Row(revoked).PodAssignment
 	held, gate := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	writer.SetClaimFault(func(_ context.Context, op lifecycleharness.ClaimOp, name string) error {
@@ -493,19 +503,17 @@ func recycleRebindRound(t *testing.T, h *lifecycleharness.Harness, rng *rand.Ran
 		return nil
 	})
 	defer writer.SetClaimFault(nil)
-	hs := startHeldBeforeCommit(t, h, peer, ready)
+	hs := startHeldBeforeCommit(t, h, peer, revoked)
 	deleted := make(chan struct{})
 	go func() {
 		defer close(deleted)
-		if code, body := h.Do(writer, http.MethodDelete, "/v1/sessions/"+ready, nil); code >= http.StatusBadRequest {
-			t.Errorf("round %d: DELETE %s on the writer = %d %v", round, ready, code, body)
-		}
+		fullRevoke(t, h, writer)
 	}()
 	select {
 	case <-held:
 	case <-time.After(10 * time.Second):
 		hs.release()
-		t.Fatalf("round %d: the writer's terminal write of the ready session made no by-name claim delete", round)
+		t.Fatalf("round %d: the writer's full_revoke of the starting session made no by-name claim delete", round)
 	}
 	letDelete := func() {
 		time.Sleep(time.Duration(rng.Intn(500)) * time.Microsecond)
@@ -523,13 +531,13 @@ func recycleRebindRound(t *testing.T, h *lifecycleharness.Harness, rng *rand.Ran
 	// The peer's binding of the cancelled session is released by its
 	// coordination Sweeper's terminal binding release.
 	for i := 0; i < 10; i++ {
-		if _, ok := peer.Registry.Get(ready); !ok {
+		if _, ok := peer.Registry.Get(revoked); !ok {
 			break
 		}
 		h.Pass()
 	}
-	if _, ok := peer.Registry.Get(ready); ok {
-		t.Fatalf("round %d: %s still binds the cancelled session %s", round, peer.ID, ready)
+	if _, ok := peer.Registry.Get(revoked); ok {
+		t.Fatalf("round %d: %s still binds the cancelled session %s", round, peer.ID, revoked)
 	}
 	if order == deleteBeforeRecycle {
 		requireClaimGone(t, h, round, pod)

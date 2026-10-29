@@ -1066,10 +1066,12 @@ func registerInputWaitTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		// pending registration so a parent's lenny/await_children call
 		// can surface them in the input_required partial result without
 		// re-fetching the child. F-8.8.5.
-		ch, err := deps.InputWaits.Register(sessionID, requestID, in.Parts)
+		wait, err := beginInputWait(ctx, deps, row, requestID, in.Parts, idFn, clock)
 		if err != nil {
 			return mcp.ToolResult{}, err
 		}
+		defer wait.exit(ctx)
+		ch := wait.ch
 		// spec: §7.2 — surface the question on the session
 		// event stream as the canonical `elicitation_request` SSE event.
 		// `lenny/request_input` (§8.5) and `lenny/request_elicitation`
@@ -1116,7 +1118,7 @@ func registerInputWaitTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			}{RequestID: requestID, Answer: answer})
 			return textResult(string(body)), nil
 		case <-time.After(callTimeout):
-			deps.InputWaits.Cancel(sessionID, requestID)
+			wait.cancel()
 			// spec: §15.2.1 / §11.3 — return the canonical
 			// REQUEST_INPUT_TIMEOUT code via *mcp.ToolError so the
 			// REST and MCP error envelopes share the same (category,
@@ -1161,7 +1163,7 @@ func registerInputWaitTool(srv *mcp.Server, deps Deps, env registerEnv) {
 					"expiredAt":      expiredAt,
 				})
 		case <-ctx.Done():
-			deps.InputWaits.Cancel(sessionID, requestID)
+			wait.cancel()
 			return mcp.ToolResult{}, ctx.Err()
 		}
 	})

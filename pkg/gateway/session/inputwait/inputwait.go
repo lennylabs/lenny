@@ -23,6 +23,9 @@ var (
 	ErrDuplicate = errors.New("inputwait: a request with this id is already pending")
 	// ErrNotFound — no pending request matches (session, id).
 	ErrNotFound = errors.New("inputwait: no pending request with this id")
+	// ErrClosed — the registry was closed by the replica's shutdown and
+	// accepts no new request.
+	ErrClosed = errors.New("inputwait: the registry is closed")
 )
 
 // Registry tracks pending lenny/request_input calls keyed by
@@ -47,6 +50,9 @@ type Registry struct {
 	// tests so the §8.8 deadlock detector's blocked-since witnesses are
 	// deterministic. spec: §8.8. F-8.8.6.
 	now func() time.Time
+	// closed is set by Close; every later Register and RegisterPersisted
+	// returns ErrClosed. Guarded by mu.
+	closed bool
 }
 
 // entry is a single pending request: the answer channel plus the §8.8 question `parts` the lenny/await_children partial result
@@ -55,6 +61,12 @@ type entry struct {
 	ch           chan string
 	parts        []json.RawMessage
 	registeredAt time.Time
+	// waitID is the gateway-assigned wait identity a persisted wait's
+	// session row names in input_wait_id; empty for an unpersisted wait.
+	waitID string
+	// persisted marks a wait registered through RegisterPersisted, whose
+	// input_required state the session row carries.
+	persisted bool
 }
 
 // PendingRequest is one session's pending lenny/request_input round as
@@ -63,10 +75,17 @@ type entry struct {
 // BlockedSince is the wall-clock instant the request was registered —
 // the §8.8 witness the subtree deadlock
 // detector reports on each `blockedRequests` entry. spec: §8.8; F-8.8.5 / F-8.8.6.
+//
+// WaitID is the gateway-assigned identity a persisted wait's session row
+// names in input_wait_id, and Persisted reports that the wait was registered
+// through RegisterPersisted. Both are zero for a wait registered through
+// Register. spec: §7.2 (Session state machine).
 type PendingRequest struct {
 	RequestID    string
 	Parts        []json.RawMessage
 	BlockedSince time.Time
+	WaitID       string
+	Persisted    bool
 }
 
 // NewRegistry returns an empty Registry.
@@ -111,17 +130,50 @@ func key(sessionID, requestID string) string {
 // so a lenny/await_children call can surface them in the input_required
 // partial result without a second round-trip to the child. A nil parts
 // slice is permitted (the registry does not interpret the payload).
+//
+// Register returns ErrClosed once Close has run.
 func (r *Registry) Register(sessionID, requestID string, parts []json.RawMessage) (<-chan string, error) {
+	return r.register(sessionID, requestID, parts, "", false)
+}
+
+// RegisterPersisted registers as Register does, records waitID on the entry,
+// and marks the entry persisted. The caller writes the session row's
+// input_required state naming waitID after the registration succeeds, and a
+// PendingDetailsForSession caller reads the identity back to tell a live
+// persisted wait from a stale row. spec: §7.2 (Session state machine).
+func (r *Registry) RegisterPersisted(sessionID, requestID, waitID string, parts []json.RawMessage) (<-chan string, error) {
+	return r.register(sessionID, requestID, parts, waitID, true)
+}
+
+func (r *Registry) register(sessionID, requestID string, parts []json.RawMessage, waitID string, persisted bool) (<-chan string, error) {
 	k := key(sessionID, requestID)
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.closed {
+		return nil, ErrClosed
+	}
 	if _, ok := r.pending[k]; ok {
 		return nil, ErrDuplicate
 	}
 	ch := make(chan string, 1)
-	r.pending[k] = &entry{ch: ch, parts: parts, registeredAt: r.clock()}
+	r.pending[k] = &entry{ch: ch, parts: parts, registeredAt: r.clock(), waitID: waitID, persisted: persisted}
 	r.consumed[sessionID]++
 	return ch, nil
+}
+
+// Close cancels every pending wait, as Cancel does for each, and makes every
+// later Register and RegisterPersisted return ErrClosed. The replica's
+// shutdown calls it before the GatewayControl server stops, so no wait stays
+// live on a replica the adapter is leaving. Close is idempotent.
+// spec: §7.2 (Session state machine), §28.3 (Link register).
+func (r *Registry) Close() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.closed = true
+	for k, e := range r.pending {
+		close(e.ch)
+		delete(r.pending, k)
+	}
 }
 
 // Consumed returns the cumulative count of lenny/request_input rounds
@@ -216,7 +268,13 @@ func (r *Registry) PendingDetailsForSession(sessionID string) []PendingRequest {
 	var out []PendingRequest
 	for k, e := range r.pending {
 		if len(k) > len(prefix) && k[:len(prefix)] == prefix {
-			out = append(out, PendingRequest{RequestID: k[len(prefix):], Parts: e.parts, BlockedSince: e.registeredAt})
+			out = append(out, PendingRequest{
+				RequestID:    k[len(prefix):],
+				Parts:        e.parts,
+				BlockedSince: e.registeredAt,
+				WaitID:       e.waitID,
+				Persisted:    e.persisted,
+			})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].RequestID < out[j].RequestID })

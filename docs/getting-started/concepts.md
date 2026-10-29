@@ -49,6 +49,7 @@ stateDiagram-v2
     input_required --> resume_pending: Retryable failure (retries remain)
     input_required --> awaiting_client_action: Retryable failure (retries exhausted)
     input_required --> failed: Non-retryable failure
+    input_required --> completed: Terminate
     suspended --> running: Message or resume (pod still held)
     suspended --> resume_pending: Message or resume (pod released)
     suspended --> completed: Terminate

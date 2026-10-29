@@ -477,15 +477,18 @@ func TestCreateAndStartTransientSlotFailureStaysRetryable_spec_5_2(t *testing.T)
 	}
 }
 
-// spec: §4.7.1 (role and gateway RPC contract); §15.1 (REST API)
-// diagnosis: the two-step /start route answers a bind that met the §4.7.1
-// started-session refusal with the non-retryable 422 SLOT_FAILED rather than
-// the retryable 503 STARTING_FAILED with Retry-After. The refusal means
-// another bind attempt or start of the same session holds the slot on that
-// pod, so the client's request did not fail on its own terms and a fresh
-// request binds a fresh attempt. The refusal classifies as policy_rejection
-// inside the slot retry loop, so a failure here means writePodClaimError no
-// longer checks the refusal ahead of the slot-failure envelope.
+// spec: §4.7.1 (role and gateway RPC contract); §15.1 (REST API); §7.2
+// (Session state machine: starting → failed)
+// diagnosis: the two-step /start route answered a bind that met the §4.7.1
+// started-session refusal with something other than 503 STARTING_FAILED with
+// Retry-After, or left the session outside failed, or admitted a repeated
+// /start of the same session. The refusal classifies as policy_rejection
+// inside the slot retry loop, so a 422 SLOT_FAILED means writePodClaimError
+// no longer checks the refusal ahead of the slot-failure envelope. The launch
+// ran after the ready → starting write, so the failure leaves the session
+// failed: a repeated /start of the same session is refused with 409
+// INVALID_STATE_TRANSITION, and the client recovers by creating a new
+// session.
 func TestStartSlotBindRefusalAnswersRetryableFallback_spec_4_7_1(t *testing.T) {
 	cluster := slotFailCluster(t)
 	store := memstore.New()
@@ -521,6 +524,15 @@ func TestStartSlotBindRefusalAnswersRetryableFallback_spec_4_7_1(t *testing.T) {
 	}
 	if resp.Header.Get("Retry-After") == "" {
 		t.Errorf("the retryable fallback carries no Retry-After header")
+	}
+	row, err := store.Get(context.Background(), "acme", id)
+	if err != nil || row.State != session.StateFailed {
+		t.Errorf("session after the refused start = %q (%v), want failed", row.State, err)
+	}
+	again, againBody := do(t, ts, "POST", "/v1/sessions/"+id+"/start", nil)
+	againEnv, _ := againBody["error"].(map[string]any)
+	if again.StatusCode != http.StatusConflict || againEnv == nil || againEnv["code"] != "INVALID_STATE_TRANSITION" {
+		t.Errorf("repeated /start = %d %v, want 409 INVALID_STATE_TRANSITION", again.StatusCode, againBody)
 	}
 }
 
