@@ -155,6 +155,7 @@ func waitStreamingReconnectFrame(t *testing.T, ch <-chan sseFrame, timeout time.
 // spurious gap), rather than replaying precisely the events with
 // SeqNum > cursor before resuming live delivery.
 func TestStreamingReconnectResumesExactlyFromCursor(t *testing.T) {
+	t.Parallel()
 	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all")
 	base := gw.BaseURL()
 

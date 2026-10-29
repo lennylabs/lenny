@@ -54,6 +54,7 @@ const (
 // route came back on the adapter and can remove the implicit session
 // record behind a response.
 func TestOpenAICompatibleSurfacesCrossTenantIsolation(t *testing.T) {
+	t.Parallel()
 	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 	base := gw.BaseURL()
 

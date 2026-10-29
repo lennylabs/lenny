@@ -52,6 +52,7 @@ import (
 // dropping the report DSN) would leave every runner-level test green
 // while the real Job pod fails or silently no-ops.
 func TestBackupBinaryFullModeAgainstPostgresAndMinIO(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds a binary and starts Postgres and MinIO containers; skipped under -short")
 	}

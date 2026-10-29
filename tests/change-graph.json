@@ -388,6 +388,39 @@
       "chaos": ["tests/tier8_chaos/jwt_keyset_chaos_test.go"],
       "security": ["tests/tier9_security/ops_revocation_enforcement_test.go"]
     },
+    "tests/testinfra/binbuild/": {
+      "unit": ["tests/testinfra/binbuild/..."],
+      "component": ["tests/tier2_component/opsrevocation/...", "tests/tier2_component/tokensigning/..."],
+      "integration": ["tests/tier4_integration/..."],
+      "chaos": ["tests/tier8_chaos/..."],
+      "security": ["tests/tier9_security/..."]
+    },
+    "tests/testinfra/ports/": {
+      "unit": ["tests/testinfra/ports/..."],
+      "integration": ["tests/tier4_integration/..."],
+      "chaos": ["tests/tier8_chaos/..."],
+      "security": ["tests/tier9_security/..."]
+    },
+    "tests/testinfra/gateway/": {
+      "unit": ["tests/testinfra/gateway/..."],
+      "integration": ["tests/tier4_integration/..."],
+      "chaos": ["tests/tier8_chaos/..."],
+      "security": ["tests/tier9_security/..."]
+    },
+    "tests/testinfra/opsprocess/": {
+      "unit": ["tests/testinfra/opsprocess/..."],
+      "component": ["tests/tier2_component/opsrevocation/..."],
+      "integration": ["tests/tier4_integration/..."],
+      "chaos": ["tests/tier8_chaos/..."],
+      "security": ["tests/tier9_security/..."]
+    },
+    "tests/testinfra/tokenservice/": {
+      "unit": ["tests/testinfra/tokenservice/..."],
+      "component": ["tests/tier2_component/tokensigning/..."],
+      "integration": ["tests/tier4_integration/..."],
+      "chaos": ["tests/tier8_chaos/..."],
+      "security": ["tests/tier9_security/..."]
+    },
     "tests/testinfra/commitfault/": {
       "unit": ["tests/testinfra/commitfault/..."],
       "component": ["tests/tier2_component/stores/sessionstore_commit_ack_test.go"],
@@ -1055,8 +1088,9 @@
       "docs": ["tests/tier11_docs/..."]
     },
     "tests/testinfra/containers": {
+      "unit": ["tests/testinfra/containers/..."],
       "component": ["tests/testinfra/containers/postgres_test.go"],
-      "integration": ["tests/tier4_integration/redis_cluster_smoke_test.go"]
+      "integration": ["tests/tier4_integration/redis_cluster_smoke_test.go", "tests/tier4_integration/redis_cluster_port_retry_test.go"]
     },
     "tests/testinfra/fixtures/expand_contract_migration": {
       "integration": ["tests/tier4_integration/schema_migration_journey_test.go"]

@@ -6,23 +6,21 @@ package tier4_integration_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	interactionpg "github.com/lennylabs/lenny/pkg/gateway/session/interactionstore/pgstore"
-	"github.com/lennylabs/lenny/tests/testinfra/containers"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // elicitationExpiryStore starts Postgres with the production migrations,
 // seeds the fixture tenant, and returns the Postgres interaction store.
 func elicitationExpiryStore(t *testing.T) interactionstore.Store {
 	t.Helper()
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: schematest.RepoRoot(t) + "/migrations",
-	})
+	pg := sharedDatabase(t)
 	if _, err := pg.Pool.Exec(context.Background(),
 		`INSERT INTO tenants (id, genesis_nonce) VALUES ($1, $2)`, "acme", []byte{0x01}); err != nil {
 		t.Fatalf("seed tenant: %v", err)
@@ -39,6 +37,7 @@ func elicitationExpiryStore(t *testing.T) interactionstore.Store {
 // elicitation whose runtime is gone, and the answer would reach no one; or a
 // child still waiting on its answer would never receive one.
 func TestFailureEdgeExpiresTheElicitationsTheSessionRaised_spec_9_2(t *testing.T) {
+	t.Parallel()
 	interactions := elicitationExpiryStore(t)
 	rt := newHeartbeatRuntime()
 	const id = "sess-elicit"
@@ -60,6 +59,7 @@ func TestFailureEdgeExpiresTheElicitationsTheSessionRaised_spec_9_2(t *testing.T
 	}
 	rt.stopAcking()
 	f.awaitState(t, session.StateResumePending)
+	awaitElicitationsExpired(t, interactions, id, "raised", "raised-dismiss")
 
 	base := f.base + "/v1/sessions/" + id + "/elicitations/"
 	if code, resp := multiTurnPost(t, base+"raised/respond", `{"response":{"ok":true}}`); code != http.StatusNotFound || restErrorCode(resp) != "ELICITATION_NOT_FOUND" {
@@ -71,6 +71,42 @@ func TestFailureEdgeExpiresTheElicitationsTheSessionRaised_spec_9_2(t *testing.T
 	held, err := interactions.Get(ctx, "acme", id, "", "child-held")
 	if err != nil || held.Phase != interactionstore.PhasePending {
 		t.Errorf("the child's elicitation held for the session = (%v, %v), want pending", held.Phase, err)
+	}
+}
+
+// awaitElicitationsExpired waits, bounded by streamFailureWait, until every
+// named elicitation of the session is gone from the interaction store.
+//
+// The gateway commits the failure edge's state write and then expires the
+// elicitations the session raised as a separate step (afterRecoveryEdge in
+// pkg/gateway/sessionserver/failure.go), so a reader can observe
+// resume_pending before the expiry has run. §9.2 states the expiry as a
+// consequence of the committed failure rather than as part of the state
+// write: a resolution recorded before the expiry is returned to the runtime
+// as for any pending elicitation, and an elicitation the expiry misses stays
+// pending. The wait reads the store rather than calling respond or dismiss,
+// because a respond that lands before the expiry resolves the elicitation,
+// and the expiry, which deletes only pending rows, would then leave it.
+//
+// spec: 9.2 (Elicitation Chain) **Expiry when the session leaves its pod:**
+func awaitElicitationsExpired(t *testing.T, store interactionstore.Store, sessionID string, ids ...string) {
+	t.Helper()
+	deadline := time.Now().Add(streamFailureWait)
+	for _, eid := range ids {
+		for {
+			_, err := store.Get(context.Background(), "acme", sessionID, "", eid)
+			if errors.Is(err, interactionstore.ErrNotFound) {
+				break
+			}
+			if err != nil {
+				t.Fatalf("read elicitation %s: %v", eid, err)
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("elicitation %s of session %s still pending %s after the failure edge, want expired",
+					eid, sessionID, streamFailureWait)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
 	}
 }
 

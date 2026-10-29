@@ -324,6 +324,7 @@ func TestMCPSendMessageCarriesEveryMessageOnTheHeldStream_spec_28_5_1(t *testing
 // child's Attach stream was opened on the delegate_task request's context
 // and ended when that request returned.
 func TestDelegateTaskThenAFollowUpOnTheHeldStream_spec_28_5_1(t *testing.T) {
+	t.Parallel()
 	envtest.SkipUnlessAvailable(t)
 	cluster := materializeCluster(t)
 	tenants, runtimes, credPools := materializeStores(t)

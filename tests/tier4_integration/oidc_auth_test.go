@@ -27,6 +27,7 @@ import (
 // refused requests means an IdP token for another audience, from another
 // issuer, or past its exp reached a handler.
 func TestLiveGatewayAuthenticatesUpstreamOIDCBearer_spec_10_2(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	idp := oidcstub.New(t)
 	foreign := oidcstub.New(t)

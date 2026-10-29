@@ -13,14 +13,10 @@ package tier4_integration_test
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
-
-	"github.com/lennylabs/lenny/tests/testinfra/containers"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // spec: §12.3 — TestRLSTenantGuardMissingSetLocal.
@@ -42,9 +38,7 @@ func TestRLSTenantGuardMissingSetLocal(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 
 	// Seed two tenants in the registry. The tenants table is the
 	// platform-global registry (no tenant_id column, no guard trigger),

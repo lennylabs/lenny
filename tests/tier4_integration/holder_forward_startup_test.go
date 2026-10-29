@@ -65,6 +65,7 @@ func runGatewayToExit(t *testing.T, binary string, env []string, args ...string)
 // coordinates would be refused as not delivered. Check
 // resolveCoordinationHolder in cmd/lenny-gateway/redis_quota.go.
 func TestGatewayWithLeaseStoreRefusesMissingAdvertiseAddress_spec_10_1_1(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	binary := gateway.Build(t)
 	for name, addr := range map[string]string{"absent": "", "no port": "10.0.0.7", "port 0": "10.0.0.7:0"} {
@@ -89,6 +90,7 @@ func TestGatewayWithLeaseStoreRefusesMissingAdvertiseAddress_spec_10_1_1(t *test
 // forward is not delivered. Check buildHolderForwardTransport and
 // startHolderForwardListener in cmd/lenny-gateway.
 func TestDevGatewayWithoutMaterialServesNoForwardListener_spec_10_3(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	gw := gateway.StartWith(t, "--dev-mode", "--redis-url=redis://"+rd.Addr+"/0")

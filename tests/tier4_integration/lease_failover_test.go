@@ -11,7 +11,6 @@ package tier4_integration_test
 
 import (
 	"context"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -22,7 +21,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	leasepg "github.com/lennylabs/lenny/pkg/gateway/storage/leasestore/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // spec: §12.4 — "Distributed session leases | Fall back to
@@ -34,9 +32,7 @@ func TestLeasePgstoreAdvisoryLockFallback_spec_12_4(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	seedTenant(t, pg, "acme")
 
 	store := leasepg.New(pg.Pool)
@@ -193,9 +189,7 @@ func TestInteractionPgstoreDeleteByTenant_spec_12_1(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	seedTenant(t, pg, "acme")
 	seedTenant(t, pg, "globex")
 

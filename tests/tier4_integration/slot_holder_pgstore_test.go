@@ -11,7 +11,6 @@ package tier4_integration_test
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"sort"
 	"testing"
 	"time"
@@ -19,8 +18,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
-	"github.com/lennylabs/lenny/tests/testinfra/containers"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // slotRow is one seeded session row.
@@ -62,10 +59,9 @@ func sortedJoin(v []string) string {
 // failure funnel's edge write moved to resume_pending names no pod, so the
 // seed, the §12.4 fallback gate, and the listing all exclude it.
 func TestSlotHolderPredicateOnPostgres_spec_5_2(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	seedTenant(t, pg, "acme")
 	seedTenant(t, pg, "globex")
 	store := sessionpg.New(pg.Pool)
@@ -132,10 +128,9 @@ func terminateAt(t *testing.T, ctx context.Context, store *sessionpg.Store, tena
 // identifier, or a string that is not a UUID; a relabel to failed must keep
 // the first terminated_at, or a relabelled session's slot is reaped late.
 func TestListStaleTerminalSessionsOnPostgres_spec_5_2(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	seedTenant(t, pg, "acme")
 	seedTenant(t, pg, "globex")
 	store := sessionpg.New(pg.Pool)

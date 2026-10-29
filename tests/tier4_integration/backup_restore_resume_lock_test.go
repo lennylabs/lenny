@@ -20,12 +20,10 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"path/filepath"
 	"testing"
 
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/opsprocess"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // spec: §25.11 (Restore Failure and Recovery, "Resume") — "Lock
@@ -44,11 +42,10 @@ import (
 // lock is still held (by bob); it must succeed again only once alice has
 // stolen the lock back and is acquiredBy once more.
 func TestRestoreResumeAfterLockStealRequiresCurrentHolder(t *testing.T) {
+	t.Parallel()
 	opsprocess.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 
 	ctx := context.Background()

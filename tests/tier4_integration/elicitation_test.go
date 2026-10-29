@@ -149,6 +149,7 @@ func (c mcpClient) delegateChild(parentID, runtimeRef string) string {
 // resolver selection, or the §15.1 respond authorization triple
 // diverged from §9.2 when driven through one process.
 func TestMCPElicitationChain(t *testing.T) {
+	t.Parallel()
 	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 	c := mcpClient{t: t, base: gw.BaseURL()}
 
@@ -240,6 +241,7 @@ func TestMCPElicitationChain(t *testing.T) {
 //	DOMAIN_NOT_ALLOWLISTED. A non-url-mode elicitation through the
 //	same tool is admitted and resolvable.
 func TestMCPProvenance(t *testing.T) {
+	t.Parallel()
 	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 	c := mcpClient{t: t, base: gw.BaseURL()}
 

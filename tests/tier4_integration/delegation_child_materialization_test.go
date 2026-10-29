@@ -429,6 +429,7 @@ func materializeHandle(t *testing.T, resp map[string]any) struct {
 // 8.2.17 divergence), never claimed a pod, or launched but stayed unregistered
 // so Executor.Send rejects it as unbound (pod.go: "is not bound to a pod").
 func TestDelegateTaskMaterializesChildToRunning_spec_8_2(t *testing.T) {
+	t.Parallel()
 	envtest.SkipUnlessAvailable(t)
 	cluster := materializeCluster(t)
 	tenants, runtimes, credPools := materializeStores(t)
@@ -507,6 +508,7 @@ func TestDelegateTaskMaterializesChildToRunning_spec_8_2(t *testing.T) {
 // tool code, admitted a running child on a failed assignment, or leaked the
 // loser's warm pod, which spec/08 line 470 forbids.
 func TestDelegateTaskMaterializationAssignmentRaceFailsClosed_spec_8_3(t *testing.T) {
+	t.Parallel()
 	envtest.SkipUnlessAvailable(t)
 	cluster := materializeCluster(t)
 	tenants, runtimes, credPools := materializeStores(t)
@@ -562,6 +564,7 @@ func TestDelegateTaskMaterializationAssignmentRaceFailsClosed_spec_8_3(t *testin
 // sentinel-to-tool-code mapping mislabeled a pool-warming outcome (for example
 // as a credential exhaustion) or swallowed it as INTERNAL_ERROR.
 func TestDelegateTaskMaterializationPoolWarmingMapsRuntimeUnavailable_spec_8_2(t *testing.T) {
+	t.Parallel()
 	envtest.SkipUnlessAvailable(t)
 	cluster := materializeCluster(t)
 	tenants, runtimes, credPools := materializeStores(t)

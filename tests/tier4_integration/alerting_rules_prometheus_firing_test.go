@@ -109,6 +109,7 @@ type firingCase struct {
 // never reaches Alertmanager or lenny-ops health aggregation, and the
 // gateway fallback silently declines to fire it (never "fires wrong").
 func TestBundledPrometheusOnlyAlertsFireUnderTriggeringConditions(t *testing.T) {
+	t.Parallel()
 	// Cases span the PromQL categories the in-process fallback reports
 	// unsupported (§25.13): a counter rate, an `unless on()` label-set
 	// join, the time() function, an increase() over a range, and a

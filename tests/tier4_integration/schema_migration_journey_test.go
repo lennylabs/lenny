@@ -92,6 +92,9 @@ func newFixtureMigrator(t *testing.T, pg *containers.Postgres) *migrate.Migrate 
 // recovered by the documented clear-dirty-flag-and-retry procedure, over
 // a real Postgres and the real golang-migrate driver.
 func TestSchemaMigrationJourney_ExpandGateContract(t *testing.T) {
+	t.Parallel()
+	// A container of its own rather than sharedDatabase: the fixture
+	// migrator drives an unmigrated server (T-17.4.33).
 	pg := containers.StartPostgres(t, containers.PostgresOptions{})
 
 	m := newFixtureMigrator(t, pg)
@@ -231,11 +234,10 @@ func TestSchemaMigrationJourney_ExpandGateContract(t *testing.T) {
 // the expand-contract discipline exists to provide does not hold over
 // the real HTTP admin surface and a real Postgres.
 func TestSchemaMigrationJourney_GatewayCoexistsAcrossExpandStepAndRestart(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 
 	gw1 := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn="+pg.DSN)
 	c1 := poolUpgradeClient{t: t, base: gw1.BaseURL()}

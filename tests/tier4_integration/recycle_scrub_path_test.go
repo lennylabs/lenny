@@ -419,6 +419,7 @@ func claimPhase(t *testing.T, c client.Client, sandbox string) string {
 // spec: 5.2 (whole-pod scrub trigger, recycle lifecycle), 4.6.3 (scrub
 // disposition), 3.4 (recycle disposition, patch-then-scrub)
 func TestRecyclePathScrubReportedReuses_spec_5_2(t *testing.T) {
+	t.Parallel()
 	c := recycleCluster(t)
 	ops := &recycleScrubOps{}
 	reporter := newRecycleScrubReporter()
@@ -518,6 +519,7 @@ func TestRecyclePathScrubReportedReuses_spec_5_2(t *testing.T) {
 // spec: 3.4 (gateway-side missing-report timeout), 5.2 (recycle lifecycle),
 // 6.2 (retire on missing report)
 func TestRecyclePathDroppedReportRetires_spec_3_4(t *testing.T) {
+	t.Parallel()
 	c := recycleCluster(t)
 	ops := &recycleScrubOps{}
 	// A reporterless adapter drops the report: the scrub runs but nothing
@@ -585,6 +587,7 @@ func TestRecyclePathDroppedReportRetires_spec_3_4(t *testing.T) {
 // spec: 5.2 step 7 (fresh-guest reprovision), 4.7 (ReportPodScrub binary
 // outcome), 6.2 (retire disposition)
 func TestRecyclePathVMRestartRetiresAndReprovisions_spec_5_2(t *testing.T) {
+	t.Parallel()
 	c := recycleCluster(t)
 	ops := &recycleScrubOps{}
 	reporter := newRecycleScrubReporter()
@@ -679,6 +682,7 @@ func TestRecyclePathVMRestartRetiresAndReprovisions_spec_5_2(t *testing.T) {
 // spec: 5.2 (whole-pod scrub, fail-closed on a wiring gap), 3.4 (missing-report
 // timeout), 6.2 (retire on missing report)
 func TestRecyclePathNilScrubOpsWithholdsReportAndRetires_spec_5_2(t *testing.T) {
+	t.Parallel()
 	c := recycleCluster(t)
 	reporter := newRecycleScrubReporter()
 
@@ -740,6 +744,7 @@ func TestRecyclePathNilScrubOpsWithholdsReportAndRetires_spec_5_2(t *testing.T) 
 // spec: 6.2 (failed/crashed session always retires), 5.2 (recycle disposition),
 // 4.7 (Shutdown recycle disposition)
 func TestRecyclePathFailedDispositionRetires_spec_6_2(t *testing.T) {
+	t.Parallel()
 	c := recycleCluster(t)
 	ops := &recycleScrubOps{}
 	reporter := newRecycleScrubReporter()
@@ -812,6 +817,7 @@ func recycleSlotBinder(t *testing.T, c client.Client, dial func(string) (*adapte
 // occupancy-zero reuse), 4.7 (Shutdown recycle disposition), 3.4 (recycle
 // disposition, patch-then-scrub)
 func TestRecyclePathConcurrentSlotScrubReportedReuses_spec_5_2(t *testing.T) {
+	t.Parallel()
 	c := recycleCluster(t)
 	ops := &recycleScrubOps{}
 	reporter := newRecycleScrubReporter()
@@ -943,6 +949,7 @@ func activeSlots(t *testing.T, rc *redis.Client, pod string) int {
 // reservation, so every failed bind leaks a slot.
 // spec: §7.1 (normal flow); §5.2 (pool configuration and execution modes); §6.2 (pod state machine)
 func TestRecyclePathUnansweredReclaimLeaksTheSlot_spec_5_2(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name        string
 		failReclaim bool
@@ -1130,6 +1137,7 @@ func (perReleaseNoopDriver) Retire(context.Context, string, bool, bool, podscrub
 // (leaked slot remains counted so occupancy stays above zero), 4.6.3 (gateway
 // stamps drain-request)
 func TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2(t *testing.T) {
+	t.Parallel()
 	c := recycleCluster(t)
 	ctx := context.Background()
 	const podName = "sbx-perrelease"

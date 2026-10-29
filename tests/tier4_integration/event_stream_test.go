@@ -31,7 +31,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -41,7 +40,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/opsprocess"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // adminRequest issues an admin request against the unauthenticated
@@ -201,11 +199,10 @@ func parseEventKey(t *testing.T, key string) (replicaID string, nanos int64, non
 // structure or its monotonic nonce, or the emitter no longer fans the
 // event out to the platform Redis stream ops:events:stream.
 func TestOpsEventStreamReadSurfaceE2E(t *testing.T) {
+	t.Parallel()
 	opsprocess.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 
 	ops := opsprocess.StartWith(
@@ -503,11 +500,10 @@ func opsErrorCode(body map[string]any) string {
 // secret once with the rotation warning, a read endpoint leaked the
 // secret, or the subscription did not persist to ops_event_subscriptions.
 func TestOpsEventSubscriptionWebhookSSRFE2E(t *testing.T) {
+	t.Parallel()
 	opsprocess.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 
 	ops := opsprocess.StartWith(

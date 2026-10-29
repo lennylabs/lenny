@@ -56,6 +56,7 @@ import (
 // notification payload did not match the CloudEvents schema the §25.5
 // REST event stream returns.
 func TestMCPManagementEventSubscriptionE2E(t *testing.T) {
+	t.Parallel()
 	t.Skip("blocked: §25.12 MCP-native event subscription is unbuilt — /mcp/management is a synchronous one-request-one-response JSON-RPC server with no streaming transport, notifications/subscribe returns -32601 method-not-found, and the §25.5 operational event source that would feed the subscription is itself unbuilt")
 
 	opsprocess.SkipUnlessAvailable(t)

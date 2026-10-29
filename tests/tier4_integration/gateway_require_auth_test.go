@@ -80,6 +80,7 @@ func postureDo(t *testing.T, method, url string, headers map[string]string, body
 // calls applyAuthPostureOptions with --dev-mode and that the route is not in
 // publicRoutePatterns.
 func TestProductionGatewayRefusesUnauthenticatedTenantHeader(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	gw := gateway.StartWith(t, append([]string{"--no-environment-policy", "allow-all"}, productionPostureFlags...)...)
 	base := gw.BaseURL()
@@ -129,6 +130,7 @@ func TestProductionGatewayRefusesUnauthenticatedTenantHeader(t *testing.T) {
 // metadata fetch is refused. Check publicRoutePatterns in
 // cmd/lenny-gateway/authposture.go.
 func TestProductionGatewayKeepsPublicRoutesPublic(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	gw := gateway.StartWith(t, append([]string{"--no-environment-policy", "allow-all"}, productionPostureFlags...)...)
 	base := gw.BaseURL()
@@ -154,6 +156,7 @@ func TestProductionGatewayKeepsPublicRoutesPublic(t *testing.T) {
 // so the dev-header transport the local development and integration
 // suites rely on no longer names the request's tenant.
 func TestDevGatewayHonoursTenantHeader(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 	got := postureDo(t, http.MethodGet, gw.BaseURL()+"/v1/admin/me", map[string]string{

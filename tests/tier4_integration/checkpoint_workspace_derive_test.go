@@ -39,6 +39,7 @@ import (
 // concatenated in index order, so a derived workspace is corrupt or
 // misordered.
 func TestWorkspaceDownloadStreamsConcatenatedChunks(t *testing.T) {
+	t.Parallel()
 	const (
 		tenant = "acme"
 		sessID = "sess_ws"
@@ -75,6 +76,7 @@ func TestWorkspaceDownloadStreamsConcatenatedChunks(t *testing.T) {
 // chunk objects, so a parent-side GC or retention rotation would strip the
 // derived session's workspace out from under it.
 func TestDeriveCopiesEveryChunkIntoDerivedPrefix(t *testing.T) {
+	t.Parallel()
 	const (
 		tenant   = "acme"
 		parentID = "sess_source"
@@ -177,6 +179,7 @@ func TestDeriveCopiesEveryChunkIntoDerivedPrefix(t *testing.T) {
 // the handler falls through to the legacy single-object path, and an
 // N-chunk checkpoint cannot be served.
 func TestWorkspaceDownloadResolvesFourSegmentRef(t *testing.T) {
+	t.Parallel()
 	const (
 		tenant = "acme"
 		sessID = "sess_fs"
@@ -213,6 +216,7 @@ func TestWorkspaceDownloadResolvesFourSegmentRef(t *testing.T) {
 // through to the legacy single-object copy that cannot copy an N-chunk
 // checkpoint.
 func TestDeriveFromFourSegmentParentRefCopiesChunks(t *testing.T) {
+	t.Parallel()
 	const (
 		tenant   = "acme"
 		parentID = "sess_fs_parent"

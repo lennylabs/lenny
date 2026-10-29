@@ -40,6 +40,7 @@ import (
 //	provider token exchange diverged from §9.3 when driven
 //	through one process.
 func TestOAuthConnector(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
 	// A fake OAuth provider token endpoint. The §9.3 callback handler

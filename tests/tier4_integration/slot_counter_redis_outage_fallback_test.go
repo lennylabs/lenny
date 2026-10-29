@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"sort"
@@ -52,7 +51,6 @@ import (
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // newSessionUUID returns a fresh random UUIDv4 string; the sessions.id column
@@ -78,11 +76,10 @@ func newSessionUUID(t *testing.T) string {
 // was overrun, or the bounded fail-closed window did not eventually fail
 // closed against a sustained outage.
 func TestSlotCounterRedisOutagePostgresFallback_spec_12_4(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	seedTenant(t, pg, "acme")
 	store := sessionpg.New(pg.Pool)
 
@@ -253,9 +250,7 @@ func outageCounter(t *testing.T, addr string, store *sessionpg.Store) *slotcount
 func newOutageTopology(t *testing.T) *outageTopology {
 	t.Helper()
 	ctx := context.Background()
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	seedTenant(t, pg, "acme")
 	store := sessionpg.New(pg.Pool)
 	rd := containers.StartRedis(t, containers.RedisOptions{})

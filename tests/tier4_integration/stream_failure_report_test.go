@@ -570,6 +570,7 @@ func resumeOn(t *testing.T, base, id string) *http.Response {
 // the coordinator's lease, refused a resume any replica can record, or the
 // coordinator never restored the session.
 func TestCrossReplicaResumeIsAStoreWriteTheCoordinatorRestores_spec_7_3(t *testing.T) {
+	t.Parallel()
 	envtest.SkipUnlessAvailable(t)
 	cluster := materializeCluster(t)
 	leases := streamFailureLeases(t)

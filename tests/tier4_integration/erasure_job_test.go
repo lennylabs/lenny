@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -32,7 +31,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 	"github.com/lennylabs/lenny/tests/testinfra/wait"
 )
 
@@ -45,11 +43,10 @@ import (
 // as a foreign-key violation against the real sessions/session_messages
 // tables; this test can.
 func TestErasureJobJourney(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	// --postgres-billing-audit-ddl-dsn is the CREATE-privileged DDL
 	// connection the gateway uses to provision a runtime-created tenant's
 	// audit_seq_<40hex> sequence; without it every audit Append for a
@@ -376,11 +373,10 @@ func erasureAdminDo(t *testing.T, base, method, path, roles string, body any) (i
 // carrying the erased user's content survives the erasure receipt, or an
 // unrelated user's queued messages are lost.
 func TestErasureDeletesTheErasedUsersSessionMessageQueues_spec_12_8(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode",
 		"--postgres-dsn="+pg.DSN, "--postgres-billing-audit-ddl-dsn="+pg.DSN,
@@ -515,10 +511,9 @@ func awaitErasureCompleted(t *testing.T, base, jobID string, within time.Duratio
 // query's) leave no cross_tenant_read event on the platform chain, so the
 // §12.3 audit of sentinel reads is unwired.
 func TestErasureJobResumesOnAnotherReplica_spec_12_8(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	args := func(interval string) []string {
 		return []string{
 			"--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn=" + pg.DSN,
@@ -563,10 +558,9 @@ func TestErasureJobResumesOnAnotherReplica_spec_12_8(t *testing.T) {
 // or the runner's concurrency limit does not admit jobs of distinct
 // tenants together.
 func TestErasureJobsCompleteWithSmallPool_spec_12_8(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	small := pg.DSN + "&pool_max_conns=4"
 	if !strings.Contains(pg.DSN, "?") {
 		small = pg.DSN + "?pool_max_conns=4"
@@ -675,11 +669,10 @@ func eraseTwinCounts(t *testing.T, pg *containers.Postgres, user, sid string) ma
 // deny entry after the restart, bounded by the lease TTL or by the orphan
 // claim timeout plus one GC sweep.
 func TestErasureDeletesTheUsersRowsInEveryWiredStore_spec_12_8(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	args := []string{
 		"--no-environment-policy", "allow-all", "--dev-mode",

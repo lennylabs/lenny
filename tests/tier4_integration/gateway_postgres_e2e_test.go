@@ -15,14 +15,11 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"path/filepath"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // spec: 12.1 (Storage Architecture), 12.8 (Compliance Interfaces: Lifecycle fence and drain), 15.1 (REST API)
@@ -31,11 +28,10 @@ import (
 // session store's transcript copier, which stores.go must wire in the
 // Postgres branch.
 func TestGatewayPostgresPersistenceE2E(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn="+pg.DSN)
 	base := gw.BaseURL()
 	client := http.DefaultClient
@@ -236,11 +232,10 @@ func TestGatewayPostgresPersistenceE2E(t *testing.T) {
 // starts, so StartWith — which waits for the process to become
 // responsive — succeeds.
 func TestGatewayPostgresIntegrityWarningStartup(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	// Disable an integrity trigger before the gateway boots.
 	if _, err := pg.Pool.Exec(context.Background(),
 		`ALTER TABLE audit_log DISABLE TRIGGER lenny_audit_immutability`); err != nil {

@@ -22,7 +22,6 @@ import (
 	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // resumeCapFixture is one gateway session server over compose Postgres
@@ -38,9 +37,7 @@ type resumeCapFixture struct {
 func newResumeCapFixture(t *testing.T) *resumeCapFixture {
 	t.Helper()
 	ctx := context.Background()
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: schematest.RepoRoot(t) + "/migrations",
-	})
+	pg := sharedDatabase(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	if _, err := pg.Pool.Exec(ctx,
 		`INSERT INTO tenants (id, genesis_nonce, max_concurrent_sessions) VALUES ('acme', '\x00', 1)`); err != nil {
@@ -147,6 +144,7 @@ func assertResumeCapRefusal(t *testing.T, what string, code int, body map[string
 // quota was full. Check the counted-session predicate in the pgstore counts
 // and migration 0185, and the admission check in sessionserver quota.go.
 func TestSuspendedSessionResumeAdmissionOnCompose_spec_11_1(t *testing.T) {
+	t.Parallel()
 	const (
 		idleID    = "11111111-1111-4111-8111-111111111111"
 		backlogID = "22222222-2222-4222-8222-222222222222"

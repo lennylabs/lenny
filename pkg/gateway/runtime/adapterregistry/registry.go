@@ -38,14 +38,25 @@ import (
 type Capabilities = adapter.Capabilities
 
 // SessionMetadata is the §15 SessionMetadata projection passed to
-// OnSessionCreated. v1 carries only the fields wired up by the
-// existing gateway surfaces; the spec defines the full closed set in
-// §15 "Shared Adapter Types".
+// OnSessionCreated. Its fields are the closed set §15 "Shared Adapter
+// Types" defines. CallerIdentity is built from the session-creating
+// principal with CallerIdentityFromPrincipal.
+//
+// No session-create path dispatches OnSessionCreated yet, because §15
+// does not state where in the session-create flow the hook runs or what
+// an adapter error does to the call. BUILD-GAPS F-15.2.27 routes that
+// question to a proposal.
+//
+// spec: §15 "Shared Adapter Types" SessionMetadata.
 type SessionMetadata struct {
-	TenantID                  string
-	SessionID                 string
-	RuntimeName               string
-	DelegationDepth           int
+	TenantID        string
+	SessionID       string
+	RuntimeName     string
+	DelegationDepth int
+	// CallerIdentity is the authenticated identity that created the
+	// session. spec: §15 "Shared Adapter Types"
+	// SessionMetadata.CallerIdentity.
+	CallerIdentity            CallerIdentity
 	NegotiatedProtocolVersion string
 }
 
@@ -199,11 +210,12 @@ type ExternalProtocolAdapter interface {
 	// PathPrefix MUST be non-empty and unique across the registry.
 	Capabilities() Capabilities
 
-	// OnSessionCreated is invoked once per session immediately after
-	// the gateway has materialized the session record. Per §15
-	// adapters MAY use this hook to allocate per-session state (push
-	// channels, correlation maps); returning a non-nil error fails the
-	// session-create call.
+	// OnSessionCreated receives the §15 SessionMetadata of a newly
+	// created session. Adapters that manage stateful protocols use it to
+	// allocate per-session state (push channels, correlation maps). §15
+	// does not state where in the session-create flow the gateway calls
+	// it or whether a non-nil error fails the session-create call, and no
+	// session-create path dispatches it yet (BUILD-GAPS F-15.2.27).
 	OnSessionCreated(ctx context.Context, metadata SessionMetadata) error
 
 	// OnSessionEvent is invoked for each SessionEvent the gateway

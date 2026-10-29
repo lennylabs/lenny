@@ -65,6 +65,7 @@ import (
 // notification during exactly the storage outage the spec promises to
 // keep delivering through.
 func TestWebhookDeliveredFromGatewayBufferDuringDualOutage(t *testing.T) {
+	t.Parallel()
 	opsprocess.SkipUnlessAvailable(t)
 
 	// Non-blocking skip tied to an open TEST-GAPS finding: lenny-ops
@@ -80,6 +81,9 @@ func TestWebhookDeliveredFromGatewayBufferDuringDualOutage(t *testing.T) {
 	// gateway-buffer delivery path is implemented.
 	t.Skip("§25.15 dual-outage webhook delivery from the gateway event buffer is not wired in lenny-ops (the webhook worker's only event source is the Redis stream); pending a human decision on the delivery mechanism")
 
+	// A container of its own rather than sharedDatabase: the test stops
+	// Postgres to inject an outage, and a shared container cannot stop for
+	// one test (T-17.4.33).
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
 		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
 	})

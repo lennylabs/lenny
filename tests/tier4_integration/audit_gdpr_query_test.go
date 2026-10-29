@@ -26,14 +26,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 	"github.com/lennylabs/lenny/tests/testinfra/wait"
 )
 
@@ -49,11 +47,10 @@ import (
 // signed receipt persisted by the real DeleteByUser run being loaded
 // back through the auditstore receipt reader.
 func TestAuditGDPRDownstreamNotificationQueryable(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	// The single test Postgres plays both the app DSN and the
 	// CREATE-privileged DDL DSN the gateway uses to provision a tenant's
 	// audit_seq_<40hex> sequence.

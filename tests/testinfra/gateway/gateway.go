@@ -15,24 +15,26 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
+	"github.com/lennylabs/lenny/tests/testinfra/binbuild"
+	"github.com/lennylabs/lenny/tests/testinfra/ports"
 	"github.com/lennylabs/lenny/tests/testinfra/stackkey"
 )
 
 // Process represents a running lenny-gateway subprocess.
 type Process struct {
-	// done receives the result of cmd.Wait once the process exits.
-	done chan error
+	// exited is closed once cmd.Wait returns; waitErr holds its result.
+	exited  chan struct{}
+	waitErr error
 	// stopOnce makes stop signal the process at most once.
 	stopOnce sync.Once
 	cmd      *exec.Cmd
@@ -84,6 +86,10 @@ type Options struct {
 	// one. A test that restarts replicas passes one binary to every
 	// start so it builds once.
 	Binary string
+	// Reserve chooses each loopback address the process is given. Empty
+	// uses ports.Reserve. A test of the start retry passes one that
+	// returns an address another process holds first.
+	Reserve func(testing.TB) string
 }
 
 // StartOpts builds and spawns cmd/lenny-gateway with opts and returns
@@ -100,21 +106,30 @@ func StartOpts(t testing.TB, opts Options) *Process {
 	if binary == "" {
 		binary = Build(t)
 	}
-	tmp := filepath.Dir(binary)
+	// cmd/lenny-gateway cannot bind port 0 and report the port it got, so
+	// the harness chooses the addresses, and starts again on fresh ones when
+	// another process takes one first (TEST-GAPS T-17.4.38).
+	return ports.StartRetrying(t, "lenny-gateway", func() (*Process, error) {
+		return startOnce(t, binary, opts)
+	})
+}
 
-	port, err := freePort()
-	if err != nil {
-		t.Fatalf("freePort: %v", err)
+// startOnce starts one gateway process on freshly chosen addresses and waits
+// for it to serve. It returns an error wrapping ports.ErrAddrInUse when the
+// process lost an address to another process, so StartOpts retries.
+func startOnce(t testing.TB, binary string, opts Options) (*Process, error) {
+	t.Helper()
+	tmp := filepath.Dir(binary)
+	reserve := opts.Reserve
+	if reserve == nil {
+		reserve = ports.Reserve
 	}
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
+
+	addr := reserve(t)
 	// §10.1.1 Replica address: a gateway with a lease store (Redis) refuses
 	// to start without an advertise address, so every process gets a
 	// second free port for its forward listener and advertises it.
-	forwardPort, err := freePort()
-	if err != nil {
-		t.Fatalf("freePort: %v", err)
-	}
-	forwardAddr := fmt.Sprintf("127.0.0.1:%d", forwardPort)
+	forwardAddr := reserve(t)
 
 	// Each process gets its own log, because processes started from one
 	// binary share its directory.
@@ -176,9 +191,11 @@ func StartOpts(t testing.TB, opts Options) *Process {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start gateway: %v", err)
 	}
-	p := &Process{cmd: cmd, baseURL: "http://" + addr, forwardAddr: forwardAddr, stderr: stderrFile, stderrPath: stderrPath, done: make(chan error, 1)}
-	// Buffered so the goroutine never blocks once nothing waits on it.
-	go func() { p.done <- cmd.Wait() }()
+	p := &Process{cmd: cmd, baseURL: "http://" + addr, forwardAddr: forwardAddr, stderr: stderrFile, stderrPath: stderrPath, exited: make(chan struct{})}
+	go func() {
+		p.waitErr = cmd.Wait()
+		close(p.exited)
+	}()
 
 	t.Cleanup(func() {
 		defer func() { _ = stderrFile.Close() }()
@@ -186,15 +203,16 @@ func StartOpts(t testing.TB, opts Options) *Process {
 	})
 
 	if err := p.waitReady(5 * time.Second); err != nil {
-		// Surface the gateway log to the test on failure.
-		b, _ := os.ReadFile(stderrPath)
-		t.Fatalf("gateway not ready: %v\nlogs:\n%s", err, b)
+		// A process that lost the forward address still runs; end it now
+		// rather than at cleanup. Surface the gateway log to the test.
+		p.stop(t, os.Interrupt)
+		return nil, fmt.Errorf("gateway not ready: %w\nlogs:\n%s", err, p.Logs())
 	}
-	return p
+	return p, nil
 }
 
-// Build compiles cmd/lenny-gateway into a fresh temporary directory,
-// which t's cleanup removes, and returns the binary's path. A test that
+// Build returns the path of a cmd/lenny-gateway binary in a fresh
+// temporary directory, which t's cleanup removes. A test that
 // runs the binary to exit with its own flags and environment, such as a
 // startup-refusal case, uses it directly; Start and StartWith use it
 // before they launch the process. It skips the test when go is not on
@@ -204,18 +222,9 @@ func Build(t testing.TB) string {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skipf("go not on PATH: %v", err)
 	}
-	tmp, err := os.MkdirTemp("", "lenny-gateway-it-*")
-	if err != nil {
-		t.Fatalf("mkdtemp: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(tmp) })
-	binary := filepath.Join(tmp, "lenny-gateway")
-	build := exec.Command("go", "build", "-o", binary, "./cmd/lenny-gateway")
-	build.Dir = schematest.RepoRoot(t)
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build lenny-gateway: %v\n%s", err, out)
-	}
-	return binary
+	// binbuild links the command once per test process and hands this
+	// test a copy in a directory of its own (TEST-GAPS T-17.4.33).
+	return binbuild.Build(t, "./cmd/lenny-gateway", "lenny-gateway")
 }
 
 // stop signals the gateway with sig and waits for it to exit, force-killing
@@ -225,7 +234,7 @@ func (p *Process) stop(t testing.TB, sig os.Signal) {
 	p.stopOnce.Do(func() {
 		_ = p.cmd.Process.Signal(sig)
 		select {
-		case <-p.done:
+		case <-p.exited:
 			return
 		case <-time.After(3 * time.Second):
 		}
@@ -233,7 +242,7 @@ func (p *Process) stop(t testing.TB, sig os.Signal) {
 		// final wait if the kernel takes its time reaping.
 		_ = p.cmd.Process.Kill()
 		select {
-		case <-p.done:
+		case <-p.exited:
 		case <-time.After(p.cmd.WaitDelay + time.Second):
 			t.Logf("gateway subprocess did not exit after SIGKILL; goroutine leaked")
 		}
@@ -287,12 +296,23 @@ func (p *Process) Logs() string {
 
 // waitReady polls /v1/sessions until the gateway responds (or until
 // the deadline expires). Any 2xx-5xx response means the listener is
-// up; only connection refused is treated as "not ready".
+// up; only connection refused is treated as "not ready". A response
+// counts only once this process holds the REST listener, because another
+// process that took the port would answer the probe while this one exits
+// on its bind refusal. A process that exits ends the wait with
+// ports.ErrAddrInUse when its log records a bind refusal. The wait also
+// returns ports.ErrAddrInUse when another process holds the forward
+// address: the gateway binds it only when it has replica certificate
+// material, but it advertises it to its peers either way.
 func (p *Process) waitReady(d time.Duration) error {
 	deadline := time.Now().Add(d)
 	client := &http.Client{Timeout: 500 * time.Millisecond}
+	addr := strings.TrimPrefix(p.baseURL, "http://")
 	var lastErr error
 	for time.Now().Before(deadline) {
+		if err := p.exitErr(); err != nil {
+			return err
+		}
 		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, p.baseURL+"/v1/sessions", nil)
 		req.Header.Set("X-Lenny-Tenant-ID", "ready-probe")
 		resp, err := client.Do(req)
@@ -303,6 +323,14 @@ func (p *Process) waitReady(d time.Duration) error {
 		}
 		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
+		if ports.Held(p.cmd.Process.Pid, p.forwardAddr) == ports.HolderOther {
+			return fmt.Errorf("another process holds the forward address %s: %w", p.forwardAddr, ports.ErrAddrInUse)
+		}
+		if !ports.Ready(p.cmd.Process.Pid, addr) {
+			lastErr = fmt.Errorf("%s answered, but not from this process", addr)
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
 		return nil
 	}
 	if lastErr == nil {
@@ -311,15 +339,17 @@ func (p *Process) waitReady(d time.Duration) error {
 	return lastErr
 }
 
-// freePort asks the kernel for a port and immediately releases it.
-// Brief race with concurrent processes is acceptable for tier-4
-// tests; production wires a deterministic allocator.
-func freePort() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
+// exitErr returns nil while the process runs. Once it has exited, it returns
+// an error wrapping ports.ErrAddrInUse when the log records a bind refusal,
+// and the exit status otherwise.
+func (p *Process) exitErr() error {
+	select {
+	case <-p.exited:
+	default:
+		return nil
 	}
-	port := l.Addr().(*net.TCPAddr).Port
-	_ = l.Close()
-	return port, nil
+	if ports.LogsAddrInUse([]byte(p.Logs())) {
+		return fmt.Errorf("gateway exited (%v): %w", p.waitErr, ports.ErrAddrInUse)
+	}
+	return fmt.Errorf("gateway exited before it served: %v", p.waitErr)
 }
