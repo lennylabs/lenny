@@ -23,12 +23,14 @@
 - Actions are owner-only for every role. Cross-user termination stays on the admin force-terminate endpoint.
 - A non-owner gets exactly the response for a session that does not exist.
 - One seam: the route wrapper covers every `{id}` route except eval and `/usage`, with no exemption list. The ownership check precedes the §9.2 elicitation triple check (option A).
+- The wrapper reads the row from the replica under the `PrimaryReadBound` timeout, and on any replica error or expiry re-reads it once from the primary. Either read decides alone on a row, a primary miss answers `404`, and a primary error answers `500` (CODE-2 step 4).
 - The MCP `create_session` legacy direct-store fallback and `delegation.Request.UserID` are deleted.
 - 0108's files are not edited. SPEC-4 and part B land after 0108 (checklist S5, S10, and S11).
 
 **Watch out for.**
 
 - `sessionPermissionGranted` returns true for every permission for a role-less single-tenant principal. Reusing it for the read bypass reopens the confidentiality hole. CODE-2 step 2 names the helper to use.
+- The bound on the wrapper's replica `Get` scopes that `Get` only. Applying it to `r.Context()` cuts off the primary re-read and the handler, and dropping it lets a hung read-pool query hold the request (CODE-2 step 4).
 - The permission gate stays outer. A `tenant-viewer` on an action route gets `403`, and only callers that the matrix admits reach the `401` or the `404`. Tests that expect `404` for every non-owner are wrong.
 - Most existing session tests reach sessionserver with no principal or an empty `Subject`, and they get `401` once CODE-1 lands. Sending `X-Lenny-User-ID` fixes only callers behind the auth middleware (TEST-1 item 11).
 - The `attach_session` SSE stream is authorized in `cmd/lenny-gateway/mcpsurface.go`, outside both the route table and the MCP tool handlers. Leaving it out keeps the main MCP read leak open.

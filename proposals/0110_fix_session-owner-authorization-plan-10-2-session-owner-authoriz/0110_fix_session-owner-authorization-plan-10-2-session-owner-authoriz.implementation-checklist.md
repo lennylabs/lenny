@@ -14,7 +14,7 @@
       Tiers 0, 11. Depends on: S1
 - [ ] **S6 · code** — CODE-1 with its TEST-1 item 11 updates. Lands the principal-bound owner on the sessionserver create paths, the client owner-field deletions, and the existing-caller updates.
       Tiers 0, 1, 2, 3, 4, 7a, 8, 9. Depends on: S1
-- [ ] **S7 · code** — CODE-2 with its TEST-1 item 11 updates. Lands the access predicate, the wrapper owner check, and the owner-filtered list.
+- [ ] **S7 · code** — CODE-2 with its TEST-1 item 11 updates. Lands the access predicate, the wrapper owner check with its bounded replica read and primary re-read, the `PrimaryReadBound` helper, and the owner-filtered list.
       Tiers 0, 1, 2, 3, 4, 7a, 8, 9. Depends on: S1, S2, S3, S4, S6
 - [ ] **S8 · code** — CODE-3 with its TEST-1 item 11 updates. Lands the MCP tool and SSE attach ownership checks.
       Tiers 0, 1, 3, 4, 7a, 8, 9. Depends on: S1, S2, S3, S4, S7
