@@ -758,7 +758,7 @@ func (s *Server) cascadeToChildren(ctx context.Context, sess sessionstore.Sessio
 					continue
 				}
 				seen[cur.ID] = true
-				updated, applied := s.cancelCascadedChild(ctx, sess.TenantID, cur)
+				updated, applied := s.cancelNodeGuarded(ctx, sess.TenantID, cur)
 				if applied && s.effectiveCascade(ctx, updated) == session.CascadeCancelAll {
 					next = append(next, cur.ID)
 				}
@@ -787,19 +787,21 @@ func (s *Server) effectiveCascade(ctx context.Context, sess sessionstore.Session
 	return session.CascadeCancelAll
 }
 
-// cancelCascadedChild makes the hook-path terminal write for one descendant
-// the cascade reached and returns the row that write committed and whether
-// it applied. An already-terminal row is skipped: its own cascade ran when it
+// cancelNodeGuarded makes the hook-path terminal write that cancels one
+// delegation node and returns the row that write committed and whether it
+// applied. cascadeToChildren calls it for each descendant it reaches, and the
+// §8.3 BUDGET_KEYS_EXPIRED cleanup calls it for each node of the root's tree.
+// An already-terminal row is skipped: its own terminal pipeline ran when it
 // settled.
 //
-// spec: §7.2, §8.10 — the claim opens before the Update, the write applies
-// only over a non-terminal locked row and records the Terminated fact, and
-// the post-terminal hook (cancel, seal, drain, the terminal events, the
-// archive, and the pod release with the cancelled disposition) runs on a
-// goroutine on a detached context, so one descendant's seal window does not
-// delay the next. A descendant another writer already ended reports false,
-// so its policy is not evaluated and none of its children are queued.
-func (s *Server) cancelCascadedChild(ctx context.Context, tenantID string, cur sessionstore.Session) (sessionstore.Session, bool) {
+// spec: §7.2, §8.10, §8.3 — the claim opens before the Update, the write
+// applies only over a non-terminal locked row and records the Terminated
+// fact, and the post-terminal hook (cancel, seal, drain, the terminal events,
+// the archive, and the pod release with the cancelled disposition) runs on a
+// goroutine on a detached context, so one node's seal window does not delay
+// the next. A node another writer already ended reports false, so the
+// cascade evaluates no policy for it and queues none of its children.
+func (s *Server) cancelNodeGuarded(ctx context.Context, tenantID string, cur sessionstore.Session) (sessionstore.Session, bool) {
 	if session.IsTerminal(cur.State) {
 		return sessionstore.Session{}, false
 	}

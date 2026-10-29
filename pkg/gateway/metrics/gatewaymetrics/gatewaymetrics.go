@@ -137,6 +137,17 @@ func (m *Metrics) IncDelegationLeaseExtension(tenantID, outcome string) {
 	m.delegationLeaseExtension.WithLabelValues(tenantID, outcome).Inc()
 }
 
+// IncDelegationBudgetKeysExpired records one §8.3 BUDGET_KEYS_EXPIRED
+// reservation detection against the §16.1
+// `lenny_delegation_budget_keys_expired_total{pool, tenant_id}` counter. pool
+// is the tree root's §5.2 pool. A nil receiver is a no-op. spec: §16.1, §8.3.
+func (m *Metrics) IncDelegationBudgetKeysExpired(pool, tenantID string) {
+	if m == nil {
+		return
+	}
+	m.delegationBudgetKeysExpired.WithLabelValues(pool, tenantID).Inc()
+}
+
 // IncDelegationBudgetReconstruction records one §11.2 delegation
 // tree budget reconstruction event. `outcome` is `success` (counters
 // restored via the MAX rule) or `irrecoverable` (the tree root was moved

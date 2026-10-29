@@ -645,6 +645,12 @@ type Server struct {
 	// emission. spec: §16.1 catalog; §16.1.1 reason vocabulary. F-11.3.7.
 	incSessionExpiry func(pool, reason string)
 
+	// incDelegationBudgetKeysExpired, when set, increments the §16.1
+	// lenny_delegation_budget_keys_expired_total{pool, tenant_id} counter
+	// once per §8.3 BUDGET_KEYS_EXPIRED reservation detection. Nil drops the
+	// increment. spec: §16.1, §8.3.
+	incDelegationBudgetKeysExpired func(pool, tenantID string)
+
 	// incWarmpoolWarmupFailure, when set, increments the §16.1
 	// lenny_warmpool_warmup_failure_total{error_type} counter for one
 	// warm-pool startup failure. Nil disables the emission. spec: §16.1, §7.3 — F-7.5.9.
@@ -1650,6 +1656,12 @@ type Options struct {
 	// spec: §16.1 catalog; §16.1.1. F-11.3.7.
 	IncSessionExpiry func(pool, reason string)
 
+	// IncDelegationBudgetKeysExpired, when set, increments the §16.1
+	// lenny_delegation_budget_keys_expired_total{pool, tenant_id} counter on
+	// every HandleBudgetKeysExpired call, with the tree root's pool. Nil
+	// drops the increment. spec: §16.1, §8.3.
+	IncDelegationBudgetKeysExpired func(pool, tenantID string)
+
 	// IncWarmpoolWarmupFailure, when set, increments the §16.1
 	// lenny_warmpool_warmup_failure_total{error_type} counter for a
 	// warm-pool startup failure. error_type is the §7.3
@@ -1791,6 +1803,10 @@ func New(store sessionstore.Store, opts Options) *Server {
 		incSessionResumeAttempt:    opts.IncSessionResumeAttempt,
 		incSessionRetry:            opts.IncSessionRetry,
 		incSessionExpiry:           opts.IncSessionExpiry,
+
+		// spec: §16.1, §8.3 — the BUDGET_KEYS_EXPIRED cleanup's detection counter.
+		incDelegationBudgetKeysExpired: opts.IncDelegationBudgetKeysExpired,
+
 		incWarmpoolWarmupFailure:   opts.IncWarmpoolWarmupFailure,
 		incInjectionGateFailClosed: opts.IncInjectionGateFailClosed,
 		uploadTokenTTL:             opts.UploadTokenTTL,

@@ -455,6 +455,9 @@ func (w *gatewayWiring) buildSessionServer(
 		// reason the watchdog resolved (max_idle_time | max_session_age).
 		// F-11.3.7.
 		IncSessionExpiry: gwMetrics.IncSessionExpiry,
+		// spec: §16.1, §8.3 — the BUDGET_KEYS_EXPIRED tree cleanup counts
+		// each reservation detection under the tree root's pool.
+		IncDelegationBudgetKeysExpired: gwMetrics.IncDelegationBudgetKeysExpired,
 		// spec: §16.1, §7.3 — F-7.5.9. Increment the
 		// lenny_warmpool_warmup_failure_total{error_type=setup_command_failed}
 		// counter when a §7.5 setup command fails on the warm-pool side
