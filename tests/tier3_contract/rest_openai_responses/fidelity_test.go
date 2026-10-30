@@ -54,16 +54,22 @@ func readFixture(t *testing.T, rel string) []byte {
 }
 
 // newResponsesServers wires the Open Responses translator and a REST
-// sessionserver against a shared memstore and EchoExecutor.
-func newResponsesServers(t *testing.T, clock func() time.Time, id string) (*httptest.Server, *httptest.Server, sessionstore.Store) {
+// sessionserver against a shared memstore and EchoExecutor. Each POST
+// creates its session under the next id in ids; the last id repeats.
+func newResponsesServers(t *testing.T, clock func() time.Time, ids ...string) (*httptest.Server, *httptest.Server, sessionstore.Store) {
 	t.Helper()
 	store := memstore.New()
 	exec := executor.NewEchoExecutor()
 
+	next := 0
 	respHandler := translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
 		DevTenantHeader: true,
 		Clock:           clock,
-		IDFunc:          func() string { return id },
+		IDFunc: func() string {
+			id := ids[min(next, len(ids)-1)]
+			next++
+			return id
+		},
 	})
 	tsResp := httptest.NewServer(respHandler.Handler())
 	t.Cleanup(tsResp.Close)
@@ -188,7 +194,7 @@ func TestRESTOpenAIResponsesFidelityMatrix(t *testing.T) {
 	}
 }
 
-// spec: §15.2.1
+// spec: §15.2.1, §15 (Open Responses conversation sessions)
 // diagnosis: §15 Translation Fidelity Matrix marks the OpenAI
 // Responses `id` field `[extended]` — top-level output item ids are
 // preserved on the wire and recoverable on ingest. The translator
@@ -209,17 +215,17 @@ func TestRESTOpenAIResponsesIDFieldExtendedBehavior(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	// Top-level id is the session id; the translator stamps the
-	// session row with the same value.
-	if got.ID != "sess_resp_idext" {
-		t.Errorf("response id: got %q, want sess_resp_idext", got.ID)
+	// The top-level id is the response id <session>.1: the session id
+	// before the last ".", and the turn's ordinal after it.
+	if got.ID != "sess_resp_idext.1" {
+		t.Errorf("response id: got %q, want sess_resp_idext.1", got.ID)
 	}
 	row, err := store.Get(context.Background(), "acme", "sess_resp_idext")
 	if err != nil {
 		t.Fatalf("session row: %v", err)
 	}
-	if row.ID != got.ID {
-		t.Errorf("internal id %q does not match wire id %q", row.ID, got.ID)
+	if sessionID, n := splitResponseID(t, got.ID); sessionID != row.ID || n != "1" {
+		t.Errorf("wire id %q does not name session %q ordinal 1", got.ID, row.ID)
 	}
 
 	// Each output item carries an id derived from the response id;
@@ -236,9 +242,13 @@ func TestRESTOpenAIResponsesIDFieldExtendedBehavior(t *testing.T) {
 	}
 
 	// `previous_response_id` carries lineage; the test confirms the
-	// translator passes it through when the request supplies one.
-	withPrev := []byte(`{"model":"gpt-4o","input":"chain","previous_response_id":"resp_parent_42"}`)
-	tsResp2, _, _ := newResponsesServers(t, clock, "sess_resp_lineage")
+	// translator passes it through when the request continues a response
+	// it produced.
+	tsResp2, _, _ := newResponsesServers(t, clock, "sess_resp_parent", "sess_resp_lineage")
+	if parent, rawParent := postJSON(t, tsResp2.URL+"/v1/responses", "acme", body); parent.StatusCode != http.StatusOK {
+		t.Fatalf("parent status: %d, body=%s", parent.StatusCode, rawParent)
+	}
+	withPrev := []byte(`{"model":"gpt-4o","input":"chain","previous_response_id":"sess_resp_parent.1"}`)
 	resp2, raw2 := postJSON(t, tsResp2.URL+"/v1/responses", "acme", withPrev)
 	if resp2.StatusCode != http.StatusOK {
 		t.Fatalf("lineage status: %d, body=%s", resp2.StatusCode, raw2)
@@ -247,7 +257,21 @@ func TestRESTOpenAIResponsesIDFieldExtendedBehavior(t *testing.T) {
 	if err := json.Unmarshal(raw2, &lin); err != nil {
 		t.Fatalf("decode lineage: %v", err)
 	}
-	if lin.PreviousResponseID != "resp_parent_42" {
-		t.Errorf("previous_response_id: got %q, want resp_parent_42", lin.PreviousResponseID)
+	if lin.PreviousResponseID != "sess_resp_parent.1" {
+		t.Errorf("previous_response_id: got %q, want sess_resp_parent.1", lin.PreviousResponseID)
 	}
+	if lin.ID != "sess_resp_lineage.1" {
+		t.Errorf("continuation response id: got %q, want sess_resp_lineage.1", lin.ID)
+	}
+}
+
+// splitResponseID splits a response id on its last "." into the session id
+// and the ordinal text, failing the test when there is no separator.
+func splitResponseID(t *testing.T, id string) (string, string) {
+	t.Helper()
+	i := strings.LastIndex(id, ".")
+	if i <= 0 {
+		t.Fatalf("response id %q has no <session>.<n> separator", id)
+	}
+	return id[:i], id[i+1:]
 }

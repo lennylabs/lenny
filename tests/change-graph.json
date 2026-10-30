@@ -1338,8 +1338,8 @@
     "pkg/gateway/environment/translator": {
       "unit": ["pkg/gateway/environment/translator/..."],
       "contract": ["tests/tier3_contract/rest_openai_chat/...", "tests/tier3_contract/rest_openai_responses/...", "tests/tier3_contract/multiprotocol_journey/..."],
-      "integration": ["tests/tier4_integration/gateway_require_auth_test.go"],
-      "security": ["tests/tier9_security/unauthenticated_tenant_access_test.go"]
+      "integration": ["tests/tier4_integration/gateway_require_auth_test.go", "tests/tier4_integration/openai_cross_tenant_test.go"],
+      "security": ["tests/tier9_security/unauthenticated_tenant_access_test.go", "tests/tier9_security/open_responses_isolation_erasure_test.go"]
     },
     "pkg/gateway/environment/tenantstore/tenantstoretest": {
       "unit": ["pkg/gateway/environment/tenantstore/...", "cmd/lenny-gateway/..."],

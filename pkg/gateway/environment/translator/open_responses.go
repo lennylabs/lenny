@@ -191,11 +191,12 @@ type OpenResponsesOptions struct {
 	ReleaseTimeout time.Duration
 
 	// Transcripts is the §15.1 transcript registry the adapter records each
-	// completed turn into and walks on a continuation to rehydrate the prior
-	// conversation onto the freshly-claimed pod. Pass nil to disable
-	// continuity (the §17.4 in-memory mode and the in-process unit tests):
-	// rehydrate then returns empty prior history and record is a no-op.
-	// spec: §15 built-in adapter single-shot compute model.
+	// turn into and reads on a cold continuation to rehydrate the
+	// conversation context onto the freshly-claimed pod. Pass nil only in
+	// the in-process unit tests: record then appends nothing and returns end
+	// sequence 0, and rehydrate still resolves previous_response_id
+	// fail-closed against the session store but contributes no entries.
+	// spec: §15 (Open Responses conversation sessions).
 	Transcripts transcriptstore.Store
 
 	// DevTenantHeader, when true, lets a request with no authenticated
@@ -237,10 +238,9 @@ func NewOpenResponsesHandler(store sessionstore.Store, exec executor.Executor, o
 		defaultRuntime: rt,
 		binder:         binder,
 		releaseTimeout: releaseTimeout,
-		// The continuity helper is nil-tolerant on its transcripts backing: a
-		// nil Transcripts store makes rehydrate a no-op returning empty prior
-		// history and record a no-op, preserving the in-memory and unit path.
-		// spec: §15 built-in adapter single-shot compute model.
+		// The continuity helper tolerates a nil transcripts backing; response
+		// resolution always reads the session store.
+		// spec: §15 (Open Responses conversation sessions).
 		cont:            &continuity{sessions: store, transcripts: opts.Transcripts},
 		devTenantHeader: opts.DevTenantHeader,
 	}
@@ -331,12 +331,13 @@ func (h *OpenResponsesHandler) handleCreate(w http.ResponseWriter, r *http.Reque
 	}
 
 	// On a continuation, resolve previous_response_id fail-closed and walk its
-	// continuation chain to assemble the prior conversation. The freshly
-	// claimed pod has empty runtime memory, so the prior turns are prepended
-	// ahead of the new turn within the one dispatch below; the runtime then
-	// continues the conversation. An unknown or cross-tenant id maps to a
-	// native 404 with no dispatch (the deferred release still drains the pod).
-	// spec: §15 built-in adapter single-shot compute model; §4.2 session-store tenant isolation.
+	// lineage to assemble the conversation context, each session's transcript
+	// bounded by the named response's end sequence. The freshly claimed pod
+	// has empty runtime memory, so the context is prepended ahead of the new
+	// input within the one dispatch below. An id that names no completed
+	// response of the tenant maps to a native 404 with no dispatch (the
+	// deferred release still drains the pod).
+	// spec: §15 (Open Responses conversation sessions); §4.2 session-store tenant isolation.
 	var prior []executor.Message
 	if req.PreviousResponseID != "" {
 		prior, err = h.cont.rehydrate(r.Context(), tenantID, req.PreviousResponseID)
@@ -360,40 +361,67 @@ func (h *OpenResponsesHandler) handleCreate(w http.ResponseWriter, r *http.Reque
 	}
 	out := sendResp.Parts
 
-	// spec: §7.2, §8.8 — the completion records the Terminated fact in its
-	// own write. It runs no post-terminal hook: the handler's deferred
-	// single-shot release releases the executor.
-	completedAt := h.clock()
-	_, _ = h.store.Update(r.Context(), tenantID, sessionID, func(s *sessionstore.Session) error {
-		from := s.State
-		s.State = session.StateCompleted
-		sessionstore.MarkTerminated(s, from, completedAt)
-		// Persist the continuation lineage only for a continuation; chain-root
-		// rows stay clean so GET echoes an empty previous_response_id.
-		// spec: §15 built-in adapter single-shot compute model.
-		if req.PreviousResponseID != "" {
-			s.ContinuationParentID = req.PreviousResponseID
-		}
-		return nil
-	})
-	disp = executor.DispositionCompleted
-
-	// Record this response's own turn (the new input plus its assistant
-	// output, excluding the rehydrated prior conversation, which stays in the
-	// ancestors' own buckets) on its own session id, unconditionally including
-	// a chain-root turn, so a later continuation can rehydrate it. Best-effort,
-	// matching the canonical §15.1 transcript-write path.
-	// spec: §15.1 session transcript best-effort write.
-	h.cont.record(r.Context(), tenantID, sessionID, msgs, out)
-
-	if req.Stream {
-		writeOpenResponsesStream(w, sessionID, req.PreviousResponseID, now, out)
+	// Record the turn's own input and output on its own session, then
+	// complete the session's first response in one write that carries its
+	// end sequence. The record is required: a response returns only after
+	// both writes, and a failure of either answers a native 500 with the
+	// response left not completed and the pod released with the failed
+	// disposition by the deferred release.
+	// spec: §15 (Open Responses conversation sessions).
+	endSeq, err := h.cont.record(r.Context(), tenantID, sessionID, msgs, out)
+	if err != nil {
+		writeOpenAIError(w, http.StatusInternalServerError, "server_error",
+			fmt.Sprintf("transcript record failed: %v", err))
 		return
 	}
-	resp := buildOpenResponsesResponse(sessionID, runtimeRef, req.PreviousResponseID, now, out)
+	if err := h.commitFirstResponse(r, tenantID, sessionID, req.PreviousResponseID, now, endSeq); err != nil {
+		writeOpenAIError(w, http.StatusInternalServerError, "server_error",
+			fmt.Sprintf("response completion failed: %v", err))
+		return
+	}
+	disp = executor.DispositionCompleted
+
+	responseID := formatResponseID(sessionID, 1)
+	if req.Stream {
+		writeOpenResponsesStream(w, responseID, req.PreviousResponseID, now, out)
+		return
+	}
+	resp := buildOpenResponsesResponse(responseID, runtimeRef, req.PreviousResponseID, now, out)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// commitFirstResponse completes the session in one write that records its
+// first response as ordinal 1 with the turn's end sequence and the session's
+// current recovery generation, persists the continuation lineage, and writes
+// the completed terminal state with its Terminated fact. It runs no
+// post-terminal hook: the handler's deferred single-shot release releases
+// the executor. The single-shot path never threads previous_response_id into
+// ParentSessionID, which the §8.2 delegated-child lease machinery owns.
+// spec: §15 (Open Responses conversation sessions); §7.2, §8.8 (terminal
+// write); §8.2 delegated-child lease.
+func (h *OpenResponsesHandler) commitFirstResponse(r *http.Request, tenantID, sessionID, prevID string,
+	createdAt time.Time, endSeq uint64,
+) error {
+	completedAt := h.clock()
+	_, err := h.store.Update(r.Context(), tenantID, sessionID, func(s *sessionstore.Session) error {
+		from := s.State
+		s.State = session.StateCompleted
+		sessionstore.MarkTerminated(s, from, completedAt)
+		s.ContinuationParentID = prevID
+		s.Responses = []sessionstore.ConversationResponse{{
+			CreatedAt:          createdAt,
+			EndSeq:             endSeq,
+			RecoveryGeneration: s.RecoveryGeneration,
+			Completed:          true,
+		}}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("commit response on session %s: %w", sessionID, err)
+	}
+	return nil
 }
 
 // writeOpenResponsesStream emits the Open Responses streaming form —
@@ -454,42 +482,39 @@ func writeOpenResponsesStream(w http.ResponseWriter, id, prev string, now time.T
 	})
 }
 
+// handleGet answers GET /v1/responses/{id} with a completed response of a
+// session in the caller's tenant. The id resolves through the same step a
+// continuation's previous_response_id resolves through, so an id that names
+// no completed response the caller can read (malformed, unknown,
+// cross-tenant, past the newest ordinal, or not completed) answers the
+// native 404. previous_response_id echoes the preceding ordinal on the same
+// session, or, for ordinal 1, the response the session's first turn
+// continued from.
+// spec: §15 (Open Responses conversation sessions); §4.2 (session-store
+// tenant isolation).
 func (h *OpenResponsesHandler) handleGet(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := resolveTenant(r, h.devTenantHeader)
 	if !ok {
 		writeUnauthenticated(w)
 		return
 	}
-	id := r.PathValue("id")
-	row, err := h.store.Get(r.Context(), tenantID, id)
+	row, n, err := h.cont.resolve(r.Context(), tenantID, r.PathValue("id"))
 	if err != nil {
-		if errors.Is(err, sessionstore.ErrNotFound) {
+		if errors.Is(err, errContinuationNotFound) {
 			writeOpenAIError(w, http.StatusNotFound, "not_found_error", "response not found")
 			return
 		}
 		writeOpenAIError(w, http.StatusInternalServerError, "server_error", err.Error())
 		return
 	}
-	// Minimal envelope — the gateway does not yet persist the raw
-	// model output, so the response carries metadata only.
-	resp := OpenResponsesResponse{
-		ID:                 row.ID,
-		Object:             "response",
-		CreatedAt:          row.CreatedAt.Unix(),
-		Status:             mapStateToResponsesStatus(row.State),
-		Model:              row.RuntimeRef,
-		PreviousResponseID: row.ContinuationParentID,
-		Output:             nil,
-		Error:              nil,
-		IncompleteDetails:  nil,
-		Instructions:       nil,
-		Tools:              []OpenResponsesTool{},
-		ParallelToolCalls:  true,
-		Metadata:           map[string]string{},
-		ToolChoice:         "auto",
-		Temperature:        1,
-		TopP:               1,
+	prev := row.ContinuationParentID
+	if n > 1 {
+		prev = formatResponseID(row.ID, n-1)
 	}
+	// The gateway does not persist the raw model output, so the response
+	// carries metadata only.
+	resp := buildOpenResponsesResponse(formatResponseID(row.ID, n), row.RuntimeRef, prev,
+		row.Responses[n-1].CreatedAt, nil)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }
@@ -564,21 +589,4 @@ func buildOpenResponsesResponse(id, model, prev string, now time.Time, out []exe
 		resp.Output = append(resp.Output, item)
 	}
 	return resp
-}
-
-func mapStateToResponsesStatus(s session.State) string {
-	switch s {
-	case session.StateCompleted:
-		return "completed"
-	case session.StateFailed:
-		return "failed"
-	case session.StateCancelled:
-		return "cancelled"
-	// spec: §7.2 (Session state machine) — input_required is a sub-state of
-	// running and maps as running does.
-	case session.StateRunning, session.StateInputRequired, session.StateStarting:
-		return "in_progress"
-	default:
-		return "queued"
-	}
 }

@@ -194,7 +194,8 @@
         "pkg/gateway/sessionserver/start_pod_test.go",
         "tests/tier2_component/migrations/prod_columns_test.go",
         "pkg/gateway/sessionserver/slot_holder_predicate_internal_test.go",
-        "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreeFiledDefectsAreConfirmed_spec_8_10"
+        "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreeFiledDefectsAreConfirmed_spec_8_10",
+        "tests/tier9_security/open_responses_isolation_erasure_test.go"
       ],
       "packages": [
         "pkg/session",
@@ -2549,7 +2550,7 @@
         "pkg/api/v1/session/session_test.go::TestValidateInterruptAdmitsRunning_spec_7_2",
         "pkg/api/v1/session/session_test.go::TestUploadAndStaleDeriveKeepRefusingInputRequired_spec_15_1",
         "pkg/gateway/checkpoint/checkpointer/freshness_test.go::TestFreshnessReaperCountsInputRequiredSessions_spec_4_4",
-        "pkg/gateway/environment/translator/open_responses_test.go::TestOpenResponsesInputRequiredIsInProgress_spec_7_2",
+        "pkg/gateway/environment/translator/open_responses_test.go::TestOpenResponsesGetInProgressTurnIs404_spec_15",
         "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestRecoveryRestoresStaleRowOnFirstCall_spec_28_3",
         "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestRecoveryRepointsToPendingPersistedWait_spec_28_3",
         "pkg/gateway/gatewaycontrol/inputwaitrecovery/recovery_test.go::TestRecoverySupersededRows_spec_28_3",
@@ -4934,7 +4935,9 @@
         "pkg/gateway/sessionserver/derive_test.go::TestDeriveAndReplayCreateRoots_spec_12_6",
         "tests/testinfra/lifecyclefence/paths_test.go::TestDeriveFailureRowFencedBySourceIsSourceGone_spec_7_1",
         "tests/testinfra/lifecyclefence/paths_test.go::TestFailureRowOutcomeKeepsOtherErrors_spec_12_8",
-        "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreeParentFreshnessClosesOnTheCreationFence_spec_8_10"
+        "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreeParentFreshnessClosesOnTheCreationFence_spec_8_10",
+        "pkg/gateway/environment/translator/continuity_test.go::TestContinuityRehydrateErasedTranscriptContributesNothing_spec_12_8",
+        "tests/tier9_security/open_responses_isolation_erasure_test.go"
       ],
       "packages": [
         "pkg/store",
@@ -5620,7 +5623,7 @@
         "tests/tier5_e2e_kind/openai_conformance_test.go",
         "tests/tier2_component/translators/openai_singleshot_lifecycle_test.go",
         "tests/tier4_integration/delegation_child_materialization_test.go",
-        "pkg/gateway/environment/translator/open_responses_test.go::TestOpenResponsesInputRequiredIsInProgress_spec_7_2",
+        "pkg/gateway/environment/translator/open_responses_test.go::TestOpenResponsesGetInProgressTurnIs404_spec_15",
         "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardedResponsesTurnAtANonHolderIsNotDeliveredInAnyState_spec_29_3",
         "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardedResponsesTurnAtTheHolderRunsLocally_spec_29_3",
         "pkg/gateway/sessionserver/holder_forward_test.go::TestUnforwardedResponsesTurn_spec_29_3",
@@ -5628,7 +5631,15 @@
         "pkg/gateway/sessionserver/holder_forward_sites_test.go::TestForwardedCreateAndStartKeepsTheAdmissionRateLimit_spec_29_3",
         "cmd/lenny-gateway/holder_forward_wiring_test.go::TestHolderForwardInnerRoutesOnlyTheResponsesCreate_spec_29_3",
         "tests/tier4_integration/holder_forward_responses_test.go::TestOffHolderResponsesTurnIsServedOnTheHoldersPod_spec_29_3",
-        "tests/tier4_integration/holder_forward_responses_test.go::TestUndeliveredResponsesTurnFailsClosedInTheNativeEnvelope_spec_29_3"
+        "tests/tier4_integration/holder_forward_responses_test.go::TestUndeliveredResponsesTurnFailsClosedInTheNativeEnvelope_spec_29_3",
+        "pkg/gateway/environment/translator/responseid_test.go",
+        "pkg/gateway/environment/translator/continuity_test.go",
+        "pkg/gateway/environment/translator/open_responses_test.go",
+        "tests/tier3_contract/rest_openai_responses/fidelity_test.go",
+        "tests/tier3_contract/rest_openai_responses/response_identity_test.go",
+        "tests/tier4_integration/openai_cross_tenant_test.go",
+        "tests/tier4_integration/multi_protocol_same_deployment_test.go",
+        "tests/tier9_security/open_responses_isolation_erasure_test.go"
       ],
       "packages": [
         "pkg/api/v1/session",
