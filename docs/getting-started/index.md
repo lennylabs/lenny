@@ -8,19 +8,19 @@ description: Quickstart, core concepts, and architecture overview — the right 
 
 # Getting Started with Lenny
 
-Lenny runs interactive AI agent sessions in isolated sandboxes on your own Kubernetes cluster. Your clients talk to a single gateway; each session gets its own pod with a fresh workspace and leased credentials. The agent itself can be anything from Anthropic's Claude Code CLI to a LangGraph graph to a custom program -- a catalog of ready-to-use ones ships with every install, and the [Runtime Author Guide](../runtime-author-guide/) covers building your own.
+Lenny runs interactive AI agent sessions in isolated sandboxes on your own Kubernetes cluster. Clients talk to a single gateway; each session gets its own pod with a fresh workspace and leased credentials. The agent itself can be anything from Anthropic's Claude Code CLI to a LangGraph graph to a custom program. A reference runtime catalog defines runtimes for common agents, and the [Runtime Author Guide](../runtime-author-guide/) covers building your own.
 
 ---
 
 ## Start here
 
-Three pages, in order. Together they take less than an hour and leave you with a working local install.
+Read the following pages in order. Together they take less than an hour and leave you with a working local install.
 
-| Page | What you'll do | Time |
-|------|----------------|------|
-| [Quickstart](quickstart.html) | Install the CLI, start the embedded stack with `lenny up`, open a chat session, try a coding agent, and explore the web playground | ~5 minutes |
-| [Core Concepts](concepts.html) | Learn the vocabulary: sessions, runtimes, pools, the gateway, delegation, workspaces, tenants, and credentials | ~20 minutes |
-| [Architecture Overview](architecture.html) | Component diagram, request flow, where state lives, and the trust boundaries between pods, the gateway, and your clients | ~15 minutes |
+| Page | Contents | Time |
+|------|----------|------|
+| [Quickstart](quickstart.html) | Install the CLI, start the embedded stack with `lenny up`, run a session against the `echo` runtime, and open the web playground | ~5 minutes |
+| [Core Concepts](concepts.html) | The vocabulary: sessions, runtimes, pools, the gateway, delegation, workspaces, tenants, and credentials | ~20 minutes |
+| [Architecture Overview](architecture.html) | Component diagram, request flow, where state lives, and the trust boundaries between pods, the gateway, and clients | ~15 minutes |
 
 ---
 
@@ -28,9 +28,9 @@ Three pages, in order. Together they take less than an hour and leave you with a
 
 After the Quickstart, continue based on your role. The short next-steps map below picks up where the [home-page persona grid](../) left off.
 
-| If you are… | Next | Why |
+| Role | Next | Why |
 |:--|:--|:--|
-| **Building an agent** | [Runtime Author Guide](../runtime-author-guide/) | Three integration levels, the adapter protocol, and the Go/Python/TypeScript SDKs. Scaffold first with `lenny runtime init`. |
+| **Building an agent** | [Runtime Author Guide](../runtime-author-guide/) | The integration levels, the adapter protocol, and the Go/Python/TypeScript SDKs. Scaffold first with `lenny runtime init`. |
 | **Deploying to a cluster** | [Operator Guide](../operator-guide/) | The install wizard, configuration reference, `lenny-ctl doctor --fix`, capacity planning, production hardening. |
 | **Calling Lenny from code** | [Client Guide](../client-guide/) | REST, MCP, OpenAI, Open Responses. Start with Authentication and Session Lifecycle, then pick your protocol. |
 | **On call for Lenny** | [Agent Operability](../operator-guide/agent-operability) | Diagnostic endpoints, runbook catalog, drift detection, backup/restore. Then [Runbooks](../runbooks/). |
