@@ -3424,7 +3424,12 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   fixes no order against 0107 or 0108; 0107 also edits `derive.go` and `replay.go`, so whichever of 0107 and
   0109 lands second locates its `derive.go` targets by symbol and quoted text, and 0108 shares no code file with it.
   Its unstaged defects are filed below, in the block for proposal 0109. The next change-proposal run is the
-  session-owner authorization proposal below, drafting as 0110.
+  session-owner authorization proposal below, drafting as 0110. Position (2026-10-30): implemented on
+  `impl/0109-snapshot-restore` after 0086's and 0107's implementations merged, with the spec edits in
+  `7796a11aa` to `d72ed6c96` and the code, tests, and docs in `5af14a3e5` to `990cffb30`. Its records step
+  closed F-7.1.34 (restore half) and F-7.1.33 in BUILD-GAPS, corrected F-7.1.34's stale replay evidence,
+  left F-4.5.21 open, and annotated each unstaged-defect entry below in place; the branch awaits its final
+  gate and merge into this branch.
 - [x] **Session-owner authorization proposal (F-15.1.55 High, F-10.2.30, F-15.1.54)**
   (`proposals/0110_fix_session-owner-authorization-plan-10-2-session-owner-authoriz/`): approved 2026-10-29 as
   proposal 0110, merge `05ed531a5`. A session's owner is the creating principal's subject on every create
@@ -4025,9 +4030,10 @@ F-10.1.36 was already tracked and keeps its routing. F-5.2.57 and F-7.2.43 named
 stages neither, so F-7.2.43 is queued here and F-5.2.57 is re-routed in the 0100 block above.
 
 - Direct-fix queue, unblocked by 0105's implementation, which edited the same files.
-  - [ ] **F-7.1.34** (High; copy half merged `3be845f0b` 2026-10-29, restore half routed to the snapshot-restore
+  - [x] **F-7.1.34** (High; copy half merged `3be845f0b` 2026-10-29, restore half routed to the snapshot-restore
     proposal queued ahead of 0077): no bind path restores a derived or replayed session's copied workspace snapshot,
-    so the session starts without its source's workspace, and a replay copies no snapshot at all. §7.1 and
+    so the session starts without its source's workspace. (Corrected 2026-10-30: this lead first also said that
+    a replay copies no snapshot at all, which the copy half made untrue.) §7.1 and
     §15.1 already state that the snapshot is the starting workspace. Copy the replay snapshot as derive does,
     carry `WorkspaceSnapshot` through every bind path that binds a `created` row, and restore it before the
     plan's sources. It lands after 0105's implementation, which edits the sessionserver start and finalize
@@ -4037,7 +4043,9 @@ stages neither, so F-7.2.43 is queued here and F-5.2.57 is re-routed in the 0100
     stays open and leaves this queue: it needs an adapter contract change (a chunk field on
     `FinalizeWorkspaceRequest`) that no specification section states, so it moves to F-7.1.33's proposal
     below. F-4.5.24 (Low, direct fix) was filed from the same work. The restore half is owned by proposal 0109
-    (approved 2026-10-29, merge `bad91fe31`), whose REC-1 closes this entry.
+    (approved 2026-10-29, merge `bad91fe31`), whose REC-1 closes this entry. Closed 2026-10-30 by 0109's
+    implementation on `impl/0109-snapshot-restore`: the restore lands on `FinalizeWorkspaceRequest.restore_chunks`
+    at the first bind, before the plan's sources, and fails the bind closed.
   - [x] **F-11.3.45** (Low) and **F-11.3.46** (Low), one fix: every replica sends its own
     `session_expiring_soon` and `DEADLINE_APPROACHING` for a session, because the warning's dedup set is per
     process, and the warning is sent from the listing without a re-read, so it can follow a terminal write.
@@ -4185,7 +4193,7 @@ D2), which stays with the upload route proposal.
     and `PodSpec.WorkspacePlan` with the Sandbox `spec.workspacePlan` field, after 0086's S2 removes both
     from the specification.
 - Proposal routing.
-  - [ ] Its own proposal, after 0086's implementation: **F-7.1.33** (Medium, the specification does not state
+  - [x] Its own proposal, after 0086's implementation: **F-7.1.33** (Medium, the specification does not state
     how a derived or replayed session's copied snapshot composes with the plan it binds at finalize). The
     missing restore was split out on 2026-10-29 as F-7.1.34, a direct fix in the 0105 direct-fix queue.
     F-4.5.21 can ride with it. F-7.1.34's restore half (High) joins this proposal: the specification names no
@@ -4194,7 +4202,9 @@ D2), which stays with the upload route proposal.
     `resolveResumeChunks`, restored before the plan's sources) along with the colliding-path order. This
     proposal is 0109 (approved 2026-10-29, merge `bad91fe31`), which closes F-7.1.33 and the F-7.1.34 restore
     half at its REC-1 and leaves F-4.5.21 with the text corrections. It mints grants through
-    `Resolver.Resolve` rather than `resolveResumeChunks`, so the restore fails closed.
+    `Resolver.Resolve` rather than `resolveResumeChunks`, so the restore fails closed. Closed 2026-10-30 by
+    0109's implementation: the snapshot is the first tier of the §5.1 materialization order, and the bound
+    plan's `sources` array applies over it under §14.1 last-writer-wins.
   - [x] Direct fix: **F-4.5.24** (Low, the memory and filesystem blob stores expire a copied checkpoint chunk
     at once, because the chunk copy sets no TTL). Done on 2026-10-29 (`fix/direct-batch-2`): a copy whose
     destination names no TTL keeps the source's TTL from the copy's write, on both stores, and the derive and
@@ -4285,11 +4295,13 @@ filing a duplicate.
 - Not filed: none. Every listed defect is filed or annotated.
 
 **Defects filed from proposal 0109's unstaged-defect list (2026-10-29).** Proposal 0109 (snapshot restore at
-bind, approved 2026-10-29, merge `bad91fe31`, implementation pending) lists defects in the shipped tree that it
-does not stage. Its REC-1 files them at implementation; they are filed now, because no defect is dropped, and
-each new or annotated BUILD-GAPS entry says 0109's REC-1 updates the entry rather than filing a duplicate. Each
-was re-confirmed against the tree at `bad91fe31`. 0109's REC-1 closes F-7.1.34 (restore half) and F-7.1.33,
-whose owner lines now name proposal 0109 with their checklist steps.
+bind, approved 2026-10-29, merge `bad91fe31`, implemented 2026-10-30 on `impl/0109-snapshot-restore`) lists
+defects in the shipped tree that it does not stage. Its REC-1 files them at implementation; they were filed on
+2026-10-29, because no defect is dropped, and each new or annotated BUILD-GAPS entry says 0109's REC-1 updates
+the entry rather than filing a duplicate. Each was re-confirmed against the tree at `bad91fe31`. 0109's REC-1
+closed F-7.1.34 (restore half) and F-7.1.33 on 2026-10-30, re-confirmed F-7.1.36, F-15.1.63, F-7.3.36,
+F-5.2.63, and F-4.5.21 against the tree at `990cffb30`, and annotated each of those entries in place rather
+than filing a duplicate. F-10.1.45 was already closed and needed no record.
 
 - Direct-fix queue, after 0109's implementation, whose CODE-4 and CODE-5 edit `bind_request.go` and
   `derive.go`, and after 0107's, which edits `derive.go` and `replay.go`.
