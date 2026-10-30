@@ -697,3 +697,9 @@ DECISION: resolved open decision 3 "Setup-window failures on `/start`." by widen
 
 ### [f2.other-proposals]
 DECISION: impact-row for the 0109 docs overlap. Appended to the summary's **Impacts on other proposals** row 0109: the effect cell now records that 0111 DOCS-1 and 0109 DOC-1 edit different sentences of the concepts.md **Gateway-mediated file delivery** paragraph and compose, and the action cell asks whichever lands second to keep the "Checkpoint chunk objects are the one exception" sentence consistent with the DOCS-1 repository-store fill. No checklist change. Authority: docs/getting-started/concepts.md:432; proposals/0109_fix_a-derived-or-replayed-session-starts-without-its-source/0109_fix_a-derived-or-replayed-session-starts-without-its-source.non-spec-changes.md:143 and :161; 0111 non-spec-changes.md:160 (DOCS-1); 0109 status.md:5,10 (Approved, 2026-10-29).
+
+### [orchestrator.decisions-2026-10-30]
+
+- DECISION (owner, 2026-10-30): private repositories are in v1. Tenant-owned warm pools exist only where a Runtime caches a private repository. The fill uses the owning tenant's existing VCS credential pool through a credential lease. Gateway mirrors are keyed by (tenant, url) for private repositories and by url for public ones.
+- DECISION (owner, 2026-10-30): a built-in generic `git-https` credential provider (username plus token or password from a secretRef) is added in this proposal, so any HTTPS git host works on the cold and warm paths. SSH stays deferred.
+- DECISION (orchestrator under delegation, 2026-10-30): widen the §6.2 `/start` clause; render the fill timeout from a controller-wide chart value; add the capture-failure edge row; on derive or replay onto a Runtime that does not name the repository, fall back to the cold clone rather than failing.
