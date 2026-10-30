@@ -69,17 +69,6 @@ func copyServer(f *fenceFixture, blobs blobstore.Store, ids []string, opts ...fu
 	return sessionserver.New(f.store, o).Handler()
 }
 
-// readWorkspace downloads id's workspace through GET /v1/sessions/{id}/workspace.
-func readWorkspace(t *testing.T, h http.Handler, id string) (int, string) {
-	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/"+id+"/workspace", nil)
-	req.Header.Set("X-Lenny-Tenant-ID", "acme")
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
-	body, _ := io.ReadAll(rr.Body)
-	return rr.Code, string(body)
-}
-
 // chunkCopyStore is a blob store that copies and erases by session: the
 // in-memory and filesystem stores both qualify.
 type chunkCopyStore interface {
