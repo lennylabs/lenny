@@ -43,6 +43,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
@@ -628,6 +629,12 @@ func TestCorruptDerivedChunkFailsTheStartAfterTheSlotRetry_spec_7_1(t *testing.T
 		if o.URI.PartID < first.URI.PartID {
 			first = o
 		}
+	}
+	// The blob store is write-once (§4.5), so the in-place overwrite removes
+	// the derived chunk-0 object before writing same-length non-gzip bytes
+	// at the same key.
+	if err := f.store.HardDeleteObject(resumechunks.ChunkObjectURI(lifecycleharness.Tenant, id, derivedCk, 0, partialmanifeststore.ChunkEncodingTarGz)); err != nil {
+		t.Fatalf("remove derived chunk 0 before overwrite: %v", err)
 	}
 	junk := bytes.Repeat([]byte{'x'}, int(first.Size))
 	putChunk(t, f.store, lifecycleharness.Tenant, id, derivedCk, 0, partialmanifeststore.ChunkEncodingTarGz, junk)
