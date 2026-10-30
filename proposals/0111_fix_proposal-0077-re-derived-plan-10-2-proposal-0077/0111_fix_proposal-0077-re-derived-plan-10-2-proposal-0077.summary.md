@@ -112,9 +112,7 @@
 
 ## Open decisions for human to make
 
-The decisions reached on 2026-10-30 under the owner's standing delegation are staged in the change files, and the review log records them. One decision remains open.
-
-1. **A credential pool `secretRef` that names a namespace other than the release namespace.** Under §4.9 **RBAC for the Token Service.** (SPEC-8 Edit (l)), rule 1 reads a two-segment `secretRef` (`<namespace>/<name>`) as naming any namespace, and rule 2 fails the chart render when a ref names a namespace other than the release namespace. The question is what the admin API does when a `tenant-admin` writes a credential pool or credential whose `secretRef` names another namespace. Option A, which the proposal stages: the admin live probe answers `DENIED`, the API refuses the write with a 422 whose remediation points at `tokenService.credentialSecretRefs`, and an operator who follows that remediation gets a `helm upgrade` render failure that names the ref. No grant is ever made, so the path fails closed, but the 422 gives a remediation that cannot succeed. Option B: the admin handlers reject such a ref with 400 `VALIDATION_ERROR` by comparing it against the gateway's `POD_NAMESPACE`. Option B costs a rule 1 clause, one new gateway input, and a TEST-1 item 40 row. The spec loop staged option A as the default and derived no recommendation between the two. The open-decisions-and-impact-review phase supplies one.
+The decisions reached on 2026-10-30 under the owner's standing delegation are staged in the change files, and the review log records them. No decision remains open.
 
 ## Defects in the shipped tree that this proposal does not stage
 
