@@ -96,7 +96,7 @@
 
 ## Open decisions for human to make
 
-The earlier decision on keeping the credentials namespace credential-only was decided on 2026-10-30 by the orchestrator under the owner's standing delegation. The staged chart guards stay: the render guard against the release and agent namespaces, and the `pods: "0"` quota. The operator obligation stays documented. One decision remains open.
+One decision remains open.
 
 1. **Operator-run listing of stray Secrets in the credentials namespace.** Should this proposal add a read-only `lenny-ctl` command that an operator runs under the operator's own Kubernetes credentials to list the Secrets in the credentials namespace that no credential pool references and that Lenny did not write? The review established the following ground. A check run by Lenny, such as the preflight Job, cannot perform this listing: listing Secrets needs `list` on `secrets`, a Secret list returns the stored values, and RBAC cannot restrict the list to metadata, so the grant would give a third Lenny identity every tenant's credential values, against the staged rule that only the Token Service reads and only the gateway writes in that namespace. A command run under the operator's own credentials is the only form compatible with that rule. It is not staged. Adding it needs a §24.2 command row, a §17.6 statement that departs from the existing rule that the CLI runs the same checks as the preflight Job, code, a tier 9 test, and docs. The spec loop rejected this command as the replacement for the dropped preflight check for that same reason, and it judged the proposal complete without the command. The loop derived no recommendation on whether to add it; the open-decisions-and-impact-review phase supplies one.
 
