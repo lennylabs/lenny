@@ -1507,7 +1507,7 @@ with the endpoint stated in its card describes the connection.
 - **Messages.** The forwarded request and its response, as
   [§29.3](29_communication-scenarios.md#293-interactive-message-send) **Forwarding.** rule 2 states, in the
   request and response formats of the route forwarded
-  ([§15.1](15_external-api-surface.md#151-rest-api), [§15.2](15_external-api-surface.md#152-mcp-api)).
+  ([§15](15_external-api-surface.md#15-external-api-surface), [§15.1](15_external-api-surface.md#151-rest-api), [§15.2](15_external-api-surface.md#152-mcp-api)).
 - **Preconditions.** [§29.3](29_communication-scenarios.md#293-interactive-message-send) **Forwarding.**
   rule 1 states when a replica forwards, and rules 3 and 4 state what the coordinator applies to a forwarded
   request. A replica forwards only when it holds the gateway replica certificate material
