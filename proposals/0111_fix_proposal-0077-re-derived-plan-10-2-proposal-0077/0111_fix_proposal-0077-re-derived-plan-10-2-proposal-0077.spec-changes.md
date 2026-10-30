@@ -2,14 +2,16 @@
 
 ## Design (as the spec must state it)
 
-The specification states the mechanism in four homes, and every other site cites one of them.
+The specification states the mechanism in the homes below, and every other site cites one of them.
 
 - **§6.4 Repository stores.** (SPEC-2) owns the `gitRepository` shared-asset entry: its fields, the url normalization, the warm fill before ready, the warm-fill failure mode, store immutability, and scrub survival.
+- **§6.4 Private repository stores.** (SPEC-2 Edit (c)) owns the private entry: its declaration, the owning tenant, the claim rule, and the mirror key and credential.
 - **§4.7.1 `FetchGitPack`** (SPEC-5) owns the RPC contract: authorization, ref resolution, the pack the gateway returns for a ref, for a commit with usable haves, and for a commit without them, and the bound that decides between a delta pack and a shallow pack.
 - **§14 Cache-served `gitClone` sources.** (SPEC-3) owns the session half as numbered rules: eligibility (rule 1), tree validation and the materialization bound (rule 2), slot-repository construction (rule 3), the worktree prohibition (rule 4), the capture copy (rule 5), and restore completion (rule 6).
 - **§13.4** (SPEC-4) owns the scoped exception that lets the adapter run local git on a gateway-produced pack and on an agent-written slot repository, with pointers in §7.4 and §2.
+- **§4.9 Credential Pool** (SPEC-8) owns VCS credential binding: the **`hostPatterns`** rules and the **`git-https` credentials.** paragraph. §14 `gitClone.auth`, §15.1, §26.2, and §26.3 cite it.
 
-SPEC-1 adds the entry type to the §5.1 Runtime example and merge table. SPEC-6 adds the `workspace_size_limit` reason to `UPLOAD_ARCHIVE_LIMIT_EXCEEDED`. SPEC-7 adds two gateway-emitted metrics.
+SPEC-1 adds the entry type to the §5.1 Runtime example and merge table. SPEC-6 adds the `workspace_size_limit` reason to `UPLOAD_ARCHIVE_LIMIT_EXCEEDED`. SPEC-7 adds two gateway-emitted metrics. SPEC-9 adds the pool owning tenant to the §4.2 scoping table and the §5.2 pool dimensions.
 
 The gateway performs every git network operation for a cache-served source. The pod runs only local git, under the §13.4 exception. Default `restricted` egress, the base NetworkPolicy, and the §14 gateway-clone sentence remain true and are not edited.
 
@@ -23,10 +25,17 @@ Each case cites the rule that owns it.
 - **A tree exceeds the materialization bound.** The workspace materialization fails with `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` and `details.reason: workspace_size_limit` (§14 rule 2).
 - **A session commit reuses a blob that only the store holds** (a revert, or a cherry-pick by SHA). The capture copy moves the object into the slot (§14 rule 5).
 - **A commit lands between the first capture copy and the archive on a runtime that is not paused.** The second copy covers it, and restore's connectivity check fails the resume for any object still missing (§14 rules 5 and 6).
+- **Agent-written slot content that the §13.4 exception rejects.** The capture or the resume fails (§13.4 exception).
 - **A checkpoint restores onto a pod whose store is at a different commit or absent.** Restore completion repoints or removes alternates and fetches `lenny.baseCommit`. When that pack is shallow, a repository whose refs, reflogs, or index reach an ancestor of `lenny.baseCommit`, as an amend or a reset of the pinned commit leaves, fails the resume (§14 rule 6).
+- **A derive or replay lands on a Runtime that does not name a restored repository's url.** Restore completion's fetch is authorized through the session's `parent_workspace_ref` (§4.7.1 `FetchGitPack`).
 - **A restore's pack would exceed `workspaceSizeLimitBytes`.** The resume fails (§14 rule 6).
 - **A shallow slot repository.** A slot built from the shallow pack has no history before `resolvedCommitSha`. Git operations that walk earlier history (`git log` past the pin, `merge-base` with older commits) see a shallow repository. This is accepted for the first version.
 - **Embedded adapter mode.** `/workspace/shared/` is writable by the single container, so store immutability rests on that container writing nothing after population (§6.4 **Repository stores.**).
+- **The owning tenant's VCS credential is revoked, removed, or rebound.** Every later operation on the private mirror key is refused (§6.4 **Private repository stores.** rule 4). A fill takes `failed`, a materialization fails, and a restore completion that must fetch fails the resume. Pods that already hold a store are not recycled.
+- **A CRD apply gives a Runtime a private entry while a pool lacks `ownerTenantId`.** The mirror path does not check the Runtime against its pools (§6.4 **Private repository stores.** rule 2), and `FetchGitPack` refuses the fill (§4.7.1), so no pod of that pool reaches ready.
+- **The git host revokes the tenant's access while its Lenny credential stays valid.** New sessions fail the authenticated ref pinning at creation (§14). A commit already in the mirror stays servable to the owning tenant's existing sessions.
+- **A `github` pool and a `git-https` pool both match a host.** Session creation and `lenny/vcs_token` fail with `GIT_CLONE_AUTH_HOST_AMBIGUOUS` (§4.9 **`hostPatterns`** rule 2).
+- **A `gitClone` source names `vcs.github.read` for a host only a `git-https` pool matches.** Session creation fails with `GIT_CLONE_AUTH_UNSUPPORTED_HOST` (§4.9 **`hostPatterns`** rule 3).
 
 ## Staged edits
 
@@ -47,7 +56,7 @@ sharedAssets:  # files and repository stores populated into /workspace/shared/ (
 **Edit (b), same code block.** Insert after the `type: inline` entry (after the line `    content: '{"version": 1}'`) and before `labels:`:
 
 ```yaml
-  - type: gitRepository  # public HTTPS repository held as a read-only bare git object store; see §6.4
+  - type: gitRepository  # HTTPS repository held as a read-only bare git object store; see §6.4
     url: "https://github.com/acme/monorepo.git"
     gitRef: main
     destPath: git/monorepo/
@@ -78,7 +87,18 @@ a list of artifact references, inline file specs, and repository stores (**Repos
 **Edit (b), new paragraph.** Insert directly after the paragraph that begins "**`/workspace/shared/` population and enforcement.**":
 
 ```markdown
-**Repository stores.** A `sharedAssets` entry of `type: gitRepository` names an HTTPS repository `url`, under the `^https://` rule that applies to `gitClone.url` ([Section 14](14_workspace-plan-schema.md#14-workspace-plan-schema)), a `gitRef` (a branch or tag name; registration rejects a `gitRef` that matches `^[0-9a-f]{40}$`), and a `destPath`. The entry carries no credential, and the gateway fetches the repository without one. Wherever the platform compares repository URLs, it compares them after normalization: the scheme and host are lowercased, then one trailing `/` and then one trailing `.git` are removed from the path. After the adapter connects to the gateway and before the pod reports ready, the adapter populates `/workspace/shared/{destPath}` with a bare git repository. It builds the repository from the commit and pack that `FetchGitPack` ([Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract)) returns for `gitRef`, and it records that commit as the store's only ref. The adapter runs no git network operation. A fill that fails for any reason, including exhaustion of the node-local ephemeral storage that bounds the volume, or that does not complete within the adapter's fill deadline, takes the pod to `failed` on its warm-fill path ([Section 6.2](#62-pod-state-machine)). On a `preConnect` pool the fill runs in `sdk_connecting`, so the `sdk_connecting` watchdog ([Section 6.1](#61-what-a-pre-warmed-pod-looks-like)) also bounds it, and the deployer sets `sdkConnectTimeoutSeconds` to cover the fill. After population the adapter does not fetch into, repack, prune, or otherwise write a store, so a store holds the history of one commit for the life of the pod. In embedded adapter mode the runtime shares the adapter's container and `/workspace/shared/` is writable by that container, so a store's immutability there rests on the container writing nothing after population, as it does for every other shared asset. Neither the per-slot cleanup nor the whole-pod scrub ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) removes a store. [Section 14](14_workspace-plan-schema.md#14-workspace-plan-schema) **Cache-served `gitClone` sources.** states how a session uses a store.
+**Repository stores.** A `sharedAssets` entry of `type: gitRepository` names an HTTPS repository `url`, under the `^https://` rule that applies to `gitClone.url` ([Section 14](14_workspace-plan-schema.md#14-workspace-plan-schema)), a `gitRef` (a branch or tag name; registration rejects a `gitRef` that matches `^[0-9a-f]{40}$`), and a `destPath`. **Private repository stores.** below governs an entry that carries a credential. Wherever the platform compares repository URLs, it compares them after normalization: the scheme and host are lowercased, then one trailing `/` and then one trailing `.git` are removed from the path. After the adapter connects to the gateway and before the pod reports ready, the adapter populates `/workspace/shared/{destPath}` with a bare git repository. It builds the repository from the commit and pack that `FetchGitPack` ([Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract)) returns for `gitRef`, and it records that commit as the store's only ref. The adapter runs no git network operation. A fill that fails for any reason, including exhaustion of the node-local ephemeral storage that bounds the volume, or that does not complete within the adapter's fill deadline, takes the pod to `failed` on its warm-fill path ([Section 6.2](#62-pod-state-machine)). On a `preConnect` pool the fill runs in `sdk_connecting`, so the `sdk_connecting` watchdog ([Section 6.1](#61-what-a-pre-warmed-pod-looks-like)) also bounds it, and the deployer sets `sdkConnectTimeoutSeconds` to cover the fill. After population the adapter does not fetch into, repack, prune, or otherwise write a store, so a store holds the history of one commit for the life of the pod. In embedded adapter mode the runtime shares the adapter's container and `/workspace/shared/` is writable by that container, so a store's immutability there rests on the container writing nothing after population, as it does for every other shared asset. Neither the per-slot cleanup nor the whole-pod scrub ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) removes a store. [Section 14](14_workspace-plan-schema.md#14-workspace-plan-schema) **Cache-served `gitClone` sources.** states how a session uses a store.
+```
+
+**Edit (c), new paragraph.** Insert directly after the **Repository stores.** paragraph:
+
+```markdown
+**Private repository stores.** A `gitRepository` entry that carries `auth` is private, and the following rules govern it and the pools whose Runtime carries one. An entry without `auth` is public.
+
+1. **Declaration.** `auth` takes the form of the `gitClone.auth` object ([Section 14](14_workspace-plan-schema.md#14-workspace-plan-schema)), and registration rejects a `leaseScope` whose access segment is not `read`.
+2. **Owning tenant.** A pool whose Runtime's resolved `sharedAssets` carry a private entry is tenant-owned, and its `ownerTenantId` names an existing tenant. Registration rejects a pool write that omits `ownerTenantId` on such a pool, sets it on any other pool, or changes it after the pool is created. It rejects a `service`-mode pool whose Runtime carries a private entry. It rejects a Runtime write through the admin API or the bootstrap seed ([Section 17.6](17_deployment-topology.md#176-packaging-and-installation)) after which a pool that resolves against that Runtime, or against a Runtime derived from it, breaks this rule. A Runtime applied as a CRD is mirrored without that check, and a pool it leaves without `ownerTenantId` is served no private entry ([Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) `FetchGitPack`). A tenant-owned pool is a pool under its owning tenant for the tenant deletion rule of [Section 15.1](15_external-api-surface.md#151-rest-api).
+3. **Claim.** Pool resolution for a session treats a pool whose `ownerTenantId` is set as absent unless the session's tenant equals it. This holds for a pool the session names and on the resume and re-adoption paths.
+4. **Mirror key and credential.** The gateway keeps one mirror per mirror key. The key is the normalized `url` for a public entry, and the pair of `ownerTenantId` and normalized `url` for a private entry. Before every operation that reads or fetches objects under a private key, including each `FetchGitPack` call ([Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract)) and each [Section 14](14_workspace-plan-schema.md#14-workspace-plan-schema) **Cache-served `gitClone` sources.** rule 2 check, the gateway resolves the entry's `leaseScope` for the owning tenant by the [Section 4.9](04_system-components.md#49-credential-leasing-service) **`hostPatterns`** rules, as it does for an `auth`-bearing `gitClone` source, and refuses the operation when the resolution fails. The resolved credential is used only on the gateway's network path. It is not written to the mirror's configuration and does not reach the pod.
 ```
 
 ### SPEC-3 · spec/14_workspace-plan-schema.md § 14 and § 14.1, spec/26_reference-runtime-catalog.md § 26.2
@@ -122,8 +142,8 @@ Both replacements compose with proposal 0086's SPEC-1 Edits (c) and (d) and SPEC
 ```markdown
 **Cache-served `gitClone` sources.** A Runtime's `gitRepository` shared assets ([Section 6.4](06_warm-pod-model.md#64-pod-filesystem-layout) **Repository stores.**) let a session obtain a large repository from a store on the pod rather than from a gateway clone. The following rules govern a cache-served source.
 
-1. **Eligibility.** A `gitClone` source is cache-served when its normalized `url` equals the normalized `url` of a `gitRepository` entry in the resolved `sharedAssets` of the Runtime of the pod's pool, `auth` is absent, `submodules` is absent or `false`, and `depth` is absent. The gateway decides eligibility when it materializes the source on a pod, from the Runtime's configuration at that moment. Every other `gitClone` source is materialized by the gateway clone this section describes above. The adapter refuses a `gitClone` source that carries `auth`, `depth`, or `submodules: true`, or whose `resolvedCommitSha` does not match `^[0-9a-f]{40}$`.
-2. **Tree validation.** Before the gateway forwards a cache-served source to the adapter, it fetches `resolvedCommitSha` into its mirror of the repository and validates the commit's whole tree, placed under the slot root at the source's `path`. The tree is refused when an entry path fails the [Section 13.4](13_security-model.md#134-upload-security) path-traversal, path-depth, or path-length rule (`path_escapes_root`, `max_path_depth`, `max_path_length`); when an entry is a gitlink or has a mode other than regular file, executable file, directory, or symlink (`non_regular_entry`); or when a symlink fails the [Section 13.4](13_security-model.md#134-upload-security) symlink rule (`symlink`). The tree is also refused when its **materialization bound** exceeds the pool's `workspaceSizeLimitBytes` (`workspace_size_limit`). The materialization bound is the sum, over the tree, of each blob's size rounded up to a multiple of 4 096 bytes, each blob's size again, each tree object's size, and, for each tree entry, 128 bytes plus the byte length of the entry's path. A refusal fails the workspace materialization with `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` and the named `details.reason` ([Section 15.1](15_external-api-surface.md#151-rest-api)). The other [Section 13.4](13_security-model.md#134-upload-security) archive validators do not apply, because no archive is unpacked. A cache-served source that passes this check does not exceed `workspaceSizeLimitBytes` at materialization, because the pack the adapter receives is bounded as [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) `FetchGitPack` states.
+1. **Eligibility.** A `gitClone` source is cache-served when its normalized `url` equals the normalized `url` of a `gitRepository` entry in the resolved `sharedAssets` of the Runtime of the pod's pool, `submodules` is absent or `false`, and `depth` is absent. The gateway decides eligibility when it materializes the source on a pod, from the Runtime's configuration at that moment. Every other `gitClone` source is materialized by the gateway clone this section describes above. The adapter refuses a `gitClone` source that carries `depth` or `submodules: true`, or whose `resolvedCommitSha` does not match `^[0-9a-f]{40}$`.
+2. **Tree validation.** Before the gateway forwards a cache-served source to the adapter, it fetches `resolvedCommitSha` into the entry's mirror ([Section 6.4](06_warm-pod-model.md#64-pod-filesystem-layout) **Private repository stores.** rule 4) and validates the commit's whole tree, placed under the slot root at the source's `path`. The tree is refused when an entry path fails the [Section 13.4](13_security-model.md#134-upload-security) path-traversal, path-depth, or path-length rule (`path_escapes_root`, `max_path_depth`, `max_path_length`); when an entry is a gitlink or has a mode other than regular file, executable file, directory, or symlink (`non_regular_entry`); or when a symlink fails the [Section 13.4](13_security-model.md#134-upload-security) symlink rule (`symlink`). The tree is also refused when its **materialization bound** exceeds the pool's `workspaceSizeLimitBytes` (`workspace_size_limit`). The materialization bound is the sum, over the tree, of each blob's size rounded up to a multiple of 4 096 bytes, each blob's size again, each tree object's size, and, for each tree entry, 128 bytes plus the byte length of the entry's path. A refusal fails the workspace materialization with `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` and the named `details.reason` ([Section 15.1](15_external-api-surface.md#151-rest-api)). The other [Section 13.4](13_security-model.md#134-upload-security) archive validators do not apply, because no archive is unpacked. A cache-served source that passes this check does not exceed `workspaceSizeLimitBytes` at materialization, because the pack the adapter receives is bounded as [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) `FetchGitPack` states.
 3. **Slot repository.** The adapter creates the repository's git directory with `git init` in a new directory outside the build tree, and every git operation of this rule runs with that git directory and with the source's `path` as the working tree. When the pod holds a store for the source's normalized `url`, the adapter writes the store's objects directory, as an absolute path, to `objects/info/alternates`. When `resolvedCommitSha` is not already reachable, the adapter calls `FetchGitPack` for `resolvedCommitSha`, naming the store's commit as the only have when it wrote alternates and naming none otherwise. When the response marks the pack shallow, the adapter writes `resolvedCommitSha` to the repository's `shallow` file before it indexes the pack. It indexes the pack with `git index-pack --strict`. When a pack requested with a have cannot be indexed, the adapter removes `objects/info/alternates` and requests the pack again with no have. The adapter records the normalized `url` as `lenny.gitStoreUrl`, `resolvedCommitSha` as `lenny.baseCommit`, and, unless the repository has no alternates or is shallow, the store's commit as `lenny.storeCommit` in the repository's config, and it checks out `resolvedCommitSha` detached. The adapter then moves the git directory to `.git` at the source's `path`, replacing any entry there, inside the build tree that promotion replaces `/workspace/slots/{sessionId}/current` with.
 4. **No store worktrees.** No component creates a worktree of a store or uses `git clone --shared` from one. A runtime may create worktrees inside its own slot repository.
 5. **Capture copy.** For each repository in the slot whose config carries `lenny.gitStoreUrl`, handled as the [Section 13.4](13_security-model.md#134-upload-security) exception states, the adapter copies into the repository's own object store every object reachable from its refs, reflogs, and index but not from `lenny.baseCommit` that the repository holds only through alternates. It runs the copy twice for every capture: before the pre-checkpoint workspace size probe ([Section 4.4](04_system-components.md#44-event--checkpoint-store) **Hard workspace size limit.**), so the probe counts the copied bytes, and again immediately before the workspace archive is written, which for a Full-level runtime is after quiescence. A failure of either copy fails the capture through the existing checkpoint failure path.
@@ -157,7 +177,7 @@ The nested list that follows is unchanged.
 **Edit (c), §7.4 bullet "Archive extraction is especially strict."** After "it is never delegated to agent pods" and its clause ending "so that a hostile archive cannot starve session attachment or delegation.", insert:
 
 ```markdown
- The adapter's local git exception is stated in [Section 13.4](13_security-model.md#134-upload-security). The gateway's tree validation of a cache-served `gitClone` source runs inside the Upload Handler subsystem under the same isolation.
+ The adapter's local git exception is stated in [Section 13.4](13_security-model.md#134-upload-security).
 ```
 
 Proposal 0109's Edit (b) rewrites the opening words of this bullet. This insertion anchors on later text and composes with it.
@@ -173,7 +193,7 @@ Proposal 0109's Edit (b) rewrites the opening words of this bullet. This inserti
 In the table under "*Adapter → Gateway RPCs:*", insert a row directly after the `ReportPodScrub` row. The row is one physical line:
 
 ```markdown
-| `FetchGitPack` | Return a git pack for a `gitRepository` shared asset ([Section 6.4](06_warm-pod-model.md#64-pod-filesystem-layout) **Repository stores.**). The request carries `podId`, `url`, `want` (a ref or a 40-hex commit SHA), and `haves` (commit SHAs). The gateway applies the same mTLS client-certificate and projected service-account token checks to this server-streaming RPC that it applies to every other GatewayControl call ([Section 10.3](10_gateway-internals.md#103-mtls-pki)). It resolves the Runtime of the calling pod's pool from `podId` and rejects, with `PERMISSION_DENIED`, a `url` that is not, after normalization, a `gitRepository` entry on that Runtime. When `want` is a ref, the request carries no `haves`; the gateway resolves the ref against the remote over its own network path on every call and returns a self-contained pack of every object reachable from the resolved commit. When `want` is a commit SHA, the gateway reads it from its mirror of the repository and fetches it from the remote when the mirror lacks it. A have that the mirror lacks after one fetch of it by SHA is ignored. When at least one have remains, the gateway computes the self-contained (non-thin) pack of the objects reachable from `want` and not from the remaining haves; when that pack's objects sum to more bytes than the blobs and tree objects of `want`'s tree, or when no have remains, the gateway instead returns a shallow pack holding `want`'s commit object and every object reachable from its tree. The response streams a header naming the resolved commit and stating whether the pack is shallow, followed by the pack, and the gateway streams the pack without buffering it whole. The request is pod-scoped. |
+| `FetchGitPack` | Return a git pack for a `gitRepository` shared asset ([Section 6.4](06_warm-pod-model.md#64-pod-filesystem-layout) **Repository stores.**). The request carries `podId`, `url`, `want` (a ref or a 40-hex commit SHA), `haves` (commit SHAs), and, on a commit-SHA `want`, the `sessionId` of the slot the pack is for. The gateway applies the same mTLS client-certificate and projected service-account token checks to this server-streaming RPC that it applies to every other GatewayControl call ([Section 10.3](10_gateway-internals.md#103-mtls-pki)). It rejects, with `PERMISSION_DENIED`, a `podId` other than the pod the projected service-account token was issued for. It resolves the calling pod's pool and that pool's Runtime from `podId`, and rejects, with `PERMISSION_DENIED`, a `url` that is not, after normalization, a `gitRepository` entry on that Runtime, a private entry on a pool whose `ownerTenantId` is empty, and a call that [Section 6.4](06_warm-pod-model.md#64-pod-filesystem-layout) **Private repository stores.** rule 4 refuses. When `want` is a commit SHA, `sessionId` names a session of the tenant on the calling pod's `SandboxClaim` ([Section 4.6.1](#461-warm-pool-controller-pod-lifecycle)), and that session carries a `parent_workspace_ref` ([Section 4.5](#45-artifact-store) **Workspace lineage:**), the gateway also accepts a `url` that is a `gitRepository` entry on the Runtime of the pool of the session that `parent_workspace_ref` names, and applies the checks above with that pool in place of the calling pod's pool; it accepts a private entry only when that tenant equals that pool's `ownerTenantId`. When `want` is a ref, the request carries no `haves`; the gateway resolves the ref against the remote over its own network path on every call and returns a self-contained pack of every object reachable from the resolved commit. When `want` is a commit SHA, the gateway reads it from the entry's mirror ([Section 6.4](06_warm-pod-model.md#64-pod-filesystem-layout) **Private repository stores.** rule 4) and fetches it from the remote when the mirror lacks it. A have that the mirror lacks after one fetch of it by SHA is ignored. When at least one have remains, the gateway computes the self-contained (non-thin) pack of the objects reachable from `want` and not from the remaining haves; when that pack's objects sum to more bytes than the blobs and tree objects of `want`'s tree, or when no have remains, the gateway instead returns a shallow pack holding `want`'s commit object and every object reachable from its tree. The response streams a header naming the resolved commit and stating whether the pack is shallow, followed by the pack, and the gateway streams the pack without buffering it whole. |
 ```
 
 ### SPEC-6 · spec/15_external-api-surface.md § 15.1 REST API, error table, and spec/06_warm-pod-model.md § 6.2 Pod State Machine
@@ -219,15 +239,95 @@ Insert two rows directly after the row that begins "| Upload extraction aborted 
 | Cache-served Git sources (`lenny_workspace_git_cache_sources_total`, counter labeled by `pool` — each `gitClone` source the gateway routes to a repository store ([Section 14](14_workspace-plan-schema.md#14-workspace-plan-schema) **Cache-served `gitClone` sources.**).) | Counter         |
 ```
 
+### SPEC-8 · spec/04_system-components.md § 4.9, spec/14_workspace-plan-schema.md § 14, spec/15_external-api-surface.md § 15.1, spec/26_reference-runtime-catalog.md § 26.2 and § 26.3
+
+**Edit (a), §4.9 Credential Provider table.** Insert after the row that begins "| `github`           | GitHub App credentials |":
+
+```markdown
+| `git-https`        | Username and token or password (Kubernetes Secret) | HTTP Basic username and password for an HTTPS Git host |
+```
+
+**Edit (b), §4.9 Credential Pool, `hostPatterns` paragraph.** Make two replacements in the paragraph that begins "**`hostPatterns` — VCS-pool-only field.**". Leave the rest of the paragraph unchanged, including the sentence opening that 0086 SPEC-2 Edit (d) rewrites. Replace
+
+```markdown
+(v1 built-in: `github`; custom providers may implement others such as GitLab, Bitbucket, Gitea, self-hosted)
+```
+
+with
+
+```markdown
+(v1 built-ins: `github` and `git-https`; custom providers may implement others)
+```
+
+Replace the text from ", compares it against `hostPatterns` across all VCS pools in the tenant," (including its leading comma) through "multiple matches yield `422 GIT_CLONE_AUTH_HOST_AMBIGUOUS`." with the block below. The paragraph's remaining sentence, "Non-VCS pools (LLM providers) ignore this field.", then stands after the list as its own paragraph, without its leading space.
+
+```markdown
+ and binds the host to a pool by the rules below, which govern every VCS credential resolution for a host:
+
+1. The candidates are the tenant's active VCS pools whose `hostPatterns` match the host, whatever their provider.
+2. Zero candidates yields `GIT_CLONE_AUTH_UNSUPPORTED_HOST`, and more than one yields `GIT_CLONE_AUTH_HOST_AMBIGUOUS` ([§15.1](15_external-api-surface.md#151-rest-api)).
+3. When the request carries an `auth.leaseScope` whose `<provider>` differs from the single candidate's provider, the gateway rejects it with `GIT_CLONE_AUTH_UNSUPPORTED_HOST`.
+4. A request that carries no `leaseScope`, such as the in-pod credential helper's ([§26.2](26_reference-runtime-catalog.md#262-shared-patterns-for-coding-agent-runtimes)), uses the single candidate.
+```
+
+**Edit (b2), §4.9 Credential Pool, new paragraph.** Insert directly after the paragraph "Non-VCS pools (LLM providers) ignore this field." that Edit (b) leaves:
+
+```markdown
+**`git-https` credentials.** A `git-https` pool serves any HTTPS Git host its `hostPatterns` name, such as a GitLab, Bitbucket, Gitea, or self-hosted server. Each credential's Secret holds a `username` key and a `password` key, the `kubernetes.io/basic-auth` layout. `password` holds the host's token or password, such as a GitLab deploy token, a Bitbucket app password, or a Gitea access token. A credential whose `secretRef` names a data key, or whose Secret lacks a non-empty `username` or `password`, is unusable. For each git operation it performs or serves, the gateway obtains the pair from the Token Service ([Section 4.3](#43-token-service)), which resolves the Secret as **Token Service secret resolution.** states, and sends the pair as HTTP Basic authentication to the bound host. The `vcs.git-https.read` and `vcs.git-https.write` scopes resolve to the same credential, and the host's grants on the token decide whether a push succeeds.
+```
+
+**Edit (c), §4.9 `leaseTTLSeconds` table.** Insert after the row that begins "| `github` | **3600** (1 hour) | 3600 (GitHub installation token maximum) |":
+
+```markdown
+| `git-https` | **3600** (1 hour) | None (the token is deployer-managed; TTL is synthetic) | The token carries no upstream expiry. |
+```
+
+**Edit (d), §4.9 direct-mode `materializedConfig` table.** Insert directly before the row that begins "| `azure_openai` | `apiKey` | string | yes (API-key pools) |":
+
+```markdown
+| `git-https` | `username` | string | yes | HTTP Basic username for the Git host. Plaintext. |
+| | `password` | string | yes | Token or password for the Git host. Plaintext. |
+```
+
+**Edit (e), §14 `gitClone.auth` paragraph.** Make three replacements in the paragraph that begins "**`gitClone.auth` object.**". Replace
+
+```markdown
+v1 ships `github` as the only built-in provider (scopes `vcs.github.read` / `vcs.github.write`), and deployers may register additional providers (e.g., GitLab, Bitbucket, Gitea, self-hosted) via the custom `CredentialProvider` interface in [§4.9](04_system-components.md#49-credential-leasing-service)
+```
+
+with
+
+```markdown
+v1 ships the built-in providers `github` (scopes `vcs.github.read` / `vcs.github.write`) and `git-https` (scopes `vcs.git-https.read` / `vcs.git-https.write`), which serves any HTTPS Git host ([§4.9](04_system-components.md#49-credential-leasing-service) **`git-https` credentials.**), and deployers may register further providers via the custom `CredentialProvider` interface in [§4.9](04_system-components.md#49-credential-leasing-service)
+```
+
+Replace the text from "The gateway resolves `<provider>` by matching the `url` host" through "are rejected with `422 GIT_CLONE_AUTH_HOST_AMBIGUOUS`." with
+
+```markdown
+The gateway binds the `url` host (extracted from the parsed HTTPS URL's authority; see `gitClone.url` restrictions above) to one of the tenant's VCS credential pools by the [§4.9](04_system-components.md#49-credential-leasing-service) **`hostPatterns`** rules, at session creation and for every git operation it performs for the source.
+```
+
+Replace "The gateway then performs the clone with a short-lived HTTPS bearer/basic token scoped to the repository," with "The gateway then performs the clone with the HTTP Basic credential of the bound pool,". Leave the rest of the paragraph, the `gitClone.url` restrictions paragraph, and §21.9 unchanged.
+
+**Edit (f), §15.1 error table, `GIT_CLONE_AUTH_UNSUPPORTED_HOST` row.** Replace "but the URL's host does not match any VCS credential pool's `hostPatterns` in the tenant." with "but the URL's host matches no VCS credential pool's `hostPatterns` in the tenant, or matches a pool whose provider differs from the `auth.leaseScope` provider." Replace "The caller must register a VCS credential pool whose `hostPatterns` covers the host, or remove `auth` for public repos." with "The caller must register a VCS credential pool whose `hostPatterns` covers the host, name that pool's provider in `auth.leaseScope`, or remove `auth` for public repos." The row stays one physical line.
+
+**Edit (g), §26.2 and §26.3.** In the §26.2 bullet that begins "- `vcs.<provider>.read` / `vcs.<provider>.write` — optional;", replace "V1 ships `github` as the only built-in VCS provider (`vcs.github.read` / `vcs.github.write`); deployers may register additional providers (GitLab, Bitbucket, Gitea, self-hosted) via the custom `CredentialProvider` interface in [§4.9](04_system-components.md#49-credential-leasing-service)." with "The built-in VCS providers are listed in [§4.9](04_system-components.md#49-credential-leasing-service) **Credential Provider**." In the §26.3 scope table row for `vcs.<provider>.read` / `vcs.<provider>.write`, replace "V1 ships `github` as the built-in provider." with "The built-in VCS providers are listed in [§4.9](04_system-components.md#49-credential-leasing-service)." and replace "short-lived token scoped to the single repo." with "the credential of the pool the host binds to." The row stays one physical line.
+
+### SPEC-9 · spec/04_system-components.md § 4.2 and spec/05_runtime-registry-and-pool-model.md § 5.2
+
+**Edit (a), §4.2 multi-tenancy table.** In the row whose first cell is "Runtimes, pools", append to the last cell: "A pool record's `ownerTenantId` is not a `tenant_id` column and is not an RLS key; [Section 6.4](06_warm-pod-model.md#64-pod-filesystem-layout) **Private repository stores.** states its rules." The row stays one physical line.
+
+**Edit (b), §5.2 pool dimensions.** Under "**Pool dimensions:**", insert after "- Runtime name": "- Owning tenant (`ownerTenantId`; see [Section 6.4](06_warm-pod-model.md#64-pod-filesystem-layout) **Private repository stores.**)".
+
 ## Spec files touched
 
 - `spec/02_goals-and-non-goals.md` (SPEC-4)
-- `spec/04_system-components.md` (SPEC-5)
-- `spec/05_runtime-registry-and-pool-model.md` (SPEC-1)
+- `spec/04_system-components.md` (SPEC-5, SPEC-8, SPEC-9)
+- `spec/05_runtime-registry-and-pool-model.md` (SPEC-1, SPEC-9)
 - `spec/06_warm-pod-model.md` (SPEC-2, SPEC-6)
 - `spec/07_session-lifecycle.md` (SPEC-4)
 - `spec/13_security-model.md` (SPEC-4)
-- `spec/14_workspace-plan-schema.md` (SPEC-3)
-- `spec/15_external-api-surface.md` (SPEC-6)
+- `spec/14_workspace-plan-schema.md` (SPEC-3, SPEC-8)
+- `spec/15_external-api-surface.md` (SPEC-6, SPEC-8)
 - `spec/16_observability.md` (SPEC-7)
-- `spec/26_reference-runtime-catalog.md` (SPEC-3)
+- `spec/26_reference-runtime-catalog.md` (SPEC-3, SPEC-8)

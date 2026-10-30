@@ -4,7 +4,7 @@
 
 - [ ] **S1 · spec** — SPEC-1. The §5.1 example edits and the merge-table rule.
       Tiers 0, 11. Depends on: —
-- [ ] **S2 · spec** — SPEC-2. The §6.4 enumeration edit and the **Repository stores.** paragraph.
+- [ ] **S2 · spec** — SPEC-2. The §6.4 enumeration edit and the **Repository stores.** and **Private repository stores.** paragraphs.
       Tiers 0, 11. Depends on: —
 - [ ] **S3 · spec** — SPEC-3. The §14 cache-served-source paragraph and its wording edits in §14, §14.1, and §26.2.
       Tiers 0, 11. Depends on: —
@@ -23,16 +23,24 @@
 - [ ] **S10 · code** — CODE-2. The `gitRepository` entry through the CRD, `runtimestore`, the flag, and the decoder.
       Tiers 0, 1, 2, 3. Depends on: S1, S2
 - [ ] **S11 · code** — CODE-3. The proto, the mirror, the handler, the stream interceptors, the metrics, and the chart.
-      Tiers 0, 1, 3, 4, 7a, 9. Depends on: S2, S3, S4, S5, S6, S7, S8, S9, S10
+      Tiers 0, 1, 3, 4, 7a, 9. Depends on: S2, S3, S4, S5, S6, S7, S8, S9, S10, S19, S21
 - [ ] **S12 · code** — CODE-4. The adapter warm fill.
       Tiers 0, 1, 3, 5. Depends on: S2, S5, S10, S11
 - [ ] **S13 · code** — CODE-5. Binder routing and slot-repository construction.
-      Tiers 0, 1, 3, 4. Depends on: S3, S4, S5, S6, S7, S11, S12
+      Tiers 0, 1, 3, 4. Depends on: S3, S4, S5, S6, S7, S11, S12, S21
 - [ ] **S14 · code** — CODE-6. The capture copy and restore completion.
       Tiers 0, 1, 4. Depends on: S3, S4, S5, S13
 - [ ] **S15 · test** — TEST-1. The case list across the reached tiers.
-      Tiers 0, 1, 2, 3, 4, 5, 7a, 9. Depends on: S10, S11, S12, S13, S14
+      Tiers 0, 1, 2, 3, 4, 5, 7a, 9. Depends on: S10, S11, S12, S13, S14, S19, S21
 - [ ] **S16 · docs** — REC-1. The defect filings.
       Tiers 0. Depends on: —
 - [ ] **S17 · docs** — DOCS-1. The pages that mirror the staged spec edits.
-      Tiers 0, 11. Depends on: S1, S2, S3, S5, S6, S7
+      Tiers 0, 11. Depends on: S1, S2, S3, S5, S6, S7, S18, S20
+- [ ] **S18 · spec** — SPEC-8. The §4.9 provider rows and VCS binding paragraphs, and the §14, §15.1, §26.2, and §26.3 pointers.
+      Tiers 0, 11. Depends on: —
+- [ ] **S19 · code** — CODE-7. The `git-https` provider, host binding, and `lenny/vcs_token`.
+      Tiers 0, 1, 3, 4, 9. Depends on: S18
+- [ ] **S20 · spec** — SPEC-9. The §4.2 table row and the §5.2 pool-dimensions bullet.
+      Tiers 0, 11. Depends on: S2
+- [ ] **S21 · code** — CODE-8. The pool owner record, its admission, resolution, and the tenant-delete dependent.
+      Tiers 0, 1, 2, 4, 9. Depends on: S2, S10, S20
