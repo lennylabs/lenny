@@ -629,12 +629,13 @@ sequence number assigned to its turn's entries), the session's
 captured for its turn, and whether the turn completed. The session row also
 records the runtime its creating request asked for, and the response id its
 first turn continued from, which is empty for the first session of a
-conversation. `GET /v1/responses/{id}` returns a completed
-response of a session in the caller's tenant and echoes its
-`previous_response_id`: the response with the preceding ordinal on the same
+conversation. `GET /v1/responses/{id}` returns a completed response of a
+session the caller may read under
+[Section 10.2](10_gateway-internals.md#102-authentication) **Session ownership.**
+and echoes its `previous_response_id`: the response with the preceding ordinal on the same
 session, or, for ordinal 1, the response the session's first turn continued
-from. An id that names no completed response of a session in the caller's
-tenant returns a native `404`. The response records live on the session row and
+from. An id that names no completed response of a session the caller may
+read returns a native `404`. The response records live on the session row and
 each turn's entries live in the session's own transcript, so the
 [Section 12.8](12_storage-architecture.md#128-compliance-interfaces) erasure of
 the session covers them.
@@ -648,8 +649,8 @@ when all of the following hold on `S`'s row:
 1. `S` is `running`.
 2. `R` is `S`'s newest response and has completed.
 3. `S`'s `recovery_generation` equals the value recorded for `R`.
-4. This request asks for the user, runtime, and environment that the request
-   which created `S` asked for.
+4. This request's principal is `S`'s owner, and the request asks for the runtime and environment that the
+   request which created `S` asked for.
 
 Before it dispatches a warm turn, the gateway reserves ordinal `n+1` on `S` with
 one write that takes effect only while conditions 1 through 4 still hold, and
