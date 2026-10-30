@@ -175,3 +175,39 @@ func TestLaggingReadStoreLagsOneCommittedWrite_spec_12_3(t *testing.T) {
 		t.Fatalf("cross-tenant Get = %v, want ErrNotFound", err)
 	}
 }
+
+// TestLaggingReadStoreBehindHoldsBackTheLag_spec_12_3 pins the deeper lag
+// model: a replica three writes behind applies writes in commit order and
+// shows no write until three later writes have committed, across rows.
+//
+// spec: §12.3 (Postgres HA Requirements)
+func TestLaggingReadStoreBehindHoldsBackTheLag_spec_12_3(t *testing.T) {
+	ctx := context.Background()
+	store := responsesstub.NewLaggingReadStoreBehind(memstore.New(), 3)
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	visible := func(id string) bool {
+		t.Helper()
+		_, err := store.Get(ctx, "acme", id)
+		if err != nil && !errors.Is(err, sessionstore.ErrNotFound) {
+			t.Fatalf("Get %s: %v", id, err)
+		}
+		return err == nil
+	}
+	ids := []string{"A", "B", "C", "D", "E"}
+	for i, id := range ids {
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: "acme", State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
+		}); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+		for j, other := range ids[:i+1] {
+			want := j <= i-3
+			if got := visible(other); got != want {
+				t.Fatalf("after %d creates, Get %s visible = %v, want %v", i+1, other, got, want)
+			}
+			if _, err := store.GetPrimary(ctx, "acme", other); err != nil {
+				t.Fatalf("GetPrimary %s: %v", other, err)
+			}
+		}
+	}
+}

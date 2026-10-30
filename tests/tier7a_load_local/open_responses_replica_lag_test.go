@@ -42,11 +42,34 @@ func (e *lagExecutor) Send(context.Context, string, []executor.Message) (executo
 
 func (e *lagExecutor) Close(context.Context, string) error { return nil }
 
-// lagBinder creates a running, held session row per bind through store and
-// counts the binds.
+// lagRecorder answers every Send with "out-<last input>" and records the
+// runtime input each session received.
+type lagRecorder struct {
+	mu     sync.Mutex
+	inputs map[string][]executor.Message
+}
+
+func (e *lagRecorder) Send(_ context.Context, id string, msgs []executor.Message) (executor.Response, error) {
+	e.mu.Lock()
+	e.inputs[id] = append([]executor.Message(nil), msgs...)
+	e.mu.Unlock()
+	return executor.Response{Parts: []executor.MessagePart{{Type: "text", Text: "out-" + msgs[len(msgs)-1].Content}}}, nil
+}
+
+func (e *lagRecorder) Close(context.Context, string) error { return nil }
+
+func (e *lagRecorder) input(id string) []executor.Message {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.inputs[id]
+}
+
+// lagBinder creates a running session row per bind through store and counts
+// the binds. The session is held unless coldOnly is set.
 type lagBinder struct {
-	store sessionstore.Store
-	binds atomic.Int64
+	store    sessionstore.Store
+	coldOnly bool
+	binds    atomic.Int64
 }
 
 func (b *lagBinder) BindSingleShot(ctx context.Context, spec translator.SingleShotSpec) (translator.SingleShotBinding, error) {
@@ -59,7 +82,7 @@ func (b *lagBinder) BindSingleShot(ctx context.Context, spec translator.SingleSh
 	}); err != nil {
 		return translator.SingleShotBinding{}, err
 	}
-	return translator.SingleShotBinding{SessionID: id, Hold: true}, nil
+	return translator.SingleShotBinding{SessionID: id, Hold: !b.coldOnly}, nil
 }
 
 // lagPost sends one turn as alice in tenant acme and returns the status, the
@@ -144,5 +167,75 @@ func TestOpenResponsesContinuationSurvivesReplicaLag_spec_15(t *testing.T) {
 	}
 	if got := binder.binds.Load(); got != conversations {
 		t.Errorf("binds = %d, want %d (one per conversation, none for a warm turn)", got, conversations)
+	}
+}
+
+// TestOpenResponsesColdLineageSurvivesReplicaLag_spec_15 pins that a cold
+// continuation's lineage walk reads every ancestor from the primary while
+// the read replica has applied none of the run's writes: concurrent
+// conversations each run three cold turns, each continuing the previous
+// turn's response at once, and the third turn's runtime input is the whole
+// lineage, the first session's turn included.
+//
+// spec: §15 (Open Responses conversation sessions); §12.3 (Postgres HA
+// Requirements)
+//
+// diagnosis: a third-turn input that starts at the second turn means an
+// ancestor hop read the lagging read pool, found the first session missing,
+// and ended the walk as though the ancestor had been erased.
+func TestOpenResponsesColdLineageSurvivesReplicaLag_spec_15(t *testing.T) {
+	const conversations, turns = 32, 3
+	// The replica holds back more writes than the run commits, so it never
+	// shows a row the run wrote.
+	store := responsesstub.NewLaggingReadStoreBehind(memstore.New(), 1<<20)
+	exec := &lagRecorder{inputs: map[string][]executor.Message{}}
+	h := translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
+		SingleShotBinder: &lagBinder{store: store, coldOnly: true},
+		Transcripts:      transcriptstore.NewMemory(),
+		HolderForwarder:  responsesstub.LocalForwarder{},
+		Terminal:         responsesstub.ReleasingTerminal{Store: store},
+		DevTenantHeader:  true,
+	}).Handler()
+
+	var (
+		mu         sync.Mutex
+		violations []string
+		wg         sync.WaitGroup
+	)
+	report := func(format string, args ...any) {
+		mu.Lock()
+		violations = append(violations, fmt.Sprintf(format, args...))
+		mu.Unlock()
+	}
+	for c := 0; c < conversations; c++ {
+		wg.Add(1)
+		go func(c int) {
+			defer wg.Done()
+			prev := ""
+			var want []string
+			for k := 1; k <= turns; k++ {
+				in := fmt.Sprintf("c%d-in-%d", c, k)
+				code, id, body := lagPost(h, prev, in)
+				if code != http.StatusOK {
+					report("conversation %d turn %d after %q: status %d, body %s", c, k, prev, code, body)
+					return
+				}
+				want = append(want, in)
+				var got []string
+				for _, m := range exec.input(id[:len(id)-len(".1")]) {
+					got = append(got, m.Content)
+				}
+				if fmt.Sprint(got) != fmt.Sprint(want) {
+					report("conversation %d turn %d runtime input = %v, want %v", c, k, got, want)
+					return
+				}
+				want = append(want, "out-"+in)
+				prev = id
+			}
+		}(c)
+	}
+	wg.Wait()
+	for _, v := range violations {
+		t.Error(v)
 	}
 }

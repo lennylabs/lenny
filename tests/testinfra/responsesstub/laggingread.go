@@ -10,10 +10,10 @@ import (
 )
 
 // LaggingReadStore wraps a session store so that Get models a §12.3 read
-// replica that applies the primary's writes in commit order and is one
-// committed write behind it. Get answers from the replica's copy, so the
-// newest committed Create or Update is not yet visible to it, while every
-// earlier write is. GetPrimary and every write reach the wrapped store and
+// replica that applies the primary's writes in commit order and is a fixed
+// number of committed writes behind it. Get answers from the replica's copy,
+// so the newest committed Creates and Updates, as many as the lag, are not
+// yet visible to it, while every earlier write is. GetPrimary and every write reach the wrapped store and
 // see the current row. Writes other than Create and Update pass through
 // unmodeled. A test that drives the Open Responses handler through it
 // observes whether a decision that turns a miss into a fail-closed 404 reads
@@ -26,18 +26,28 @@ type LaggingReadStore struct {
 
 	mu      sync.Mutex
 	replica map[string]sessionstore.Session
-	pending *lagWrite
+	lag     int
+	pending []lagWrite
 }
 
-// lagWrite is the committed write the replica has not applied yet.
+// lagWrite is a committed write the replica has not applied yet.
 type lagWrite struct {
 	key string
 	row sessionstore.Session
 }
 
-// NewLaggingReadStore wraps inner.
+// NewLaggingReadStore wraps inner with a replica one committed write behind.
 func NewLaggingReadStore(inner sessionstore.Store) *LaggingReadStore {
-	return &LaggingReadStore{Store: inner, replica: map[string]sessionstore.Session{}}
+	return NewLaggingReadStoreBehind(inner, 1)
+}
+
+// NewLaggingReadStoreBehind wraps inner with a replica that has not applied
+// the newest committed writes, as many as writes. A lag below one is one.
+func NewLaggingReadStoreBehind(inner sessionstore.Store, writes int) *LaggingReadStore {
+	if writes < 1 {
+		writes = 1
+	}
+	return &LaggingReadStore{Store: inner, replica: map[string]sessionstore.Session{}, lag: writes}
 }
 
 // lagKey keys a row by tenant and id.
@@ -78,13 +88,15 @@ func (s *LaggingReadStore) Update(ctx context.Context, tenantID, id string, muta
 	return out, err
 }
 
-// commit applies the previously queued write to the replica and queues row.
+// commit queues row and applies to the replica, in commit order, every
+// queued write older than the lag.
 func (s *LaggingReadStore) commit(row sessionstore.Session) {
 	row.Responses = append([]sessionstore.ConversationResponse(nil), row.Responses...)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.pending != nil {
-		s.replica[s.pending.key] = s.pending.row
+	s.pending = append(s.pending, lagWrite{key: lagKey(row.TenantID, row.ID), row: row})
+	for len(s.pending) > s.lag {
+		s.replica[s.pending[0].key] = s.pending[0].row
+		s.pending = s.pending[1:]
 	}
-	s.pending = &lagWrite{key: lagKey(row.TenantID, row.ID), row: row}
 }

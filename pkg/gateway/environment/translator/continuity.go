@@ -51,12 +51,9 @@ type continuity struct {
 	primaryReadTimeout time.Duration
 }
 
-// sessionRead reads one tenant-scoped session row.
-type sessionRead func(ctx context.Context, tenantID, id string) (sessionstore.Session, error)
-
 // readPrimary reads the row from the Postgres primary. A response the gateway
 // returned has its completion write on the primary already, while the §12.3
-// read pool may still lag that write, so the head of a resolution reads here.
+// read pool may still lag that write, so every resolution hop reads here.
 // spec: §15 (Open Responses conversation sessions); §12.3 (Postgres HA
 // Requirements).
 func (c *continuity) readPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
@@ -67,38 +64,22 @@ func (c *continuity) readPrimary(ctx context.Context, tenantID, id string) (sess
 // returns the row with the response's ordinal. It returns
 // errContinuationNotFound for an unparsable id, a session the tenant cannot
 // read, an ordinal past the newest response, or a response that has not
-// completed. Any other store error is returned wrapped. It is the first hop of
+// completed. Any other store error is returned wrapped. It is every hop of
 // rehydrate, the resolution a continuation performs, and the read behind
-// GET /v1/responses/{id}. It reads the primary because each of these callers
-// turns a miss into the fail-closed 404, and a client that names a response
-// the gateway has just returned must not meet a §12.3 read replica that has
-// not yet applied the response's completion write.
+// GET /v1/responses/{id}. It reads the primary because a miss on any of these
+// paths either answers the fail-closed 404 or ends a lineage walk, and a
+// §12.3 read replica that has not yet applied a completion write would turn
+// replication lag into a missing response: a client that names a response
+// the gateway has just returned would meet a 404, and a cold continuation
+// would drop an intact ancestor's context.
 // spec: §15 (Open Responses conversation sessions); §4.2 (session-store
 // tenant isolation); §12.3 (Postgres HA Requirements).
 func (c *continuity) resolve(ctx context.Context, tenantID, responseID string) (sessionstore.Session, int, error) {
-	return c.resolveWith(ctx, c.readPrimary, tenantID, responseID)
-}
-
-// resolveAncestor resolves a lineage hop past the head through the store's
-// Get, which may read the §12.3 read pool. The replica applies the WAL in
-// order, so an ancestor's completion write is visible wherever its
-// descendant's head row was.
-// spec: §15 (Open Responses conversation sessions); §12.3 (Postgres HA
-// Requirements).
-func (c *continuity) resolveAncestor(ctx context.Context, tenantID, responseID string) (sessionstore.Session, int, error) {
-	return c.resolveWith(ctx, c.sessions.Get, tenantID, responseID)
-}
-
-// resolveWith parses responseID, reads its session through read, and checks
-// that the ordinal names a completed response.
-// spec: §15 (Open Responses conversation sessions); §4.2 (session-store
-// tenant isolation).
-func (c *continuity) resolveWith(ctx context.Context, read sessionRead, tenantID, responseID string) (sessionstore.Session, int, error) {
 	sessionID, n, ok := parseResponseID(responseID)
 	if !ok {
 		return sessionstore.Session{}, 0, errContinuationNotFound
 	}
-	row, err := read(ctx, tenantID, sessionID)
+	row, err := c.readPrimary(ctx, tenantID, sessionID)
 	if err != nil {
 		if errors.Is(err, sessionstore.ErrNotFound) {
 			return sessionstore.Session{}, 0, errContinuationNotFound
@@ -114,9 +95,9 @@ func (c *continuity) resolveWith(ctx context.Context, read sessionRead, tenantID
 // rehydrate returns the conversation context of responseID as leading
 // executor.Message values in chronological order (first session first).
 //
-// The first hop reads the primary and fails closed: a response id resolve
-// rejects returns errContinuationNotFound. Later hops resolve through
-// resolveAncestor. Each hop reads its session's transcript entries
+// Every hop resolves on the primary through resolve. The first hop fails
+// closed: a response id resolve rejects returns errContinuationNotFound. Each
+// hop reads its session's transcript entries
 // with Seq at or below the response's EndSeq, then continues at the
 // session's ContinuationParentID. An empty ContinuationParentID ends the
 // walk. A later hop that resolve rejects (an erased session, an unparsable
@@ -145,7 +126,7 @@ func (c *continuity) rehydrate(ctx context.Context, tenantID, responseID string)
 		if row.ContinuationParentID == "" {
 			break
 		}
-		row, n, err = c.resolveAncestor(ctx, tenantID, row.ContinuationParentID)
+		row, n, err = c.resolve(ctx, tenantID, row.ContinuationParentID)
 		if errors.Is(err, errContinuationNotFound) {
 			break // a gap in the lineage ends the walk.
 		}

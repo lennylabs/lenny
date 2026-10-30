@@ -5676,6 +5676,7 @@
         "tests/tier7a_load_local/open_responses_conversation_invariant_test.go::TestOpenResponsesConversationInterleavingsHoldTheInvariants_spec_15",
         "tests/tier7a_load_local/open_responses_conversation_invariant_test.go::TestOpenResponsesInvariantCheckerComparesRESTDeliveries_spec_15",
         "tests/tier7a_load_local/open_responses_replica_lag_test.go::TestOpenResponsesContinuationSurvivesReplicaLag_spec_15",
+        "tests/tier7a_load_local/open_responses_replica_lag_test.go::TestOpenResponsesColdLineageSurvivesReplicaLag_spec_15",
         "tests/tier8_chaos/open_responses_chaos_test.go",
         "tests/tier9_security/open_responses_held_resolution_test.go::TestRejectedHeldResponseIDMakesNoBindAndNoForward_spec_15"
       ],

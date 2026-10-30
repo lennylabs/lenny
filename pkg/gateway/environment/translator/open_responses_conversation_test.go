@@ -294,14 +294,17 @@ type convOptions struct {
 	// through a responsesstub.LaggingReadStore, so Get lags the newest
 	// committed write as a §12.3 read replica does.
 	laggingReads bool
+	// replicaLag, when above one, makes the lagging replica hold back that
+	// many committed writes; it implies laggingReads.
+	replicaLag int
 }
 
 func newConvFixture(t *testing.T, o convOptions) *convFixture {
 	t.Helper()
 	inner := memstore.New()
 	var served sessionstore.Store = inner
-	if o.laggingReads {
-		served = responsesstub.NewLaggingReadStore(inner)
+	if o.laggingReads || o.replicaLag > 1 {
+		served = responsesstub.NewLaggingReadStoreBehind(inner, o.replicaLag)
 	}
 	f := &convFixture{
 		inner:     inner,
@@ -1144,6 +1147,42 @@ func TestOpenResponsesResolutionReadsThePrimary_spec_15(t *testing.T) {
 			if rr.Code != http.StatusOK {
 				t.Errorf("GET %s = %d, want 200: %s", third, rr.Code, rr.Body.String())
 			}
+		})
+	}
+}
+
+// TestOpenResponsesLineageHopsReadThePrimary_spec_15 pins that every hop of a
+// cold continuation's lineage walk reads the primary: with the §12.3 read
+// replica held back past the first session's completion write, a cold
+// continuation of the second session's response still sends the runtime the
+// first session's turn ahead of the second's. Replication lag is not an
+// unreadable ancestor and does not end the walk.
+//
+// spec: §15 (Open Responses conversation sessions); §12.3 (Postgres HA
+// Requirements)
+//
+// diagnosis: a dispatched prefix that starts at "two" means an ancestor hop
+// read the lagging read pool, found the first session missing or its
+// response not completed, and treated the lag as a lineage gap.
+func TestOpenResponsesLineageHopsReadThePrimary_spec_15(t *testing.T) {
+	// Each lag holds back the first session's completion write when the
+	// third turn walks the lineage.
+	for _, lag := range []int{5, 8, 64} {
+		t.Run(fmt.Sprintf("replica %d writes behind", lag), func(t *testing.T) {
+			f := newConvFixture(t, convOptions{replicaLag: lag})
+			first := f.mustTurn(t, "", "one")
+			second := f.mustTurn(t, first, "two")
+			f.mustTurn(t, second, "three")
+			if got := f.binder.count(); got != 3 {
+				t.Fatalf("binds = %d, want 3 (every turn cold)", got)
+			}
+			assertMessages(t, f.exec.call(t, 2).msgs, []executor.Message{
+				{Role: "user", Content: "one"},
+				{Role: "assistant", Content: "reply1"},
+				{Role: "user", Content: "two"},
+				{Role: "assistant", Content: "reply2"},
+				{Role: "user", Content: "three"},
+			})
 		})
 	}
 }
