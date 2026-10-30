@@ -4954,7 +4954,8 @@
         "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreeParentFreshnessClosesOnTheCreationFence_spec_8_10",
         "pkg/gateway/environment/translator/continuity_test.go::TestContinuityRehydrateErasedTranscriptContributesNothing_spec_12_8",
         "tests/tier9_security/open_responses_isolation_erasure_test.go",
-        "tests/tier7a_load_local/open_responses_conversation_invariant_test.go::TestOpenResponsesConversationInterleavingsHoldTheInvariants_spec_15"
+        "tests/tier7a_load_local/open_responses_conversation_invariant_test.go::TestOpenResponsesConversationInterleavingsHoldTheInvariants_spec_15",
+        "tests/tier7a_load_local/open_responses_conversation_invariant_test.go::TestOpenResponsesInvariantCheckerComparesRESTDeliveries_spec_15"
       ],
       "packages": [
         "pkg/store",
@@ -5673,6 +5674,7 @@
         "tests/tier4_integration/open_responses_idle_suspension_test.go::TestIdleSuspendedResponsesSessionContinuesCold_spec_15",
         "tests/tier5_e2e_kind/open_responses_idle_restamp_test.go::TestWarmResponsesTurnsKeepTheHeldSessionRunningPastTheIdleBound_spec_15",
         "tests/tier7a_load_local/open_responses_conversation_invariant_test.go::TestOpenResponsesConversationInterleavingsHoldTheInvariants_spec_15",
+        "tests/tier7a_load_local/open_responses_conversation_invariant_test.go::TestOpenResponsesInvariantCheckerComparesRESTDeliveries_spec_15",
         "tests/tier8_chaos/open_responses_chaos_test.go",
         "tests/tier9_security/open_responses_held_resolution_test.go::TestRejectedHeldResponseIDMakesNoBindAndNoForward_spec_15"
       ],

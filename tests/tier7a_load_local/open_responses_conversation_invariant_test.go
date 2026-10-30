@@ -66,21 +66,32 @@ const (
 // keyed by the turn's token, and counts releases. A release that ends a
 // binding counts in releases; a release of a session that holds no binding is
 // a no-op, as executor.SessionReleaser states, and counts in noopReleases.
+//
+// mu also orders deliveries against the session transcript. A REST delivery
+// holds it across its history append and its transcript append, and a
+// successful Send returns with it held so that the handler's transcript
+// record of the turn (through orInvTranscripts.Append) happens before any
+// other delivery. The runtime order and the transcript order of every entry
+// therefore agree, which is what lets the audit compare REST entries.
 type orInvRuntime struct {
-	mu        sync.Mutex
-	bound     map[string]bool
-	history   map[string][]executor.Message
-	snapshots map[int][]executor.Message
-	firstSend map[string][]executor.Message
-	receiver  map[int]string
-	releases  map[string]int
+	mu          sync.Mutex
+	transcripts *transcriptstore.Memory
+	// restOrigin maps a REST delivery's content to the session it reached.
+	restOrigin map[string]string
+	bound      map[string]bool
+	history    map[string][]executor.Message
+	snapshots  map[int][]executor.Message
+	firstSend  map[string][]executor.Message
+	receiver   map[int]string
+	releases   map[string]int
 	// noopReleases counts the releases of a session that held no binding.
 	noopReleases map[string]int
 	faults       map[int]orInvFault
 }
 
-func newORInvRuntime() *orInvRuntime {
+func newORInvRuntime(transcripts *transcriptstore.Memory) *orInvRuntime {
 	return &orInvRuntime{
+		transcripts: transcripts, restOrigin: map[string]string{},
 		bound: map[string]bool{}, history: map[string][]executor.Message{},
 		snapshots: map[int][]executor.Message{}, firstSend: map[string][]executor.Message{},
 		receiver: map[int]string{}, releases: map[string]int{}, noopReleases: map[string]int{},
@@ -110,11 +121,21 @@ func (m *orInvRuntime) setFault(k int, f orInvFault) {
 }
 
 // Send delivers msgs to the session's runtime and answers "out-<k>" for the
-// turn token k carried by the last message.
+// turn token k carried by the last message. A successful Send returns with mu
+// held; the handler's transcript record of the turn releases it. Every other
+// outcome releases it before returning.
 func (m *orInvRuntime) Send(_ context.Context, id string, msgs []executor.Message) (executor.Response, error) {
 	runtime.Gosched()
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	resp, err := m.deliver(id, msgs)
+	if err != nil {
+		m.mu.Unlock()
+	}
+	return resp, err
+}
+
+// deliver is Send's body, run with mu held.
+func (m *orInvRuntime) deliver(id string, msgs []executor.Message) (executor.Response, error) {
 	if !m.bound[id] {
 		return executor.Response{}, executor.ErrNotBound
 	}
@@ -146,15 +167,48 @@ func (m *orInvRuntime) Send(_ context.Context, id string, msgs []executor.Messag
 }
 
 // deliverREST delivers a REST message to a bound session's runtime and
-// reports whether it did.
-func (m *orInvRuntime) deliverREST(id, content string) bool {
+// appends it to the session's transcript as one step under mu, as a POST
+// /v1/sessions/{id}/messages delivery does.
+func (m *orInvRuntime) deliverREST(tenantID, id, content string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !m.bound[id] {
-		return false
+		return
 	}
 	m.history[id] = append(m.history[id], executor.Message{Role: "user", Content: content})
-	return true
+	m.restOrigin[content] = id
+	_, _ = m.transcripts.Append(context.Background(), tenantID, id,
+		transcriptstore.Entry{Role: "user", Content: content})
+}
+
+// orInvTranscripts is the transcript store the handler records through. Every
+// Append it receives is the record of a turn whose successful Send returned
+// with the runtime's mu held, so Append releases mu once the entries are
+// stored. dropREST makes Get omit REST entries, a rehydrate defect the
+// checker must report.
+type orInvTranscripts struct {
+	*transcriptstore.Memory
+	rt       *orInvRuntime
+	dropREST atomic.Bool
+}
+
+func (s *orInvTranscripts) Append(ctx context.Context, tenantID, sessionID string, entries ...transcriptstore.Entry) (uint64, error) {
+	defer s.rt.mu.Unlock()
+	return s.Memory.Append(ctx, tenantID, sessionID, entries...)
+}
+
+func (s *orInvTranscripts) Get(ctx context.Context, tenantID, sessionID string) ([]transcriptstore.Entry, error) {
+	entries, err := s.Memory.Get(ctx, tenantID, sessionID)
+	if err != nil || !s.dropREST.Load() {
+		return entries, err
+	}
+	kept := entries[:0:0]
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Content, "rest-") {
+			kept = append(kept, e)
+		}
+	}
+	return kept, nil
 }
 
 func (m *orInvRuntime) Close(ctx context.Context, id string) error { return m.Release(ctx, id, "") }
@@ -232,6 +286,7 @@ type orInvWorld struct {
 	handler     http.Handler
 	store       *orInvStore
 	transcripts *transcriptstore.Memory
+	recorder    *orInvTranscripts
 	rt          *orInvRuntime
 	terminal    responsesstub.ReleasingTerminal
 	nextToken   atomic.Int64
@@ -255,10 +310,12 @@ type orInvWorld struct {
 }
 
 func newORInvWorld(t *testing.T) *orInvWorld {
-	rt := newORInvRuntime()
+	transcripts := transcriptstore.NewMemory()
+	rt := newORInvRuntime(transcripts)
 	store := &orInvStore{Store: memstore.New(), terminals: map[string]int{}}
 	w := &orInvWorld{
-		t: t, store: store, transcripts: transcriptstore.NewMemory(), rt: rt,
+		t: t, store: store, transcripts: transcripts, rt: rt,
+		recorder: &orInvTranscripts{Memory: transcripts, rt: rt},
 		terminal: responsesstub.ReleasingTerminal{Exec: rt},
 		tokenOf:  map[string]int{}, sessionOfToken: map[int]string{}, parentOf: map[string]string{},
 		erased: map[string]bool{},
@@ -266,7 +323,7 @@ func newORInvWorld(t *testing.T) *orInvWorld {
 	w.handler = translator.NewOpenResponsesHandler(store, rt, translator.OpenResponsesOptions{
 		SingleShotBinder: orInvBinder{store: store, rt: rt},
 		DefaultRuntime:   orInvRuntimeRef,
-		Transcripts:      w.transcripts,
+		Transcripts:      w.recorder,
 		HolderForwarder:  responsesstub.LocalForwarder{},
 		Terminal:         w.terminal,
 		DevTenantHeader:  true,
@@ -403,12 +460,7 @@ func (w *orInvWorld) rest(id string) {
 	if erased {
 		return
 	}
-	content := "rest-" + strconv.FormatInt(w.nextToken.Add(1), 10)
-	if !w.rt.deliverREST(id, content) {
-		return
-	}
-	_, _ = w.transcripts.Append(context.Background(), orInvTenant, id,
-		transcriptstore.Entry{Role: "user", Content: content})
+	w.rt.deliverREST(orInvTenant, id, "rest-"+strconv.FormatInt(w.nextToken.Add(1), 10))
 }
 
 // drive runs ops random operations.
@@ -459,21 +511,42 @@ func (w *orInvWorld) drive(rng *rand.Rand, ops int) {
 	}
 }
 
-// orInvLineage keeps only the turn entries of a history, dropping REST
-// deliveries and audit inputs.
+// orInvLineage keeps the turn and REST entries of a history in order,
+// dropping only the audit inputs and their answers.
 func orInvLineage(msgs []executor.Message) []string {
 	var out []string
 	for _, m := range msgs {
-		if strings.HasPrefix(m.Content, "in-") || strings.HasPrefix(m.Content, "out-") {
+		if orInvConversational(m.Content) {
 			out = append(out, m.Content)
 		}
 	}
 	return out
 }
 
+func orInvConversational(content string) bool {
+	return strings.HasPrefix(content, "in-") || strings.HasPrefix(content, "out-") ||
+		strings.HasPrefix(content, "rest-")
+}
+
+// origin returns the session an entry of the lineage was delivered to: the
+// session that answered a turn entry, or the session a REST delivery reached.
+func (w *orInvWorld) origin(content string) string {
+	if strings.HasPrefix(content, "rest-") {
+		w.rt.mu.Lock()
+		defer w.rt.mu.Unlock()
+		return w.rt.restOrigin[content]
+	}
+	k := orInvToken(content)
+	if k < 0 {
+		k, _ = strconv.Atoi(strings.TrimPrefix(content, "out-"))
+	}
+	return w.sessionOfToken[k]
+}
+
 // expected returns the conversation context a continuation of id must
-// carry: the history the runtime held at the end of id's turn, cut at the
-// newest erased ancestor of id's session.
+// carry: the history the runtime held at the end of id's turn, REST
+// deliveries included in delivery order, cut at the newest erased ancestor of
+// id's session.
 func (w *orInvWorld) expected(id string) []string {
 	sid, _ := orInvSplit(id)
 	keep := map[string]bool{}
@@ -484,13 +557,12 @@ func (w *orInvWorld) expected(id string) []string {
 		keep[cur] = true
 		cur, _ = orInvSplit(w.parentOf[cur])
 	}
+	w.rt.mu.Lock()
+	snapshot := w.rt.snapshots[w.tokenOf[id]]
+	w.rt.mu.Unlock()
 	var out []string
-	for _, c := range orInvLineage(w.rt.snapshots[w.tokenOf[id]]) {
-		k := orInvToken(c)
-		if k < 0 {
-			k, _ = strconv.Atoi(strings.TrimPrefix(c, "out-"))
-		}
-		if keep[w.sessionOfToken[k]] {
+	for _, c := range orInvLineage(snapshot) {
+		if keep[w.origin(c)] {
 			out = append(out, c)
 		}
 	}
@@ -560,7 +632,8 @@ func (w *orInvWorld) audit() []string {
 // concurrent continuations of one head, REST deliveries, executor refusals
 // and failures, terminates, and erasures, a response id answered twice, a
 // completed response's conversation context differed from the history its
-// runtime held at the end of the turn (cut at an erased ancestor), an erased
+// runtime held at the end of the turn, REST deliveries included in order
+// (cut at an erased ancestor), an erased
 // head answered other than 404, a failed turn left its session live or
 // holding its executor binding (including a turn that failed on a row an
 // erasure deleted after losing its CH-BINDRELEASE publish), a session's
@@ -593,4 +666,63 @@ func TestOpenResponsesConversationInterleavingsHoldTheInvariants_spec_15(t *test
 			}
 		})
 	}
+}
+
+// orInvRESTScenario runs a warm turn, a REST delivery, a warm continuation,
+// and a second REST delivery on one session, and returns the two response
+// ids.
+func orInvRESTScenario(t *testing.T, w *orInvWorld) (string, string) {
+	t.Helper()
+	w.turn("", orInvNoFault)
+	first := w.pick(nil, true)
+	if first == "" {
+		t.Fatalf("first turn did not complete: %v", w.violations)
+	}
+	sid, _ := orInvSplit(first)
+	w.rest(sid)
+	w.turn(first, orInvNoFault)
+	second := w.pick(nil, true)
+	if second == first {
+		t.Fatalf("warm continuation did not complete: %v", w.violations)
+	}
+	w.rest(sid)
+	return first, second
+}
+
+// spec: §15 (Open Responses conversation sessions), §15.1 (session transcript)
+// diagnosis: the invariant checker's expected context dropped or misplaced a
+// REST delivery, or it passed a rehydrate that omitted one. A REST entry
+// delivered between two turns belongs in the later turn's Seq-bounded prefix
+// and out of the earlier one's, and the checker compares REST entries, so a
+// rehydrate that drops them is a reported violation. Check orInvLineage and
+// expected in this file and rehydrate and prefix in
+// pkg/gateway/environment/translator/continuity.go.
+func TestOpenResponsesInvariantCheckerComparesRESTDeliveries_spec_15(t *testing.T) {
+	t.Run("intact rehydrate matches the runtime history with REST entries", func(t *testing.T) {
+		w := newORInvWorld(t)
+		first, second := orInvRESTScenario(t, w)
+		if got, want := strings.Join(w.expected(first), ","), "in-1,out-1"; got != want {
+			t.Errorf("expected(%s) = %s, want %s", first, got, want)
+		}
+		if got, want := strings.Join(w.expected(second), ","), "in-1,out-1,rest-2,in-3,out-3"; got != want {
+			t.Errorf("expected(%s) = %s, want %s", second, got, want)
+		}
+		for _, v := range w.audit() {
+			t.Errorf("intact rehydrate reported: %s", v)
+		}
+	})
+	t.Run("rehydrate that drops a REST entry is a violation", func(t *testing.T) {
+		w := newORInvWorld(t)
+		_, second := orInvRESTScenario(t, w)
+		w.recorder.dropREST.Store(true)
+		found := false
+		for _, v := range w.audit() {
+			if strings.HasPrefix(v, "context of "+second) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("audit passed a rehydrate of %s that omitted its REST delivery", second)
+		}
+	})
 }
