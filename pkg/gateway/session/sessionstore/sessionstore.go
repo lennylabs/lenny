@@ -25,7 +25,8 @@ import (
 // ConversationResponse is one Open Responses turn on a session. EndSeq is
 // the last transcript Seq the turn appended, which bounds a cold
 // continuation's rehydrated prefix. RecoveryGeneration is the session's
-// recovery_generation when the turn was reserved; a warm continuation
+// recovery_generation captured for the turn: at reservation for a warm
+// turn, and at bind for a session's first turn. A warm continuation
 // requires it unchanged. Completed is set once the turn's output is
 // recorded.
 // spec: §15 (Open Responses conversation sessions).

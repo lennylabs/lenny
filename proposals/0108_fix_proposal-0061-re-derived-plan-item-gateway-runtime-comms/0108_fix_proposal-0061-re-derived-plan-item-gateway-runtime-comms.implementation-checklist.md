@@ -2,13 +2,13 @@
 
 ## Implementation checklist
 
-- [ ] **S1 · spec** — SPEC-1, SPEC-2. Narrow the §15 single-shot paragraph and add **Open Responses conversation sessions.**
+- [x] **S1 · spec** — SPEC-1, SPEC-2. Narrow the §15 single-shot paragraph and add **Open Responses conversation sessions.**
       Tiers 0, 11. Depends on: —
-- [ ] **S2 · spec** — SPEC-3. Split the §29.3 adapter off-holder row and edit the lead-in clause.
+- [x] **S2 · spec** — SPEC-3. Split the §29.3 adapter off-holder row and edit the lead-in clause.
       Tiers 0, 11. Depends on: S1
-- [ ] **S3 · spec** — SPEC-4. Add the §15 link to the §28.5.4 `CH-HOLDERFORWARD` card's **Messages.** bullet.
+- [x] **S3 · spec** — SPEC-4. Add the §15 link to the §28.5.4 `CH-HOLDERFORWARD` card's **Messages.** bullet.
       Tiers 0, 11. Depends on: S1
-- [ ] **S4 · code** — CODE-1. Transcript `Append` returns the last assigned Seq, with every caller updated.
+- [x] **S4 · code** — CODE-1. Transcript `Append` returns the last assigned Seq, with every caller updated.
       Tiers 0, 1, 2, 7a. Depends on: S1
 - [ ] **S5 · code** — CODE-2. Per-response records and the requested runtime ref on the session request-envelope bundle.
       Tiers 0, 1, 2. Depends on: S1
