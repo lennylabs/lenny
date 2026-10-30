@@ -196,6 +196,18 @@ with
 unless it is a violation the `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` row of [§15.1](15_external-api-surface.md#151-rest-api) names, which surfaces as that code
 ```
 
+In the `/start` sentence of the same bullet, replace
+
+```markdown
+while any other setup-window failure stays the retryable `STARTING_FAILED` fallback
+```
+
+with
+
+```markdown
+while a violation the `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` row of [§15.1](15_external-api-surface.md#151-rest-api) names surfaces as that code, and any other setup-window failure stays the retryable `STARTING_FAILED` fallback
+```
+
 Proposal 0085 edits other §6.2 bullets and leaves this one unchanged.
 
 ### SPEC-7 · spec/16_observability.md § 16.1 Metrics
