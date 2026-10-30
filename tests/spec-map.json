@@ -195,7 +195,8 @@
         "tests/tier2_component/migrations/prod_columns_test.go",
         "pkg/gateway/sessionserver/slot_holder_predicate_internal_test.go",
         "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreeFiledDefectsAreConfirmed_spec_8_10",
-        "tests/tier9_security/open_responses_isolation_erasure_test.go"
+        "tests/tier9_security/open_responses_isolation_erasure_test.go",
+        "tests/tier9_security/open_responses_held_resolution_test.go::TestRejectedHeldResponseIDMakesNoBindAndNoForward_spec_15"
       ],
       "packages": [
         "pkg/session",
@@ -2157,7 +2158,10 @@
         "pkg/gateway/environment/translator/open_responses_conversation_test.go::TestOpenResponsesDoubleFailureReleasesOnce_spec_15",
         "pkg/gateway/environment/translator/open_responses_conversation_test.go::TestOpenResponsesColdTurnLeavesReleaseToTheWriterThatEndedTheRow_spec_15",
         "tests/tier4_integration/open_responses_held_session_test.go::TestHeldResponsesSessionServesThreeTurnsOnOnePod_spec_15",
-        "tests/tier4_integration/open_responses_held_session_test.go::TestUnheldResponsesSessionReleasesAfterEachTurn_spec_15"
+        "tests/tier4_integration/open_responses_held_session_test.go::TestUnheldResponsesSessionReleasesAfterEachTurn_spec_15",
+        "tests/tier4_integration/open_responses_idle_suspension_test.go::TestIdleSuspendedResponsesSessionContinuesCold_spec_15",
+        "tests/tier5_e2e_kind/open_responses_idle_restamp_test.go::TestWarmResponsesTurnsKeepTheHeldSessionRunningPastTheIdleBound_spec_15",
+        "tests/tier8_chaos/open_responses_chaos_test.go::TestCoordinatorCrashMidWarmTurnLeavesTheReservationAndGoesCold_spec_15"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -2755,7 +2759,9 @@
         "pkg/gateway/sessionserver/cascade_on_expire_test.go::TestAwaitingExpiredAppliesCascadeViaTerminalHook_spec_7_3_11",
         "pkg/gateway/sessionserver/cascade_on_expire_test.go::TestAwaitingExpiredDetachLeavesChildrenRunning_spec_7_3_11",
         "pkg/gateway/sessionserver/derive_failure_audit_test.go::TestDeriveFailureFencedByAResumeEntry_spec_7_1",
-        "pkg/gateway/sessionserver/treerecovery_internal_test.go::TestTreeRecoveryFailRacesResumeEntry_spec_8_10"
+        "pkg/gateway/sessionserver/treerecovery_internal_test.go::TestTreeRecoveryFailRacesResumeEntry_spec_8_10",
+        "tests/tier8_chaos/open_responses_chaos_test.go::TestRestoreBetweenTurnsSendsTheNextContinuationCold_spec_15",
+        "tests/tier8_chaos/open_responses_chaos_test.go::TestRestoreMidTurnFailsTheTurnAndTheSession_spec_15"
       ],
       "packages": [
         "pkg/session/resume",
@@ -4946,7 +4952,8 @@
         "tests/testinfra/lifecyclefence/paths_test.go::TestFailureRowOutcomeKeepsOtherErrors_spec_12_8",
         "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreeParentFreshnessClosesOnTheCreationFence_spec_8_10",
         "pkg/gateway/environment/translator/continuity_test.go::TestContinuityRehydrateErasedTranscriptContributesNothing_spec_12_8",
-        "tests/tier9_security/open_responses_isolation_erasure_test.go"
+        "tests/tier9_security/open_responses_isolation_erasure_test.go",
+        "tests/tier7a_load_local/open_responses_conversation_invariant_test.go::TestOpenResponsesConversationInterleavingsHoldTheInvariants_spec_15"
       ],
       "packages": [
         "pkg/store",
@@ -5661,7 +5668,12 @@
         "tests/tier3_contract/rest_openai_responses/held_session_contract_test.go",
         "tests/tier4_integration/open_responses_held_session_test.go",
         "tests/tier9_security/open_responses_warm_user_test.go",
-        "tests/tier3_contract/rest_sessions/openapi_document_test.go::TestServedDocumentOpenResponsesByIDHasNoDeleteOperation"
+        "tests/tier3_contract/rest_sessions/openapi_document_test.go::TestServedDocumentOpenResponsesByIDHasNoDeleteOperation",
+        "tests/tier4_integration/open_responses_idle_suspension_test.go::TestIdleSuspendedResponsesSessionContinuesCold_spec_15",
+        "tests/tier5_e2e_kind/open_responses_idle_restamp_test.go::TestWarmResponsesTurnsKeepTheHeldSessionRunningPastTheIdleBound_spec_15",
+        "tests/tier7a_load_local/open_responses_conversation_invariant_test.go::TestOpenResponsesConversationInterleavingsHoldTheInvariants_spec_15",
+        "tests/tier8_chaos/open_responses_chaos_test.go",
+        "tests/tier9_security/open_responses_held_resolution_test.go::TestRejectedHeldResponseIDMakesNoBindAndNoForward_spec_15"
       ],
       "packages": [
         "pkg/api/v1/session",
@@ -8481,7 +8493,8 @@
         "pkg/gateway/environment/translator/open_responses_conversation_test.go::TestOpenResponsesForwardedRequestAlwaysGoesToTheForwarder_spec_29_3",
         "pkg/gateway/environment/translator/open_responses_conversation_test.go::TestOpenResponsesHandlerRequiresForwarderAndTerminal_spec_15",
         "tests/tier3_contract/rest_openai_responses/held_session_contract_test.go::TestRefusedWarmTurnIsNative409WithCurrentState_spec_29_3",
-        "cmd/lenny-gateway/credentialsurface_singleshot_test.go::TestSessionHolderForwarderAdaptsTheSessionServer_spec_29_3"
+        "cmd/lenny-gateway/credentialsurface_singleshot_test.go::TestSessionHolderForwarderAdaptsTheSessionServer_spec_29_3",
+        "tests/tier8_chaos/open_responses_chaos_test.go::TestCoordinatorCrashAfterReadingAForwardedResponsesTurnFailsClosed_spec_29_3"
       ]
     },
     "28.7": {
