@@ -214,6 +214,11 @@ func TestRestoreMidTurnFailsTheTurnAndTheSession_spec_15(t *testing.T) {
 	for i := 0; i < chaosRecoveryPasses && h.Row(id).RecoveryGeneration == gen && !session.IsTerminal(h.Row(id).State); i++ {
 		h.Pass()
 	}
+	if restored := h.Row(id); restored.RecoveryGeneration <= gen {
+		pod.Runtime.Release()
+		t.Fatalf("the runtime_crash report left the session %q at recovery generation %d, want a restore above %d",
+			restored.State, restored.RecoveryGeneration, gen)
+	}
 	pod.Runtime.Release()
 
 	var got answer
