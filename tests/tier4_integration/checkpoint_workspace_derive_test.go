@@ -427,8 +427,10 @@ func seedRestoreSource(t *testing.T, store *miniostore.Store, mstore *partialman
 	seedCompleteManifest(t, mstore, lifecycleharness.Tenant, source, checkpointID, 3, int64(len(raw)), partialmanifeststore.ChunkEncodingTarGz)
 }
 
-// restoreFixture is a gateway replica on a concurrent-workspace pool whose
-// pods run the in-process adapter, wired to a live MinIO checkpoint store.
+// restoreFixture is a gateway replica on a warm pool whose pods run the
+// in-process adapter, wired to a live MinIO checkpoint store. The pool is a
+// concurrent-workspace pool when maxConcurrent is above 1 and an exclusive
+// pool otherwise.
 type restoreFixture struct {
 	h      *lifecycleharness.Harness
 	r      *lifecycleharness.Replica
@@ -436,11 +438,12 @@ type restoreFixture struct {
 	mstore *partialmanifeststore.MemoryStore
 }
 
-// newRestoreFixture seeds pods idle pods. A scenario whose bind fails needs
+// newRestoreFixture seeds pods idle pods on a pool of maxConcurrent
+// sessions per pod. An exclusive pool needs one pod per session that runs. A scenario whose bind fails needs
 // more than one: the failed attempt's release deletes the per-pod claim of
 // a pod it was the only slot on, and the §4.6.1 occupancy projection moves
 // that pod to draining, so the §5.2 slot retry lands on another pod.
-func newRestoreFixture(t *testing.T, pods int) *restoreFixture {
+func newRestoreFixture(t *testing.T, pods int, maxConcurrent int32) *restoreFixture {
 	t.Helper()
 	store := newLiveChunkStore(t)
 	mstore := partialmanifeststore.NewMemoryStore(nil)
@@ -449,7 +452,7 @@ func newRestoreFixture(t *testing.T, pods int) *restoreFixture {
 		t.Fatalf("object-store transport: %v", err)
 	}
 	h := lifecycleharness.New(t, lifecycleharness.Options{
-		Replicas: 1, Pods: pods, MaxConcurrentSessions: 8,
+		Replicas: 1, Pods: pods, MaxConcurrentSessions: maxConcurrent,
 		ObjectStore: &lifecycleharness.ObjectStore{
 			Blobs: store, Manifests: mstore, Resolver: chunkResolver(store, mstore), Transport: transport,
 		},
@@ -475,6 +478,14 @@ func (f *restoreFixture) seedSource(t *testing.T, source, checkpointID string) {
 // the new session's id.
 func (f *restoreFixture) copyFrom(t *testing.T, source, route string, body map[string]any) string {
 	t.Helper()
+	id, _ := f.copyWithToken(t, source, route, body)
+	return id
+}
+
+// copyWithToken derives or replays source by the given route and body and
+// returns the new session's id and the uploadToken the response carries.
+func (f *restoreFixture) copyWithToken(t *testing.T, source, route string, body map[string]any) (string, string) {
+	t.Helper()
 	code, resp := f.h.Do(f.r, http.MethodPost, "/v1/sessions/"+source+"/"+route, body)
 	if code != http.StatusCreated {
 		t.Fatalf("%s from %s: status %d body %v", route, source, code, resp)
@@ -484,17 +495,19 @@ func (f *restoreFixture) copyFrom(t *testing.T, source, route string, body map[s
 		t.Fatalf("%s from %s answered no session id: %v", route, source, resp)
 	}
 	f.h.Track(id)
-	return id
+	token, _ := resp["uploadToken"].(string)
+	return id, token
 }
 
 // finalizeAndStart binds the plan and starts the session, returning the
-// /start status and body.
-func (f *restoreFixture) finalizeAndStart(t *testing.T, id string) (int, map[string]any) {
+// /start status and body. extra sources follow the plan's inline sources.
+func (f *restoreFixture) finalizeAndStart(t *testing.T, id string, extra ...map[string]any) (int, map[string]any) {
 	t.Helper()
-	sources := make([]map[string]any, 0, len(restorePlanSources))
+	sources := make([]map[string]any, 0, len(restorePlanSources)+len(extra))
 	for path, content := range restorePlanSources {
 		sources = append(sources, map[string]any{"type": "inlineFile", "path": path, "content": content})
 	}
+	sources = append(sources, extra...)
 	code, resp := f.h.Do(f.r, http.MethodPost, "/v1/sessions/"+id+"/finalize", map[string]any{
 		"workspacePlan": map[string]any{"schemaVersion": 1, "sources": sources},
 	})
@@ -544,25 +557,18 @@ func wantRestoredTree() map[string]string {
 	return want
 }
 
-// A derived session and a session replayed in either mode start on a
-// concurrent-workspace pool with the source snapshot overlaid by the plan's
-// sources, read from the derived session's own copy: deleting every chunk
-// object of the source session before /start changes nothing, and the
-// bundle's session-file tree never reaches the workspace. Against the code
-// that carried no restore on FinalizeWorkspace, the slot holds only the
-// plan's sources.
-//
-// spec: §7.1 (Derive restore semantics); §7.1 (Derive copy semantics); §15.1
-// (Session Replay Semantics); §5.1; §5.2; §14.1
-// diagnosis: a derived or replayed session started without its source snapshot, restored it from the source session's objects instead of its own copy, restored the session-file tree, or let the snapshot overwrite a plan source. Check workspaceRestore in pkg/gateway/sessionserver, mintRestoreChunks in pkg/gateway/podlifecycle/podsession, and restoreSeed in pkg/adapter.
-func TestDerivedAndReplayedSessionsStartFromTheirRestoredSnapshot_spec_7_1(t *testing.T) {
-	f := newRestoreFixture(t, 1)
-	cases := []struct {
-		name          string
-		route         string
-		body          map[string]any
-		deleteSources bool
-	}{
+// restoreCase is one way of creating a session from a seeded source.
+type restoreCase struct {
+	name          string
+	route         string
+	body          map[string]any
+	deleteSources bool
+}
+
+// restoreCases are derive and both replay modes, most of them after the
+// source session's chunk objects are deleted.
+func restoreCases() []restoreCase {
+	return []restoreCase{
 		{name: "derive", route: "derive", body: map[string]any{}},
 		{name: "derive after the source chunks are deleted", route: "derive", body: map[string]any{}, deleteSources: true},
 		{
@@ -574,35 +580,69 @@ func TestDerivedAndReplayedSessionsStartFromTheirRestoredSnapshot_spec_7_1(t *te
 			body: map[string]any{"replayMode": "workspace_derive", "targetRuntime": lifecycleharness.RuntimeRef}, deleteSources: true,
 		},
 	}
-	for i, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			source := fmt.Sprintf("sess_restore_source_%d", i)
-			f.seedSource(t, source, fmt.Sprintf("ck_restore_%d", i))
-			id := f.copyFrom(t, source, tc.route, tc.body)
-			if tc.deleteSources {
-				if _, err := f.store.DeleteBySession(context.Background(), lifecycleharness.Tenant, source); err != nil {
-					t.Fatalf("delete the source chunk objects: %v", err)
-				}
-			}
+}
 
-			code, resp := f.finalizeAndStart(t, id)
-			if code != http.StatusOK {
-				t.Fatalf("start %s: status %d body %v", id, code, resp)
-			}
-			if st := f.h.Row(id).State; st != session.StateRunning {
-				t.Errorf("session state after start = %q, want running", st)
-			}
-			got, want := f.slotTree(t, id), wantRestoredTree()
-			if len(got) != len(want) {
-				t.Errorf("slot workspace = %v, want %v", got, want)
-			}
-			for path, body := range want {
-				if got[path] != body {
-					t.Errorf("%s = %q, want %q", path, got[path], body)
-				}
-			}
-			if _, ok := got["transcript.jsonl"]; ok {
-				t.Error("the source session-file tree reached the workspace")
+// A derived session and a session replayed in either mode start, on a
+// concurrent-workspace pool and on an exclusive pool, with the source
+// snapshot overlaid by the plan's sources, read from the derived session's
+// own copy: deleting every chunk object of the source session before /start
+// changes nothing, and the bundle's session-file tree never reaches the
+// workspace. Against the code that carried no restore on FinalizeWorkspace,
+// the slot holds only the plan's sources. On the exclusive pool the session
+// reaches running only because derive and replay claim a warm pod at create
+// (F-7.1.36): without that claim, /finalize prepares nothing and /start
+// answers 503 STARTING_FAILED on the empty binding.
+//
+// spec: §7.1 (Derive restore semantics); §7.1 (Derive copy semantics); §7.1
+// (Derive session semantics) derive rule 2; §7.1 (Atomicity of session
+// creation (steps 2–8)); §15.1 (Session Replay Semantics); §5.1; §5.2; §14.1
+// diagnosis: a derived or replayed session did not start, started without its source snapshot, restored it from the source session's objects instead of its own copy, restored the session-file tree, or let the snapshot overwrite a plan source. On the exclusive pool, a row with no pod assignment or a 503 STARTING_FAILED naming no claimed sandbox binding means derive or replay inserted the row without the create-time claim (claimForNewRow in pkg/gateway/sessionserver). Otherwise check workspaceRestore in pkg/gateway/sessionserver, mintRestoreChunks in pkg/gateway/podlifecycle/podsession, and restoreSeed in pkg/adapter.
+func TestDerivedAndReplayedSessionsStartFromTheirRestoredSnapshot_spec_7_1(t *testing.T) {
+	pools := []struct {
+		name          string
+		maxConcurrent int32
+	}{
+		{name: "concurrent-workspace pool", maxConcurrent: 8},
+		{name: "exclusive pool", maxConcurrent: 0},
+	}
+	for p, pool := range pools {
+		t.Run(pool.name, func(t *testing.T) {
+			cases := restoreCases()
+			f := newRestoreFixture(t, len(cases), pool.maxConcurrent)
+			for i, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					source := fmt.Sprintf("sess_restore_source_%d_%d", p, i)
+					f.seedSource(t, source, fmt.Sprintf("ck_restore_%d_%d", p, i))
+					id := f.copyFrom(t, source, tc.route, tc.body)
+					if f.h.Row(id).PodAssignment == "" {
+						t.Fatalf("%s persisted %s with no claimed pod", tc.route, id)
+					}
+					if tc.deleteSources {
+						if _, err := f.store.DeleteBySession(context.Background(), lifecycleharness.Tenant, source); err != nil {
+							t.Fatalf("delete the source chunk objects: %v", err)
+						}
+					}
+
+					code, resp := f.finalizeAndStart(t, id)
+					if code != http.StatusOK {
+						t.Fatalf("start %s: status %d body %v", id, code, resp)
+					}
+					if st := f.h.Row(id).State; st != session.StateRunning {
+						t.Errorf("session state after start = %q, want running", st)
+					}
+					got, want := f.slotTree(t, id), wantRestoredTree()
+					if len(got) != len(want) {
+						t.Errorf("slot workspace = %v, want %v", got, want)
+					}
+					for path, body := range want {
+						if got[path] != body {
+							t.Errorf("%s = %q, want %q", path, got[path], body)
+						}
+					}
+					if _, ok := got["transcript.jsonl"]; ok {
+						t.Error("the source session-file tree reached the workspace")
+					}
+				})
 			}
 		})
 	}
@@ -610,15 +650,17 @@ func TestDerivedAndReplayedSessionsStartFromTheirRestoredSnapshot_spec_7_1(t *te
 
 // A derived chunk overwritten in place with the same number of bytes that are
 // not a gzip stream passes the gateway's chunk resolver, so the restore fails
-// inside the adapter. Every attempt fails, the §5.2 slot retry runs a second
-// FinalizeWorkspace with freshly minted grants on the pool's second pod, and
-// /start answers 422 SLOT_FAILED with the transient category and leaves no
-// started session on either pod.
+// inside the adapter. Derive reserved the session's slot at create, as
+// POST /v1/sessions does, so /start binds that reserved slot once and does
+// not re-reserve it: the failed bind releases the reservation, /start answers
+// the retryable 503 STARTING_FAILED that a transient slot failure on a
+// reserved slot carries, and no session is started on either pod.
 //
-// spec: §7.1 (Derive restore semantics); §5.2; §4.7.1
-// diagnosis: a restore that cannot complete started the session with a different workspace, was classified as a permanent slot failure and skipped the retry, or answered a status other than 422 SLOT_FAILED. Check the errRestore arm of FinalizeWorkspace in pkg/adapter and applySlotRetryPolicy in pkg/gateway/sessionserver.
-func TestCorruptDerivedChunkFailsTheStartAfterTheSlotRetry_spec_7_1(t *testing.T) {
-	f := newRestoreFixture(t, 2)
+// spec: §7.1 (Derive restore semantics); §7.1 (Derive session semantics)
+// derive rule 2; §5.2; §4.7.1; §15.1
+// diagnosis: a restore that cannot complete started the session with a different workspace, was classified as a permanent slot failure, or bound more than once on a slot reserved at create. Check the errRestore arm of FinalizeWorkspace in pkg/adapter and bindConcurrentSlot and failReservedSlot in pkg/gateway/sessionserver.
+func TestCorruptDerivedChunkFailsTheStartOnTheReservedSlot_spec_7_1(t *testing.T) {
+	f := newRestoreFixture(t, 2, 8)
 	const source, checkpointID = "sess_restore_corrupt_source", "ck_restore_corrupt"
 	f.seedSource(t, source, checkpointID)
 	id := f.copyFrom(t, source, "derive", map[string]any{})
@@ -649,19 +691,15 @@ func TestCorruptDerivedChunkFailsTheStartAfterTheSlotRetry_spec_7_1(t *testing.T
 
 	finalizesBefore := f.finalizeCalls()
 	code, resp := f.finalizeAndStart(t, id)
-	if code != http.StatusUnprocessableEntity {
-		t.Fatalf("start status = %d, want 422; body %v", code, resp)
+	if code != http.StatusServiceUnavailable {
+		t.Fatalf("start status = %d, want 503; body %v", code, resp)
 	}
 	errBody, _ := resp["error"].(map[string]any)
-	if errBody["code"] != "SLOT_FAILED" {
-		t.Errorf("error.code = %v, want SLOT_FAILED", errBody["code"])
+	if errBody["code"] != "STARTING_FAILED" || errBody["retryable"] != true {
+		t.Errorf("error = %v %v, want the retryable STARTING_FAILED", errBody["code"], errBody["retryable"])
 	}
-	details, _ := errBody["details"].(map[string]any)
-	if details["category"] != "transient" {
-		t.Errorf("error.details.category = %v, want transient", details["category"])
-	}
-	if n := f.finalizeCalls() - finalizesBefore; n != 2 {
-		t.Errorf("FinalizeWorkspace attempts = %d, want 2 (the first attempt and the §5.2 slot retry)", n)
+	if n := f.finalizeCalls() - finalizesBefore; n != 1 {
+		t.Errorf("FinalizeWorkspace attempts = %d, want 1 (a slot reserved at create is not re-reserved)", n)
 	}
 	if st := f.h.Row(id).State; st == session.StateRunning || st == session.StateStarting {
 		t.Errorf("session state after the failed start = %q, want not started", st)
@@ -683,4 +721,54 @@ func (f *restoreFixture) finalizeCalls() int {
 		n += pod.UnaryCalls("FinalizeWorkspace")
 	}
 	return n
+}
+
+// A derived session and a session replayed in either mode, on an exclusive
+// pool, accept an upload before finalize with the uploadToken their creation
+// response carries, and the uploaded file reaches the started workspace
+// beside the restored snapshot and the plan's inline sources. Against the
+// code that minted no token, the response carries none and the upload is
+// refused.
+//
+// spec: §15.1 (Session Replay Semantics) ("identical to `POST /v1/sessions`",
+// "upload → finalize → start → run"); §7.1 (Normal Flow) step 8; §7.4 (Upload
+// Safety) Upload authorization; §7.1 (Derive restore semantics)
+// diagnosis: derive or replay returned no uploadToken, stored a digest the upload path does not accept, or the uploaded file did not reach the workspace. Check mintUploadToken in pkg/gateway/sessionserver/create.go and its calls in derive.go and replay.go.
+func TestDerivedAndReplayedSessionsAcceptUploadsBeforeFinalize_spec_15_1(t *testing.T) {
+	cases := restoreCases()
+	f := newRestoreFixture(t, len(cases), 0)
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			source := fmt.Sprintf("sess_upload_source_%d", i)
+			f.seedSource(t, source, fmt.Sprintf("ck_upload_%d", i))
+			id, token := f.copyWithToken(t, source, tc.route, tc.body)
+			if token == "" {
+				t.Fatalf("%s answered no uploadToken", tc.route)
+			}
+			code, resp := f.h.Upload(f.r, id, token, "text/plain", []byte("uploaded bytes"))
+			if code != http.StatusCreated {
+				t.Fatalf("upload into %s: status %d body %v", id, code, resp)
+			}
+			ref, _ := resp["uploadRef"].(string)
+			if ref == "" {
+				t.Fatalf("upload answered no uploadRef: %v", resp)
+			}
+
+			code, resp = f.finalizeAndStart(t, id, map[string]any{"type": "uploadFile", "path": "uploaded.txt", "uploadRef": ref})
+			if code != http.StatusOK {
+				t.Fatalf("start %s: status %d body %v", id, code, resp)
+			}
+			want := wantRestoredTree()
+			want["uploaded.txt"] = "uploaded bytes"
+			got := f.slotTree(t, id)
+			if len(got) != len(want) {
+				t.Errorf("slot workspace = %v, want %v", got, want)
+			}
+			for path, body := range want {
+				if got[path] != body {
+					t.Errorf("%s = %q, want %q", path, got[path], body)
+				}
+			}
+		})
+	}
 }

@@ -650,9 +650,10 @@ type Server struct {
 	incDelegationBudgetKeysExpired func(pool, tenantID string)
 
 	// incWarmpoolWarmupFailure, when set, increments the §16.1
-	// lenny_warmpool_warmup_failure_total{error_type} counter for one
-	// warm-pool startup failure. Nil disables the emission. spec: §16.1, §7.3 — F-7.5.9.
-	incWarmpoolWarmupFailure func(errorType string)
+	// lenny_warmpool_warmup_failure_total{pool, runtime_class, error_type}
+	// counter for one warm-pool startup failure. Nil disables the emission.
+	// spec: §16.1, §7.3 — F-7.5.9, F-16.1.9.
+	incWarmpoolWarmupFailure func(pool, runtimeClass, errorType string)
 
 	// incInjectionGateFailClosed, when set, increments the
 	// lenny_injection_gate_failclosed_total{cause} counter once per §5.1
@@ -1663,12 +1664,13 @@ type Options struct {
 	IncDelegationBudgetKeysExpired func(pool, tenantID string)
 
 	// IncWarmpoolWarmupFailure, when set, increments the §16.1
-	// lenny_warmpool_warmup_failure_total{error_type} counter for a
-	// warm-pool startup failure. error_type is the §7.3
-	// non-retryable failure category the gateway classified
-	// (`setup_command_failed`, etc.). Nil disables the emission.
-	// spec: §16.1, §7.3 — F-7.5.9.
-	IncWarmpoolWarmupFailure func(errorType string)
+	// lenny_warmpool_warmup_failure_total{pool, runtime_class, error_type}
+	// counter for a warm-pool startup failure. pool and runtimeClass name
+	// the pod the failure ran on; error_type is the §7.3 non-retryable
+	// failure category the gateway classified (`setup_command_failed`).
+	// Nil disables the emission.
+	// spec: §16.1, §7.3 — F-7.5.9, F-16.1.9.
+	IncWarmpoolWarmupFailure func(pool, runtimeClass, errorType string)
 
 	// IncInjectionGateFailClosed, when set, increments the
 	// lenny_injection_gate_failclosed_total{cause} counter once per §5.1

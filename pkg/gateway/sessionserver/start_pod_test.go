@@ -800,15 +800,20 @@ func TestFinalizeFailsSessionAndReclaimsPodOnSetupError_spec_7_5(t *testing.T) {
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
+	sbx := podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5")
+	sbx.Spec.IsolationProfile = string(isolation.ProfileSandboxed)
 	cluster := podBindClient(
 		t,
 		podBindWarmPool("echo-pool", "echo-tmpl"),
 		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		sbx,
 	)
 	registry := podsession.NewRegistry()
 	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
 	store := memstore.New()
+	// spec: §16.1 (Metrics) — the setup_command_failed count carries the
+	// pool and runtime_class of the pod the setup ran on. F-16.1.9.
+	var warmupLabels [][3]string
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-fin-setupfail" },
@@ -816,6 +821,9 @@ func TestFinalizeFailsSessionAndReclaimsPodOnSetupError_spec_7_5(t *testing.T) {
 		PodBinder:               binder,
 		PodRegistry:             registry,
 		AgentNamespace:          podTestNS,
+		IncWarmpoolWarmupFailure: func(pool, runtimeClass, errorType string) {
+			warmupLabels = append(warmupLabels, [3]string{pool, runtimeClass, errorType})
+		},
 	})
 	h := srv.Handler()
 
@@ -861,6 +869,9 @@ func TestFinalizeFailsSessionAndReclaimsPodOnSetupError_spec_7_5(t *testing.T) {
 	}
 	if env.Error.Details["reason"] != "setup_command_failed" {
 		t.Errorf("details.reason = %v, want setup_command_failed", env.Error.Details["reason"])
+	}
+	if want := [][3]string{{"echo-pool", "gvisor", "setup_command_failed"}}; fmt.Sprint(warmupLabels) != fmt.Sprint(want) {
+		t.Errorf("warm-up failure counts = %v, want %v", warmupLabels, want)
 	}
 	// A deterministic non-retryable failure must not invite a retry.
 	if ra := rr.Header().Get("Retry-After"); ra != "" {

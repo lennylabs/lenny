@@ -2268,6 +2268,9 @@
       "title": "Session Lifecycle \u2014 Normal Flow",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
+        "pkg/gateway/sessionserver/derive_claim_test.go",
+        "pkg/gateway/sessionserver/derive_upload_token_test.go::TestDeriveAndReplayMintFailureLeavesNoRowAndNoCopy_spec_7_1",
+        "tests/tier3_contract/rest_sessions/derive_replay_claim_contract_test.go::TestDeriveAndReplayClaimFailureContract_spec_7_1",
         "pkg/adapter/capability_redaction_test.go",
         "tests/tier3_contract/rest_sessions/derive_replay_snapshot_contract_test.go::TestDeriveAndReplaySnapshotCopyErrorContract_spec_7_1",
         "tests/tier3_contract/rest_sessions/openapi_document_test.go::TestServedDocumentDeriveAndReplayDeclareSnapshotUnavailable",
@@ -5634,6 +5637,8 @@
       "title": "REST API",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "pkg/gateway/sessionserver/derive_upload_token_test.go::TestDeriveAndReplayMintAnUploadToken_spec_15_1",
+        "tests/tier4_integration/checkpoint_workspace_derive_test.go::TestDerivedAndReplayedSessionsAcceptUploadsBeforeFinalize_spec_15_1",
         "tests/tier3_contract/rest_sessions/derive_replay_snapshot_contract_test.go::TestDeriveAndReplaySnapshotCopyErrorContract_spec_7_1",
         "tests/tier3_contract/rest_sessions/openapi_document_test.go::TestServedDocumentDeriveAndReplayDeclareSnapshotUnavailable",
         "pkg/gateway/sessionserver/snapshot_copy_test.go::TestSnapshotCopyFailsClosed_spec_7_1",
@@ -6144,6 +6149,8 @@
       "title": "Metrics",
       "spec_file": "spec/16_observability.md",
       "tests": [
+        "pkg/gateway/sessionserver/start_pod_test.go",
+        "pkg/gateway/podlifecycle/podsession/setup_failure_labels_test.go::TestSetupCommandFailureCarriesPoolAndRuntimeClass_spec_16_1",
         "pkg/observability/metrics/metrics_test.go::TestValidateAcceptsCanonicalNames",
         "pkg/observability/metrics/metrics_test.go::TestValidateRejectsForbiddenLabels",
         "pkg/observability/metrics/metrics_test.go::TestValidateAccumulatesMultipleViolations",

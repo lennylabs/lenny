@@ -591,15 +591,17 @@ func (m *Metrics) IncSessionSuspensionCheckpointFailed(pool, tenantID string) {
 }
 
 // IncWarmpoolWarmupFailure increments the gateway half of the §16.1
-// `lenny_warmpool_warmup_failure_total{error_type}` counter. The gateway's
-// one caller passes `setup_command_failed`, for a session whose setup
-// commands fail; the WarmPoolController emits the warm-up error types.
-// spec: §16.1, §7.5 — F-7.5.9.
-func (m *Metrics) IncWarmpoolWarmupFailure(errorType string) {
+// `lenny_warmpool_warmup_failure_total{pool, runtime_class, error_type}`
+// counter. The gateway's one caller passes `setup_command_failed`, for a
+// session whose setup commands fail, with the pool and runtime class of the
+// pod the setup ran on; the WarmPoolController emits the warm-up error
+// types with the same labels.
+// spec: §16.1, §7.5 — F-7.5.9, F-16.1.9.
+func (m *Metrics) IncWarmpoolWarmupFailure(pool, runtimeClass, errorType string) {
 	if m == nil {
 		return
 	}
-	m.warmpoolWarmupFailure.WithLabelValues(errorType).Inc()
+	m.warmpoolWarmupFailure.WithLabelValues(pool, runtimeClass, errorType).Inc()
 }
 
 // IncInjectionGateFailClosed increments the

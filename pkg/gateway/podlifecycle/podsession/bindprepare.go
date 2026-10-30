@@ -178,10 +178,14 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 		reclaim(err)
 		// spec: §7.5 — partial outputs ride alongside the failure
 		// so the gateway can persist what was captured before the abort.
+		// spec: §16.1 — the pool and the pod's runtime class label the
+		// gateway's setup_command_failed count.
 		return nil, &SetupCommandFailure{
-			Pod:     sandboxName,
-			Cause:   err,
-			Outputs: setupOutputs,
+			Pod:          sandboxName,
+			Pool:         req.Pool,
+			RuntimeClass: runtimeClassOf(sb.Spec.IsolationProfile),
+			Cause:        err,
+			Outputs:      setupOutputs,
 		}
 	}
 	t.SetupCommands = time.Since(phaseStart)

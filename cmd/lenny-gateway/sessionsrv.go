@@ -446,7 +446,8 @@ func (w *gatewayWiring) buildSessionServer(
 		// each reservation detection under the tree root's pool.
 		IncDelegationBudgetKeysExpired: gwMetrics.IncDelegationBudgetKeysExpired,
 		// spec: §16.1, §7.3 — F-7.5.9. Increment the
-		// lenny_warmpool_warmup_failure_total{error_type=setup_command_failed}
+		// lenny_warmpool_warmup_failure_total{pool, runtime_class,
+		// error_type=setup_command_failed}
 		// counter when a §7.5 setup command fails on the warm-pool side
 		// of a bind.
 		IncWarmpoolWarmupFailure: gwMetrics.IncWarmpoolWarmupFailure,

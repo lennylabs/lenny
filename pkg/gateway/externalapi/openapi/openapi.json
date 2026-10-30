@@ -818,7 +818,7 @@
           "201": { "description": "Created" },
           "409": { "description": "DERIVE_ON_LIVE_SESSION" },
           "422": { "description": "ISOLATION_MONOTONICITY_VIOLATED" },
-          "503": { "description": "DERIVE_SNAPSHOT_UNAVAILABLE", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+          "503": { "description": "DERIVE_SNAPSHOT_UNAVAILABLE, or a create-time claim failure: SESSION_CREATION_FAILED, CREDENTIAL_POOL_EXHAUSTED, or RUNTIME_UNAVAILABLE (pool warming)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
       }
     },
@@ -1051,7 +1051,7 @@
           "400": { "description": "INCOMPATIBLE_RUNTIME", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "409": { "description": "REPLAY_ON_LIVE_SESSION", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "422": { "description": "ISOLATION_MONOTONICITY_VIOLATED", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
-          "503": { "description": "DERIVE_SNAPSHOT_UNAVAILABLE", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+          "503": { "description": "DERIVE_SNAPSHOT_UNAVAILABLE, or a create-time claim failure: SESSION_CREATION_FAILED, CREDENTIAL_POOL_EXHAUSTED, or RUNTIME_UNAVAILABLE (pool warming)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
       }
     },

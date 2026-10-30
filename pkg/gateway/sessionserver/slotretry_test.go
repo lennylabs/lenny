@@ -935,7 +935,7 @@ func TestSlotBindRefusalAnswersRetryableFallback_spec_4_7_1(t *testing.T) {
 			var sink captureSetupAudit
 			var warmupFailures []string
 			s.lifecycleAudit = &sink
-			s.incWarmpoolWarmupFailure = func(et string) { warmupFailures = append(warmupFailures, et) }
+			s.incWarmpoolWarmupFailure = func(_, _, et string) { warmupFailures = append(warmupFailures, et) }
 
 			w := httptest.NewRecorder()
 			s.writePodClaimError(w, tc.err(t), tc.fallback, "could not start the session")
