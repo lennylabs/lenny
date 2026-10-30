@@ -24,6 +24,7 @@ import (
 func seedTerminalSource(t *testing.T, store sessionstore.Store, mods ...func(*sessionstore.Session)) {
 	t.Helper()
 	row := sessionstore.Session{
+		UserID:           testOwner,
 		ID:               "sess_src",
 		TenantID:         "acme",
 		State:            session.StateCompleted,

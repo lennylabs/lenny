@@ -33,7 +33,8 @@ func fenceTestServer(t *testing.T) (*sessionserver.Server, sessionstore.Store) {
 func TestDeleteFromResumingBumpsCoordinationGeneration_spec_7_2_F_7_1_14(t *testing.T) {
 	srv, store := fenceTestServer(t)
 	row := sessionstore.Session{
-		ID: "sess-del-resuming", TenantID: "acme", RuntimeRef: "claude-code",
+		UserID: testOwner,
+		ID:     "sess-del-resuming", TenantID: "acme", RuntimeRef: "claude-code",
 		State: session.StateResuming, CoordinationGeneration: 4, RecoveryGeneration: 2,
 	}
 	if err := store.Create(context.Background(), row); err != nil {
@@ -66,7 +67,8 @@ func TestDeleteFromResumingBumpsCoordinationGeneration_spec_7_2_F_7_1_14(t *test
 func TestDeleteFromRunningDoesNotBumpCoordinationGeneration_spec_7_2_F_7_1_14(t *testing.T) {
 	srv, store := fenceTestServer(t)
 	row := sessionstore.Session{
-		ID: "sess-del-running", TenantID: "acme", RuntimeRef: "claude-code",
+		UserID: testOwner,
+		ID:     "sess-del-running", TenantID: "acme", RuntimeRef: "claude-code",
 		State: session.StateRunning, CoordinationGeneration: 9,
 	}
 	if err := store.Create(context.Background(), row); err != nil {
@@ -98,7 +100,8 @@ func TestDeleteFromRunningDoesNotBumpCoordinationGeneration_spec_7_2_F_7_1_14(t 
 func TestReportSessionFailureFromResumingWritesAwaitingAtG_spec_7_3_8(t *testing.T) {
 	srv, store := fenceTestServer(t)
 	row := sessionstore.Session{
-		ID: "sess-collapse-res", TenantID: "acme", RuntimeRef: "claude-code",
+		UserID: testOwner,
+		ID:     "sess-collapse-res", TenantID: "acme", RuntimeRef: "claude-code",
 		State: session.StateResuming, CoordinationGeneration: 14,
 	}
 	if err := store.Create(context.Background(), row); err != nil {
@@ -130,7 +133,8 @@ func TestReportSessionFailureFromResumingWritesAwaitingAtG_spec_7_3_8(t *testing
 func TestStoreMonotonicityRejectsCoordinationGenerationDecrease_spec_4_2_F_7_1_14(t *testing.T) {
 	store := memstore.New()
 	row := sessionstore.Session{
-		ID: "sess-mono", TenantID: "acme", RuntimeRef: "claude-code",
+		UserID: testOwner,
+		ID:     "sess-mono", TenantID: "acme", RuntimeRef: "claude-code",
 		State: session.StateRunning, CoordinationGeneration: 10,
 	}
 	if err := store.Create(context.Background(), row); err != nil {

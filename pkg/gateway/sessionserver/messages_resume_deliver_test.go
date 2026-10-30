@@ -109,7 +109,7 @@ func seedSuspendedSession(t *testing.T, store sessionstore.Store, id, pod string
 	t.Helper()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", UserID: "alice", RuntimeRef: "echo",
+		ID: id, TenantID: "acme", UserID: testOwner, RuntimeRef: "echo",
 		State: session.StateSuspended, PodAssignment: pod,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {

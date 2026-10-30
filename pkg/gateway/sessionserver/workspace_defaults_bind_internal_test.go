@@ -189,7 +189,7 @@ func (f *wdFixture) seed(t *testing.T, id, runtime string) {
 	t.Helper()
 	at := time.Date(2026, 6, 8, 9, 0, 0, 0, time.UTC)
 	if err := f.store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: wdTenant, UserID: "alice", RuntimeRef: runtime,
+		ID: id, TenantID: wdTenant, UserID: testOwner, RuntimeRef: runtime,
 		State: session.StateCreated, CreatedAt: at, UpdatedAt: at,
 	}); err != nil {
 		t.Fatalf("seed %s: %v", id, err)

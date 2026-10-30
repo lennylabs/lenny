@@ -73,7 +73,8 @@ func TestMessagesObservesTTFTOnFirstResponse_spec_6_3_F_6_3_3(t *testing.T) {
 		ObserveTimeToFirstToken: cap.observe,
 	})
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_ttft", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_ttft", TenantID: "acme", State: session.StateRunning,
 		PoolRef: "pool-runc", IsolationProfile: isolation.ProfileStandard,
 		CreatedAt: createdAt, UpdatedAt: createdAt,
 	}); err != nil {
@@ -124,7 +125,8 @@ func TestMessagesTTFTObservedOnlyOncePerSession_spec_6_3_F_6_3_3(t *testing.T) {
 		ObserveTimeToFirstToken: cap.observe,
 	})
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_ttft_once", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_ttft_once", TenantID: "acme", State: session.StateRunning,
 		PoolRef: "pool-runc", IsolationProfile: isolation.ProfileStandard,
 		CreatedAt: createdAt, UpdatedAt: createdAt,
 	}); err != nil {
@@ -166,7 +168,8 @@ func TestMessagesTTFTSkipsNonResponseEvents_spec_6_3_F_6_3_3(t *testing.T) {
 		ObserveTimeToFirstToken: cap.observe,
 	})
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_ttft_skip", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_ttft_skip", TenantID: "acme", State: session.StateRunning,
 		PoolRef: "pool-runc", IsolationProfile: isolation.ProfileStandard,
 		CreatedAt: createdAt, UpdatedAt: createdAt,
 	}); err != nil {
@@ -203,7 +206,8 @@ func TestMessagesTTFTSkipsUnresolvedIsolation_spec_6_3_F_6_3_3(t *testing.T) {
 		ObserveTimeToFirstToken: cap.observe,
 	})
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_ttft_unresolved", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_ttft_unresolved", TenantID: "acme", State: session.StateRunning,
 		// IsolationProfile left empty: RuntimeClassName(empty) returns ok=false.
 		CreatedAt: createdAt, UpdatedAt: createdAt,
 	}); err != nil {

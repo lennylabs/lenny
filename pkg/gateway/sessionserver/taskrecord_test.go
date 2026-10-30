@@ -62,7 +62,8 @@ func TestGetSessionProjectsTaskRecord_spec_8_8_806(t *testing.T) {
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_tr1", TenantID: "acme", State: session.StateCompleted,
+		UserID: testOwner,
+		ID:     "sess_tr1", TenantID: "acme", State: session.StateCompleted,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -121,7 +122,8 @@ func TestGetSessionOmitsTaskRecordWithoutTranscripts_spec_8_8_806(t *testing.T) 
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: executor.NewEchoExecutor()})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_no_tr", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_no_tr", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)

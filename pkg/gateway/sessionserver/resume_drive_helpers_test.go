@@ -35,7 +35,7 @@ func resumeAndDrive(t *testing.T, srv *sessionserver.Server, id string) *httptes
 		t.Fatalf("decode resume answer: %v", err)
 	}
 	if body.State == string(session.StateResumePending) {
-		srv.DriveResumeAndWait(context.Background(), sessionstore.Session{TenantID: "acme", ID: id})
+		srv.DriveResumeAndWait(context.Background(), sessionstore.Session{UserID: testOwner, TenantID: "acme", ID: id})
 	}
 	return rr
 }

@@ -23,11 +23,11 @@ func TestResumeWindowLeftRunsFromStateEntry_spec_6_2(t *testing.T) {
 	const window = 15 * time.Minute
 	s := &Server{clock: func() time.Time { return now }, maxResumePending: window}
 
-	stale := sessionstore.Session{StateEnteredAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Second)}
+	stale := sessionstore.Session{UserID: testOwner, StateEnteredAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Second)}
 	if got := s.windowLeft(stale); got > 0 {
 		t.Errorf("windowLeft for a row that entered resume_pending 1h ago = %s, want <= 0", got)
 	}
-	fresh := sessionstore.Session{StateEnteredAt: now.Add(-time.Minute), UpdatedAt: now.Add(-time.Hour)}
+	fresh := sessionstore.Session{UserID: testOwner, StateEnteredAt: now.Add(-time.Minute), UpdatedAt: now.Add(-time.Hour)}
 	if got, want := s.windowLeft(fresh), window-time.Minute; got != want {
 		t.Errorf("windowLeft for a row that entered resume_pending 1m ago = %s, want %s", got, want)
 	}

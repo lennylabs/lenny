@@ -118,8 +118,8 @@ func TestPublishedBindingCarriesRowGeneration_spec_10_1_1(t *testing.T) {
 		name string
 		row  sessionstore.Session
 	}{
-		{"checkpoint resume", sessionstore.Session{WorkspaceSnapshot: checkpointed()}},
-		{"snapshotless resume", sessionstore.Session{WorkspacePlan: json.RawMessage(`{
+		{"checkpoint resume", sessionstore.Session{UserID: testOwner, WorkspaceSnapshot: checkpointed()}},
+		{"snapshotless resume", sessionstore.Session{UserID: testOwner, WorkspacePlan: json.RawMessage(`{
 			"schemaVersion": 1,
 			"sources": [{"type":"inlineFile","path":"CLAUDE.md","content":"# resumed","mode":"0644"}]
 		}`)}},

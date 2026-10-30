@@ -129,7 +129,8 @@ func newDriverFixture(t *testing.T, brokenResume bool) *driverFixture {
 	})
 	t.Cleanup(f.srv.Close)
 	if err := f.store.Create(context.Background(), sessionstore.Session{
-		ID: "s", TenantID: "acme", RuntimeRef: "echo", PoolRef: "echo-pool", State: session.StateResumePending,
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", RuntimeRef: "echo", PoolRef: "echo-pool", State: session.StateResumePending,
 		IsolationProfile:  isolation.ProfileSandboxed,
 		WorkspaceSnapshot: checkpointed(),
 	}); err != nil {

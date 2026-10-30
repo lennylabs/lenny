@@ -60,7 +60,8 @@ func newRBACSessionServer(t *testing.T, roles customrolestore.Store) (*sessionse
 	store := memstore.New()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_rbac", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_rbac", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed session: %v", err)
@@ -277,7 +278,8 @@ func TestSessionEndpointCrossTenantRejection(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	// A session owned by globex.
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_globex", TenantID: "globex", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_globex", TenantID: "globex", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -367,7 +369,8 @@ func TestSessionEndpointMultiTenantRejectsRolelessPrincipal(t *testing.T) {
 	store := memstore.New()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_rbac", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_rbac", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed session: %v", err)

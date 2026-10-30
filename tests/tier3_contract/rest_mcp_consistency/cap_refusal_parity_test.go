@@ -25,6 +25,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // capEnvelope is the projection of an error envelope the parity test
@@ -51,8 +52,8 @@ func newCapLimitedServers(t *testing.T) (*httptest.Server, *httptest.Server) {
 		t.Fatalf("seed tenant: %v", err)
 	}
 	for _, row := range []sessionstore.Session{
-		{ID: "sess_running", TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning},
-		{ID: "sess_suspended", TenantID: "acme", RuntimeRef: "echo", State: session.StateSuspended, PodAssignment: "pod-a"},
+		{ID: "sess_running", TenantID: "acme", UserID: ownerprincipal.Alice, RuntimeRef: "echo", State: session.StateRunning},
+		{ID: "sess_suspended", TenantID: "acme", UserID: ownerprincipal.Alice, RuntimeRef: "echo", State: session.StateSuspended, PodAssignment: "pod-a"},
 	} {
 		if err := store.Create(ctx, row); err != nil {
 			t.Fatalf("seed %s: %v", row.ID, err)
@@ -61,7 +62,8 @@ func newCapLimitedServers(t *testing.T) (*httptest.Server, *httptest.Server) {
 	exec := executor.NewEchoExecutor()
 	rest := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec, Tenants: tenants})
 	t.Cleanup(rest.Close)
-	tsREST := httptest.NewServer(rest.Handler())
+	// spec: §10.2 (Session ownership) — REST requests run as the seeded rows' owner.
+	tsREST := httptest.NewServer(ownerprincipal.Wrap(rest.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsREST.Close)
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
@@ -74,7 +76,7 @@ func newCapLimitedServers(t *testing.T) (*httptest.Server, *httptest.Server) {
 		IDFunc:            func() string { return "msg_cap" },
 		TenantID:          "acme",
 	})
-	tsMCP := httptest.NewServer(mcpSrv.Handler())
+	tsMCP := httptest.NewServer(ownerprincipal.Wrap(mcpSrv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsMCP.Close)
 	return tsREST, tsMCP
 }

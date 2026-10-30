@@ -72,7 +72,7 @@ func midSessionFixtureAudited(t *testing.T, capability, policyEnabled, withBindi
 	store := memstore.New()
 	now := time.Now()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_mid", TenantID: "acme", UserID: "alice", RuntimeRef: "rt-mid",
+		ID: "sess_mid", TenantID: "acme", UserID: testOwner, RuntimeRef: "rt-mid",
 		State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatal(err)

@@ -97,7 +97,7 @@ func TestClassifyCommitCoversEveryRow_spec_7_3(t *testing.T) {
 	binder := commitBaseline{gen: 7, sandbox: "sbx-new", recoveryGen: 2}
 	binderless := commitBaseline{recoveryGen: 2, binderless: true}
 	row := func(st session.State, pod string, gen, rec int64) sessionstore.Session {
-		return sessionstore.Session{State: st, PodAssignment: pod, CoordinationGeneration: gen, RecoveryGeneration: rec}
+		return sessionstore.Session{UserID: testOwner, State: st, PodAssignment: pod, CoordinationGeneration: gen, RecoveryGeneration: rec}
 	}
 	for _, tc := range []struct {
 		name string
@@ -157,7 +157,8 @@ func TestBinderlessCommitIsClassifiedOnce_spec_7_3(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			inner := memstore.New()
 			if err := inner.Create(context.Background(), sessionstore.Session{
-				ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateResumePending,
+				UserID: testOwner,
+				ID:     "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateResumePending,
 			}); err != nil {
 				t.Fatalf("seed: %v", err)
 			}
@@ -204,7 +205,8 @@ func TestDriveResumeRefusals_spec_7_3(t *testing.T) {
 	seed := func(t *testing.T, st sessionstore.Store, id string) sessionstore.Session {
 		t.Helper()
 		if err := st.Create(context.Background(), sessionstore.Session{
-			ID: id, TenantID: "acme", RuntimeRef: "echo", State: session.StateResumePending,
+			UserID: testOwner,
+			ID:     id, TenantID: "acme", RuntimeRef: "echo", State: session.StateResumePending,
 		}); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
@@ -296,7 +298,8 @@ func TestResumeAttemptRecordIsEmptyAfterEveryExit_spec_7_3(t *testing.T) {
 	newRow := func(t *testing.T, st sessionstore.Store, id string) sessionstore.Session {
 		t.Helper()
 		if err := st.Create(context.Background(), sessionstore.Session{
-			ID: id, TenantID: "acme", RuntimeRef: "echo", State: session.StateResumePending,
+			UserID: testOwner,
+			ID:     id, TenantID: "acme", RuntimeRef: "echo", State: session.StateResumePending,
 		}); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
@@ -407,7 +410,8 @@ func serviceModeResumeServer(t *testing.T, store sessionstore.Store, inner sessi
 	}
 	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(pool, tmpl).Build()
 	if err := inner.Create(context.Background(), sessionstore.Session{
-		ID: "svc", TenantID: "acme", RuntimeRef: "svc-runtime", IsolationProfile: isolation.ProfileSandboxed,
+		UserID: testOwner,
+		ID:     "svc", TenantID: "acme", RuntimeRef: "svc-runtime", IsolationProfile: isolation.ProfileSandboxed,
 		State: session.StateResumePending, CoordinationGeneration: 4, Pool: "svc-pool", PoolRef: "svc-pool",
 	}); err != nil {
 		t.Fatalf("seed: %v", err)

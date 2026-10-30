@@ -57,6 +57,7 @@ func seedCreatedSession(t *testing.T, store sessionstore.Store, id, tenant strin
 	t.Helper()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	row := sessionstore.Session{
+		UserID:    testOwner,
 		ID:        id,
 		TenantID:  tenant,
 		State:     session.StateCreated,
@@ -189,7 +190,8 @@ func TestUploadRejectsWrongState(t *testing.T) {
 	// Session is `ready` — not in upload's precondition table.
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_upload", TenantID: "acme", State: session.StateReady,
+		UserID: testOwner,
+		ID:     "sess_upload", TenantID: "acme", State: session.StateReady,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)

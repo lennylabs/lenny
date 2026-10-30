@@ -44,10 +44,10 @@ var copyEndpoints = []copyEndpoint{
 		return deriveRequest(t, h, sessionserver.DeriveRequest{})
 	}},
 	{"replay prompt_history", "sess_replay", func(t *testing.T, h http.Handler) *httptest.ResponseRecorder {
-		return replayAs(t, h, "", sessionserver.ReplayRequest{ReplayMode: sessionserver.ReplayPromptHistory, TargetRuntime: "x"})
+		return replayAs(t, h, "alice@acme.com", sessionserver.ReplayRequest{ReplayMode: sessionserver.ReplayPromptHistory, TargetRuntime: "x"})
 	}},
 	{"replay workspace_derive", "sess_replay", func(t *testing.T, h http.Handler) *httptest.ResponseRecorder {
-		return replayAs(t, h, "", sessionserver.ReplayRequest{ReplayMode: sessionserver.ReplayWorkspaceDerive, TargetRuntime: "x"})
+		return replayAs(t, h, "alice@acme.com", sessionserver.ReplayRequest{ReplayMode: sessionserver.ReplayWorkspaceDerive, TargetRuntime: "x"})
 	}},
 }
 
@@ -338,7 +338,7 @@ func TestReplayReservationBracketsCopy_spec_12_8(t *testing.T) {
 		f, _, _ := replayFixture(t)
 		f.store.reserveErr = refusal
 		h := copyServer(f, f.blobs, []string{"sess_replay"})
-		rr := replayAs(t, h, "", sessionserver.ReplayRequest{ReplayMode: sessionserver.ReplayWorkspaceDerive, TargetRuntime: "x"})
+		rr := replayAs(t, h, "alice@acme.com", sessionserver.ReplayRequest{ReplayMode: sessionserver.ReplayWorkspaceDerive, TargetRuntime: "x"})
 		if rr.Code != http.StatusForbidden {
 			t.Fatalf("status = %d, want 403; body %s", rr.Code, rr.Body.String())
 		}
@@ -352,7 +352,7 @@ func TestReplayReservationBracketsCopy_spec_12_8(t *testing.T) {
 			f.store.createReservedErr = refusal
 			f.store.createWithTransErr = refusal
 			h := copyServer(f, f.blobs, []string{"sess_replay"})
-			rr := replayAs(t, h, "", sessionserver.ReplayRequest{ReplayMode: mode, TargetRuntime: "x"})
+			rr := replayAs(t, h, "alice@acme.com", sessionserver.ReplayRequest{ReplayMode: mode, TargetRuntime: "x"})
 			if rr.Code != http.StatusForbidden {
 				t.Fatalf("status = %d, want 403; body %s", rr.Code, rr.Body.String())
 			}

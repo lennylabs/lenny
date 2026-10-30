@@ -516,7 +516,8 @@ func TestResolveCredentialPoolsFailsClosedOnLookupError_spec_4_9(t *testing.T) {
 		f := newLookupFixture(t, lookupFixtureOpts{noPolicy: true})
 		f.runtimes.arm(lookupExclusiveRT, errInjectedLookup)
 		pools, _, _, err := f.srv.resolveCredentialPools(context.Background(), sessionstore.Session{
-			ID: "s1", TenantID: "acme", RuntimeRef: lookupExclusiveRT,
+			UserID: testOwner,
+			ID:     "s1", TenantID: "acme", RuntimeRef: lookupExclusiveRT,
 		})
 		if err != nil || len(pools) != 0 {
 			t.Errorf("no-policy resolution = (%v, %v), want no assignment and no error", pools, err)
@@ -525,7 +526,8 @@ func TestResolveCredentialPoolsFailsClosedOnLookupError_spec_4_9(t *testing.T) {
 	t.Run("control: runtime declares no providers", func(t *testing.T) {
 		f := newLookupFixture(t, lookupFixtureOpts{noProviders: true})
 		_, _, _, err := f.srv.resolveCredentialPools(context.Background(), sessionstore.Session{
-			ID: "s1", TenantID: "acme", RuntimeRef: lookupExclusiveRT,
+			UserID: testOwner,
+			ID:     "s1", TenantID: "acme", RuntimeRef: lookupExclusiveRT,
 		})
 		if !errors.Is(err, credrouter.ErrNoCredentialAvailable) {
 			t.Errorf("runtime with no providers = %v, want ErrNoCredentialAvailable", err)
@@ -535,7 +537,8 @@ func TestResolveCredentialPoolsFailsClosedOnLookupError_spec_4_9(t *testing.T) {
 		f := newLookupFixture(t, lookupFixtureOpts{})
 		f.tenants.arm(errInjectedLookup)
 		pools, _, _, err := f.srv.resolveCredentialPools(context.Background(), sessionstore.Session{
-			ID: "s1", TenantID: "acme", RuntimeRef: lookupExclusiveRT, CredentialDeny: true,
+			UserID: testOwner,
+			ID:     "s1", TenantID: "acme", RuntimeRef: lookupExclusiveRT, CredentialDeny: true,
 		})
 		if err != nil || len(pools) != 0 {
 			t.Errorf("deny row = (%v, %v), want no assignment and no error (a deny hop holds no credential)", pools, err)
@@ -864,7 +867,7 @@ func TestCreateOverrideRestrictCheckFailsClosed_spec_14(t *testing.T) {
 			body, _ := json.Marshal(req)
 			r := httptest.NewRequest(http.MethodPost, "/v1/sessions", bytes.NewReader(body))
 			rr := httptest.NewRecorder()
-			row := sessionstore.Session{ID: "sess-override", TenantID: "acme"}
+			row := sessionstore.Session{UserID: testOwner, ID: "sess-override", TenantID: "acme"}
 			_, ok := srv.validateRequestEnvelope(rr, r, req, "acme", &row)
 			if ok != tc.wantOK {
 				t.Fatalf("envelope ok = %v, want %v; status=%d body=%s", ok, tc.wantOK, rr.Code, rr.Body.String())

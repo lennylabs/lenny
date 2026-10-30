@@ -813,7 +813,8 @@ func TestServiceModeStartTakesNoLease_spec_10_1_1(t *testing.T) {
 		ReplicaID:               "replica-a",
 	})
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess-svc", TenantID: startTestTenant, RuntimeRef: "svc-runtime",
+		UserID: testOwner,
+		ID:     "sess-svc", TenantID: startTestTenant, RuntimeRef: "svc-runtime",
 		IsolationProfile: isolation.ProfileSandboxed, State: session.StateReady,
 	}); err != nil {
 		t.Fatalf("seed ready row: %v", err)

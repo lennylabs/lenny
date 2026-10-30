@@ -49,6 +49,7 @@ func seedAndMintUploadSubsystem(t *testing.T, store sessionstore.Store, issuer *
 	t.Helper()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	row := sessionstore.Session{
+		UserID:    testOwner,
 		ID:        id,
 		TenantID:  tenant,
 		State:     session.StateCreated,

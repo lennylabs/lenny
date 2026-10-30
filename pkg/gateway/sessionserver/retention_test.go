@@ -22,6 +22,7 @@ import (
 func seedSessionForRetention(t *testing.T, store sessionstore.Store) sessionstore.Session {
 	t.Helper()
 	row := sessionstore.Session{
+		UserID:    testOwner,
 		ID:        "sess_R",
 		TenantID:  "acme",
 		State:     session.StateCompleted,

@@ -276,7 +276,7 @@ func TestAdmitResumeOutcomes_spec_11_1(t *testing.T) {
 		{name: "tenant limit zero", setup: setup{tenants: newLimitTenants(0)}, noCount: true},
 		{name: "tenant below", setup: setup{tenants: newLimitTenants(3)}},
 		{name: "tenant at", setup: setup{tenants: newLimitTenants(2)}, refusal: &CapRefusal{Scope: CapScopeTenant, Limit: 2, Active: 2}},
-		{name: "unknown tenant", setup: setup{tenants: newLimitTenants(1)}, row: sessionstore.Session{ID: "x", TenantID: "globex", State: session.StateSuspended}, noCount: true},
+		{name: "unknown tenant", setup: setup{tenants: newLimitTenants(1)}, row: sessionstore.Session{UserID: testOwner, ID: "x", TenantID: "globex", State: session.StateSuspended}, noCount: true},
 		{name: "tenant lookup error", setup: setup{tenants: &limitTenants{Memory: tenantstore.NewMemory(), getErr: errCountFailed}}, wantErr: errCountFailed, noCount: true},
 		{name: "tenant count error", setup: setup{tenants: newLimitTenants(5), countErr: errCountFailed}, wantErr: errCountFailed},
 		{name: "user below", setup: setup{user: 3}},
@@ -378,7 +378,8 @@ func TestResumeEndpointAdmission_spec_11_1(t *testing.T) {
 	r.seedPodless(t, "podless")
 	r.seedSuspended(t, "held", r.now.Add(-time.Hour))
 	if err := r.store.Create(context.Background(), sessionstore.Session{
-		ID: "awaiting", TenantID: "acme", State: session.StateAwaitingClientAction,
+		UserID: testOwner,
+		ID:     "awaiting", TenantID: "acme", State: session.StateAwaitingClientAction,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -487,7 +488,8 @@ func TestFailureEdgeOutOfSuspendedIsNotAdmissionChecked_spec_11_1(t *testing.T) 
 	srv.maxConcSessGlobal = 1
 	seedCounted(t, store, "other")
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "s1", TenantID: "acme", RuntimeRef: "echo", State: session.StateSuspended, PodAssignment: "pod-1",
+		UserID: testOwner,
+		ID:     "s1", TenantID: "acme", RuntimeRef: "echo", State: session.StateSuspended, PodAssignment: "pod-1",
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}

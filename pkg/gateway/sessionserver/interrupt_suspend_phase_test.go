@@ -46,7 +46,8 @@ func TestInterruptRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_sus", TenantID: "acme", RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     "sess_sus", TenantID: "acme", RuntimeRef: "echo",
 		State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 	})
 
@@ -108,7 +109,8 @@ func TestInterruptTimeoutRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_to", TenantID: "acme", RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     "sess_to", TenantID: "acme", RuntimeRef: "echo",
 		State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 	})
 
@@ -161,7 +163,8 @@ func TestInterruptBusyLeavesRowRunning_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_busy", TenantID: "acme", RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     "sess_busy", TenantID: "acme", RuntimeRef: "echo",
 		State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 	})
 
@@ -210,7 +213,8 @@ func TestInterruptSuspendNoBindingStampsRow_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_nb", TenantID: "acme", RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     "sess_nb", TenantID: "acme", RuntimeRef: "echo",
 		State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 	})
 	// No binder, no registry — row-only mode.

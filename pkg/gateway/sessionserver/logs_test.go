@@ -27,7 +27,8 @@ func logsTestServer(t *testing.T, id string, publish func(bus *sessionevents.Bus
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     id, TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("create session: %v", err)
@@ -106,7 +107,8 @@ func TestLogsJSONSinceFilter_spec_24_17_220(t *testing.T) {
 	bus := sessionevents.NewBus(32)
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_since", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_since", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: base, UpdatedAt: base,
 	}); err != nil {
 		t.Fatalf("create: %v", err)

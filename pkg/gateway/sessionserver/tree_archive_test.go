@@ -27,7 +27,8 @@ func seedAwaitingParent(t *testing.T, store sessionstore.Store, id string) {
 	t.Helper()
 	now := time.Now()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", State: session.StateAwaitingClientAction,
+		UserID: testOwner,
+		ID:     id, TenantID: "acme", State: session.StateAwaitingClientAction,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed awaiting parent %s: %v", id, err)
@@ -56,7 +57,8 @@ func seedCascadeSession(t *testing.T, store sessionstore.Store, id, parent strin
 	t.Helper()
 	now := time.Now()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     id, TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: parent, CascadeOnFailure: policy,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
@@ -71,7 +73,8 @@ func seedDelegatedSession(t *testing.T, store sessionstore.Store, id, parent str
 	t.Helper()
 	now := time.Now()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", State: session.StateRunning, RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     id, TenantID: "acme", State: session.StateRunning, RuntimeRef: "echo",
 		ParentSessionID: parent, DelegationDepth: 1,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
@@ -239,7 +242,8 @@ func TestDetachFallsBackToCancelAllOverOrphanCap(t *testing.T) {
 	now := time.Now()
 	// A pre-existing orphan: a running child of an already-terminal root.
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "old_root", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "old_root", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed old root: %v", err)
@@ -279,7 +283,8 @@ func TestOrphanCapCountsChildrenOfTerminalMidTreeSession_spec_8_10(t *testing.T)
 	seedDelegatedSession(t, store, "mid", "live_root")
 	for _, id := range []string{"mid_kid_a", "mid_kid_b"} {
 		if err := store.Create(context.Background(), sessionstore.Session{
-			ID: id, TenantID: "acme", State: session.StateRunning, RuntimeRef: "echo",
+			UserID: testOwner,
+			ID:     id, TenantID: "acme", State: session.StateRunning, RuntimeRef: "echo",
 			ParentSessionID: "mid", DelegationDepth: 2,
 		}); err != nil {
 			t.Fatalf("seed %s: %v", id, err)
@@ -332,7 +337,8 @@ func TestDetachFallbackEmitsCascadeAppliedAudit_spec_8_10_1103(t *testing.T) {
 	now := time.Now()
 	// Pre-existing orphan to push the tenant over the cap.
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "old_root", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "old_root", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed old root: %v", err)
@@ -408,7 +414,8 @@ func TestDetachProceedsUnderOrphanCap(t *testing.T) {
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, MaxOrphanTasksPerTenant: 10})
 	now := time.Now()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "old_root", TenantID: "acme", State: session.StateCompleted,
+		UserID: testOwner,
+		ID:     "old_root", TenantID: "acme", State: session.StateCompleted,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed old root: %v", err)
@@ -493,7 +500,8 @@ func TestResumeSkipsChildrenReattachedWhenAllChildrenTerminal(t *testing.T) {
 	seedAwaitingParent(t, store, "sess_parent")
 	now := time.Now()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_child", TenantID: "acme", State: session.StateCompleted,
+		UserID: testOwner,
+		ID:     "sess_child", TenantID: "acme", State: session.StateCompleted,
 		ParentSessionID: "sess_parent", CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed child: %v", err)

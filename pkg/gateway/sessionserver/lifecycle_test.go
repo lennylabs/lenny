@@ -52,7 +52,8 @@ func TestCreateStampsDefaultRetention_spec_7_1_5(t *testing.T) {
 func TestInterruptEmitsStatusChangeSuspended_spec_7_2_2(t *testing.T) {
 	store := memstore.New()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_i", TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_i", TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}

@@ -33,11 +33,13 @@ func TestOnSessionExpiredEmitsCounter_F_11_3_7(t *testing.T) {
 	srv := New(memstore.New(), Options{DevTenantHeader: true, IncSessionExpiry: counter.record})
 
 	srv.OnSessionExpired(context.Background(), sessionstore.Session{
-		ID: "sess_idle", TenantID: "acme", PoolRef: "pool-a",
+		UserID: testOwner,
+		ID:     "sess_idle", TenantID: "acme", PoolRef: "pool-a",
 		State: session.StateExpired,
 	}, "max_idle_time")
 	srv.OnSessionExpired(context.Background(), sessionstore.Session{
-		ID: "sess_age", TenantID: "acme", PoolRef: "pool-b",
+		UserID: testOwner,
+		ID:     "sess_age", TenantID: "acme", PoolRef: "pool-b",
 		State: session.StateExpired,
 	}, "max_session_age")
 
@@ -60,6 +62,7 @@ func TestOnSessionExpiredEmitsCounter_F_11_3_7(t *testing.T) {
 func TestOnSessionExpiredWithoutCounterIsNoOp_F_11_3_7(t *testing.T) {
 	srv := New(memstore.New(), Options{DevTenantHeader: true})
 	srv.OnSessionExpired(context.Background(), sessionstore.Session{
-		ID: "sess", TenantID: "acme", State: session.StateExpired,
+		UserID: testOwner,
+		ID:     "sess", TenantID: "acme", State: session.StateExpired,
 	}, "max_idle_time")
 }

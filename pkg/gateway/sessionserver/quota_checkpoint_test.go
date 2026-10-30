@@ -52,25 +52,21 @@ func TestSessionCompletionWritesFinalQuotaCheckpoint_spec_11_2(t *testing.T) {
 
 // A session row with no user id writes no per-user final checkpoint (the
 // guard short-circuits). No create path writes such a row, because the
-// owner is the creating principal's subject (§10.2 Session ownership), so
-// the test seeds it in the store.
+// owner is the creating principal's subject, and no session route reaches
+// one, because no caller owns it (§10.2 Session ownership rules 1 and 5),
+// so the test drives the terminal pipeline directly.
 func TestSessionCompletionNoCheckpointWithoutUser_spec_11_2(t *testing.T) {
 	cp := &recCheckpointer{}
-	store := memstore.New()
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, QuotaCheckpointer: cp})
 	now := time.Now().UTC()
-	const id = "sess_userless"
-	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCreated,
+	srv.OnSessionTerminal(context.Background(), session.StateRunning, sessionstore.Session{
+		ID: "sess_userless", TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCompleted,
 		CreatedAt: now, UpdatedAt: now,
-	}); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, QuotaCheckpointer: cp})
-	h := asOwner(srv.Handler())
-
-	term := sessionRequest(t, h, http.MethodPost, "/v1/sessions/"+id+"/terminate")
-	if term.Code != http.StatusOK {
-		t.Fatalf("terminate: status %d, body %s", term.Code, term.Body.String())
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.WaitTerminalWork(ctx); err != nil {
+		t.Fatalf("wait for the terminal pipeline: %v", err)
 	}
 	if len(cp.calls) != 0 {
 		t.Errorf("final checkpoint calls = %v, want none for a user-less session", cp.calls)

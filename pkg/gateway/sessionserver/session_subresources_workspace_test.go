@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	pkgauth "github.com/lennylabs/lenny/pkg/auth"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
@@ -37,13 +40,14 @@ func TestSetupOutput_spec_15_1_674(t *testing.T) {
 	store := memstore.New()
 	ctx := context.Background()
 	_ = store.Create(ctx, sessionstore.Session{
-		ID: "s1", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(1, 0),
+		UserID: testOwner,
+		ID:     "s1", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(1, 0),
 		SetupOutput: []sessionstore.SetupCommandOutput{
 			{Cmd: "npm ci", ExitCode: 0, Stdout: "added 12 packages", DurationMs: 940, Truncated: true},
 			{Cmd: "rm -rf /", Rejected: true, RejectionReason: "setup_command_policy_violation"},
 		},
 	})
-	_ = store.Create(ctx, sessionstore.Session{ID: "bare", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(2, 0)})
+	_ = store.Create(ctx, sessionstore.Session{UserID: testOwner, ID: "bare", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(2, 0)})
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	h := asOwner(srv.Handler())
 
@@ -110,21 +114,25 @@ func TestWorkspaceDownload_spec_15_1_671(t *testing.T) {
 
 	store := memstore.New()
 	_ = store.Create(ctx, sessionstore.Session{
-		ID: "s1", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(1, 0),
+		UserID: testOwner,
+		ID:     "s1", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(1, 0),
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: uriRef, ContentHash: "abc123"},
 	})
 	_ = store.Create(ctx, sessionstore.Session{
-		ID: "s_path", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(2, 0),
+		UserID: testOwner,
+		ID:     "s_path", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(2, 0),
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: "/acme/workspace/s1/snap-path"},
 	})
-	_ = store.Create(ctx, sessionstore.Session{ID: "nosnap", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(3, 0)})
+	_ = store.Create(ctx, sessionstore.Session{UserID: testOwner, ID: "nosnap", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(3, 0)})
 	_ = store.Create(ctx, sessionstore.Session{
-		ID: "foreign", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(4, 0),
+		UserID: testOwner,
+		ID:     "foreign", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(4, 0),
 		// Ref names another tenant; parseSnapshotRef must reject it.
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: "/globex/workspace/s1/snap-uri"},
 	})
 	_ = store.Create(ctx, sessionstore.Session{
-		ID: "gone", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(5, 0),
+		UserID: testOwner,
+		ID:     "gone", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(5, 0),
 		// Ref is well-formed but the object is absent from the store.
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: "lenny-blob://acme/workspace/s1/missing"},
 	})
@@ -178,7 +186,8 @@ func TestWorkspaceDownload_spec_15_1_671(t *testing.T) {
 func TestWorkspaceNoBlobStore_spec_15_1_671(t *testing.T) {
 	store := memstore.New()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "s1", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(1, 0),
+		UserID: testOwner,
+		ID:     "s1", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(1, 0),
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: "lenny-blob://acme/workspace/s1/snap"},
 	})
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true}) // no Blobs
@@ -195,7 +204,8 @@ func TestSubresourcesDeriveFailure404_spec_15_1_661(t *testing.T) {
 	store := memstore.New()
 	ctx := context.Background()
 	_ = store.Create(ctx, sessionstore.Session{
-		ID: "df", TenantID: "acme", State: session.StateFailed,
+		UserID: testOwner,
+		ID:     "df", TenantID: "acme", State: session.StateFailed,
 		FailureClass: session.FailureClassDeriveFailure, CreatedAt: time.Unix(1, 0),
 	})
 	// Wire a blob store and billing so the 404 cannot be attributed to a
@@ -203,7 +213,14 @@ func TestSubresourcesDeriveFailure404_spec_15_1_661(t *testing.T) {
 	blobs := blobstore.NewMemoryStore(nil)
 	billing := billingstore.NewMemory()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Blobs: blobs, Billing: billing})
-	h := srv.Handler()
+	// The owner holds tenant-admin, so the /usage route's view_usage gate
+	// admits it and only the derive_failure class answers the 404.
+	inner := srv.Handler()
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		inner.ServeHTTP(w, r.WithContext(authmw.WithPrincipal(r.Context(), authmw.Principal{
+			Subject: testOwner, TenantID: "acme", Roles: []pkgauth.Role{pkgauth.RoleTenantAdmin},
+		})))
+	})
 
 	// The session row itself is reachable (line 651).
 	if rr := getSubresource(t, h, "/v1/sessions/df", "acme"); rr.Code != http.StatusOK {

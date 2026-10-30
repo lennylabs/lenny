@@ -866,7 +866,7 @@ func replayFixture(t *testing.T) (*fenceFixture, *transcriptstore.Memory, http.H
 func TestReplayCopiesTranscriptInInsert_spec_12_8(t *testing.T) {
 	t.Run("prompt_history", func(t *testing.T) {
 		f, transcripts, h := replayFixture(t)
-		rr := replayAs(t, h, "", sessionserver.ReplayRequest{ReplayMode: sessionserver.ReplayPromptHistory, TargetRuntime: "x"})
+		rr := replayAs(t, h, "alice@acme.com", sessionserver.ReplayRequest{ReplayMode: sessionserver.ReplayPromptHistory, TargetRuntime: "x"})
 		if rr.Code != http.StatusCreated {
 			t.Fatalf("status = %d; body %s", rr.Code, rr.Body.String())
 		}
@@ -883,7 +883,7 @@ func TestReplayCopiesTranscriptInInsert_spec_12_8(t *testing.T) {
 	})
 	t.Run("workspace_derive", func(t *testing.T) {
 		f, transcripts, h := replayFixture(t)
-		rr := replayAs(t, h, "", sessionserver.ReplayRequest{ReplayMode: sessionserver.ReplayWorkspaceDerive, TargetRuntime: "x"})
+		rr := replayAs(t, h, "alice@acme.com", sessionserver.ReplayRequest{ReplayMode: sessionserver.ReplayWorkspaceDerive, TargetRuntime: "x"})
 		if rr.Code != http.StatusCreated {
 			t.Fatalf("status = %d; body %s", rr.Code, rr.Body.String())
 		}
@@ -897,7 +897,7 @@ func TestReplayCopiesTranscriptInInsert_spec_12_8(t *testing.T) {
 	t.Run("copy error", func(t *testing.T) {
 		f, _, h := replayFixture(t)
 		f.store.createWithTransErr = errors.New("transcript copy failed")
-		rr := replayAs(t, h, "", sessionserver.ReplayRequest{TargetRuntime: "x"})
+		rr := replayAs(t, h, "alice@acme.com", sessionserver.ReplayRequest{TargetRuntime: "x"})
 		if rr.Code != http.StatusInternalServerError {
 			t.Fatalf("status = %d, want 500", rr.Code)
 		}
@@ -908,7 +908,7 @@ func TestReplayCopiesTranscriptInInsert_spec_12_8(t *testing.T) {
 	t.Run("owner restricted after admission", func(t *testing.T) {
 		f, transcripts, h := replayFixture(t)
 		f.store.beforeInsert = func() { f.restrict(t, "alice@acme.com", "job-2") }
-		rr := replayAs(t, h, "", sessionserver.ReplayRequest{TargetRuntime: "x"})
+		rr := replayAs(t, h, "alice@acme.com", sessionserver.ReplayRequest{TargetRuntime: "x"})
 		if rr.Code != http.StatusForbidden {
 			t.Fatalf("status = %d, want 403; body %s", rr.Code, rr.Body.String())
 		}

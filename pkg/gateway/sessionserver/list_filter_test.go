@@ -85,7 +85,8 @@ func TestListSessionsCanonicalCursorEnvelope_spec_15_1_1228(t *testing.T) {
 	ctx := context.Background()
 	for i := 0; i < 5; i++ {
 		_ = store.Create(ctx, sessionstore.Session{
-			ID: "s" + string(rune('0'+i)), TenantID: "acme",
+			UserID: testOwner,
+			ID:     "s" + string(rune('0'+i)), TenantID: "acme",
 			State: session.StateRunning, CreatedAt: time.Unix(int64(10+i), 0),
 		})
 	}
@@ -159,9 +160,9 @@ func TestListSessionsRejectsUnknownSortField_spec_15_1_1236(t *testing.T) {
 func TestListFilterByLabels_spec_15_1_598(t *testing.T) {
 	store := memstore.New()
 	ctx := context.Background()
-	_ = store.Create(ctx, sessionstore.Session{ID: "gold", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(3, 0), Labels: map[string]string{"team": "payments", "tier": "gold"}})
-	_ = store.Create(ctx, sessionstore.Session{ID: "silver", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(2, 0), Labels: map[string]string{"team": "payments", "tier": "silver"}})
-	_ = store.Create(ctx, sessionstore.Session{ID: "search", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0), Labels: map[string]string{"team": "search"}})
+	_ = store.Create(ctx, sessionstore.Session{UserID: testOwner, ID: "gold", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(3, 0), Labels: map[string]string{"team": "payments", "tier": "gold"}})
+	_ = store.Create(ctx, sessionstore.Session{UserID: testOwner, ID: "silver", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(2, 0), Labels: map[string]string{"team": "payments", "tier": "silver"}})
+	_ = store.Create(ctx, sessionstore.Session{UserID: testOwner, ID: "search", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0), Labels: map[string]string{"team": "search"}})
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	h := asOwner(srv.Handler())
 
@@ -186,8 +187,8 @@ func TestListFilterByLabels_spec_15_1_598(t *testing.T) {
 func TestListTenantFilterPlatformAdmin_spec_15_1_598(t *testing.T) {
 	store := memstore.New()
 	ctx := context.Background()
-	_ = store.Create(ctx, sessionstore.Session{ID: "acme_s", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0)})
-	_ = store.Create(ctx, sessionstore.Session{ID: "globex_s", TenantID: "globex", State: session.StateRunning, CreatedAt: time.Unix(1, 0)})
+	_ = store.Create(ctx, sessionstore.Session{UserID: testOwner, ID: "acme_s", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0)})
+	_ = store.Create(ctx, sessionstore.Session{UserID: testOwner, ID: "globex_s", TenantID: "globex", State: session.StateRunning, CreatedAt: time.Unix(1, 0)})
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	h := asOwner(srv.Handler())
 
@@ -222,8 +223,8 @@ func TestListTenantFilterPlatformAdmin_spec_15_1_598(t *testing.T) {
 func TestListIncludeDeriveFailures_spec_15_1_652(t *testing.T) {
 	store := memstore.New()
 	ctx := context.Background()
-	_ = store.Create(ctx, sessionstore.Session{ID: "live", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(2, 0)})
-	_ = store.Create(ctx, sessionstore.Session{ID: "df", TenantID: "acme", State: session.StateFailed, FailureClass: session.FailureClassDeriveFailure, CreatedAt: time.Unix(1, 0)})
+	_ = store.Create(ctx, sessionstore.Session{UserID: testOwner, ID: "live", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(2, 0)})
+	_ = store.Create(ctx, sessionstore.Session{UserID: testOwner, ID: "df", TenantID: "acme", State: session.StateFailed, FailureClass: session.FailureClassDeriveFailure, CreatedAt: time.Unix(1, 0)})
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	h := asOwner(srv.Handler())
 

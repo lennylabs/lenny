@@ -161,7 +161,7 @@ type siteCase struct {
 }
 
 func siteRow(state session.State, pod string) sessionstore.Session {
-	return sessionstore.Session{ID: "sess-1", TenantID: "acme", State: state, PodAssignment: pod}
+	return sessionstore.Session{UserID: testOwner, ID: "sess-1", TenantID: "acme", State: state, PodAssignment: pod}
 }
 
 func forwardedSites() []siteCase {
@@ -465,6 +465,7 @@ func keyedResume(h http.Handler, key string) *httptest.ResponseRecorder {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", key)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	req.Header.Set("X-Lenny-User-ID", testOwner)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec

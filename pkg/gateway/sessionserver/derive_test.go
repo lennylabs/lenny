@@ -424,7 +424,7 @@ func TestDeriveIsolationDowngradeWithAdminEmitsAuditAndSucceeds(t *testing.T) {
 		},
 		func(req *http.Request) {
 			ctx := authmw.WithPrincipal(req.Context(), authmw.Principal{
-				Subject:  "ops@acme.com",
+				Subject:  testOwner,
 				TenantID: "acme",
 				Roles:    []pkgauth.Role{pkgauth.RolePlatformAdmin},
 			})
@@ -440,7 +440,7 @@ func TestDeriveIsolationDowngradeWithAdminEmitsAuditAndSucceeds(t *testing.T) {
 	ev := sink.events[0]
 	if ev.SourceIsolationProfile != isolation.ProfileMicrovm ||
 		ev.TargetIsolationProfile != isolation.ProfileSandboxed ||
-		ev.AuthorizingUserSubject != "ops@acme.com" ||
+		ev.AuthorizingUserSubject != testOwner ||
 		ev.TicketID != "JIRA-123" ||
 		ev.TargetPool != "" ||
 		ev.TenantID != "acme" {

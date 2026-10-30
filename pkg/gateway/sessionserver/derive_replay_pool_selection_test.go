@@ -77,11 +77,14 @@ func replayReqWith(t *testing.T, h http.Handler, body sessionserver.ReplayReques
 	return replayReq(t, wrapped, body)
 }
 
-// asPlatformAdmin attaches a platform-admin principal of tenant acme, so a
-// downgrade request passes the role check and reaches the audit sink.
+// asPlatformAdmin attaches a platform-admin principal of tenant acme who owns
+// the source session, so a downgrade request passes the role check and
+// reaches the audit sink. Deriving and replaying act on the source, which
+// only its owner may do whatever the caller's role (§10.2 Session
+// ownership rule 5).
 func asPlatformAdmin(req *http.Request) {
 	*req = *req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{
-		Subject: "carol@acme.com", TenantID: "acme", Roles: []pkgauth.Role{pkgauth.RolePlatformAdmin},
+		Subject: testOwner, TenantID: "acme", Roles: []pkgauth.Role{pkgauth.RolePlatformAdmin},
 	}))
 }
 

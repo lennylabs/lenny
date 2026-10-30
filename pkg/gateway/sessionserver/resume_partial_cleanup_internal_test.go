@@ -44,7 +44,8 @@ func TestResumeCleanupScopedToCommittedGeneration_spec_10_1_7(t *testing.T) {
 	const committedGen = 7
 	store := memstore.New()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateResumePending,
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateResumePending,
 		CoordinationGeneration: committedGen,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -83,7 +84,8 @@ func TestResumeCleanupScopedToCommittedGeneration_spec_10_1_7(t *testing.T) {
 func TestResumeNotLandedRunsNoCleanup_spec_10_1_7(t *testing.T) {
 	store := memstore.New()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning, CoordinationGeneration: 3,
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning, CoordinationGeneration: 3,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}

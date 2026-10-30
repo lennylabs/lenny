@@ -32,7 +32,8 @@ func TestResolveTenantPrefersAuthenticatedPrincipal(t *testing.T) {
 	// Session belongs to acme.
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_a", TenantID: "acme", State: session.StateCreated, CreatedAt: now, UpdatedAt: now,
+		UserID: testOwner,
+		ID:     "sess_a", TenantID: "acme", State: session.StateCreated, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -41,7 +42,7 @@ func TestResolveTenantPrefersAuthenticatedPrincipal(t *testing.T) {
 	// hijack the header to read a different tenant — Principal wins.
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_a", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "globex")
-	ctx := authmw.WithPrincipal(req.Context(), authmw.Principal{TenantID: "acme"})
+	ctx := authmw.WithPrincipal(req.Context(), authmw.Principal{Subject: testOwner, TenantID: "acme"})
 	req = req.WithContext(ctx)
 	rr := httptest.NewRecorder()
 	asOwner(srv.Handler()).ServeHTTP(rr, req)
@@ -151,7 +152,8 @@ func TestFinalizeConsumesUploadToken(t *testing.T) {
 func TestExtendRetentionRejectsExcessiveTTL(t *testing.T) {
 	store := memstore.New()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_R", TenantID: "acme", State: session.StateCompleted,
+		UserID: testOwner,
+		ID:     "sess_R", TenantID: "acme", State: session.StateCompleted,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -173,7 +175,8 @@ func TestExtendRetentionRejectsExcessiveTTL(t *testing.T) {
 func TestExtendRetentionAdmitsAtCap(t *testing.T) {
 	store := memstore.New()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_R", TenantID: "acme", State: session.StateCompleted,
+		UserID: testOwner,
+		ID:     "sess_R", TenantID: "acme", State: session.StateCompleted,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}); err != nil {
 		t.Fatalf("seed: %v", err)

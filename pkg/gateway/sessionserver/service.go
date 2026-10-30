@@ -67,9 +67,13 @@ func (s *Server) serviceMux() http.Handler {
 // returns the raw 2xx result, or a typed ServiceError carrying the §16.3
 // code/category/HTTP-status/retryable the REST surface would have
 // written. The caller's authenticated principal rides on ctx exactly as
-// it does on a real request (the §10.2 permission gate runs and admits a
-// roleless dev principal); tenantID is recorded on the synthetic request's
-// context as its service tenant, which resolveTenant consults after the
+// it does on a real request: the §10.2 permission gate runs and may admit
+// a role-less dev principal or a request with no principal, and the
+// ownership step that follows refuses a request with no principal subject
+// with 401 on every {id} route, on list, and on create, and limits every
+// caller to the sessions §10.2 Session ownership lets it read or act on
+// (spec: §10.2 (Session ownership)). tenantID is recorded on the synthetic
+// request's context as its service tenant, which resolveTenant consults after the
 // principal. A client-sent X-Lenny-Tenant-ID header plays no part here.
 // spec: §10.2 (Authentication). F-10.2.21.
 //

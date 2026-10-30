@@ -57,7 +57,8 @@ func TestTaskErrorForSessionEveryReason_spec_8_8(t *testing.T) {
 	for _, tc := range everyReasonCodeCase() {
 		t.Run("reason="+tc.reason, func(t *testing.T) {
 			got := taskErrorForSession(sessionstore.Session{
-				ID: "child", State: session.StateFailed, FailureReason: tc.reason,
+				UserID: testOwner,
+				ID:     "child", State: session.StateFailed, FailureReason: tc.reason,
 			}, 3)
 			if got.Code != tc.code || got.Category != tc.category {
 				t.Fatalf("error = {code %q category %q}, want {code %q category %q}",
@@ -83,9 +84,10 @@ func TestEmitChildFailedCarriesErrorCodeEveryReason_spec_8_10(t *testing.T) {
 			bus := sessionevents.NewBus(0)
 			srv := New(store, Options{DevTenantHeader: true, Events: bus})
 			now := time.Now()
-			mustCreate(t, store, sessionstore.Session{ID: "parent", TenantID: "acme", State: session.StateRunning, CreatedAt: now, UpdatedAt: now})
+			mustCreate(t, store, sessionstore.Session{UserID: testOwner, ID: "parent", TenantID: "acme", State: session.StateRunning, CreatedAt: now, UpdatedAt: now})
 			child := sessionstore.Session{
-				ID: "child", TenantID: "acme", State: session.StateFailed,
+				UserID: testOwner,
+				ID:     "child", TenantID: "acme", State: session.StateFailed,
 				ParentSessionID: "parent", FailureClass: session.FailureClassRuntime,
 				FailureReason: tc.reason, CreatedAt: now, UpdatedAt: now,
 			}
@@ -133,10 +135,10 @@ func TestEmitChildFailedOnlyForFailedChild_spec_8_10(t *testing.T) {
 		child sessionstore.Session
 		sink  bool
 	}{
-		{"expired child", sessionstore.Session{ID: "c", TenantID: "acme", State: session.StateExpired, ParentSessionID: "parent", FailureReason: reason, CreatedAt: now, UpdatedAt: now}, true},
-		{"cancelled child", sessionstore.Session{ID: "c", TenantID: "acme", State: session.StateCancelled, ParentSessionID: "parent", FailureReason: reason, CreatedAt: now, UpdatedAt: now}, true},
-		{"root session", sessionstore.Session{ID: "c", TenantID: "acme", State: session.StateFailed, FailureReason: reason, CreatedAt: now, UpdatedAt: now}, true},
-		{"no event sink", sessionstore.Session{ID: "c", TenantID: "acme", State: session.StateFailed, ParentSessionID: "parent", FailureReason: reason, CreatedAt: now, UpdatedAt: now}, false},
+		{"expired child", sessionstore.Session{UserID: testOwner, ID: "c", TenantID: "acme", State: session.StateExpired, ParentSessionID: "parent", FailureReason: reason, CreatedAt: now, UpdatedAt: now}, true},
+		{"cancelled child", sessionstore.Session{UserID: testOwner, ID: "c", TenantID: "acme", State: session.StateCancelled, ParentSessionID: "parent", FailureReason: reason, CreatedAt: now, UpdatedAt: now}, true},
+		{"root session", sessionstore.Session{UserID: testOwner, ID: "c", TenantID: "acme", State: session.StateFailed, FailureReason: reason, CreatedAt: now, UpdatedAt: now}, true},
+		{"no event sink", sessionstore.Session{UserID: testOwner, ID: "c", TenantID: "acme", State: session.StateFailed, ParentSessionID: "parent", FailureReason: reason, CreatedAt: now, UpdatedAt: now}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

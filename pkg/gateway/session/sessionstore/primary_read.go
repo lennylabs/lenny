@@ -45,10 +45,7 @@ var errPrimaryReadOnly = errors.New("sessionstore: primary read writes nothing")
 //
 // spec: §12.3 (Postgres HA Requirements)
 func ReadPrimary(ctx context.Context, st Store, timeout time.Duration, tenantID, id string) (Session, error) {
-	if timeout <= 0 {
-		timeout = DefaultPrimaryReadTimeout
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(ctx, PrimaryReadBound(timeout))
 	defer cancel()
 	type result struct {
 		row Session
@@ -65,6 +62,19 @@ func ReadPrimary(ctx context.Context, st Store, timeout time.Duration, tenantID,
 	case <-ctx.Done():
 		return Session{}, fmt.Errorf("sessionstore: read session %s from the primary: %w", id, ctx.Err())
 	}
+}
+
+// PrimaryReadBound returns the bound ReadPrimary applies for timeout: timeout
+// itself when it is positive, and DefaultPrimaryReadTimeout otherwise. A caller
+// that bounds its own read of the same row, such as a replica read it re-reads
+// from the primary on failure, uses it so both reads share one bound.
+//
+// spec: §12.3 (Postgres HA Requirements)
+func PrimaryReadBound(timeout time.Duration) time.Duration {
+	if timeout <= 0 {
+		return DefaultPrimaryReadTimeout
+	}
+	return timeout
 }
 
 // readPrimaryOnce issues the primary read: GetPrimary when the store provides

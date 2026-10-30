@@ -82,7 +82,8 @@ func TestResumeEndpointIsAStoreWrite_spec_7_3(t *testing.T) {
 		srv := New(store, Options{DevTenantHeader: true, Events: bus, IncSessionRetry: func(string) { retries++ }})
 		defer srv.Close()
 		if err := store.Create(context.Background(), sessionstore.Session{
-			ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateAwaitingClientAction, RetryCount: 2,
+			UserID: testOwner,
+			ID:     "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateAwaitingClientAction, RetryCount: 2,
 		}); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
@@ -105,7 +106,8 @@ func TestResumeEndpointIsAStoreWrite_spec_7_3(t *testing.T) {
 	t.Run("from a suspended session that holds no pod", func(t *testing.T) {
 		f := newFunnelFixture(t, funnelOpts{})
 		if err := f.store.Create(context.Background(), sessionstore.Session{
-			ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateSuspended,
+			UserID: testOwner,
+			ID:     "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateSuspended,
 		}); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
@@ -123,7 +125,8 @@ func TestResumeEndpointIsAStoreWrite_spec_7_3(t *testing.T) {
 		srv := New(store, Options{DevTenantHeader: true})
 		defer srv.Close()
 		if err := store.Create(context.Background(), sessionstore.Session{
-			ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateSuspended, PodAssignment: "pod-a",
+			UserID: testOwner,
+			ID:     "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateSuspended, PodAssignment: "pod-a",
 		}); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
@@ -146,7 +149,8 @@ func TestResumeEndpointIsAStoreWrite_spec_7_3(t *testing.T) {
 			srv := New(store, Options{DevTenantHeader: true})
 			defer srv.Close()
 			if err := store.Create(context.Background(), sessionstore.Session{
-				ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateSuspended, PodAssignment: "pod-a",
+				UserID: testOwner,
+				ID:     "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateSuspended, PodAssignment: "pod-a",
 			}); err != nil {
 				t.Fatalf("seed: %v", err)
 			}
@@ -175,7 +179,8 @@ func TestResumeOfAHeldPodOnAPeerAnswersTargetNotReady_spec_29_3(t *testing.T) {
 			held := newHeldFixture(t, false)
 			f.srv.messaging = held.coord
 			if err := f.store.Create(context.Background(), sessionstore.Session{
-				ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateSuspended, PodAssignment: "pod-a",
+				UserID: testOwner,
+				ID:     "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateSuspended, PodAssignment: "pod-a",
 			}); err != nil {
 				t.Fatalf("seed: %v", err)
 			}

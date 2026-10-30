@@ -50,14 +50,16 @@ func TestAwaitingExpiredAppliesCascadeViaTerminalHook_spec_7_3_11(t *testing.T) 
 	born := time.Date(2026, 5, 26, 10, 0, 0, 0, time.UTC)
 	// Parent in awaiting_client_action with default cascade=cancel_all.
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "p_aw", TenantID: "acme", RuntimeRef: "claude-code",
+		UserID: testOwner,
+		ID:     "p_aw", TenantID: "acme", RuntimeRef: "claude-code",
 		State: session.StateAwaitingClientAction, CreatedAt: born, UpdatedAt: born,
 	}); err != nil {
 		t.Fatalf("seed parent: %v", err)
 	}
 	// Active child that should be cancelled by the cascade on expiry.
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "c_running", TenantID: "acme", RuntimeRef: "claude-code",
+		UserID: testOwner,
+		ID:     "c_running", TenantID: "acme", RuntimeRef: "claude-code",
 		State: session.StateRunning, ParentSessionID: "p_aw",
 		CreatedAt: born, UpdatedAt: born,
 	}); err != nil {
@@ -107,14 +109,16 @@ func TestAwaitingExpiredDetachLeavesChildrenRunning_spec_7_3_11(t *testing.T) {
 
 	born := time.Date(2026, 5, 26, 10, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "p_detach", TenantID: "acme", RuntimeRef: "claude-code",
+		UserID: testOwner,
+		ID:     "p_detach", TenantID: "acme", RuntimeRef: "claude-code",
 		State: session.StateAwaitingClientAction, CreatedAt: born, UpdatedAt: born,
 		CascadeOnFailure: session.CascadeDetach,
 	}); err != nil {
 		t.Fatalf("seed parent: %v", err)
 	}
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "c_detach", TenantID: "acme", RuntimeRef: "claude-code",
+		UserID: testOwner,
+		ID:     "c_detach", TenantID: "acme", RuntimeRef: "claude-code",
 		State: session.StateRunning, ParentSessionID: "p_detach",
 		CreatedAt: born, UpdatedAt: born,
 	}); err != nil {
@@ -151,7 +155,8 @@ func capNode(t *testing.T, store sessionstore.Store, id, parent string, depth ui
 	t.Helper()
 	now := time.Now()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", State: session.StateRunning, RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     id, TenantID: "acme", State: session.StateRunning, RuntimeRef: "echo",
 		ParentSessionID: parent, DelegationDepth: depth, CascadeOnFailure: policy,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
@@ -534,7 +539,7 @@ func TestCascadeUnderStoreFaultsConvergesThroughOrphanCleanup_spec_8_10(t *testi
 		faults := &cascadeFaultStore{Store: writes, rng: rand.New(rand.NewSource(rng.Int63())), p: 0.35}
 		archive := orphanfixture.NewArchiveCounter()
 		srv := sessionserver.New(faults, sessionserver.Options{DevTenantHeader: true, TreeArchive: archive})
-		orphanfixture.Seed(t, writes, sessionstore.Session{TenantID: "acme", RuntimeRef: "echo"}, nodes)
+		orphanfixture.Seed(t, writes, sessionstore.Session{UserID: testOwner, TenantID: "acme", RuntimeRef: "echo"}, nodes)
 
 		ctx := context.Background()
 		end := srv.BeginTerminal(nodes[0].ID)

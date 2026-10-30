@@ -55,7 +55,7 @@ func (c *countingLeaseStore) Get(ctx context.Context, tenantID, sessionID string
 
 // forwardRow is a running session that names its pod.
 func forwardRow() sessionstore.Session {
-	return sessionstore.Session{ID: "sess-1", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-1"}
+	return sessionstore.Session{UserID: testOwner, ID: "sess-1", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-1"}
 }
 
 // forwardServer builds a Server with a pod binder, the lease store, the
@@ -1754,7 +1754,7 @@ func TestResponsesTurnForwardStatesAreRunningOnly_spec_29_3(t *testing.T) {
 	}
 	s := forwardServer(nil, "gw-a", nil)
 	for _, st := range []session.State{session.StateInputRequired, session.StateSuspended, session.StateResumePending, session.StateCompleted} {
-		if s.forwardGated(sessionstore.Session{State: st, PodAssignment: "pod-1"}, ForwardKindResponsesTurn) {
+		if s.forwardGated(sessionstore.Session{UserID: testOwner, State: st, PodAssignment: "pod-1"}, ForwardKindResponsesTurn) {
 			t.Errorf("state %q is gated, want only running", st)
 		}
 	}

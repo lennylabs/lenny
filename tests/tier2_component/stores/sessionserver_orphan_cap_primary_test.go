@@ -18,6 +18,7 @@ import (
 	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
@@ -123,7 +124,8 @@ func TestOrphanCapCountReadsPrimaryOverPostgres_spec_8_10(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+ids["start"]+"/terminate", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", tenant)
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	// spec: §10.2 (Session ownership) — the terminate runs as the tree's owner.
+	ownerprincipal.Wrap(srv.Handler(), "alice").ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("terminate: status %d, body %s", rr.Code, rr.Body.String())
 	}

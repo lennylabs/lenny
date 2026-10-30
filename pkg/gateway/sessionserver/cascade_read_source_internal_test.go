@@ -50,7 +50,8 @@ func (s *cascadeListingStore) counts() (primary, replica int) {
 func seedCascadeRow(t *testing.T, s sessionstore.Store, id, parent string, depth uint32, st session.State) sessionstore.Session {
 	t.Helper()
 	row := sessionstore.Session{
-		ID: id, TenantID: "acme", RuntimeRef: "claude-code", State: st,
+		UserID: testOwner,
+		ID:     id, TenantID: "acme", RuntimeRef: "claude-code", State: st,
 		ParentSessionID: parent, DelegationDepth: depth,
 	}
 	if err := s.Create(context.Background(), row); err != nil {

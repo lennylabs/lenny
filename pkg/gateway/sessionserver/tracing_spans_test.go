@@ -14,8 +14,11 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
@@ -192,13 +195,38 @@ func TestUploadStartsSessionUploadSpan_spec_16_3(t *testing.T) {
 	}
 }
 
+// vanishingStore serves the §10.2 ownership check's bounded read with a row
+// the test owner owns and answers every later, unbounded read with
+// ErrNotFound, standing in for a session deleted between the ownership check
+// and the handler's own read.
+type vanishingStore struct {
+	*memstore.Store
+}
+
+func (v vanishingStore) Get(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	if _, bounded := ctx.Deadline(); bounded {
+		return sessionstore.Session{ID: id, TenantID: tenantID, UserID: testOwner, State: session.StateCreated}, nil
+	}
+	return sessionstore.Session{}, sessionstore.ErrNotFound
+}
+
 func TestUploadSpanRecordsMissingSessionError_spec_16_3(t *testing.T) {
 	rec, restore := installSpanRecorder(t)
 	defer restore()
 
-	srv, issuer, _, _, _, _ := newUploadServer(t)
-	// No session is seeded: the store.Get returns ErrNotFound, driving the
-	// §16.3 RESOURCE_NOT_FOUND error branch on the upload span.
+	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("upload-secret")})
+	issuer := uploadtoken.NewIssuer(ring, clock)
+	srv := sessionserver.New(vanishingStore{memstore.New()}, sessionserver.Options{
+		DevTenantHeader:     true,
+		Clock:               clock,
+		UploadTokenIssuer:   issuer,
+		UploadTokenVerifier: uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), clock),
+		Blobs:               blobstore.NewMemoryStore(nil),
+	})
+	// The ownership check admits the owner, and the handler's store.Get then
+	// returns ErrNotFound, driving the §16.3 RESOURCE_NOT_FOUND error branch
+	// on the upload span.
 	tok, _ := issuer.Issue("sess_missing_upload", 0)
 
 	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_missing_upload", "acme", tok, []byte("x"), "text/plain")

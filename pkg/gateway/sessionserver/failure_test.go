@@ -51,7 +51,8 @@ func seedRow(t *testing.T, store sessionstore.Store, row sessionstore.Session) s
 func TestReportSessionFailureRetryableEntersResumePending(t *testing.T) {
 	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 2})
 	row := sessionstore.Session{
-		ID: "sess-r1", TenantID: "acme", RuntimeRef: "claude-code",
+		UserID: testOwner,
+		ID:     "sess-r1", TenantID: "acme", RuntimeRef: "claude-code",
 		State: session.StateRunning, RetryCount: 0,
 	}
 	seedRow(t, store, row)
@@ -89,7 +90,8 @@ func TestReportSessionFailureRetryableEntersResumePending(t *testing.T) {
 func TestReportSessionFailureRetryableExhaustedEntersAwaiting(t *testing.T) {
 	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 2})
 	row := sessionstore.Session{
-		ID: "sess-r2", TenantID: "acme", RuntimeRef: "claude-code",
+		UserID: testOwner,
+		ID:     "sess-r2", TenantID: "acme", RuntimeRef: "claude-code",
 		State: session.StateRunning, RetryCount: 2,
 	}
 	seedRow(t, store, row)
@@ -125,7 +127,8 @@ func TestReportSessionFailureRetryableExhaustedEntersAwaiting(t *testing.T) {
 func TestReportSessionFailureNonRetryableFromRunningGoesFailed(t *testing.T) {
 	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 2})
 	row := sessionstore.Session{
-		ID: "sess-r3", TenantID: "acme", RuntimeRef: "claude-code",
+		UserID: testOwner,
+		ID:     "sess-r3", TenantID: "acme", RuntimeRef: "claude-code",
 		State: session.StateRunning, RetryCount: 0,
 	}
 	seedRow(t, store, row)
@@ -158,7 +161,8 @@ func TestReportSessionFailureNonRetryableFromRunningGoesFailed(t *testing.T) {
 func TestReportSessionFailureNonRetryableDuringResumingEntersAwaiting(t *testing.T) {
 	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 5})
 	row := sessionstore.Session{
-		ID: "sess-r4", TenantID: "acme", RuntimeRef: "claude-code",
+		UserID: testOwner,
+		ID:     "sess-r4", TenantID: "acme", RuntimeRef: "claude-code",
 		State: session.StateResuming, RetryCount: 0, CoordinationGeneration: 1,
 	}
 	seedRow(t, store, row)
@@ -180,7 +184,8 @@ func TestReportSessionFailureNonRetryableDuringResumingEntersAwaiting(t *testing
 func TestReportSessionFailureUnknownReasonDegradesNonRetryable(t *testing.T) {
 	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 5})
 	row := sessionstore.Session{
-		ID: "sess-r5", TenantID: "acme", RuntimeRef: "claude-code",
+		UserID: testOwner,
+		ID:     "sess-r5", TenantID: "acme", RuntimeRef: "claude-code",
 		State: session.StateRunning, RetryCount: 0,
 	}
 	seedRow(t, store, row)
@@ -204,7 +209,8 @@ func TestReportSessionFailureUnknownReasonDegradesNonRetryable(t *testing.T) {
 func TestReportSessionFailureClientOnlyModeBypassesRetry(t *testing.T) {
 	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 5})
 	row := sessionstore.Session{
-		ID: "sess-r6", TenantID: "acme", RuntimeRef: "claude-code",
+		UserID: testOwner,
+		ID:     "sess-r6", TenantID: "acme", RuntimeRef: "claude-code",
 		State: session.StateRunning, RetryCount: 0,
 		RetryPolicy: &session.RetryPolicy{Mode: session.RetryModeClientOnly},
 	}
@@ -232,7 +238,8 @@ func TestReportSessionFailureNoOpInHoldingOrTerminalState(t *testing.T) {
 	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 5})
 	for i, st := range cases {
 		row := sessionstore.Session{
-			ID: "noop-" + string(st), TenantID: "acme",
+			UserID: testOwner,
+			ID:     "noop-" + string(st), TenantID: "acme",
 			RuntimeRef: "claude-code", State: st,
 		}
 		seedRow(t, store, row)
@@ -264,7 +271,8 @@ func TestReportSessionFailureIgnoredOnPreRunningState(t *testing.T) {
 		session.StateReady, session.StateStarting,
 	} {
 		row := sessionstore.Session{
-			ID: "pre-" + string(st), TenantID: "acme",
+			UserID: testOwner,
+			ID:     "pre-" + string(st), TenantID: "acme",
 			RuntimeRef: "claude-code", State: st,
 		}
 		seedRow(t, store, row)
@@ -304,7 +312,8 @@ func TestReportSessionFailureUsesPerSessionMaxRetries(t *testing.T) {
 	// Deployer cap=5; per-session policy=1; RetryCount=1 → exhausted.
 	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 5})
 	row := sessionstore.Session{
-		ID: "sess-r7", TenantID: "acme", RuntimeRef: "claude-code",
+		UserID: testOwner,
+		ID:     "sess-r7", TenantID: "acme", RuntimeRef: "claude-code",
 		State: session.StateRunning, RetryCount: 1,
 		RetryPolicy: &session.RetryPolicy{MaxRetries: 1},
 	}
@@ -348,7 +357,8 @@ func TestReportSessionFailureStampsPodAssignment(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 2})
 			row := sessionstore.Session{
-				ID: "sess-r8", TenantID: "acme", RuntimeRef: "claude-code",
+				UserID: testOwner,
+				ID:     "sess-r8", TenantID: "acme", RuntimeRef: "claude-code",
 				State: session.StateRunning, PodAssignment: "old-pod", RetryCount: tc.retryCount,
 			}
 			seedRow(t, store, row)
@@ -382,7 +392,8 @@ func TestReportSessionFailureStampsPodAssignment(t *testing.T) {
 func TestReportSessionFailureExitFromResumingKeepsCoordinationGeneration_spec_7_3(t *testing.T) {
 	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 5})
 	row := sessionstore.Session{
-		ID: "sess-cg1", TenantID: "acme", RuntimeRef: "claude-code",
+		UserID: testOwner,
+		ID:     "sess-cg1", TenantID: "acme", RuntimeRef: "claude-code",
 		State: session.StateResuming, RetryCount: 0,
 		CoordinationGeneration: 7, RecoveryGeneration: 3,
 	}
@@ -416,7 +427,8 @@ func TestReportSessionFailureExitFromResumingKeepsCoordinationGeneration_spec_7_
 func TestReportSessionFailureResumingToResumePendingKeepsCoordinationGeneration_spec_7_3(t *testing.T) {
 	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 5})
 	row := sessionstore.Session{
-		ID: "sess-cg2", TenantID: "acme", RuntimeRef: "claude-code",
+		UserID: testOwner,
+		ID:     "sess-cg2", TenantID: "acme", RuntimeRef: "claude-code",
 		State: session.StateResuming, RetryCount: 0,
 		CoordinationGeneration: 1,
 	}
@@ -459,7 +471,8 @@ func TestReportSessionFailureOnResumingRequiresTheAttemptGeneration_spec_7_3(t *
 		t.Run(tc.name, func(t *testing.T) {
 			srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 5})
 			seedRow(t, store, sessionstore.Session{
-				ID: "sess-gen", TenantID: "acme", RuntimeRef: "claude-code",
+				UserID: testOwner,
+				ID:     "sess-gen", TenantID: "acme", RuntimeRef: "claude-code",
 				State: session.StateResuming, CoordinationGeneration: 5,
 			})
 			before, _ := store.Get(context.Background(), "acme", "sess-gen")
@@ -492,7 +505,8 @@ func TestReportSessionFailureDoesNotBumpCoordinationFromResumePending_spec_7_2_F
 		t.Run(reason, func(t *testing.T) {
 			f := newReportFixture(t)
 			seedRow(t, f.store, sessionstore.Session{
-				ID: "sess-cg3", TenantID: "acme", RuntimeRef: "claude-code",
+				UserID: testOwner,
+				ID:     "sess-cg3", TenantID: "acme", RuntimeRef: "claude-code",
 				State: session.StateResumePending, RetryCount: 1,
 				CoordinationGeneration: 11,
 			})
@@ -582,7 +596,8 @@ func TestReportSessionFailureReleasesTheBindingOnEveryEdge_spec_7_3(t *testing.T
 			t.Run(string(from)+"/"+tc.name, func(t *testing.T) {
 				f := newReportFixture(t)
 				seedRow(t, f.store, sessionstore.Session{
-					ID: "sess-rel", TenantID: "acme", RuntimeRef: "claude-code",
+					UserID: testOwner,
+					ID:     "sess-rel", TenantID: "acme", RuntimeRef: "claude-code",
 					State: from, RetryCount: tc.retries,
 				})
 				f.bind("sess-rel")
@@ -621,7 +636,8 @@ func TestReportSessionFailureWithoutACommitReleasesNothing_spec_7_3(t *testing.T
 		t.Run(string(st), func(t *testing.T) {
 			f := newReportFixture(t)
 			seedRow(t, f.store, sessionstore.Session{
-				ID: "sess-none", TenantID: "acme", RuntimeRef: "claude-code", State: st,
+				UserID: testOwner,
+				ID:     "sess-none", TenantID: "acme", RuntimeRef: "claude-code", State: st,
 			})
 			f.bind("sess-none")
 			if _, err := f.srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{

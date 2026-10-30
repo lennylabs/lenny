@@ -43,6 +43,7 @@ func TestHandleUploadRejectsTierStoreMismatch_spec_12_9_1048(t *testing.T) {
 	})
 
 	row := sessionstore.Session{
+		UserID:    testOwner,
 		ID:        "sess_t4",
 		TenantID:  "restricted",
 		State:     session.StateCreated,

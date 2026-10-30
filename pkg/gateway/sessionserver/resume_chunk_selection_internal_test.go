@@ -90,7 +90,8 @@ func TestResolveResumeChunksSelectsHighestGenerationPartial(t *testing.T) {
 		checkpointManifests: mstore,
 	}
 	row := sessionstore.Session{
-		ID: session, TenantID: tenant,
+		UserID: testOwner,
+		ID:     session, TenantID: tenant,
 		// The ref names the completed checkpoint (written only on success).
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: fullCk},
 	}
@@ -121,7 +122,8 @@ func TestResolveResumeChunksFallsBackToRefWhenNoActiveRow(t *testing.T) {
 		checkpointManifests: mstore, // empty: no active row for the session
 	}
 	row := sessionstore.Session{
-		ID: session, TenantID: tenant,
+		UserID: testOwner,
+		ID:     session, TenantID: tenant,
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: fullCk},
 	}
 	_ = s.resolveResumeChunks(context.Background(), row)
@@ -156,7 +158,8 @@ func TestResolveResumeChunksNormalizesFourSegmentRefOnFallback(t *testing.T) {
 		checkpointManifests: mstore, // empty: no active row, forces the ref fallback
 	}
 	row := sessionstore.Session{
-		ID: session, TenantID: tenant,
+		UserID: testOwner,
+		ID:     session, TenantID: tenant,
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: fourSegmentRef},
 	}
 	_ = s.resolveResumeChunks(context.Background(), row)
@@ -192,7 +195,8 @@ func TestResolveResumeChunksReassemblesPartialWithNoRef(t *testing.T) {
 	}
 	// No completed checkpoint: WorkspaceSnapshot carries an empty ref.
 	row := sessionstore.Session{
-		ID: session, TenantID: tenant,
+		UserID: testOwner,
+		ID:     session, TenantID: tenant,
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: ""},
 	}
 
@@ -258,7 +262,8 @@ func TestResolveResumeChunksEmitsRecoveredOnAboveThresholdPartial(t *testing.T) 
 		checkpointRecoveryMetrics: metrics,
 	}
 	row := sessionstore.Session{
-		ID: session, TenantID: tenant, PoolRef: "warm-a",
+		UserID: testOwner,
+		ID:     session, TenantID: tenant, PoolRef: "warm-a",
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: ""},
 	}
 
@@ -328,7 +333,8 @@ func TestResolveResumeChunksRecoversNonEvictionOriginPartial(t *testing.T) {
 		checkpointRecoveryMetrics: metrics,
 	}
 	row := sessionstore.Session{
-		ID: session, TenantID: tenant, PoolRef: "warm-b",
+		UserID: testOwner,
+		ID:     session, TenantID: tenant, PoolRef: "warm-b",
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: ""},
 	}
 
@@ -369,7 +375,8 @@ func TestResolveResumeChunksEmitsNothingOnCompleteRestore(t *testing.T) {
 		checkpointRecoveryMetrics: metrics,
 	}
 	row := sessionstore.Session{
-		ID: session, TenantID: tenant, PoolRef: "warm-a",
+		UserID: testOwner,
+		ID:     session, TenantID: tenant, PoolRef: "warm-a",
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: fullCk},
 	}
 

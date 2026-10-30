@@ -39,6 +39,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // ctxRaceSealer holds each seal for a short random time and records any
@@ -104,7 +105,8 @@ func ctxRaceREST(method, suffix string) ctxRaceWriter {
 	return func(ctx context.Context, srv *sessionserver.Server, _ sessionstore.Store, id string) {
 		req := httptest.NewRequest(method, "/v1/sessions/"+id+suffix, nil).WithContext(ctx)
 		req.Header.Set("X-Lenny-Tenant-ID", "acme")
-		srv.Handler().ServeHTTP(httptest.NewRecorder(), req)
+		// spec: §10.2 (Session ownership) — the request runs as the seeded row's owner.
+		ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice).ServeHTTP(httptest.NewRecorder(), req)
 	}
 }
 
@@ -194,7 +196,8 @@ func ctxRaceRound(t *testing.T, round int, rng *rand.Rand) {
 	for i := range ids {
 		ids[i] = fmt.Sprintf("sess-ctx-%d-%d", round, i)
 		if err := store.Create(context.Background(), sessionstore.Session{
-			ID: ids[i], TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning,
+			UserID: ownerprincipal.Alice,
+			ID:     ids[i], TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning,
 		}); err != nil {
 			t.Fatalf("round %d: seed %s: %v", round, ids[i], err)
 		}

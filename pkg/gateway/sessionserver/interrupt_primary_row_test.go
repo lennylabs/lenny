@@ -32,7 +32,8 @@ type laggingReadStore struct {
 func (s laggingReadStore) Get(_ context.Context, tenant, id string) (sessionstore.Session, error) {
 	now := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
 	return sessionstore.Session{
-		ID: id, TenantID: tenant, RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     id, TenantID: tenant, RuntimeRef: "echo",
 		State: session.StateRunning, PodAssignment: "pod-1",
 		CreatedAt: now, UpdatedAt: now,
 	}, nil
@@ -130,7 +131,8 @@ func TestInterruptChecksThePrimaryRowBeforeDrivingTheAdapter_spec_15_1(t *testin
 			now := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
 			if !tc.absent {
 				if err := base.Create(context.Background(), sessionstore.Session{
-					ID: "s1", TenantID: "acme", RuntimeRef: "echo", State: tc.state,
+					UserID: testOwner,
+					ID:     "s1", TenantID: "acme", RuntimeRef: "echo", State: tc.state,
 					CreatedAt: now, UpdatedAt: now,
 				}); err != nil {
 					t.Fatalf("seed: %v", err)
@@ -200,7 +202,8 @@ func TestInterruptWithoutBindingSkipsThePrimaryRead_spec_15_1(t *testing.T) {
 			base := memstore.New()
 			now := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
 			if err := base.Create(context.Background(), sessionstore.Session{
-				ID: "s1", TenantID: "acme", RuntimeRef: "echo", State: st, CreatedAt: now, UpdatedAt: now,
+				UserID: testOwner,
+				ID:     "s1", TenantID: "acme", RuntimeRef: "echo", State: st, CreatedAt: now, UpdatedAt: now,
 			}); err != nil {
 				t.Fatalf("seed: %v", err)
 			}

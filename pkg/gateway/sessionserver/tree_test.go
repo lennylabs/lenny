@@ -23,7 +23,8 @@ func seedTreeSession(t *testing.T, store sessionstore.Store, id, parent string) 
 	t.Helper()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	row := sessionstore.Session{
-		ID: id, TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     id, TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: parent, RuntimeRef: "echo",
 		CreatedAt: now, UpdatedAt: now,
 	}
@@ -105,7 +106,8 @@ func TestTreeNodeAttributes_spec_8_9_1010(t *testing.T) {
 	seedTreeSession(t, store, "sess_root", "")
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_kid", TenantID: "acme", State: session.StateFailed,
+		UserID: testOwner,
+		ID:     "sess_kid", TenantID: "acme", State: session.StateFailed,
 		ParentSessionID: "sess_root", RuntimeRef: "echo",
 		RecoveryGeneration: 3, PodAssignment: "pod-7",
 		DelegationLease: &sessionstore.DelegationLease{MaxParallelChildren: 4},
@@ -152,7 +154,8 @@ func seedTreeSessionVis(t *testing.T, store sessionstore.Store, id, parent strin
 	t.Helper()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	row := sessionstore.Session{
-		ID: id, TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     id, TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: parent, RuntimeRef: "echo",
 		TreeVisibility: vis,
 		CreatedAt:      now, UpdatedAt: now,
@@ -304,11 +307,13 @@ func TestTreeCrossTenantIsolation(t *testing.T) {
 	// A foreign-tenant session must not appear in acme's tree even
 	// if its ParentSessionID points at an acme session.
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_root", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_root", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_foreign", TenantID: "globex", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_foreign", TenantID: "globex", State: session.StateRunning,
 		ParentSessionID: "sess_root",
 		CreatedAt:       now, UpdatedAt: now,
 	})
@@ -397,12 +402,14 @@ func TestTreeEmitsCycleObservation_spec_8_9_F_8_9_10(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	// A two-node cycle: sess_a.parent = sess_b, sess_b.parent = sess_a.
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_a_899", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_a_899", TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: "sess_b_899",
 		CreatedAt:       now, UpdatedAt: now,
 	})
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_b_899", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_b_899", TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: "sess_a_899",
 		CreatedAt:       now, UpdatedAt: now,
 	})
@@ -465,12 +472,14 @@ func TestTreeNilObserverIsSafe_spec_8_9_F_8_9_10(t *testing.T) {
 	store := memstore.New()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_x_899", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_x_899", TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: "sess_y_899",
 		CreatedAt:       now, UpdatedAt: now,
 	})
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_y_899", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_y_899", TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: "sess_x_899",
 		CreatedAt:       now, UpdatedAt: now,
 	})

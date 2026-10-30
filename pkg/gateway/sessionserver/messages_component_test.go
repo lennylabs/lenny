@@ -149,7 +149,8 @@ func seedConcurrentSession(t *testing.T, store sessionstore.Store, id string, st
 	t.Helper()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", State: st, RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     id, TenantID: "acme", State: st, RuntimeRef: "echo",
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed %s: %v", id, err)

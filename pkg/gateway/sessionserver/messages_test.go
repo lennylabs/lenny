@@ -43,7 +43,8 @@ func seedRunningSession(t *testing.T, store sessionstore.Store, id string) {
 	t.Helper()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     id, TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -161,7 +162,8 @@ func TestMessagesRejectsEmptyBatch(t *testing.T) {
 func TestMessagesRejectsTerminalSession(t *testing.T) {
 	srv, store := newMessagesServer(t)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_done", TenantID: "acme", State: session.StateCompleted,
+		UserID: testOwner,
+		ID:     "sess_done", TenantID: "acme", State: session.StateCompleted,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -257,7 +259,8 @@ func TestMessagesRejectsInjectionWhenRuntimeUnsupported(t *testing.T) {
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "s1", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "s1", TenantID: "acme", State: session.StateRunning,
 		RuntimeRef: "oneshot", CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -302,12 +305,14 @@ func TestMessagesInjectionTenantOverride_spec_5_1_49(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	// acme has the override → injection rejected.
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "acme1", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "acme1", TenantID: "acme", State: session.StateRunning,
 		RuntimeRef: "chatty", CreatedAt: now, UpdatedAt: now,
 	})
 	// globex has no override → inherits the platform default (injection on).
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "glx1", TenantID: "globex", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "glx1", TenantID: "globex", State: session.StateRunning,
 		RuntimeRef: "chatty", CreatedAt: now, UpdatedAt: now,
 	})
 
@@ -346,7 +351,8 @@ func TestMessagesAllowsInjectionWhenRuntimeSupports(t *testing.T) {
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "s1", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "s1", TenantID: "acme", State: session.StateRunning,
 		RuntimeRef: "chatty", CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -383,7 +389,8 @@ func TestMessagesInjectionResolvesDerivedRuntime(t *testing.T) {
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "s1", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "s1", TenantID: "acme", State: session.StateRunning,
 		RuntimeRef: "chatty-derived", CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -444,7 +451,8 @@ func seedInjectionSession(t *testing.T, store sessionstore.Store, id, tenant str
 	t.Helper()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: tenant, State: session.StateRunning,
+		UserID: testOwner,
+		ID:     id, TenantID: tenant, State: session.StateRunning,
 		RuntimeRef: "chatty", CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed session: %v", err)
@@ -637,7 +645,8 @@ func TestMessagesRejectsPreRunningStatesPerSpec71Line339(t *testing.T) {
 			now := time.Now()
 			id := "sess_" + string(tc.state)
 			if err := store.Create(context.Background(), sessionstore.Session{
-				ID: id, TenantID: "acme", State: tc.state, CreatedAt: now, UpdatedAt: now,
+				UserID: testOwner,
+				ID:     id, TenantID: "acme", State: tc.state, CreatedAt: now, UpdatedAt: now,
 			}); err != nil {
 				t.Fatalf("seed: %v", err)
 			}

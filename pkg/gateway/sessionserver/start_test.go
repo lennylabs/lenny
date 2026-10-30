@@ -137,6 +137,7 @@ func TestTwoStepStartLaunchesReadySession(t *testing.T) {
 func TestTwoStepStartRejectsNonReadyState(t *testing.T) {
 	store := memstore.New()
 	if err := store.Create(context.Background(), sessionstore.Session{
+		UserID:   testOwner,
 		ID:       "sess_created_1",
 		TenantID: "acme",
 		State:    session.StateCreated,

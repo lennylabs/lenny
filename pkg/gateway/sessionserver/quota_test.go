@@ -38,7 +38,8 @@ func quotaServer(t *testing.T, limit int, seed []session.State) *sessionserver.S
 	now := time.Now().UTC()
 	for i, st := range seed {
 		if err := store.Create(ctx, sessionstore.Session{
-			ID: fmt.Sprintf("seed-%d", i), TenantID: "acme", State: st,
+			UserID: testOwner,
+			ID:     fmt.Sprintf("seed-%d", i), TenantID: "acme", State: st,
 			CreatedAt: now, UpdatedAt: now,
 		}); err != nil {
 			t.Fatalf("seed session: %v", err)

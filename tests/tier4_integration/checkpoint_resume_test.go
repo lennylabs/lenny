@@ -26,6 +26,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // spec: §10.1.7 — the gateway mints one GET capability per chunk in
@@ -104,7 +105,8 @@ func TestResumeReassemblesMultiChunkCheckpointFromPresignedGET(t *testing.T) {
 	// gateway (the gateway reads the chunk bodies itself).
 	handler, _ := newChunkGateway(t, store, mstore, func() string { return "sess_derived" },
 		sessionstore.Session{
-			ID: sessID, TenantID: tenant, State: session.StateCompleted,
+			UserID: ownerprincipal.Alice,
+			ID:     sessID, TenantID: tenant, State: session.StateCompleted,
 			WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: checkpoint},
 		})
 	rr := getWorkspace(t, handler, tenant, sessID)

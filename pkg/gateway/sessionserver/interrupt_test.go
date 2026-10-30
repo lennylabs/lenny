@@ -81,7 +81,8 @@ func TestInterruptSignalsAdapterAndSuspendsOnAck_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_int", TenantID: "acme", RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     "sess_int", TenantID: "acme", RuntimeRef: "echo",
 		State:     session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
@@ -120,7 +121,8 @@ func TestInterruptForcesSuspendedOnTimeout_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_to", TenantID: "acme", RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     "sess_to", TenantID: "acme", RuntimeRef: "echo",
 		State:     session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
@@ -160,7 +162,8 @@ func TestInterruptReturnsBusyAndLeavesRowRunning_spec_4_7(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_busy", TenantID: "acme", RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     "sess_busy", TenantID: "acme", RuntimeRef: "echo",
 		State:     session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
@@ -196,7 +199,8 @@ func TestInterruptFallsBackToRowOnlyWhenNoBinding_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_nobind", TenantID: "acme", RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     "sess_nobind", TenantID: "acme", RuntimeRef: "echo",
 		State:     session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
@@ -224,7 +228,8 @@ func TestInterruptRejectsNonRunningStateBeforeAdapterCall_spec_15_1(t *testing.T
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_sus", TenantID: "acme", RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     "sess_sus", TenantID: "acme", RuntimeRef: "echo",
 		State:     session.StateSuspended, // already suspended
 		CreatedAt: now, UpdatedAt: now,
 	})
@@ -255,7 +260,8 @@ func TestInterruptForwardsDeadlineMs_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_ddl", TenantID: "acme", RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     "sess_ddl", TenantID: "acme", RuntimeRef: "echo",
 		State:     session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})

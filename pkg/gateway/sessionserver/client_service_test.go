@@ -44,8 +44,8 @@ func withPrincipal(p authmw.Principal) func(*http.Request) {
 // spec: §15.2.1 rule 1. F-15.2.3.
 func TestServiceCall_PassthroughAndError_spec_15_2_3(t *testing.T) {
 	store := memstore.New()
-	ctx := context.Background()
-	_ = store.Create(ctx, sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0)})
+	ctx := ownerCtx(context.Background())
+	_ = store.Create(ctx, sessionstore.Session{UserID: testOwner, ID: "s1", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0)})
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
 	res, svcErr := srv.ServiceCall(ctx, "acme", http.MethodGet, "/v1/sessions/s1", nil, "", nil)
@@ -102,8 +102,8 @@ func TestServiceCall_NonEnvelopeBodyFallback(t *testing.T) {
 // empty envelope when no catalog is wired. spec: §15.1; F-15.2.3.
 func TestListArtifacts_spec_15_2_3(t *testing.T) {
 	store := memstore.New()
-	ctx := context.Background()
-	_ = store.Create(ctx, sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(1, 0)})
+	ctx := ownerCtx(context.Background())
+	_ = store.Create(ctx, sessionstore.Session{UserID: testOwner, ID: "s1", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(1, 0)})
 	cat := listCatalog{rows: []artifactcatalog.Record{
 		{URI: "lenny-blob://acme/workspace/s1/p1", SessionID: "s1", State: artifactcatalog.StateLive, SizeBytes: 12, ArtifactType: artifactcatalog.ArtifactTypeWorkspace},
 		{URI: "lenny-blob://acme/workspace/s1/gone", SessionID: "s1", State: artifactcatalog.StateSoftDeleted, ArtifactType: artifactcatalog.ArtifactTypeWorkspace},
@@ -159,8 +159,8 @@ func TestListArtifacts_spec_15_2_3(t *testing.T) {
 // §10.2 view_usage. F-15.2.3.
 func TestSessionUsage_spec_15_2_3(t *testing.T) {
 	store := memstore.New()
-	ctx := context.Background()
-	_ = store.Create(ctx, sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(1, 0)})
+	ctx := ownerCtx(context.Background())
+	_ = store.Create(ctx, sessionstore.Session{UserID: testOwner, ID: "s1", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(1, 0)})
 	billing := billingstore.NewMemory()
 	_, _ = billing.Append(ctx, billingstore.Event{TenantID: "acme", SessionID: "s1", EventType: billingstore.EventSessionCreated, TokensInput: 30, TokensOutput: 7})
 	_, _ = billing.Append(ctx, billingstore.Event{TenantID: "acme", SessionID: "s1", EventType: billingstore.EventSessionCompleted, TokensInput: 20, TokensOutput: 3})
@@ -221,9 +221,9 @@ func TestSessionUsageTreeAggregated_spec_15_1_676(t *testing.T) {
 	store := memstore.New()
 	ctx := context.Background()
 	// root → c1 → {c2 (live), c3 (archived-only)}.
-	_ = store.Create(ctx, sessionstore.Session{ID: "root", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(1, 0)})
-	_ = store.Create(ctx, sessionstore.Session{ID: "c1", TenantID: "acme", ParentSessionID: "root", RootSessionID: "root", State: session.StateCompleted, CreatedAt: time.Unix(2, 0)})
-	_ = store.Create(ctx, sessionstore.Session{ID: "c2", TenantID: "acme", ParentSessionID: "c1", RootSessionID: "root", State: session.StateCompleted, CreatedAt: time.Unix(3, 0)})
+	_ = store.Create(ctx, sessionstore.Session{UserID: testOwner, ID: "root", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(1, 0)})
+	_ = store.Create(ctx, sessionstore.Session{UserID: testOwner, ID: "c1", TenantID: "acme", ParentSessionID: "root", RootSessionID: "root", State: session.StateCompleted, CreatedAt: time.Unix(2, 0)})
+	_ = store.Create(ctx, sessionstore.Session{UserID: testOwner, ID: "c2", TenantID: "acme", ParentSessionID: "c1", RootSessionID: "root", State: session.StateCompleted, CreatedAt: time.Unix(3, 0)})
 
 	archive := treearchive.NewMemory()
 	// c3 has settled and its live row is gone; only the archive remembers it.

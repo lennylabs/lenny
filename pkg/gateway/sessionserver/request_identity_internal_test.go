@@ -164,8 +164,13 @@ func TestServiceEntryPointsFailClosedWithoutTenant(t *testing.T) {
 	if _, err := s.ServiceCall(ctx, "", http.MethodGet, "/v1/sessions", nil, "", nil); err == nil || err.Code != "UNAUTHORIZED" {
 		t.Fatalf("ServiceCall with no tenant: err %v, want UNAUTHORIZED", err)
 	}
-	if _, err := s.ServiceCall(ctx, "acme", http.MethodGet, "/v1/sessions", nil, "", nil); err != nil {
+	if _, err := s.ServiceCall(ownerCtx(ctx), "acme", http.MethodGet, "/v1/sessions", nil, "", nil); err != nil {
 		t.Fatalf("ServiceCall with tenant acme: err %v, want success", err)
+	}
+	// spec: §10.2 (Session ownership) rule 3 — a service tenant resolves
+	// the tenant only, so a list with no principal subject is refused.
+	if _, err := s.ServiceCall(ctx, "acme", http.MethodGet, "/v1/sessions", nil, "", nil); err == nil || err.Code != "UNAUTHORIZED" {
+		t.Fatalf("ServiceCall with tenant acme and no principal: err %v, want UNAUTHORIZED", err)
 	}
 }
 

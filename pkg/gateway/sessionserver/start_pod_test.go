@@ -1557,7 +1557,8 @@ func TestResumePlacesAwaitingSessionOnFreshPod(t *testing.T) {
 	t.Parallel()
 	srv, store, registry, cluster := podResumeServer(t, "sess-resume-1")
 	seedAwaitingSession(t, store, sessionstore.Session{
-		ID: "sess-resume-1",
+		UserID: testOwner,
+		ID:     "sess-resume-1",
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{
 			Ref:    "ckpt-1",
 			Source: sessionstore.WorkspaceSnapshotCheckpoint,
@@ -1602,7 +1603,8 @@ func TestResumeRebuildsSessionWithoutSnapshotFromPlan(t *testing.T) {
 	// No WorkspaceSnapshot: the session never checkpointed. The resume
 	// path rebuilds it from the §14 WorkspacePlan recorded at create.
 	seedAwaitingSession(t, store, sessionstore.Session{
-		ID: "sess-resume-nockpt",
+		UserID: testOwner,
+		ID:     "sess-resume-nockpt",
 		WorkspacePlan: json.RawMessage(`{
 			"schemaVersion": 1,
 			"sources": [{"type":"inlineFile","path":"CLAUDE.md","content":"# resumed","mode":"0644"}]
@@ -1644,6 +1646,7 @@ func TestResumeRebuildsWithStalePodAssignmentClaimsFreshPod(t *testing.T) {
 	// fix, startOnPod's `if row.PodAssignment != ""` branch would reconnect
 	// to "sbx-dead" rather than claiming the idle "sbx-1".
 	seedAwaitingSession(t, store, sessionstore.Session{
+		UserID:        testOwner,
 		ID:            "sess-resume-stale",
 		PodAssignment: "sbx-dead",
 		PoolRef:       "echo-pool",
@@ -1691,6 +1694,7 @@ func TestResumeRejectsNonResumableState(t *testing.T) {
 	// A `running` session is not a valid POST /resume precondition —
 	// only `awaiting_client_action` is (§15.1).
 	if err := store.Create(context.Background(), sessionstore.Session{
+		UserID:           testOwner,
 		ID:               "sess-resume-bad",
 		TenantID:         "acme",
 		State:            session.StateRunning,
@@ -1727,6 +1731,7 @@ func TestResumeWithNoMatchingPoolWritesNothing_spec_7_3(t *testing.T) {
 	// The cluster serves only the "echo" runtime; the session targets a
 	// runtime no warm pool covers, so the pod claim cannot resolve.
 	seedAwaitingSession(t, store, sessionstore.Session{
+		UserID:     testOwner,
 		ID:         "sess-resume-nopool",
 		RuntimeRef: "no-such-runtime",
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{
@@ -1782,6 +1787,7 @@ func TestResumeOfChildWithNoPoolNeitherFailsNorArchives_spec_7_3(t *testing.T) {
 	})
 
 	seedAwaitingSession(t, store, sessionstore.Session{
+		UserID:          testOwner,
 		ID:              "sess-child",
 		RuntimeRef:      "no-such-runtime",
 		ParentSessionID: "sess-parent",
@@ -1892,6 +1898,7 @@ func TestResumeKeepsPendingOnTransientPoolExhaustion(t *testing.T) {
 	})
 
 	seedAwaitingSession(t, store, sessionstore.Session{
+		UserID:  testOwner,
 		ID:      "sess-transient-pool",
 		PoolRef: "echo-pool",
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{
@@ -1960,6 +1967,7 @@ func TestResumePassesRecoveryGenerationAndSizeHintsToAdapter(t *testing.T) {
 	// floor in memstore clamps zero on re-write, so seed via Update
 	// after Create.
 	seedAwaitingSession(t, store, sessionstore.Session{
+		UserID:             testOwner,
 		ID:                 "sess-rg-hints",
 		PoolRef:            "echo-pool",
 		RecoveryGeneration: 3,
@@ -1983,7 +1991,8 @@ func TestResumeBumpsRecoveryGeneration(t *testing.T) {
 	t.Parallel()
 	srv, store, _, _ := podResumeServer(t, "sess-recovery-bump")
 	seedAwaitingSession(t, store, sessionstore.Session{
-		ID: "sess-recovery-bump",
+		UserID: testOwner,
+		ID:     "sess-recovery-bump",
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{
 			Ref:    "ckpt-1",
 			Source: sessionstore.WorkspaceSnapshotCheckpoint,

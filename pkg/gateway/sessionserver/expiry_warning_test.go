@@ -25,7 +25,8 @@ func TestOnSessionExpiringSoonEmitsEventAndSignalsPod_spec_11_3_240(t *testing.T
 	bus := sessionevents.NewBus(0)
 	now := time.Now()
 	sess := sessionstore.Session{
-		ID: "sess_warn", TenantID: "acme", RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     "sess_warn", TenantID: "acme", RuntimeRef: "echo",
 		State:     session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	}
@@ -93,7 +94,8 @@ func TestOnSessionExpiringSoonEmitsEventWithoutBinding_spec_11_3_240(t *testing.
 	bus := sessionevents.NewBus(0)
 	now := time.Now()
 	sess := sessionstore.Session{
-		ID: "sess_nb", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_nb", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := store.Create(context.Background(), sess); err != nil {

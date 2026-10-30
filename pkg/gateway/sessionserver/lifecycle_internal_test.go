@@ -95,7 +95,8 @@ func TestEmitTerminalLifecycleRecordsVariantMetrics_spec_10_7_1124(t *testing.T)
 				},
 			})
 			srv.emitTerminalLifecycle(context.Background(), sessionstore.Session{
-				ID: "s", TenantID: "acme", State: tc.state,
+				UserID: testOwner,
+				ID:     "s", TenantID: "acme", State: tc.state,
 				ExecutionMode: tc.mode, ExperimentContext: tc.ec, CreatedAt: created,
 			})
 			if len(got) != 1 {
@@ -117,7 +118,8 @@ func TestEmitTerminalLifecycleSkipsNonTerminalMetric_spec_10_7_1124(t *testing.T
 		RecordSessionTerminal: func(string, string, string, bool, float64) { called = true },
 	})
 	srv.emitTerminalLifecycle(context.Background(), sessionstore.Session{
-		ID: "s", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", State: session.StateRunning,
 	})
 	if called {
 		t.Errorf("metric hook fired for a non-terminal state")
@@ -127,7 +129,7 @@ func TestEmitTerminalLifecycleSkipsNonTerminalMetric_spec_10_7_1124(t *testing.T
 // A nil hook must be a no-op (the metric subsystem is optional wiring).
 func TestRecordTerminalSessionMetricsNilHookIsSafe_spec_10_7_1124(t *testing.T) {
 	srv := New(memstore.New(), Options{DevTenantHeader: true, Clock: func() time.Time { return time.Unix(0, 0) }})
-	srv.recordTerminalSessionMetrics(sessionstore.Session{ID: "s", TenantID: "acme", State: session.StateFailed})
+	srv.recordTerminalSessionMetrics(sessionstore.Session{UserID: testOwner, ID: "s", TenantID: "acme", State: session.StateFailed})
 }
 
 // --- F-7.1.10: session lifecycle audit events --------------------------
@@ -177,7 +179,7 @@ func TestRecordSessionCompletedEmitsTerminalAuditEvent_spec_7_1_10(t *testing.T)
 	for _, tc := range cases {
 		sink := &captureLifecycleAudit{}
 		srv := New(memstore.New(), Options{DevTenantHeader: true, LifecycleAuditSink: sink})
-		row := sessionstore.Session{ID: "s", TenantID: "acme", RuntimeRef: "echo", State: tc.state}
+		row := sessionstore.Session{UserID: testOwner, ID: "s", TenantID: "acme", RuntimeRef: "echo", State: tc.state}
 		if tc.state == session.StateFailed {
 			row.FailureClass = session.FailureClass("runtime_failure")
 		}
@@ -202,7 +204,8 @@ func TestRecordSessionCompletedNonTerminalNoAudit_spec_7_1_10(t *testing.T) {
 	sink := &captureLifecycleAudit{}
 	srv := New(memstore.New(), Options{DevTenantHeader: true, LifecycleAuditSink: sink})
 	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
-		ID: "s", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", State: session.StateRunning,
 	})
 	if len(sink.events) != 0 {
 		t.Errorf("non-terminal state emitted %d audit events, want 0", len(sink.events))
@@ -212,8 +215,8 @@ func TestRecordSessionCompletedNonTerminalNoAudit_spec_7_1_10(t *testing.T) {
 func TestLifecycleAuditNilSinkIsSafe_spec_7_1_10(t *testing.T) {
 	srv := New(memstore.New(), Options{DevTenantHeader: true})
 	// Neither path may panic with a nil sink.
-	srv.recordSessionCreated(context.Background(), sessionstore.Session{ID: "s", TenantID: "acme", State: session.StateCreated})
-	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{ID: "s", TenantID: "acme", State: session.StateFailed})
+	srv.recordSessionCreated(context.Background(), sessionstore.Session{UserID: testOwner, ID: "s", TenantID: "acme", State: session.StateCreated})
+	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{UserID: testOwner, ID: "s", TenantID: "acme", State: session.StateFailed})
 }
 
 // --- F-7.1.11 / F-7.2.2: status_change + session_complete SSE ----------
@@ -225,7 +228,8 @@ func TestTerminalTransitionEmitsStatusChangeAndComplete_spec_7_2_2(t *testing.T)
 		bus := sessionevents.NewBus(64)
 		srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus})
 		srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
-			ID: "s", TenantID: "acme", State: st,
+			UserID: testOwner,
+			ID:     "s", TenantID: "acme", State: st,
 		})
 
 		sc := sseEventsOfType(bus, "s", "status_change")
@@ -253,7 +257,8 @@ func TestSessionCompleteCarriesTaskResult_spec_7_2_2(t *testing.T) {
 	bus := sessionevents.NewBus(64)
 	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus})
 	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
-		ID: "s", TenantID: "acme", State: session.StateFailed,
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", State: session.StateFailed,
 		FailureReason: "RUNTIME_CRASH",
 	})
 	complete := sseEventsOfType(bus, "s", "session_complete")
@@ -282,7 +287,8 @@ func TestNonTerminalRecordCompletedNoSSE_spec_7_2_2(t *testing.T) {
 	bus := sessionevents.NewBus(64)
 	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus})
 	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
-		ID: "s", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", State: session.StateRunning,
 	})
 	if n := len(bus.History("s", 0)); n != 0 {
 		t.Errorf("non-terminal recordSessionCompleted emitted %d SSE events, want 0", n)
@@ -295,7 +301,8 @@ func TestFailSessionEmitsTerminalLifecycle_spec_7_2_2(t *testing.T) {
 	// as any terminal.
 	store := memstore.New()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateResumePending,
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateResumePending,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -322,7 +329,7 @@ func TestFailSessionEmitsTerminalLifecycle_spec_7_2_2(t *testing.T) {
 func TestEmitStatusChangeNoBusIsSafe_spec_7_2_2(t *testing.T) {
 	srv := New(memstore.New(), Options{DevTenantHeader: true})
 	srv.emitStatusChange("acme", "s", session.StateSuspended) // nil bus must not panic
-	srv.emitSessionComplete(context.Background(), sessionstore.Session{ID: "s", State: session.StateCompleted})
+	srv.emitSessionComplete(context.Background(), sessionstore.Session{UserID: testOwner, ID: "s", State: session.StateCompleted})
 }
 
 // --- F-7.1.5 / F-7.1.16: artifact retention default + terminal roll ----
@@ -331,13 +338,14 @@ func TestRollRetentionOnTerminalFromZero_spec_7_1_16(t *testing.T) {
 	store := memstore.New()
 	now := time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "s", TenantID: "acme", State: session.StateCompleted,
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", State: session.StateCompleted,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	srv := New(store, Options{DevTenantHeader: true, Clock: func() time.Time { return now }})
 
-	srv.rollRetentionOnTerminal(context.Background(), sessionstore.Session{ID: "s", TenantID: "acme", State: session.StateCompleted})
+	srv.rollRetentionOnTerminal(context.Background(), sessionstore.Session{UserID: testOwner, ID: "s", TenantID: "acme", State: session.StateCompleted})
 
 	row, _ := store.Get(context.Background(), "acme", "s")
 	want := now.Add(DefaultArtifactRetention)
@@ -354,7 +362,8 @@ func TestRollRetentionRollsCreateDefaultForward_spec_7_1_16(t *testing.T) {
 	created := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	terminal := created.Add(36 * time.Hour)
 	seeded := sessionstore.Session{
-		ID: "s", TenantID: "acme", State: session.StateCompleted,
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", State: session.StateCompleted,
 		CreatedAt:          created,
 		RetentionExpiresAt: created.Add(DefaultArtifactRetention),
 	}
@@ -378,7 +387,8 @@ func TestRollRetentionPreservesLongerExtension_spec_7_1_16(t *testing.T) {
 	terminal := time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC)
 	extended := terminal.Add(60 * 24 * time.Hour) // 60 days, > 7-day default
 	seeded := sessionstore.Session{
-		ID: "s", TenantID: "acme", State: session.StateCompleted,
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", State: session.StateCompleted,
 		RetentionExpiresAt: extended,
 	}
 	if err := store.Create(context.Background(), seeded); err != nil {

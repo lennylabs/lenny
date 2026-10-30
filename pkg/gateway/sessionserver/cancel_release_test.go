@@ -72,7 +72,8 @@ func seedRunningChild(t *testing.T, store sessionstore.Store, id, parent string)
 	t.Helper()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     id, TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: parent, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed %s: %v", id, err)
@@ -144,7 +145,7 @@ func TestSessionModePodDrainedOnTerminalTransition_spec_6_1(t *testing.T) {
 		exec := newCancelTrackingExecutor()
 		srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec})
 		now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-		sess := sessionstore.Session{ID: "sm", TenantID: "acme", State: tc.state, CreatedAt: now, UpdatedAt: now}
+		sess := sessionstore.Session{UserID: testOwner, ID: "sm", TenantID: "acme", State: tc.state, CreatedAt: now, UpdatedAt: now}
 		if err := store.Create(ctx, sess); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
@@ -253,7 +254,8 @@ func TestCascadeCancelDetachLeavesGrandchildRuntimeRunning_spec_11_3_9(t *testin
 	// c1 detaches, so its child gc must stay running and undrained.
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "c1", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "c1", TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: "p", CascadeOnFailure: session.CascadeDetach,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {

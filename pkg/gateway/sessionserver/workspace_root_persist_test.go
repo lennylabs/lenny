@@ -25,7 +25,8 @@ func TestPersistWorkspaceRootRecordsFirstValue_spec_7_3_15(t *testing.T) {
 	store := memstore.New()
 	now := time.Date(2026, 5, 26, 10, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "s1", TenantID: "acme", RuntimeRef: "claude-code",
+		UserID: testOwner,
+		ID:     "s1", TenantID: "acme", RuntimeRef: "claude-code",
 		State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -53,7 +54,8 @@ func TestPersistWorkspaceRootDerivesSlotRootOnce_spec_7_3_15(t *testing.T) {
 	store := memstore.New()
 	now := time.Date(2026, 5, 26, 10, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "s4", TenantID: "acme", RuntimeRef: "claude-code",
+		UserID: testOwner,
+		ID:     "s4", TenantID: "acme", RuntimeRef: "claude-code",
 		State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -79,7 +81,8 @@ func TestPersistWorkspaceRootIgnoresEmpty_spec_7_3_15(t *testing.T) {
 	store := memstore.New()
 	now := time.Date(2026, 5, 26, 10, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "s2", TenantID: "acme", RuntimeRef: "claude-code",
+		UserID: testOwner,
+		ID:     "s2", TenantID: "acme", RuntimeRef: "claude-code",
 		State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 		WorkspaceRoot: "/workspace/slots/s2/current",
 	}); err != nil {
@@ -103,7 +106,8 @@ func TestPersistWorkspaceRootDoesNotOverwriteRecorded_spec_7_3_15(t *testing.T) 
 	store := memstore.New()
 	now := time.Date(2026, 5, 26, 10, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "s3", TenantID: "acme", RuntimeRef: "claude-code",
+		UserID: testOwner,
+		ID:     "s3", TenantID: "acme", RuntimeRef: "claude-code",
 		State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 		WorkspaceRoot: "/workspace/slots/s3/current",
 	}); err != nil {

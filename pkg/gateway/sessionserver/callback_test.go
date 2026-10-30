@@ -201,7 +201,8 @@ func TestWebhookEventsEndpoint_spec_15_678(t *testing.T) {
 	srv := callbackServer(t, store, sessionserver.Options{DevTenantHeader: true})
 	ctx := context.Background()
 	if err := store.Create(ctx, sessionstore.Session{
-		ID: "sess_wh", TenantID: "acme", State: session.StateCompleted,
+		UserID: testOwner,
+		ID:     "sess_wh", TenantID: "acme", State: session.StateCompleted,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}); err != nil {
 		t.Fatalf("create: %v", err)
@@ -305,7 +306,8 @@ func TestTerminalCallbackDelivered_spec_14_108(t *testing.T) {
 
 	ctx := context.Background()
 	row := sessionstore.Session{
-		ID: "sess_term", TenantID: "acme", State: session.StateCompleted,
+		UserID: testOwner,
+		ID:     "sess_term", TenantID: "acme", State: session.StateCompleted,
 		CallbackURL: srv.URL, CallbackPinnedIP: u.Hostname(),
 		CallbackSecret: []byte("opaque-sealed"),
 		CreatedAt:      time.Now(), UpdatedAt: time.Now(),

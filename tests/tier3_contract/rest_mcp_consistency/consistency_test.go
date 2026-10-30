@@ -302,6 +302,7 @@ func TestRESTMCPTasks(t *testing.T) {
 	// task tree is what we compare, not how it was built.
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	parent := sessionstore.Session{
+		UserID:     ownerprincipal.Alice,
 		ID:         "sess_parent",
 		TenantID:   "acme",
 		RuntimeRef: "claude-code",
@@ -314,6 +315,7 @@ func TestRESTMCPTasks(t *testing.T) {
 	}
 	for _, id := range []string{"sess_child_a", "sess_child_b"} {
 		child := sessionstore.Session{
+			UserID:          ownerprincipal.Alice,
 			ID:              id,
 			TenantID:        "acme",
 			RuntimeRef:      "claude-code",

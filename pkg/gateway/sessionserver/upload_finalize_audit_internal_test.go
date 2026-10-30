@@ -38,7 +38,7 @@ func TestRunUploadEmitsAuditEvent_spec_7_4_17(t *testing.T) {
 	})
 
 	row := sessionstore.Session{
-		ID: "sess_audit", TenantID: "default", UserID: "alice",
+		ID: "sess_audit", TenantID: "default", UserID: testOwner,
 		RuntimeRef: "claude-code", State: session.StateCreated,
 		CreatedAt: clock(), UpdatedAt: clock(),
 	}
@@ -101,7 +101,7 @@ func TestHandleFinalizeEmitsAuditEvent_spec_7_4_17(t *testing.T) {
 		t.Fatalf("mint: %v", err)
 	}
 	row := sessionstore.Session{
-		ID: "sess_fin", TenantID: "default", UserID: "alice",
+		ID: "sess_fin", TenantID: "default", UserID: testOwner,
 		RuntimeRef: "claude-code", State: session.StateCreated,
 		CreatedAt: clock(), UpdatedAt: clock(),
 		UploadTokenDigest: parsed.Digest,
@@ -153,7 +153,8 @@ func TestRunUploadAuditNilSinkSafe_spec_7_4_17(t *testing.T) {
 	})
 
 	row := sessionstore.Session{
-		ID: "sess_nil", TenantID: "default", State: session.StateCreated,
+		UserID: testOwner,
+		ID:     "sess_nil", TenantID: "default", State: session.StateCreated,
 		CreatedAt: clock(), UpdatedAt: clock(),
 	}
 	if err := store.Create(context.Background(), row); err != nil {

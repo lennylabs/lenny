@@ -160,7 +160,7 @@ func TestResumeReleasesEarlierBindingBeforeBind_spec_10_1(t *testing.T) {
 	t.Run("leftover binding is released before the new bind", func(t *testing.T) {
 		t.Parallel()
 		f := newRebindFixture(t, "sess-rebind", false)
-		seedAwaitingSession(t, f.store, sessionstore.Session{ID: "sess-rebind", WorkspaceSnapshot: checkpointed()})
+		seedAwaitingSession(t, f.store, sessionstore.Session{UserID: testOwner, ID: "sess-rebind", WorkspaceSnapshot: checkpointed()})
 		f.registry.Put(&podsession.BindResult{SessionID: "sess-rebind", TenantID: "acme", SandboxName: "sbx-old"})
 		f.setHolder("sess-rebind", "rep-1")
 
@@ -188,7 +188,7 @@ func TestResumeReleasesEarlierBindingBeforeBind_spec_10_1(t *testing.T) {
 	t.Run("pre-claim failure writes nothing and keeps this replica's lease", func(t *testing.T) {
 		t.Parallel()
 		f := newRebindFixture(t, "sess-keep", true)
-		seedAwaitingSession(t, f.store, sessionstore.Session{ID: "sess-keep", WorkspaceSnapshot: checkpointed()})
+		seedAwaitingSession(t, f.store, sessionstore.Session{UserID: testOwner, ID: "sess-keep", WorkspaceSnapshot: checkpointed()})
 		f.setHolder("sess-keep", "rep-1")
 
 		row := resumeToPending(t, f, "sess-keep")
@@ -224,8 +224,8 @@ func TestResumeAgainstForeignLeaseHolderHoldsRow_spec_15_1(t *testing.T) {
 		name string
 		row  sessionstore.Session
 	}{
-		{"checkpoint", sessionstore.Session{WorkspaceSnapshot: checkpointed()}},
-		{"snapshotless", sessionstore.Session{WorkspacePlan: json.RawMessage(`{
+		{"checkpoint", sessionstore.Session{UserID: testOwner, WorkspaceSnapshot: checkpointed()}},
+		{"snapshotless", sessionstore.Session{UserID: testOwner, WorkspacePlan: json.RawMessage(`{
 			"schemaVersion": 1,
 			"sources": [{"type":"inlineFile","path":"CLAUDE.md","content":"# resumed","mode":"0644"}]
 		}`)}},
