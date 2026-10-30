@@ -16,13 +16,15 @@
 package tier8_chaos_test
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
 )
 
@@ -72,18 +74,6 @@ func requireColdContinuation(t *testing.T, h *lifecycleharness.Harness, r *lifec
 		t.Errorf("new session's continuation parent = %q, want %q", got, prev)
 	}
 	return cold
-}
-
-// awaitHandling waits until the session's runtime holds a message in hand.
-func awaitHandling(t *testing.T, pod *lifecycleharness.Pod, id string) {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for pod.Runtime.Handling(id) == 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("the runtime never received the warm turn")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
 }
 
 // spec: 15 (Open Responses conversation sessions), 10.1.2 (Coordinator Handoff Protocol), 6.2 (Pod State Machine)
@@ -182,7 +172,10 @@ func TestRestoreBetweenTurnsSendsTheNextContinuationCold_spec_15(t *testing.T) {
 // diagnosis: a §7.3 restore of a held Open Responses session between a warm
 // turn's reservation and its completion write let the turn complete, or the
 // handler answered anything but the native 500, or left the session other
-// than failed. The completion write is conditioned on the
+// than failed. The runtime answers the turn and the transcript records it,
+// then the completion write is held while a runtime_crash report sends the
+// session through resume_pending and the resume driver restores it at a
+// higher recovery_generation. The completion write is conditioned on the
 // recovery_generation captured at the reservation, and every failure after
 // input may have reached the runtime ends the session. Check commitWarm and
 // endHeldSession in pkg/gateway/environment/translator/open_responses.go.
@@ -192,49 +185,57 @@ func TestRestoreMidTurnFailsTheTurnAndTheSession_spec_15(t *testing.T) {
 	r := h.Replicas[0]
 	first, id := firstResponsesTurn(t, h, r, "turn-1")
 	gen := h.Row(id).RecoveryGeneration
-	pod := h.Cluster.PodOf(h.Row(id).PodAssignment)
 
-	pod.Runtime.Hold()
-	type answer struct {
-		code int
-		body map[string]any
-	}
-	done := make(chan answer, 1)
-	go func() {
-		code, body := postResponses(h, r, first, "in-flight")
-		done <- answer{code, body}
-	}()
-	awaitHandling(t, pod, id)
-	if row := h.Row(id); len(row.Responses) != 2 {
-		pod.Runtime.Release()
-		t.Fatalf("the warm turn in hand left %d response records, want the reservation", len(row.Responses))
-	}
+	// The hold runs on the handler's goroutine before the completion write,
+	// so it records what it observed and the test asserts afterwards.
+	var held atomic.Bool
+	var restored sessionstore.Session
+	var reserved int
+	var reportErr error
+	h.Trace.ArmMatching("Update", "commitWarm", lifecycleharness.FaultHold,
+		func(lifecycleharness.TraceEntry, lifecycleharness.FaultKind) {
+			held.Store(true)
+			reserved = len(h.Row(id).Responses)
+			if _, reportErr = r.Server.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
+				TenantID: lifecycleharness.Tenant, SessionID: id, Reason: string(session.FailureRuntimeCrash),
+			}); reportErr != nil {
+				return
+			}
+			restored = h.AwaitState(id, session.StateRunning, chaosRecoveryPasses)
+			for i := 0; i < chaosRecoveryPasses && restored.RecoveryGeneration == gen; i++ {
+				h.Pass()
+				restored = h.Row(id)
+			}
+		})
+	code, body := postResponses(h, r, first, "in-flight")
 
-	lifecycleharness.Report(t, r, id, string(session.FailureRuntimeCrash))
-	for i := 0; i < chaosRecoveryPasses && h.Row(id).RecoveryGeneration == gen && !session.IsTerminal(h.Row(id).State); i++ {
-		h.Pass()
+	if !held.Load() {
+		t.Fatalf("the warm turn never reached its completion write; answered %d %v", code, body)
 	}
-	if restored := h.Row(id); restored.RecoveryGeneration <= gen {
-		pod.Runtime.Release()
-		t.Fatalf("the runtime_crash report left the session %q at recovery generation %d, want a restore above %d",
+	if reportErr != nil {
+		t.Fatalf("ReportSessionFailure during the held completion write: %v", reportErr)
+	}
+	if reserved != 2 {
+		t.Errorf("the warm turn in hand left %d response records, want the reservation", reserved)
+	}
+	if restored.State != session.StateRunning || restored.RecoveryGeneration <= gen {
+		t.Fatalf("the runtime_crash report left the session %q at recovery generation %d, want running after a restore above %d",
 			restored.State, restored.RecoveryGeneration, gen)
 	}
-	pod.Runtime.Release()
-
-	var got answer
-	select {
-	case got = <-done:
-	case <-time.After(60 * time.Second):
-		t.Fatal("the warm turn did not answer after the restore")
+	if n := timesReceived(h, id, "in-flight"); n < 1 {
+		t.Errorf("the runtime received the warm turn %d times, want it delivered before the restore", n)
 	}
 	h.Settle()
-	e, _ := got.body["error"].(map[string]any)
-	if got.code != http.StatusInternalServerError || e["type"] != "server_error" {
-		t.Fatalf("warm turn across the restore = %d %v, want the native 500", got.code, got.body)
+	e, _ := body["error"].(map[string]any)
+	if code != http.StatusInternalServerError || e["type"] != "server_error" {
+		t.Fatalf("warm turn across the restore = %d %v, want the native 500", code, body)
 	}
 	row := h.Row(id)
 	if row.State != session.StateFailed {
 		t.Errorf("session after the failed turn = %q, want failed", row.State)
+	}
+	if row.RecoveryGeneration != restored.RecoveryGeneration {
+		t.Errorf("recovery generation after the failed turn = %d, want the restored %d", row.RecoveryGeneration, restored.RecoveryGeneration)
 	}
 	if len(row.Responses) != 2 || row.Responses[1].Completed {
 		t.Errorf("responses after the failed turn = %+v, want the second not completed", row.Responses)

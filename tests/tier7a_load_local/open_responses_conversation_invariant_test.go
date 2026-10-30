@@ -331,12 +331,6 @@ func newORInvWorld(t *testing.T) *orInvWorld {
 	return w
 }
 
-func (w *orInvWorld) violate(format string, args ...any) {
-	w.mu.Lock()
-	w.violations = append(w.violations, fmt.Sprintf(format, args...))
-	w.mu.Unlock()
-}
-
 // post sends one turn and returns the status and the response id.
 func (w *orInvWorld) post(user, prev, input string) (int, string) {
 	body := map[string]any{"model": orInvRuntimeRef, "input": input, "user": user}
@@ -467,10 +461,10 @@ func (w *orInvWorld) rest(id string) {
 func (w *orInvWorld) drive(rng *rand.Rand, ops int) {
 	for i := 0; i < ops; i++ {
 		fault := orInvNoFault
-		switch r := rng.Intn(10); {
-		case r == 0:
+		switch rng.Intn(10) {
+		case 0:
 			fault = orInvRefuse
-		case r == 1:
+		case 1:
 			fault = orInvFail
 		}
 		switch op := rng.Intn(20); {
