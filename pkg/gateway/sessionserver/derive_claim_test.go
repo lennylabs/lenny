@@ -216,3 +216,44 @@ func TestDeriveAndReplayInsertFailureReleasesTheClaim_spec_7_1(t *testing.T) {
 		})
 	}
 }
+
+// TestDeriveAndReplayMintFailureReleasesTheClaim_spec_7_1 pins that an
+// uploadToken mint failure after a successful claim releases the claimed
+// pod and persists no row: the mint is part of the same §7.1 atomic unit as
+// the claim.
+//
+// spec: 7.1 (Normal Flow) step 8 and Atomicity of session creation (steps
+// 2–8), 15.1 (REST API) Session Replay Semantics.
+func TestDeriveAndReplayMintFailureReleasesTheClaim_spec_7_1(t *testing.T) {
+	t.Parallel()
+	for _, rt := range newSessionRoutes() {
+		// A dot in the session id makes the issuer refuse the mint.
+		rt.newID = "sess.bad-id"
+		t.Run(rt.name, func(t *testing.T) {
+			t.Parallel()
+			store := memstore.New()
+			rt.seed(t, store)
+			h, cluster, _ := claimingServer(
+				t, store, rt,
+				podBindWarmPool("echo-pool", "echo-tmpl"),
+				podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+				podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+			)
+			rr := rt.call(t, h)
+			if rr.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want 503; body=%s", rr.Code, rr.Body.String())
+			}
+			if code, _, details := decodeError(t, rr); details["reason"] != "upload_token_issuance_failed" {
+				t.Errorf("error = %s %v, want reason upload_token_issuance_failed", code, details)
+			}
+			if _, err := store.Get(context.Background(), "acme", rt.newID); err == nil {
+				t.Error("a row was persisted although the mint failed")
+			}
+			var claim lennyv1.SandboxClaim
+			err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim)
+			if !apierrors.IsNotFound(err) {
+				t.Errorf("claim-sbx-1 after the failed mint: err=%v phase=%q, want NotFound (released)", err, claim.Status.Phase)
+			}
+		})
+	}
+}

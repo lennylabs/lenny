@@ -4336,8 +4336,10 @@ than filing a duplicate. F-10.1.45 was already closed and needed no record.
     `targetPool`, so a wrong pool answers a retryable 503 and the pool grant is not checked.
   - [ ] **F-15.1.66** (Medium, filed from F-7.1.36): replay compares no `executionMode` and never answers
     `400 INCOMPATIBLE_RUNTIME`.
-  - [ ] **F-15.1.63** (Medium): derive and replay mint no `uploadToken`, although the §15.1 replay response is
-    identical to `POST /v1/sessions`. It rides with F-7.1.36, which edits the same create path.
+  - [x] **F-15.1.63** (Medium): derive and replay mint no `uploadToken`, although the §15.1 replay response is
+    identical to `POST /v1/sessions`. Closed 2026-10-30 by direct fix on `fix/derive-claim-and-setup-labels`:
+    both handlers mint through the create path's `mintUploadToken` before the insert, store the digest and
+    expiry, and return the token; a derived and a replayed session accept an upload before finalize at tier 4.
 - Direct-fix queue, independent of 0109's implementation and preferably ahead of it.
   - [x] **F-10.1.45** (High): only `miniostore` implements `ListByPrefix`, so the chunk resolver is nil on
     S3, GCS, and Azure, a resume restores no chunks there, and after 0109 derive and replay answer `500` there.

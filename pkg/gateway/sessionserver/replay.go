@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -42,6 +44,11 @@ type ReplayRequest struct {
 // ReplayResponse is the §15.1 replay reply.
 type ReplayResponse struct {
 	SessionResponse
+
+	// UploadToken is the §7.1 uploadToken of the replayed session. §15.1
+	// states the replay response carries it, identical to
+	// `POST /v1/sessions`. Treat as a secret per §7.1.
+	UploadToken string `json:"uploadToken"`
 
 	ReplayMode      string `json:"replayMode"`
 	ParentSessionID string `json:"parentSessionId"`
@@ -219,6 +226,16 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 		s.undoDerivedWrites(r.Context(), tenantID, replayedID)
 		return
 	}
+	// spec: §15.1 (Session Replay Semantics) — the response carries the
+	// uploadToken, identical to POST /v1/sessions, minted and stored in the
+	// same atomic unit as the insert (§7.1 step 8). A mint failure releases
+	// the claim, undoes the copy and the reservation, and answers with no
+	// session_id.
+	uploadToken, ok := s.mintUploadToken(w, r, &replayed, createClaim, trace.SpanFromContext(r.Context()))
+	if !ok {
+		s.undoDerivedWrites(r.Context(), tenantID, replayedID)
+		return
+	}
 	if err := s.insertReplayed(r.Context(), replayed, source.ID, req.ReplayMode); err != nil {
 		// spec: §7.1 (Atomicity of session creation (steps 2–8)) — every
 		// insert failure releases the create-time claim.
@@ -241,6 +258,7 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 
 	resp := ReplayResponse{
 		SessionResponse: toResponse(replayed),
+		UploadToken:     uploadToken,
 		ReplayMode:      string(req.ReplayMode),
 		ParentSessionID: source.ID,
 	}

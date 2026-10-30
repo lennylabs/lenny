@@ -337,32 +337,10 @@ func (s *Server) claimMintPersist(w http.ResponseWriter, r *http.Request, row *s
 		return level, "", false
 	}
 
-	// spec: §7.1 — atomicity. Mint the §7.1 step 8 uploadToken
-	// BEFORE the row is persisted: on failure no session row exists, so
-	// the client receives no session_id (matching the "does NOT persist
-	// the session row" rule). The token's digest + expiry are stamped
-	// directly on the row that will be persisted, replacing the legacy
-	// "Create then Update with digest" sequence that left an orphan
-	// `created`-state row when the mint failed.
-	// spec: §7.1 — TTL = maxCreatedStateTimeoutSeconds; the
-	// gateway threads the configured value through s.uploadTokenTTL so
-	// the token deadline matches the watchdog's MaxCreatedSeconds. F-7.4.7.
-	tok, parsed, err := s.uploadIssuer.IssueDetailed(row.ID, s.uploadTokenTTL)
-	if err != nil {
-		// spec: §7.1 — the mint failed before the row persist, so roll
-		// back the create-time pod claim rather than leak it past a "no
-		// session_id returned" failure.
-		s.rollbackClaim(r.Context(), createClaim, row.ID)
-		// spec: §16.3 — the uploadToken mint failed before any row
-		// was persisted; record it on the create span (PERMANENT: a bad
-		// session id does not become valid on retry).
-		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryPermanent))
-		s.writeSessionCreationFailed(w, "upload_token_issuance_failed",
-			"upload token issuance failed: "+err.Error())
+	tok, ok := s.mintUploadToken(w, r, row, createClaim, span)
+	if !ok {
 		return level, "", false
 	}
-	row.UploadTokenDigest = parsed.Digest
-	row.UploadTokenExpiry = parsed.Expiry
 
 	if err := s.store.Create(r.Context(), *row); err != nil {
 		// spec: §7.1 — persistence failure leaves no row behind;
@@ -455,6 +433,40 @@ func (s *Server) claimForNewRow(w http.ResponseWriter, r *http.Request, row *ses
 		row.PoolRef = outcome.Claim.Pool
 	}
 	return level, outcome.Claim, true
+}
+
+// mintUploadToken mints the §7.1 step-8 uploadToken for a row that is not
+// yet persisted and stamps its digest and expiry on the row, so the insert
+// that follows stores them. Every handler that inserts a top-level session in
+// `created` calls it after its claim: `POST /v1/sessions`, derive, and replay,
+// whose §15.1 response is "identical to `POST /v1/sessions`" and whose new
+// session goes through the standard upload → finalize → start lifecycle.
+// Minting before the insert keeps §7.1 atomicity: on failure no row exists,
+// so the client receives no session_id. The TTL is
+// maxCreatedStateTimeoutSeconds, threaded through s.uploadTokenTTL, so the
+// token deadline matches the watchdog's created-state deadline (F-7.4.7).
+//
+// On failure it releases claim (the create-time pod claim of the same atomic
+// unit, nil when none was taken), writes 503 SESSION_CREATION_FAILED with
+// reason upload_token_issuance_failed, and returns ok=false.
+//
+// spec: §7.1 (Normal Flow) step 8 and Atomicity of session creation (steps
+// 2–8); §7.4 (Upload Safety) Upload authorization; §15.1 (Session Replay
+// Semantics).
+func (s *Server) mintUploadToken(w http.ResponseWriter, r *http.Request, row *sessionstore.Session, claim *podsession.ClaimResult, span trace.Span) (string, bool) {
+	tok, parsed, err := s.uploadIssuer.IssueDetailed(row.ID, s.uploadTokenTTL)
+	if err != nil {
+		s.rollbackClaim(r.Context(), claim, row.ID)
+		// spec: §16.3 — PERMANENT: a bad session id does not become valid
+		// on retry.
+		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryPermanent))
+		s.writeSessionCreationFailed(w, "upload_token_issuance_failed",
+			"upload token issuance failed: "+err.Error())
+		return "", false
+	}
+	row.UploadTokenDigest = parsed.Digest
+	row.UploadTokenExpiry = parsed.Expiry
+	return tok, true
 }
 
 // writeCreateSessionResponse renders the §15.1 201 CreateSessionResponse:

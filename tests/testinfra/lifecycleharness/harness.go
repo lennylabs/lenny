@@ -484,6 +484,12 @@ func (h *Harness) AddReplica(name string) *Replica {
 		r.SlotCounter = h.newSlotCounter()
 		binder.SlotCounter = r.SlotCounter
 	}
+	// The binder stages a plan's uploadFile and uploadArchive sources from
+	// the same blob store the session server writes uploads to, as the
+	// gateway wires them.
+	if h.objects != nil {
+		binder.Blobs = h.objects.Blobs
+	}
 	exec := executor.NewPodExecutor(reg, binder)
 	r.Executor, r.Binder = exec, binder
 	var bus *sessionevents.Bus
@@ -735,6 +741,24 @@ func (h *Harness) DoAs(r *Replica, user, method, path string, body any) (int, ma
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	rr := httptest.NewRecorder()
+	r.public.ServeHTTP(rr, req)
+	out := map[string]any{}
+	_ = json.Unmarshal(rr.Body.Bytes(), &out)
+	return rr.Code, out
+}
+
+// Upload posts body as one file to the session's upload endpoint on the
+// replica, carrying token in the X-Lenny-Upload-Token header, and returns
+// the status and the decoded answer.
+//
+// spec: §7.4 (Upload Safety) Upload authorization; §15.1 (REST API)
+func (h *Harness) Upload(r *Replica, id, token, mime string, body []byte) (int, map[string]any) {
+	h.T.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+id+"/upload", bytes.NewReader(body))
+	req.Header.Set("X-Lenny-Tenant-ID", Tenant)
+	req.Header.Set("X-Lenny-Upload-Token", token)
+	req.Header.Set("Content-Type", mime)
 	rr := httptest.NewRecorder()
 	r.public.ServeHTTP(rr, req)
 	out := map[string]any{}

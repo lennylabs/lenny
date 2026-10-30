@@ -76,6 +76,11 @@ type DeriveRequest struct {
 type DeriveResponse struct {
 	SessionResponse
 
+	// UploadToken is the §7.1 uploadToken the client supplies on every
+	// upload into the derived session until it is finalized, as on a
+	// `POST /v1/sessions` response. Treat as a secret per §7.1.
+	UploadToken string `json:"uploadToken"`
+
 	// WorkspaceSnapshotSource echoes the §7.1 derive response field.
 	WorkspaceSnapshotSource string `json:"workspaceSnapshotSource,omitempty"`
 
@@ -392,6 +397,16 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		s.undoDerivedWrites(r.Context(), tenantID, derivedID)
 		return
 	}
+	// spec: §7.1 (Normal Flow) step 8, §7.4 (Upload Safety) — the derived
+	// session goes through the standard upload → finalize → start lifecycle,
+	// so it carries an uploadToken minted and stored in the same atomic unit
+	// as the insert. A mint failure releases the claim, undoes the copy and
+	// the reservation, and answers with no session_id.
+	uploadToken, ok := s.mintUploadToken(w, r, &derived, createClaim, trace.SpanFromContext(r.Context()))
+	if !ok {
+		s.undoDerivedWrites(r.Context(), tenantID, derivedID)
+		return
+	}
 	if err := s.store.CreateReserved(r.Context(), derived); err != nil {
 		// spec: §7.1 (Atomicity of session creation (steps 2–8)) — every
 		// insert failure releases the create-time claim, as the create path
@@ -414,6 +429,7 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 
 	resp := DeriveResponse{
 		SessionResponse:              toResponse(derived),
+		UploadToken:                  uploadToken,
 		WorkspaceSnapshotSource:      string(derived.WorkspaceSnapshot.Source),
 		WorkspaceSnapshotTimestamp:   derived.WorkspaceSnapshot.Timestamp.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
 		WorkspaceSnapshotContentHash: derived.WorkspaceSnapshot.ContentHash,

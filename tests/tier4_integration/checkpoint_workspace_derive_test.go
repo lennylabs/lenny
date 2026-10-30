@@ -478,6 +478,14 @@ func (f *restoreFixture) seedSource(t *testing.T, source, checkpointID string) {
 // the new session's id.
 func (f *restoreFixture) copyFrom(t *testing.T, source, route string, body map[string]any) string {
 	t.Helper()
+	id, _ := f.copyWithToken(t, source, route, body)
+	return id
+}
+
+// copyWithToken derives or replays source by the given route and body and
+// returns the new session's id and the uploadToken the response carries.
+func (f *restoreFixture) copyWithToken(t *testing.T, source, route string, body map[string]any) (string, string) {
+	t.Helper()
 	code, resp := f.h.Do(f.r, http.MethodPost, "/v1/sessions/"+source+"/"+route, body)
 	if code != http.StatusCreated {
 		t.Fatalf("%s from %s: status %d body %v", route, source, code, resp)
@@ -487,17 +495,19 @@ func (f *restoreFixture) copyFrom(t *testing.T, source, route string, body map[s
 		t.Fatalf("%s from %s answered no session id: %v", route, source, resp)
 	}
 	f.h.Track(id)
-	return id
+	token, _ := resp["uploadToken"].(string)
+	return id, token
 }
 
 // finalizeAndStart binds the plan and starts the session, returning the
-// /start status and body.
-func (f *restoreFixture) finalizeAndStart(t *testing.T, id string) (int, map[string]any) {
+// /start status and body. extra sources follow the plan's inline sources.
+func (f *restoreFixture) finalizeAndStart(t *testing.T, id string, extra ...map[string]any) (int, map[string]any) {
 	t.Helper()
-	sources := make([]map[string]any, 0, len(restorePlanSources))
+	sources := make([]map[string]any, 0, len(restorePlanSources)+len(extra))
 	for path, content := range restorePlanSources {
 		sources = append(sources, map[string]any{"type": "inlineFile", "path": path, "content": content})
 	}
+	sources = append(sources, extra...)
 	code, resp := f.h.Do(f.r, http.MethodPost, "/v1/sessions/"+id+"/finalize", map[string]any{
 		"workspacePlan": map[string]any{"schemaVersion": 1, "sources": sources},
 	})
@@ -711,4 +721,54 @@ func (f *restoreFixture) finalizeCalls() int {
 		n += pod.UnaryCalls("FinalizeWorkspace")
 	}
 	return n
+}
+
+// A derived session and a session replayed in either mode, on an exclusive
+// pool, accept an upload before finalize with the uploadToken their creation
+// response carries, and the uploaded file reaches the started workspace
+// beside the restored snapshot and the plan's inline sources. Against the
+// code that minted no token, the response carries none and the upload is
+// refused.
+//
+// spec: §15.1 (Session Replay Semantics) ("identical to `POST /v1/sessions`",
+// "upload → finalize → start → run"); §7.1 (Normal Flow) step 8; §7.4 (Upload
+// Safety) Upload authorization; §7.1 (Derive restore semantics)
+// diagnosis: derive or replay returned no uploadToken, stored a digest the upload path does not accept, or the uploaded file did not reach the workspace. Check mintUploadToken in pkg/gateway/sessionserver/create.go and its calls in derive.go and replay.go.
+func TestDerivedAndReplayedSessionsAcceptUploadsBeforeFinalize_spec_15_1(t *testing.T) {
+	cases := restoreCases()
+	f := newRestoreFixture(t, len(cases), 0)
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			source := fmt.Sprintf("sess_upload_source_%d", i)
+			f.seedSource(t, source, fmt.Sprintf("ck_upload_%d", i))
+			id, token := f.copyWithToken(t, source, tc.route, tc.body)
+			if token == "" {
+				t.Fatalf("%s answered no uploadToken", tc.route)
+			}
+			code, resp := f.h.Upload(f.r, id, token, "text/plain", []byte("uploaded bytes"))
+			if code != http.StatusCreated {
+				t.Fatalf("upload into %s: status %d body %v", id, code, resp)
+			}
+			ref, _ := resp["uploadRef"].(string)
+			if ref == "" {
+				t.Fatalf("upload answered no uploadRef: %v", resp)
+			}
+
+			code, resp = f.finalizeAndStart(t, id, map[string]any{"type": "uploadFile", "path": "uploaded.txt", "uploadRef": ref})
+			if code != http.StatusOK {
+				t.Fatalf("start %s: status %d body %v", id, code, resp)
+			}
+			want := wantRestoredTree()
+			want["uploaded.txt"] = "uploaded bytes"
+			got := f.slotTree(t, id)
+			if len(got) != len(want) {
+				t.Errorf("slot workspace = %v, want %v", got, want)
+			}
+			for path, body := range want {
+				if got[path] != body {
+					t.Errorf("%s = %q, want %q", path, got[path], body)
+				}
+			}
+		})
+	}
 }
