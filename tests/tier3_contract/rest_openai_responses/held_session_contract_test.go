@@ -53,7 +53,8 @@ func (refusingForwarder) ForwardResponsesTurn(w http.ResponseWriter, _ *http.Req
 func (refusingForwarder) Forwarded(context.Context) bool { return false }
 
 // newHeldServer serves the Open Responses translator with a holding binder
-// and the given forwarder (nil for the single-process default).
+// and the given forwarder. The forwarder is required; responsesstub.LocalForwarder
+// is the single-process default that serves every turn locally.
 func newHeldServer(t *testing.T, exec executor.Executor, fwd translator.HolderForwarder) *httptest.Server {
 	t.Helper()
 	store := memstore.New()
@@ -87,7 +88,7 @@ func postTurn(t *testing.T, url, prev, input string) (*http.Response, []byte) {
 // pkg/gateway/environment/translator/open_responses.go (serveWarm) no
 // longer formats the response id as <session>.<n+1> on the wire.
 func TestHeldSessionWarmTurnAnswersTheNextOrdinal_spec_15(t *testing.T) {
-	srv := newHeldServer(t, executor.NewEchoExecutor(), nil)
+	srv := newHeldServer(t, executor.NewEchoExecutor(), responsesstub.LocalForwarder{})
 	resp, raw := postTurn(t, srv.URL, "", "one")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("root POST: %d, body=%s", resp.StatusCode, raw)
@@ -166,7 +167,7 @@ func (f *failingSecondSend) Send(ctx context.Context, id string, m []executor.Me
 // than the native 500 server_error envelope means the failure exit in
 // pkg/gateway/environment/translator/open_responses.go (failTurn) drifted.
 func TestFailedWarmTurnIsNative500_spec_15(t *testing.T) {
-	srv := newHeldServer(t, &failingSecondSend{Executor: executor.NewEchoExecutor()}, nil)
+	srv := newHeldServer(t, &failingSecondSend{Executor: executor.NewEchoExecutor()}, responsesstub.LocalForwarder{})
 	resp, raw := postTurn(t, srv.URL, "", "one")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("root POST: %d, body=%s", resp.StatusCode, raw)
