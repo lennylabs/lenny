@@ -10,12 +10,22 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
@@ -374,5 +384,394 @@ func TestBindSlotFailsClosedWhenRestoreCannotBeMinted_spec_7_1(t *testing.T) {
 	}
 	if len(a.finalizedSet()) != 0 {
 		t.Errorf("finalized = %v, want none", a.finalizedSet())
+	}
+}
+
+// restoreEventLog records, in order, the bind-sequence events a restore test
+// asserts on: the PrepareWorkspace stream completing, each restore closure
+// invocation, and each FinalizeWorkspace the adapter serves.
+type restoreEventLog struct {
+	mu     sync.Mutex
+	events []string
+}
+
+func (l *restoreEventLog) add(event string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.events = append(l.events, event)
+}
+
+func (l *restoreEventLog) snapshot() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.events...)
+}
+
+// restoreRecordingAdapter is the concurrent-adapter fake with a recording
+// PrepareWorkspace and FinalizeWorkspace. It logs both RPCs into the shared
+// event log, keeps each FinalizeWorkspace's restore_chunks URLs in arrival
+// order, and fails the first FinalizeWorkspace when failFirstFinalize is set
+// so a test can drive a retried bind. It serves the exclusive and the slot
+// bind paths alike.
+type restoreRecordingAdapter struct {
+	*concurrentAdapter
+	log               *restoreEventLog
+	failFirstFinalize bool
+
+	mu        sync.Mutex
+	finalizes int
+	restores  [][]string
+}
+
+func newRestoreRecordingAdapter(log *restoreEventLog, failFirstFinalize bool) *restoreRecordingAdapter {
+	return &restoreRecordingAdapter{concurrentAdapter: newConcurrentAdapter(), log: log, failFirstFinalize: failFirstFinalize}
+}
+
+func (a *restoreRecordingAdapter) PrepareWorkspace(stream grpc.ClientStreamingServer[adapterv1.PrepareWorkspaceRequest, adapterv1.PrepareWorkspaceResponse]) error {
+	err := a.concurrentAdapter.PrepareWorkspace(stream)
+	a.log.add("PrepareWorkspace")
+	return err
+}
+
+func (a *restoreRecordingAdapter) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeWorkspaceRequest) (*adapterv1.FinalizeWorkspaceResponse, error) {
+	a.log.add("FinalizeWorkspace")
+	urls := []string{}
+	for _, g := range req.GetRestoreChunks() {
+		urls = append(urls, fmt.Sprintf("%d=%s", g.GetIndex(), g.GetUrl()))
+	}
+	a.mu.Lock()
+	a.finalizes++
+	fail := a.failFirstFinalize && a.finalizes == 1
+	a.restores = append(a.restores, urls)
+	a.mu.Unlock()
+	if fail {
+		return nil, status.Error(codes.Internal, "first finalize fails so the bind is retried")
+	}
+	return a.concurrentAdapter.FinalizeWorkspace(ctx, req)
+}
+
+func (a *restoreRecordingAdapter) recordedRestores() [][]string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([][]string(nil), a.restores...)
+}
+
+// restoreRecordingDialer serves a restoreRecordingAdapter over an in-memory
+// connection and returns a DialAdapter func wired to it.
+func restoreRecordingDialer(t *testing.T, a *restoreRecordingAdapter) func(string) (*adapterclient.Client, error) {
+	t.Helper()
+	lis := bufconn.Listen(1 << 20)
+	gs := grpc.NewServer()
+	adapterv1.RegisterAdapterServer(gs, a)
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(gs.Stop)
+	return func(string) (*adapterclient.Client, error) {
+		return adapterclient.Dial("passthrough:///bufnet",
+			grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+				return lis.DialContext(ctx)
+			}),
+			grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}
+}
+
+// perAttemptRestore returns a restore closure that mints a distinct grant set
+// on every call, logs each call into the event log, and reports the grants it
+// minted per call in the "index=url" form restoreRecordingAdapter records.
+func perAttemptRestore(log *restoreEventLog) (func(context.Context) ([]adapterclient.ChunkGrant, error), func() [][]string) {
+	var mu sync.Mutex
+	var minted [][]string
+	restore := func(context.Context) ([]adapterclient.ChunkGrant, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		attempt := len(minted) + 1
+		log.add(fmt.Sprintf("restore#%d", attempt))
+		var grants []adapterclient.ChunkGrant
+		var urls []string
+		for i := range 3 {
+			url := fmt.Sprintf("https://objstore.example/attempt-%d/chunk-%d", attempt, i)
+			grants = append(grants, adapterclient.ChunkGrant{Index: uint32(i), URL: url})
+			urls = append(urls, fmt.Sprintf("%d=%s", i, url))
+		}
+		minted = append(minted, urls)
+		return grants, nil
+	}
+	return restore, func() [][]string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([][]string(nil), minted...)
+	}
+}
+
+// restoreBindPath drives one bind attempt on one of the two Binder sites that
+// issue a bind-time FinalizeWorkspace: Prepare (through Bind on an exclusive
+// pool) and materializeSlotStages (through BindSlot on a concurrent-workspace
+// pool). Each attempt carries an uploadFile source so stageWorkspace sends a
+// PrepareWorkspace the event log observes.
+type restoreBindPath struct {
+	name string
+	bind func(t *testing.T, a *restoreRecordingAdapter, restore func(context.Context) ([]adapterclient.ChunkGrant, error)) (attempt func() error)
+}
+
+func restoreBindPaths() []restoreBindPath {
+	return []restoreBindPath{
+		{name: "exclusive Prepare", bind: exclusiveRestoreAttempt},
+		{name: "slot materializeSlotStages", bind: slotRestoreAttempt},
+	}
+}
+
+// uploadPlan returns a blob store holding one upload and the plan that
+// names it.
+func uploadPlan(t *testing.T) (*blobstore.MemoryStore, *adapterv1.WorkspacePlan) {
+	t.Helper()
+	blobs := blobstore.NewMemoryStore(nil)
+	uri := blobstore.URI{TenantID: "acme", SessionID: "sess-1", PartID: "part-1", TTL: time.Hour, Encoding: blobstore.Encoding}
+	if _, err := blobs.Put(uri, "application/octet-stream", bytes.NewReader([]byte("uploaded"))); err != nil {
+		t.Fatalf("put blob: %v", err)
+	}
+	return blobs, &adapterv1.WorkspacePlan{SchemaVersion: 1, Sources: []*adapterv1.WorkspaceSource{
+		{Type: "uploadFile", Path: "data/payload.bin", UploadRef: uri.String()},
+	}}
+}
+
+func exclusiveRestoreAttempt(t *testing.T, a *restoreRecordingAdapter, restore func(context.Context) ([]adapterclient.ChunkGrant, error)) func() error {
+	ns := testNamespace(t)
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"), idleSandbox(ns, "sbx-2", "10.244.1.8"))
+	binder := newBinder(ns, c, restoreRecordingDialer(t, a))
+	blobs, plan := uploadPlan(t)
+	binder.Blobs = blobs
+	return func() error {
+		res, err := binder.Bind(context.Background(), podsession.BindRequest{
+			Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+			Plan: plan, RestoreChunks: restore,
+		})
+		if err == nil {
+			res.Adapter.Close()
+		}
+		return err
+	}
+}
+
+func slotRestoreAttempt(t *testing.T, a *restoreRecordingAdapter, restore func(context.Context) ([]adapterclient.ChunkGrant, error)) func() error {
+	ns := testNamespace(t)
+	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newSlotBinder(t, c, restoreRecordingDialer(t, a))
+	blobs, plan := uploadPlan(t)
+	binder.Blobs = blobs
+	return func() error {
+		res, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
+			Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+			MaxConcurrentSessions: 8, Plan: plan, RestoreChunks: restore,
+		})
+		if err == nil {
+			res.Adapter.Close()
+		}
+		return err
+	}
+}
+
+// A retried bind invokes the restore closure again, after stageWorkspace and
+// immediately before FinalizeWorkspace, and each attempt's FinalizeWorkspace
+// carries exactly that attempt's freshly minted grants in index order. The
+// pair of Binder sites that issue a bind-time FinalizeWorkspace behave the
+// same. Against grants minted once and reused, the second attempt would carry
+// the first attempt's (possibly lapsed) capabilities.
+//
+// spec: §7.1 (Derive restore semantics); §5.2; §4.7.1
+// diagnosis: a retried bind would reuse expired restore capabilities, or mint them before stageWorkspace, and fail every retry of a derived session.
+func TestRetriedBindMintsFreshRestoreGrantsImmediatelyBeforeFinalize_spec_7_1(t *testing.T) {
+	for _, path := range restoreBindPaths() {
+		t.Run(path.name, func(t *testing.T) {
+			log := &restoreEventLog{}
+			a := newRestoreRecordingAdapter(log, true)
+			restore, minted := perAttemptRestore(log)
+			attempt := path.bind(t, a, restore)
+
+			if err := attempt(); err == nil {
+				t.Fatal("first attempt succeeded, want the injected FinalizeWorkspace failure")
+			}
+			if err := attempt(); err != nil {
+				t.Fatalf("retried attempt: %v", err)
+			}
+
+			want := []string{
+				"PrepareWorkspace", "restore#1", "FinalizeWorkspace",
+				"PrepareWorkspace", "restore#2", "FinalizeWorkspace",
+			}
+			if got := log.snapshot(); !slices.Equal(got, want) {
+				t.Errorf("bind sequence = %v, want %v", got, want)
+			}
+			gotRestores, wantRestores := a.recordedRestores(), minted()
+			if len(gotRestores) != 2 || len(wantRestores) != 2 {
+				t.Fatalf("finalizes carried %d restores and the closure minted %d sets, want 2 each", len(gotRestores), len(wantRestores))
+			}
+			for i := range wantRestores {
+				if !slices.Equal(gotRestores[i], wantRestores[i]) {
+					t.Errorf("attempt %d restore_chunks = %v, want %v", i+1, gotRestores[i], wantRestores[i])
+				}
+			}
+			if slices.Equal(gotRestores[0], gotRestores[1]) {
+				t.Error("the retried attempt reused the first attempt's grants")
+			}
+		})
+	}
+}
+
+// A bind whose request carries no restore closure sends FinalizeWorkspace
+// with an empty restore_chunks on both Binder sites.
+//
+// spec: §7.1 (Derive restore semantics); §4.7.1
+// diagnosis: an ordinary session would ask the adapter to seed its workspace from a snapshot it does not have.
+func TestBindWithoutRestoreSendsEmptyRestoreChunks_spec_7_1(t *testing.T) {
+	for _, path := range restoreBindPaths() {
+		t.Run(path.name, func(t *testing.T) {
+			log := &restoreEventLog{}
+			a := newRestoreRecordingAdapter(log, false)
+			if err := path.bind(t, a, nil)(); err != nil {
+				t.Fatalf("bind: %v", err)
+			}
+			got := a.recordedRestores()
+			if len(got) != 1 || len(got[0]) != 0 {
+				t.Errorf("FinalizeWorkspace restore_chunks = %v, want one finalize with none", got)
+			}
+		})
+	}
+}
+
+// The composers set the restore closure on every bind request, including the
+// claim-only request at create and the launch-only request at /start. Only a
+// bind that issues FinalizeWorkspace invokes it: Claim, ClaimSlot, and Launch
+// never do, so no 30-second grant is minted for a call that cannot use it.
+//
+// spec: §7.1 (Derive restore semantics); §4.3; §4.4
+// diagnosis: grants minted at claim or launch would lapse before the bind-time FinalizeWorkspace, or the closure would be invoked where no restore is sent.
+func TestRestoreClosureIsNotInvokedOnClaimOrLaunch_spec_7_1(t *testing.T) {
+	t.Run("exclusive Claim, Prepare, Launch", func(t *testing.T) {
+		ns := testNamespace(t)
+		transport := &snapshotTransport{bodies: map[string][]byte{
+			"https://objstore.example/chunk-0": snapshotBundle(t, map[string]string{"workspace/restored.txt": "r"}),
+		}}
+		srv := adapter.New("adapter-test")
+		srv.WorkspaceBase = t.TempDir()
+		srv.Runtime = &fakeRuntime{}
+		srv.CheckpointTransport = transport
+		binder := newBinder(ns, k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7")), adapterDialer(t, srv))
+		restore, calls := restoreClosure([]adapterclient.ChunkGrant{{Index: 0, URL: "https://objstore.example/chunk-0"}}, nil)
+		req := podsession.BindRequest{
+			Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+			Plan: inlinePlan("a.txt"), RestoreChunks: restore,
+		}
+
+		claim, err := binder.Claim(context.Background(), req)
+		if err != nil {
+			t.Fatalf("Claim: %v", err)
+		}
+		if *calls != 0 {
+			t.Errorf("Claim invoked the restore closure %d times, want 0", *calls)
+		}
+		req.SandboxName = claim.SandboxName
+		prep, err := binder.Prepare(context.Background(), req)
+		if err != nil {
+			t.Fatalf("Prepare: %v", err)
+		}
+		if *calls != 1 {
+			t.Errorf("Prepare invoked the restore closure %d times, want 1", *calls)
+		}
+		req.Demoted = prep.Demoted
+		res, err := binder.Launch(context.Background(), req)
+		if err != nil {
+			t.Fatalf("Launch: %v", err)
+		}
+		defer res.Adapter.Close()
+		if *calls != 1 {
+			t.Errorf("Launch invoked the restore closure; calls = %d, want 1", *calls)
+		}
+	})
+	t.Run("slot ClaimSlot then BindReservedSlot", func(t *testing.T) {
+		ns := testNamespace(t)
+		a := newConcurrentAdapter()
+		binder := newSlotBinder(t, k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7")), concurrentAdapterDialer(t, a))
+		restore, calls := restoreClosure([]adapterclient.ChunkGrant{{Index: 0, URL: "https://objstore.example/chunk-0"}}, nil)
+		req := podsession.SlotBindRequest{
+			Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+			MaxConcurrentSessions: 8, Plan: &adapterv1.WorkspacePlan{}, RestoreChunks: restore,
+		}
+		claim, err := binder.ClaimSlot(context.Background(), req)
+		if err != nil {
+			t.Fatalf("ClaimSlot: %v", err)
+		}
+		if *calls != 0 {
+			t.Errorf("ClaimSlot invoked the restore closure %d times, want 0", *calls)
+		}
+		res, err := binder.BindReservedSlot(context.Background(), req, claim.SandboxName, claim.SlotID)
+		if err != nil {
+			t.Fatalf("BindReservedSlot: %v", err)
+		}
+		defer res.Adapter.Close()
+		if *calls != 1 {
+			t.Errorf("BindReservedSlot invoked the restore closure %d times, want 1", *calls)
+		}
+	})
+}
+
+// Prepare's demotion and the launch-only recomputation read one decision:
+// for the same request, PrepareResult.Demoted equals RequiresDemotion, which
+// is what launchPrepared assigns to BindRequest.Demoted. A restore with
+// blocking paths demotes, a restore with an empty list does not, and a
+// non-preConnect pod never does.
+//
+// spec: §6.1; §7.1 (Derive restore semantics); §4.4
+// diagnosis: /start would launch a demoted pod through ConfigureWorkspace, or an SDK-warm pod through StartSession, because finalize and launch disagree about the restore demotion.
+func TestPrepareAndLaunchRecomputationAgreeOnRestoreDemotion_spec_6_1(t *testing.T) {
+	cases := []struct {
+		name       string
+		preConnect bool
+		blocking   []string
+		want       bool
+	}{
+		{name: "restore with blocking paths", preConnect: true, blocking: []string{"CLAUDE.md"}, want: true},
+		{name: "restore with no blocking paths", preConnect: true, want: false},
+		{name: "restore on a non-preConnect pod", preConnect: false, blocking: []string{"CLAUDE.md"}, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ns := testNamespace(t)
+			transport := &snapshotTransport{bodies: map[string][]byte{
+				"https://objstore.example/chunk-0": snapshotBundle(t, map[string]string{"workspace/CLAUDE.md": "restored"}),
+			}}
+			rt := &fakeSDKWarmRuntime{}
+			srv := adapter.New("adapter-test")
+			srv.WorkspaceBase = t.TempDir()
+			srv.Runtime = rt
+			srv.CheckpointTransport = transport
+			binder := newBinder(ns, k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7")), adapterDialer(t, srv))
+			restore, _ := restoreClosure([]adapterclient.ChunkGrant{{Index: 0, URL: "https://objstore.example/chunk-0"}}, nil)
+			req := podsession.BindRequest{
+				Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+				Plan: inlinePlan("src/main.go"), PreConnect: tc.preConnect,
+				SDKWarmBlockingPaths: tc.blocking, RestoreChunks: restore,
+			}
+			claim, err := binder.Claim(context.Background(), req)
+			if err != nil {
+				t.Fatalf("Claim: %v", err)
+			}
+			req.SandboxName = claim.SandboxName
+			prep, err := binder.Prepare(context.Background(), req)
+			if err != nil {
+				t.Fatalf("Prepare: %v", err)
+			}
+			if prep.Demoted != tc.want {
+				t.Errorf("Prepare demoted = %v, want %v", prep.Demoted, tc.want)
+			}
+			if got := podsession.RequiresDemotion(req); got != prep.Demoted {
+				t.Errorf("launch recomputation RequiresDemotion = %v, Prepare demoted = %v; they must agree", got, prep.Demoted)
+			}
+			wantDemoteCalls := 0
+			if tc.want {
+				wantDemoteCalls = 1
+			}
+			if rt.demoted != wantDemoteCalls {
+				t.Errorf("DemoteSDK called %d times, want %d", rt.demoted, wantDemoteCalls)
+			}
+		})
 	}
 }

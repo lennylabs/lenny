@@ -803,6 +803,7 @@
       "title": "Role and Gateway RPC Contract",
       "spec_file": "spec/04_system-components.md",
       "tests": [
+        "pkg/gateway/podlifecycle/podsession/restore_bind_test.go",
         "tests/tier3_contract/adapter_chunk_encoding/chunk_encoding_wire_test.go",
         "pkg/gateway/session/executor/pod_sealed_test.go::TestPodExecutorStreamEndWhileSealedIsARefusal_spec_4_7_1",
         "pkg/gateway/sessionserver/suspension_internal_test.go::TestSealMarksTheBindingDuringTheSealCall_spec_4_7_1",
@@ -1424,6 +1425,7 @@
         "tests/tier3_contract/crd_schema/runtime_command_env_test.go::TestRuntimeServedSchemaCarriesEnvWithRules",
         "tests/tier2_component/stores/runtimestore_test.go",
         "tests/tier2_component/runtimecapoverride/runtimecapoverride_test.go",
+        "tests/tier4_integration/checkpoint_workspace_derive_test.go",
         "tests/tier9_security/injection_gate_failclosed_test.go",
         "pkg/gateway/sessionserver/messages_test.go",
         "cmd/lenny-ctl/runtimescaffold/scaffold_test.go",
@@ -1447,11 +1449,13 @@
       "tests": [
         "pkg/apis/lenny/v1alpha1/runtime_restartable_test.go::TestRuntimeSpecRestartable_spec_5_1",
         "pkg/controller/runtime/restartable_test.go::TestMirror_RestartableFollowsCRDEdits_spec_5_1",
+        "pkg/gateway/podlifecycle/podsession/restore_bind_test.go",
         "pkg/gateway/runtime/runtimestore/merge_test.go::TestMergeInheritsRestartable_spec_5_1",
         "migrations/runtime_definitions_restartable_test.go::TestRuntimeRestartableMigration_spec_5_1",
         "tests/tier2_component/stores/runtimestore_test.go::TestRuntimeStoreRestartableRoundTrip_spec_5_1",
         "pkg/gateway/podlifecycle/podsession/postclaim_release_test.go",
         "pkg/gateway/sessionserver/slotretry_hook_error_test.go",
+        "tests/tier4_integration/checkpoint_workspace_derive_test.go",
         "tests/tier5_e2e_kind/prompt_roundtrip_test.go::TestConcurrentSlotSessionsEachCarryTwoMessages_spec_28_5_1",
         "tests/tier10_conformance/concurrent_slot_conformance_test.go::TestRuntimeSDKEchoServesConcurrentSessionsOnOneProcess_spec_4_7_10",
         "tests/tier7a_load_local/session_frame_pairing_race_test.go",
@@ -2271,6 +2275,7 @@
         "pkg/gateway/sessionserver/bind_rollback_test.go::TestReleaseCoordinationLeaseDetachesFromCancelledCaller_spec_7_1",
         "pkg/gateway/sessionserver/delegated_child_materialize_test.go::TestMaterializeDelegatedChildRollbacksSurviveCancelledRequest_spec_7_1",
         "pkg/gateway/sessionserver/bind_rollback_test.go::TestRollbackBindingBoundedByReleaseAllowance_spec_7_1",
+        "tests/tier4_integration/checkpoint_workspace_derive_test.go",
         "tests/tier7a_load_local/terminal_pipeline_context_race_test.go",
         "tests/tier2_component/stores/sessionstore_post_terminal_window_test.go",
         "tests/tier7a_load_local/erasure_pipeline_gate_race_test.go",
@@ -2377,7 +2382,8 @@
         "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreeRecordsCloseTheirMembers_spec_8_10",
         "pkg/adapter/staging_restore_test.go",
         "pkg/adapter/workspace/materialize_test.go",
-        "tests/tier3_contract/adapter_workspace_restore/restore_chunks_wire_test.go"
+        "tests/tier3_contract/adapter_workspace_restore/restore_chunks_wire_test.go",
+        "tests/tier9_security/restore_grant_scope_test.go"
       ],
       "packages": [
         "pkg/session"
@@ -3342,6 +3348,7 @@
         "tests/tier3_contract/checkpoint_stream/...",
         "tests/tier3_contract/adapter_generation_fence/generation_fence_wire_test.go",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231",
+        "tests/tier4_integration/checkpoint_workspace_derive_test.go",
         "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas",
         "tests/tier5_e2e_kind/gateway_replica_continuity_test.go::TestSessionContinuesAfterCoordinatingGatewayReplicaLoss",
         "tests/tier7a_load_local/checkpoint_grant_window_test.go",
@@ -5052,6 +5059,7 @@
         "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestCheckpointDocsMirrorsAgreeWithSpec131",
         "tests/tier9_security/adapter_hold_termination_surface_test.go",
         "tests/tier9_security/adapter_shared_mcp_surface_test.go",
+        "tests/tier9_security/restore_grant_scope_test.go",
         "tests/tier9_security/session_teardown_surface_test.go",
         "tests/tier11_docs/adapter_manifest_credentials_path_doc_reconciliation_test.go",
         "tests/tier11_docs/ephemeral_container_cred_guard_path_reconciliation_test.go",
@@ -5143,7 +5151,8 @@
       "spec_file": "spec/13_security-model.md",
       "tests": [
         "tests/tier9_security/network_policy_test.go",
-        "tests/tier9_security/agent_egress_test.go"
+        "tests/tier9_security/agent_egress_test.go",
+        "tests/tier9_security/restore_grant_scope_test.go"
       ],
       "packages": [
         "pkg/controller/warmpool"
@@ -5619,6 +5628,7 @@
         "tests/tier3_contract/rest_sessions/derive_replay_snapshot_contract_test.go::TestDeriveAndReplaySnapshotCopyErrorContract_spec_7_1",
         "tests/tier3_contract/rest_sessions/openapi_document_test.go::TestServedDocumentDeriveAndReplayDeclareSnapshotUnavailable",
         "pkg/gateway/sessionserver/snapshot_copy_test.go::TestSnapshotCopyFailsClosed_spec_7_1",
+        "tests/tier4_integration/checkpoint_workspace_derive_test.go",
         "tests/tier8_chaos/workspace_defaults_outage_test.go::TestWorkspaceDefaultsPostgresOutageFailsClosed_spec_14_1",
         "tests/tier3_contract/rest_sessions/start_starting_state_contract_test.go::TestStartLaunchFailureAnswersStartingFailedAndFailsTheSession_spec_15_1",
         "tests/tier3_contract/rest_sessions/start_starting_state_contract_test.go::TestSecondStartWhileTheFirstIsHeldAnswersStarting_spec_15_1",

@@ -108,14 +108,14 @@ func bundle(t *testing.T, files map[string]string) []byte {
 
 // serve starts the compiled adapter over bufconn and returns a gateway
 // adapter client dialed to it and the adapter's workspace base.
-func serve(t *testing.T, transport adapter.CheckpointTransport) (*adapterclient.Client, string) {
+func serve(t *testing.T, transport adapter.CheckpointTransport, opts ...grpc.ServerOption) (*adapterclient.Client, string) {
 	t.Helper()
 	s := adapter.New("workspace-restore-contract")
 	s.WorkspaceBase = t.TempDir()
 	s.SessionsRoot = t.TempDir()
 	s.CheckpointTransport = transport
 	lis := bufconn.Listen(1 << 20)
-	gs := adapter.NewGRPCServer(s)
+	gs := adapter.NewGRPCServer(s, opts...)
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
 	conn, err := grpc.NewClient("passthrough:///bufnet",
@@ -225,5 +225,115 @@ func TestRestoreFailureAnswersUnavailableOverTheWire_spec_7_1(t *testing.T) {
 		[]adapterclient.ChunkGrant{{Index: 0, URL: url, Length: 256}}, "attempt-a", false)
 	if status.Code(err) != codes.Unavailable {
 		t.Fatalf("err = %v, want Unavailable", err)
+	}
+}
+
+// finalizeCapture is a server interceptor that keeps every
+// FinalizeWorkspaceRequest the adapter server decoded, so a test reads the
+// request as it arrived over the wire.
+type finalizeCapture struct {
+	mu   sync.Mutex
+	reqs []*adapterv1.FinalizeWorkspaceRequest
+}
+
+func (c *finalizeCapture) intercept(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	if fr, ok := req.(*adapterv1.FinalizeWorkspaceRequest); ok {
+		c.mu.Lock()
+		c.reqs = append(c.reqs, fr)
+		c.mu.Unlock()
+	}
+	return handler(ctx, req)
+}
+
+func (c *finalizeCapture) received() []*adapterv1.FinalizeWorkspaceRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]*adapterv1.FinalizeWorkspaceRequest(nil), c.reqs...)
+}
+
+// TestEmptyRestoreArrivesAbsentAndMaterializesThePlan_spec_7_1 sends an
+// ordinary session's FinalizeWorkspace with no grants and pins that the
+// adapter server decodes no restore_chunks, fetches nothing, and promotes
+// exactly the plan's sources.
+//
+// spec: §7.1 (Derive restore semantics), §4.7.1 (role and gateway RPC
+// contract), §5.1 (Derived Runtime Instantiation)
+//
+// diagnosis: the gateway's adapter client put an empty or placeholder grant on
+// the wire for a session with no snapshot, or the adapter seeded the build tree
+// from an empty restore and changed an ordinary session's workspace. Check
+// chunkGrantsToProto in pkg/gateway/runtime/adapterclient and restoreSeed in
+// pkg/adapter.
+func TestEmptyRestoreArrivesAbsentAndMaterializesThePlan_spec_7_1(t *testing.T) {
+	transport := &recordingTransport{bodies: map[string][]byte{}}
+	capture := &finalizeCapture{}
+	cl, base := serve(t, transport, grpc.ChainUnaryInterceptor(capture.intercept))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	plan := &adapterv1.WorkspacePlan{SchemaVersion: 1, Sources: []*adapterv1.WorkspaceSource{
+		{Type: "inlineFile", Path: "a.txt", Content: "from source", Mode: "644"},
+	}}
+	if _, err := cl.FinalizeWorkspace(ctx, "sess-ordinary", plan, nil, nil, "attempt-a", false); err != nil {
+		t.Fatalf("FinalizeWorkspace: %v", err)
+	}
+
+	reqs := capture.received()
+	if len(reqs) != 1 {
+		t.Fatalf("adapter decoded %d FinalizeWorkspace requests, want 1", len(reqs))
+	}
+	if n := len(reqs[0].GetRestoreChunks()); n != 0 {
+		t.Errorf("restore_chunks arrived with %d grants, want the field absent", n)
+	}
+	if got := transport.recorded(); len(got) != 0 {
+		t.Errorf("adapter fetched %d chunks for a request with no restore", len(got))
+	}
+	current := filepath.Join(base, "slots", "sess-ordinary", "current")
+	entries, err := os.ReadDir(current)
+	if err != nil {
+		t.Fatalf("read current: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "a.txt" {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("current holds %v, want only a.txt", names)
+	}
+	if b, rerr := os.ReadFile(filepath.Join(current, "a.txt")); rerr != nil || string(b) != "from source" {
+		t.Errorf("a.txt = %q, %v; want %q", b, rerr, "from source")
+	}
+}
+
+// TestMidSessionFinalizeWithRestoreIsRefusedOverTheWire_spec_4_7_1 sends a
+// mid-session FinalizeWorkspace that carries restore_chunks and an empty
+// bind_attempt, so only the restore pairing clause can refuse it, and pins
+// that the adapter answers INVALID_ARGUMENT before fetching any grant or
+// creating any slot entry.
+//
+// spec: §4.7.1 (role and gateway RPC contract), §7.1 (Derive restore
+// semantics)
+//
+// diagnosis: the adapter accepted a restore on a mid-session upload, which
+// would overwrite a running session's workspace with a snapshot, or refused it
+// with a status the gateway reads as transient. Check validateRestorePairing in
+// pkg/adapter.
+func TestMidSessionFinalizeWithRestoreIsRefusedOverTheWire_spec_4_7_1(t *testing.T) {
+	url := "https://objectstore.example/acme/" + derivedSession + "/chunk-0"
+	transport := &recordingTransport{bodies: map[string][]byte{url: bundle(t, map[string]string{"a.txt": "restored"})}}
+	cl, base := serve(t, transport)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err := cl.FinalizeWorkspace(ctx, derivedSession, &adapterv1.WorkspacePlan{SchemaVersion: 1}, nil,
+		[]adapterclient.ChunkGrant{{Index: 0, URL: url}}, "", true)
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("err = %v, want InvalidArgument", err)
+	}
+	if got := transport.recorded(); len(got) != 0 {
+		t.Errorf("adapter fetched %d chunks for a refused request", len(got))
+	}
+	if _, serr := os.Stat(filepath.Join(base, "slots", derivedSession)); !errors.Is(serr, os.ErrNotExist) {
+		t.Errorf("a refused request created the slot entry: %v", serr)
 	}
 }

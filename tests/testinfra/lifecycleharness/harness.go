@@ -20,6 +20,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordination"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
@@ -159,6 +160,27 @@ type Options struct {
 	// upload policy on every replica, so POST /upload-to-session admits a
 	// running session (§7.4).
 	MidSessionUpload bool
+	// ObjectStore, when set, wires every replica's session server to a
+	// checkpoint object store and every pod's adapter to its HTTP
+	// transport, so derive and replay copy a checkpoint and a derived or
+	// replayed session's first bind restores it (§7.1 Derive restore
+	// semantics).
+	ObjectStore *ObjectStore
+}
+
+// ObjectStore is the checkpoint object store a harness wires into its
+// replicas and pods. Blobs, Manifests, and Resolver are the session server's
+// blob store, checkpoint manifest store, and chunk resolver; Transport is the
+// pod adapter's object-store transport, which fetches the presigned GETs the
+// resolver mints.
+type ObjectStore struct {
+	Blobs     blobstore.Store
+	Manifests interface {
+		sessionserver.CheckpointManifestReader
+		sessionserver.CheckpointManifestWriter
+	}
+	Resolver  sessionserver.ResumeChunkResolver
+	Transport adapter.CheckpointTransport
 }
 
 // Harness is the shared world the replicas run in.
@@ -234,6 +256,8 @@ type Harness struct {
 	// runtimes is the runtime registry every replica reads when
 	// Options.MidSessionUpload is set, and nil otherwise.
 	runtimes runtimestore.Store
+	// objects is Options.ObjectStore, nil when the harness has none.
+	objects *ObjectStore
 }
 
 // Replica is one gateway replica: a session server with its own pod
@@ -322,7 +346,7 @@ func New(t testing.TB, opts Options) *Harness {
 		Trace:             NewTrace(),
 		Redis:             mr,
 		Leases:            leasestore.New(rc),
-		Cluster:           NewClusterWith(t, ClusterOptions{Recycling: opts.Recycling, HeartbeatInterval: opts.HeartbeatInterval, ControlPlane: opts.ControlPlane}),
+		Cluster:           NewClusterWith(t, ClusterOptions{Recycling: opts.Recycling, HeartbeatInterval: opts.HeartbeatInterval, ControlPlane: opts.ControlPlane, CheckpointTransport: objectTransport(opts.ObjectStore)}),
 		Checkpoints:       &Checkpointer{},
 		Interactions:      interactionstore.NewMemory(),
 		TreeMetrics:       &TreeMetrics{},
@@ -336,6 +360,7 @@ func New(t testing.TB, opts Options) *Harness {
 		finalizingSeconds: opts.MaxFinalizingSeconds,
 		msgLimit:          opts.MessagingRateLimit,
 		interceptors:      opts.Interceptors,
+		objects:           opts.ObjectStore,
 	}
 	if opts.Leases != nil {
 		h.Leases = opts.Leases(h.Leases)
@@ -476,7 +501,7 @@ func (h *Harness) AddReplica(name string) *Replica {
 	}
 	r.Events = bus
 	r.inputWaitGen = inputwaitrecovery.NewGeneration()
-	r.Server = sessionserver.New(h.Store, sessionserver.Options{
+	opts := sessionserver.Options{
 		DevTenantHeader:            true,
 		Events:                     bus,
 		IDFunc:                     newIDFunc(name),
@@ -502,7 +527,9 @@ func (h *Harness) AddReplica(name string) *Replica {
 		StreamFailureReportTimeout: ReleaseAllowance,
 		Runtimes:                   h.runtimes,
 		MidSessionUploadEnabled:    h.runtimes != nil,
-	})
+	}
+	h.applyObjectStore(&opts)
+	r.Server = sessionserver.New(h.Store, opts)
 	// spec: §28.5.1 (Gateway-to-pod) — a failed CH-ATTACH stream is
 	// reported to the replica's session server, as the gateway wires it.
 	exec.SetStreamFailureHandler(r.Server.ReportAttachStreamFailure)
@@ -853,6 +880,27 @@ func (h *Harness) poolRegistry() poolstore.Store {
 		return nil
 	}
 	return h.pools
+}
+
+// applyObjectStore wires the harness's checkpoint object store, when it has
+// one, into a replica's session server options.
+func (h *Harness) applyObjectStore(opts *sessionserver.Options) {
+	if h.objects == nil {
+		return
+	}
+	opts.Blobs = h.objects.Blobs
+	opts.CheckpointManifestReader = h.objects.Manifests
+	opts.CheckpointManifestWriter = h.objects.Manifests
+	opts.ResumeChunkResolver = h.objects.Resolver
+}
+
+// objectTransport is the pod adapter transport of an object store, nil when
+// the harness has none.
+func objectTransport(o *ObjectStore) adapter.CheckpointTransport {
+	if o == nil {
+		return nil
+	}
+	return o.Transport
 }
 
 // watchdogIdleSeconds is the watchdog idle bound: Options.MaxIdleSeconds,
