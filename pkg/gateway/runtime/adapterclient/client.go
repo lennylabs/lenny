@@ -403,16 +403,25 @@ func sendUpload(stream adapterv1.Adapter_PrepareWorkspaceClient, hdr uploadFrame
 // and signals the runtime once promotion completes, rather than replacing
 // the whole tree. The §4.7 assignment-sequence callers pass false. F-7.4.6.
 //
+// restore carries the presigned GET capabilities for a derived or replayed
+// session's starting snapshot, in ascending index order, which the adapter
+// extracts into the build tree before the plan's sources. A nil or empty
+// slice means no restore, which every caller other than the first bind of
+// a derived or replayed session passes. The capabilities are bearer URLs,
+// so the Client never logs them.
+// spec: §4.7.1 (pairing rule); §7.1 (Derive restore semantics).
+//
 // bindAttempt pairs with midSession under §4.7.1: a bind-sequence caller
 // passes its attempt's token with false, and the §7.4 mid-session upload
 // passes the empty string with true. The Client sets both as given.
-func (c *Client) FinalizeWorkspace(ctx context.Context, sessionID string, plan *adapterv1.WorkspacePlan, archive *adapterv1.ArchivePolicy, bindAttempt string, midSession bool) ([]*adapterv1.WorkspacePlanWarning, error) {
+func (c *Client) FinalizeWorkspace(ctx context.Context, sessionID string, plan *adapterv1.WorkspacePlan, archive *adapterv1.ArchivePolicy, restore []ChunkGrant, bindAttempt string, midSession bool) ([]*adapterv1.WorkspacePlanWarning, error) {
 	resp, err := c.rpc.FinalizeWorkspace(ctx, &adapterv1.FinalizeWorkspaceRequest{
 		SessionId:     &adapterv1.SessionId{Value: sessionID},
 		WorkspacePlan: plan,
 		ArchivePolicy: archive,
 		MidSession:    midSession,
 		BindAttempt:   bindAttempt,
+		RestoreChunks: chunkGrantsToProto(restore),
 	})
 	if err != nil {
 		return nil, translateSlotBindRefusal(err)
@@ -775,7 +784,7 @@ func (c *Client) Resume(ctx context.Context, p ResumeParams) (ResumeResult, erro
 		ExpectedWorkspaceBytes:  p.ExpectedWorkspaceBytes,
 		WorkspaceSizeLimitBytes: p.WorkspaceSizeLimitBytes,
 		ExpectedWorkspaceRoot:   p.ExpectedWorkspaceRoot,
-		Chunks:                  resumeChunksToProto(p.Chunks),
+		Chunks:                  chunkGrantsToProto(p.Chunks),
 		BindAttempt:             p.BindAttempt,
 	})
 	if err != nil {
@@ -788,11 +797,13 @@ func (c *Client) Resume(ctx context.Context, p ResumeParams) (ResumeResult, erro
 	}, nil
 }
 
-// resumeChunksToProto maps the caller's presigned GET capabilities onto
-// the wire ChunkGrant set the adapter fetches on resume, preserving the
-// caller's ascending index order. It returns nil for an empty set so a
-// conversation-only or coordinator-handoff Resume carries no chunks.
-func resumeChunksToProto(chunks []ChunkGrant) []*adapterv1.ChunkGrant {
+// chunkGrantsToProto maps the caller's presigned GET capabilities onto
+// the wire ChunkGrant set the adapter fetches on resume or on a derived or
+// replayed session's first-bind restore, preserving the caller's ascending
+// index order. It returns nil for an empty set so a conversation-only or
+// coordinator-handoff Resume, and every FinalizeWorkspace that restores
+// nothing, carries no chunks.
+func chunkGrantsToProto(chunks []ChunkGrant) []*adapterv1.ChunkGrant {
 	if len(chunks) == 0 {
 		return nil
 	}

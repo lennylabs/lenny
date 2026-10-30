@@ -155,7 +155,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 		reclaim(err)
 		return nil, fmt.Errorf("podsession: stage workspace on pod %s: %w", sandboxName, err)
 	}
-	finalizeWarnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, bindAttempt, false)
+	finalizeWarnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, nil, bindAttempt, false)
 	if err != nil {
 		reclaim(err)
 		return nil, fmt.Errorf("podsession: finalize workspace on pod %s: %w", sandboxName, err)

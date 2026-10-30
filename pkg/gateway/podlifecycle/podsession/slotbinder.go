@@ -373,7 +373,7 @@ func (b *Binder) materializeSlotStages(ctx context.Context, req SlotBindRequest,
 		return nil, nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
 			fmt.Errorf("podsession: stage slot workspace on pod %s: %w", sandboxName, err))
 	}
-	warnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, bindAttempt, false)
+	warnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, nil, bindAttempt, false)
 	if err != nil {
 		b.recordSlotFailure(slotFailureWorkspaceFinalize, req.Pool, sandboxName)
 		return nil, nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
