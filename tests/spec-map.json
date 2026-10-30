@@ -4658,6 +4658,7 @@
       "title": "Storage Interface Design",
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
+        "tests/tier3_contract/crd_schema/sandbox_workspace_plan_test.go::TestSandboxServedSchemaCarriesNoWorkspacePlan",
         "pkg/gateway/storage/eventbus/cloudevents_test.go",
         "pkg/gateway/storage/eventbus/eventbus_test.go",
         "pkg/events/auditbearing_test.go::TestOperationalEventInlineOCSFWireForm",

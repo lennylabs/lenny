@@ -15,6 +15,7 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -149,6 +150,23 @@ type Reconciler struct {
 	// (the controller.tuning supervise keys) rendered as adapter flags on
 	// every supervised pod. spec: §28.5.3 (CH-SUPERVISE, Timing); §17.8.1.
 	SuperviseTiming podspec.SuperviseTiming
+
+	// warmupOnce initializes warmupMeter on first use, so a Reconciler
+	// built as a struct literal needs no constructor.
+	warmupOnce sync.Once
+	// warmupMeter counts §16.1 warm-up failures once per failing pod.
+	warmupMeter *warmupFailureMeter
+}
+
+// warmupFailures returns the Reconciler's warm-up failure meter.
+// spec: §16.1 (Metrics, the warm-up failure row).
+func (r *Reconciler) warmupFailures() *warmupFailureMeter {
+	r.warmupOnce.Do(func() {
+		if r.warmupMeter == nil {
+			r.warmupMeter = newWarmupFailureMeter()
+		}
+	})
+	return r.warmupMeter
 }
 
 // EgressCaptureUpstreamAnnotation is the TESTING.md §12.9.8 opt-in annotation an
@@ -171,6 +189,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		// stale, so drop the series.
 		if apierrors.IsNotFound(err) {
 			finalizerTerminatingSeconds.DeleteLabelValues(req.Namespace, req.Name)
+			r.warmupFailures().forget(req.NamespacedName)
 		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -189,6 +208,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, fmt.Errorf("get pod for sandbox %s: %w", sb.Name, podErr)
 	}
 	obs := observePod(&pod, podErr)
+	// spec: §16.1 — count a warming pod whose status shows a warm-up error
+	// type (an image pull failure or a node-pressure eviction), read
+	// against the phase before this reconcile moves it.
+	r.warmupFailures().observePod(&sb, &pod, podErr == nil)
 
 	// §6.1: a pool whose runtime declares capabilities.preConnect
 	// (and whose §6.1 circuit breaker has not disabled SDK-warm) warms
@@ -654,6 +677,9 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		sb.Spec.RequireSoPeercred = nil
 	}
 	if err := r.Client.Create(ctx, pod); err != nil {
+		// spec: §16.1, §17.2 — a creation the namespace ResourceQuota
+		// rejects counts as a resource_quota_exceeded warm-up failure.
+		r.warmupFailures().observeCreateError(sb, pod, err)
 		return fmt.Errorf("create pod: %w", err)
 	}
 	return nil

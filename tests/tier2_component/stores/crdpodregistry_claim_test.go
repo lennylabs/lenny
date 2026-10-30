@@ -305,12 +305,11 @@ func TestCRDPodRegistryClaimInertOptsUsePatchNotUpdate_spec_4_6_3(t *testing.T) 
 	prio := int32(5)
 	cid := podregistry.ClusterID("east-1")
 	rec, err := r.ClaimPod(ctx, podregistry.ClaimOpts{
-		PoolID:           podregistry.PoolID(pool),
-		TenantID:         "acme",
-		SessionID:        "sess-1",
-		RequiresDemotion: true,
-		Priority:         &prio,
-		ClusterID:        &cid,
+		PoolID:    podregistry.PoolID(pool),
+		TenantID:  "acme",
+		SessionID: "sess-1",
+		Priority:  &prio,
+		ClusterID: &cid,
 	})
 	if err != nil {
 		t.Fatalf("ClaimPod with inert opts: %v", err)
