@@ -7,7 +7,8 @@
 // server itself as the terminal, and the handler constructor refuses a nil
 // for either. An in-process test that builds the handler without a session
 // server passes these stubs instead, so the single-replica assumption each
-// one encodes is visible at the call site.
+// one encodes is visible at the call site. LaggingReadStore models a §12.3
+// read replica behind the primary for tests of the handler's read routing.
 //
 // spec: §15 (Open Responses conversation sessions); §29.3 (Interactive
 // message send) Forwarding.

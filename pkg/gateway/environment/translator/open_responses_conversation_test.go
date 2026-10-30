@@ -256,6 +256,11 @@ func (p *probeStore) Update(ctx context.Context, tenantID, id string, mutate fun
 	return p.Store.Update(ctx, tenantID, id, mutate)
 }
 
+// GetPrimary reads the wrapped store's primary without counting an Update.
+func (p *probeStore) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	return sessionstore.ReadPrimary(ctx, p.Store, 0, tenantID, id)
+}
+
 func (p *probeStore) updateCount() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -285,14 +290,22 @@ type convOptions struct {
 	hold           bool
 	rewriteRuntime string
 	transcripts    transcriptstore.Store
+	// laggingReads routes the handler's and the binder's session store
+	// through a responsesstub.LaggingReadStore, so Get lags the newest
+	// committed write as a §12.3 read replica does.
+	laggingReads bool
 }
 
 func newConvFixture(t *testing.T, o convOptions) *convFixture {
 	t.Helper()
 	inner := memstore.New()
+	var served sessionstore.Store = inner
+	if o.laggingReads {
+		served = responsesstub.NewLaggingReadStore(inner)
+	}
 	f := &convFixture{
 		inner:     inner,
-		store:     &probeStore{Store: inner},
+		store:     &probeStore{Store: served},
 		exec:      &convExecutor{},
 		terminal:  &stubTerminal{},
 		forwarder: &stubForwarder{local: true},
@@ -301,7 +314,7 @@ func newConvFixture(t *testing.T, o convOptions) *convFixture {
 	if f.ts == nil {
 		f.ts = transcriptstore.NewMemory()
 	}
-	f.binder = &convBinder{store: inner, hold: o.hold, rewriteRuntime: o.rewriteRuntime}
+	f.binder = &convBinder{store: served, hold: o.hold, rewriteRuntime: o.rewriteRuntime}
 	f.h = translator.NewOpenResponsesHandler(f.store, f.exec, translator.OpenResponsesOptions{
 		DevTenantHeader:  true,
 		Clock:            func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
@@ -1084,6 +1097,55 @@ func TestOpenResponsesResolutionPrecedesClaim_spec_15(t *testing.T) {
 			t.Errorf("status %d binds %d forwards %d, want 404 with no side effect", rr.Code, f.binder.count(), f.forwarder.count())
 		}
 	})
+}
+
+// TestOpenResponsesResolutionReadsThePrimary_spec_15 pins that a response
+// the gateway has just returned resolves even while the §12.3 read replica
+// has not applied its completion write: a continuation of the cold turn's
+// S.1 and of the warm turn's S.2 each answer 200, a held session serves both
+// warm with no further bind, a session that is not held serves them cold
+// with the whole lineage as context, and GET answers 200 for the newest response.
+//
+// spec: §15 (Open Responses conversation sessions); §12.3 (Postgres HA
+// Requirements)
+func TestOpenResponsesResolutionReadsThePrimary_spec_15(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		hold      bool
+		wantBinds int
+	}{
+		{name: "held session continues warm", hold: true, wantBinds: 1},
+		{name: "session not held continues cold", hold: false, wantBinds: 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newConvFixture(t, convOptions{hold: tc.hold, laggingReads: true})
+			first := f.mustTurn(t, "", "one")
+			second := f.mustTurn(t, first, "two")
+			third := f.mustTurn(t, second, "three")
+			if got := f.binder.count(); got != tc.wantBinds {
+				t.Errorf("binds = %d, want %d", got, tc.wantBinds)
+			}
+			if tc.hold && (second != "sess_1.2" || third != "sess_1.3") {
+				t.Errorf("warm ids = %q, %q; want sess_1.2, sess_1.3", second, third)
+			}
+			if !tc.hold {
+				assertMessages(t, f.exec.call(t, 2).msgs, []executor.Message{
+					{Role: "user", Content: "one"},
+					{Role: "assistant", Content: "reply1"},
+					{Role: "user", Content: "two"},
+					{Role: "assistant", Content: "reply2"},
+					{Role: "user", Content: "three"},
+				})
+			}
+			req := httptest.NewRequest(http.MethodGet, "/v1/responses/"+third, nil)
+			req.Header.Set("X-Lenny-Tenant-ID", "acme")
+			rr := httptest.NewRecorder()
+			f.h.Handler().ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				t.Errorf("GET %s = %d, want 200: %s", third, rr.Code, rr.Body.String())
+			}
+		})
+	}
 }
 
 // TestOpenResponsesHandlerRequiresForwarderAndTerminal_spec_15 pins that the

@@ -218,12 +218,17 @@ func TestContinuityResolveStoreErrorIsNotNotFound_spec_15(t *testing.T) {
 	}
 }
 
+// failingGetStore fails both the read-pool Get and the primary read with err.
 type failingGetStore struct {
 	sessionstore.Store
 	err error
 }
 
 func (f failingGetStore) Get(context.Context, string, string) (sessionstore.Session, error) {
+	return sessionstore.Session{}, f.err
+}
+
+func (f failingGetStore) GetPrimary(context.Context, string, string) (sessionstore.Session, error) {
 	return sessionstore.Session{}, f.err
 }
 

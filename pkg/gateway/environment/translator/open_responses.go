@@ -197,6 +197,14 @@ type OpenResponsesOptions struct {
 	// Operator-tunable.
 	ReleaseTimeout time.Duration
 
+	// PrimaryReadTimeout bounds the primary read of the session row a
+	// response id names. A value at or below zero selects
+	// sessionstore.DefaultPrimaryReadTimeout. The gateway sets it from
+	// --session-primary-read-timeout.
+	// spec: §15 (Open Responses conversation sessions); §12.3 (Postgres HA
+	// Requirements).
+	PrimaryReadTimeout time.Duration
+
 	// Transcripts is the §15.1 transcript registry the adapter records each
 	// turn into and reads on a cold continuation to rehydrate the
 	// conversation context onto the freshly-claimed pod. Pass nil only in
@@ -279,7 +287,11 @@ func NewOpenResponsesHandler(store sessionstore.Store, exec executor.Executor, o
 		// The continuity helper tolerates a nil transcripts backing; response
 		// resolution always reads the session store.
 		// spec: §15 (Open Responses conversation sessions).
-		cont:            &continuity{sessions: store, transcripts: opts.Transcripts},
+		cont: &continuity{
+			sessions:           store,
+			transcripts:        opts.Transcripts,
+			primaryReadTimeout: opts.PrimaryReadTimeout,
+		},
 		devTenantHeader: opts.DevTenantHeader,
 	}
 }

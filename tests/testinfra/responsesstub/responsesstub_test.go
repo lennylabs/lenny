@@ -119,3 +119,59 @@ func TestReleasingTerminalReleasesAFailedSession_spec_15(t *testing.T) {
 		}
 	})
 }
+
+// TestLaggingReadStoreLagsOneCommittedWrite_spec_12_3 pins the lag model:
+// Get misses a row whose Create is the newest committed write, returns each
+// row as it stood before the newest committed write, and sees an older write
+// to another row, while GetPrimary returns the current row.
+//
+// spec: §12.3 (Postgres HA Requirements)
+func TestLaggingReadStoreLagsOneCommittedWrite_spec_12_3(t *testing.T) {
+	ctx := context.Background()
+	store := responsesstub.NewLaggingReadStore(memstore.New())
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	create := func(id string) {
+		t.Helper()
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: "acme", State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
+		}); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+	}
+	responses := func(read func(context.Context, string, string) (sessionstore.Session, error), id string) int {
+		t.Helper()
+		row, err := read(ctx, "acme", id)
+		if errors.Is(err, sessionstore.ErrNotFound) {
+			return -1
+		}
+		if err != nil {
+			t.Fatalf("read %s: %v", id, err)
+		}
+		return len(row.Responses)
+	}
+	create("S")
+	if got := responses(store.Get, "S"); got != -1 {
+		t.Fatalf("Get of a just-created row = %d responses, want ErrNotFound", got)
+	}
+	for i := 1; i <= 2; i++ {
+		if _, err := store.Update(ctx, "acme", "S", func(r *sessionstore.Session) error {
+			r.Responses = append(r.Responses, sessionstore.ConversationResponse{Completed: true})
+			return nil
+		}); err != nil {
+			t.Fatalf("update %d: %v", i, err)
+		}
+		if got := responses(store.Get, "S"); got != i-1 {
+			t.Fatalf("Get after update %d = %d responses, want %d", i, got, i-1)
+		}
+		if got := responses(store.GetPrimary, "S"); got != i {
+			t.Fatalf("GetPrimary after update %d = %d responses, want %d", i, got, i)
+		}
+	}
+	create("T")
+	if got := responses(store.Get, "S"); got != 2 {
+		t.Fatalf("Get of S after a later write to T = %d responses, want 2", got)
+	}
+	if _, err := store.Get(ctx, "globex", "S"); !errors.Is(err, sessionstore.ErrNotFound) {
+		t.Fatalf("cross-tenant Get = %v, want ErrNotFound", err)
+	}
+}

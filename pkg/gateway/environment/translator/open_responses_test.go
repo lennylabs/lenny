@@ -763,8 +763,8 @@ func (a appendFailTranscripts) Append(context.Context, string, string, ...transc
 	return 0, errors.New("transcript append failed")
 }
 
-// getFailStore wraps a session store and makes Get return a non-ErrNotFound
-// infrastructure error, so a continuation's resolve maps to a 500 rather than
+// getFailStore wraps a session store and makes Get and GetPrimary return a
+// non-ErrNotFound infrastructure error, so a continuation's resolve maps to a 500 rather than
 // a fail-closed 404 (which is reserved for unknown or cross-tenant ids).
 type getFailStore struct {
 	sessionstore.Store
@@ -772,6 +772,10 @@ type getFailStore struct {
 }
 
 func (g getFailStore) Get(context.Context, string, string) (sessionstore.Session, error) {
+	return sessionstore.Session{}, g.err
+}
+
+func (g getFailStore) GetPrimary(context.Context, string, string) (sessionstore.Session, error) {
 	return sessionstore.Session{}, g.err
 }
 

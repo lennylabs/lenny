@@ -76,12 +76,13 @@ func (w *gatewayWiring) buildCredentialSurface(sessionSrv *sessionserver.Server)
 	singleShotBinder := sessionSingleShotBinder{srv: sessionSrv, runtimes: w.runtimes, capOverrides: w.capOverrides}
 	openaiHandler := translator.NewOpenAIChatHandler(w.sessions, w.exec, translator.OpenAIChatOptions{Clock: clockinject.Now, SingleShotBinder: singleShotBinder, DevTenantHeader: *w.f.devMode})
 	responsesHandler := translator.NewOpenResponsesHandler(w.sessions, w.exec, translator.OpenResponsesOptions{
-		Clock:            clockinject.Now,
-		SingleShotBinder: singleShotBinder,
-		Transcripts:      w.transcripts,
-		HolderForwarder:  sessionHolderForwarder{srv: sessionSrv},
-		Terminal:         sessionSrv,
-		DevTenantHeader:  *w.f.devMode,
+		Clock:              clockinject.Now,
+		SingleShotBinder:   singleShotBinder,
+		Transcripts:        w.transcripts,
+		HolderForwarder:    sessionHolderForwarder{srv: sessionSrv},
+		Terminal:           sessionSrv,
+		DevTenantHeader:    *w.f.devMode,
+		PrimaryReadTimeout: *w.f.sessionPrimaryReadTimeout,
 	})
 
 	// ----- §4.9 end-user credential registry -----
