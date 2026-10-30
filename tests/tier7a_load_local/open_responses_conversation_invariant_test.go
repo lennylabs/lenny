@@ -505,7 +505,7 @@ func (w *orInvWorld) audit() []string {
 		}
 	}
 	for sid, n := range w.rt.releases {
-		if n > 1 && !w.erased[sid] {
+		if n > 1 {
 			out = append(out, fmt.Sprintf("session %s released %d times", sid, n))
 		}
 	}

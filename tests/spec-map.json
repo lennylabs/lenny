@@ -2157,6 +2157,7 @@
         "pkg/gateway/podlifecycle/podsession/restore_bind_test.go",
         "pkg/gateway/environment/translator/open_responses_conversation_test.go::TestOpenResponsesDoubleFailureReleasesOnce_spec_15",
         "pkg/gateway/environment/translator/open_responses_conversation_test.go::TestOpenResponsesColdTurnLeavesReleaseToTheWriterThatEndedTheRow_spec_15",
+        "pkg/gateway/environment/translator/open_responses_conversation_test.go::TestOpenResponsesFailureOnAnErasedSessionReleasesNothing_spec_15",
         "tests/tier4_integration/open_responses_held_session_test.go::TestHeldResponsesSessionServesThreeTurnsOnOnePod_spec_15",
         "tests/tier4_integration/open_responses_held_session_test.go::TestUnheldResponsesSessionReleasesAfterEachTurn_spec_15",
         "tests/tier4_integration/open_responses_idle_suspension_test.go::TestIdleSuspendedResponsesSessionContinuesCold_spec_15",

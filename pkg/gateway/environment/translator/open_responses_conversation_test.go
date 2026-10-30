@@ -849,6 +849,59 @@ func TestOpenResponsesDoubleFailureReleasesOnce_spec_15(t *testing.T) {
 	}
 }
 
+// TestOpenResponsesFailureOnAnErasedSessionReleasesNothing_spec_15 pins the
+// failure exit of a turn whose session an erasure deleted mid-turn. The
+// erasure ended the session through its terminal path, which released the
+// pod, before it deleted the row, so endHeldSession's failed write finds no
+// row and the handler answers 500 without releasing the executor binding a
+// second time. Both failure points are covered: the executor failing and the
+// response commit failing on the missing row.
+//
+// spec: §15 (Open Responses conversation sessions), §12.8 (Compliance Interfaces), §6.2 (Pod State Machine)
+func TestOpenResponsesFailureOnAnErasedSessionReleasesNothing_spec_15(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		cold    bool
+		sendErr bool
+	}{
+		{name: "warm turn executor failure", sendErr: true},
+		{name: "warm turn commit on deleted row"},
+		{name: "cold turn executor failure", cold: true, sendErr: true},
+		{name: "cold turn commit on deleted row", cold: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newConvFixture(t, convOptions{hold: true})
+			head := f.mustTurn(t, "", "one")
+			prev := head
+			if tc.cold {
+				prev = ""
+			}
+			f.exec.hook = func(ctx context.Context, call int, sessionID string) error {
+				if call != 2 {
+					return nil
+				}
+				if err := f.inner.Delete(ctx, "acme", sessionID); err != nil {
+					t.Errorf("erase %s: %v", sessionID, err)
+				}
+				if tc.sendErr {
+					return errors.New("adapter closed the stream")
+				}
+				return nil
+			}
+			rr := f.turn(t, prev, "two")
+			if rr.Code != http.StatusInternalServerError {
+				t.Fatalf("status %d, want 500", rr.Code)
+			}
+			if _, _, hooks := f.terminal.snapshot(); hooks != 0 {
+				t.Errorf("hooks = %d, want 0", hooks)
+			}
+			if got := f.exec.releases(); len(got) != 0 {
+				t.Errorf("releases = %v, want none: the erasure's terminal path released the pod", got)
+			}
+		})
+	}
+}
+
 // TestOpenResponsesNonLocalForwardWritesNothing_spec_29_3 pins §29.3
 // Forwarding rule 1 on the adapter route: when the forwarder reports the
 // turn not local, the handler makes no store write and writes nothing of its
