@@ -73,6 +73,21 @@ Using `pod-security.kubernetes.io/enforce=restricted` at the namespace level wou
 | allowPrivilegeEscalation | false | false | Relaxed for device plugins |
 | shareProcessNamespace | false (enforced by webhook) | false (enforced by webhook) | false (enforced by webhook) |
 
+### RuntimeClass Names
+
+Each isolation profile maps to a Kubernetes RuntimeClass by name. The chart defaults are `runc` for `standard`, `gvisor` for `sandboxed`, and `kata` for `microvm`. A cluster that publishes a runtime under another name, such as gVisor as `runsc` or Kata as `kata-qemu` or `kata-fc`, sets the name with the chart value `runtimeClasses.profiles.<profile>.name`:
+
+```yaml
+runtimeClasses:
+  profiles:
+    sandboxed:
+      name: runsc
+```
+
+This value is the only setting for the RuntimeClass name of a profile. The controller stamps it on each agent pod's `runtimeClassName`. The gateway and the controller use it as the `runtime_class` metric label. The `lenny-pod-security` webhook and the Kyverno policy match it to apply the gVisor and Kata relaxations in the table above. The preflight Job checks that the RuntimeClass exists. When `runtimeClasses.create` is `true`, the chart also renders the RuntimeClass object under this name. A profile left unset keeps its default name. The name applies whether or not the profile is enabled, because `enabled` only selects which RuntimeClass objects the chart renders.
+
+The chart refuses to render when the removed value `isolation.runtimeClassNames` is set, and the error names `runtimeClasses.profiles.<profile>.name` as the replacement.
+
 ---
 
 ## Admission Policies

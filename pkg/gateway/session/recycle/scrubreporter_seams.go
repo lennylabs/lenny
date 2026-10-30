@@ -298,7 +298,7 @@ type SessionCountRetirerOptions struct {
 
 	// RuntimeClassNameOverrides is the §17.5 per-profile RuntimeClass name
 	// override map, built by isolation.RuntimeClassOverrides from the chart's
-	// `isolation.runtimeClassNames` values the controller also reads, so the
+	// `runtimeClasses.profiles.<profile>.name` values the controller also reads, so the
 	// §16.1 runtime_class label names the RuntimeClass the controller stamped
 	// on the pod. Optional; nil keeps every profile on its default name.
 	RuntimeClassNameOverrides map[isolation.Profile]string
@@ -546,7 +546,7 @@ type PodInspectorOptions struct {
 
 	// RuntimeClassNameOverrides is the §17.5 per-profile RuntimeClass name
 	// override map, built by isolation.RuntimeClassOverrides from the chart's
-	// `isolation.runtimeClassNames` values the controller also reads, so the
+	// `runtimeClasses.profiles.<profile>.name` values the controller also reads, so the
 	// §16.1 runtime_class label names the RuntimeClass the controller stamped
 	// on the pod. Optional; nil keeps every profile on its default name.
 	RuntimeClassNameOverrides map[isolation.Profile]string

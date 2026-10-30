@@ -19,7 +19,7 @@ import (
 // RuntimeClassNameOverrides option of the per-release session-count retirer
 // and of the pod inspector reaches the §16.1 runtime_class label of
 // lenny_gateway_pod_retirement_total and of the recycle disposition metrics.
-// Under an `isolation.runtimeClassNames` override both name the overridden
+// Under an `runtimeClasses.profiles.<profile>.name` override both name the overridden
 // RuntimeClass, the name the controller stamps on the pod, and with no
 // override both keep the default name.
 //

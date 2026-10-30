@@ -147,7 +147,7 @@ type Binder struct {
 	ClaimAccepted func(pool, runtimeClass string)
 	// RuntimeClassNameOverrides is the §17.5 per-profile RuntimeClass name
 	// override map, built by isolation.RuntimeClassOverrides from the same
-	// chart `isolation.runtimeClassNames` values the controller reads. The
+	// chart `runtimeClasses.profiles.<profile>.name` values the controller reads. The
 	// binder maps a pod's §5.3 isolation profile through it to the
 	// runtime_class label of lenny_warmpool_claims_total and of its
 	// setup_command_failed count of lenny_warmpool_warmup_failure_total, so

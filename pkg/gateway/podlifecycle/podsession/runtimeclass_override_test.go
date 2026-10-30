@@ -20,7 +20,7 @@ func runscOverrides() map[isolation.Profile]string {
 }
 
 // TestBinderLabelsRuntimeClassThroughTheOverride_spec_16_1 pins that under an
-// `isolation.runtimeClassNames` override the binder labels runtime_class with
+// `runtimeClasses.profiles.<profile>.name` override the binder labels runtime_class with
 // the overridden RuntimeClass name, the name the controller stamps on the
 // pod's runtimeClassName, on both gateway warm-pool series:
 // lenny_warmpool_claims_total and the setup_command_failed count of

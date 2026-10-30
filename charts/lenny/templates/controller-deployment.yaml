@@ -141,7 +141,10 @@ spec:
                    controller maps §5.3 profiles to the cluster's
                    actual RuntimeClass names without renaming the
                    in-cluster objects. F-17.5.7. The gateway renders the
-                   same flags from the same helper. F-16.1.10. */}}
+                   same flags from the same helper. F-16.1.10. The
+                   helper reads runtimeClasses.profiles.<profile>.name,
+                   the key the webhook, the Kyverno policy, and the
+                   preflight also read. F-17.5.11. */}}
             {{- include "lenny.runtimeClassNameArgs" . | nindent 12 }}
             {{- /* spec: §13.1 — the operator-tunable non-root pod
                    UIDs. The lenny-webhook Deployments are wired from the

@@ -1,0 +1,16 @@
+{{- /*
+RuntimeClass name render guard (§17.5, F-17.5.11).
+
+runtimeClasses.profiles.<profile>.name is the only values key for the
+RuntimeClass name of a profile. The controller and gateway flags
+(lenny.runtimeClassNameArgs), the lenny-pod-security webhook, the Kyverno
+RuntimeClass policy, the preflight, and the rendered RuntimeClass objects all
+read it. The isolation block, whose runtimeClassNames map was a second key
+for the same name, is removed. This guard refuses to render when any
+isolation key is set and names the replacement, so a values file written for
+the removed key fails at install instead of being silently ignored. The
+template emits no Kubernetes object.
+*/ -}}
+{{- with .Values.isolation }}
+{{- fail "isolation.runtimeClassNames is removed: set the RuntimeClass name of each profile with runtimeClasses.profiles.<standard|sandboxed|microvm>.name, which the controller, the gateway, the lenny-pod-security webhook, the Kyverno policy, and the preflight all read (§17.5)" }}
+{{- end }}
