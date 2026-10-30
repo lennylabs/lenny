@@ -7,26 +7,21 @@
 - **Secret references.** (SPEC-2) is the single `secretRef` rule: the accepted forms, the canonical stored form, and the reserved `lenny-cred-` prefix.
 - **Registering a Secret by reference.** (SPEC-2) names the four admin paths that can introduce a `secretRef` and restricts an introduction to `platform-admin` and the bootstrap seed.
 - **Credentials namespace.** (SPEC-2) states the namespace, its chart guards, the only two Secret grants in it, and the denial of every other Lenny ServiceAccount.
-- **Credential values submitted through the admin API.** (SPEC-2) is variant B: the `secretData` field, the derived Secret name, annotations, and tenant-hash label, write and delete ordering, logging exclusion, and the encryption layer.
+- **Credential values submitted through the admin API.** (SPEC-2) is variant B and the home of the Lenny-written Secret lifecycle.
 - **Token Service secret resolution.** (SPEC-3) governs every Token Service read of a credential Secret.
 
-**Admin-time Secret probe (required).** (SPEC-2) replaces the RBAC live-probe paragraph and uses the unkeyed call. §15.1 (SPEC-7), §10.2 (SPEC-5), §24.5 (SPEC-11), and §25 (SPEC-12) carry the role and error consequences. §13.2.4 (SPEC-6) adds the Token Service kube-apiserver egress, §12.8 (SPEC-9) adds the erasure step, §16 (SPEC-8) carries the metric and the logging exclusion, and §17 (SPEC-10) carries the namespace layout, the Helm value, the preflight warning text, and the runbooks.
+**Admin-time Secret probe (required).** (SPEC-2) replaces the RBAC live-probe paragraph and uses the unkeyed call. §15.1 (SPEC-7), §10.2 (SPEC-5), §24.5 (SPEC-11), and §25 (SPEC-12) carry the role and error consequences. §13.2.4 (SPEC-6) adds the Token Service kube-apiserver egress, §12.8 and §12.9 (SPEC-9) carry the erasure step and the data-classification store, §16 (SPEC-8) carries the metric and the logging exclusion, and §17 (SPEC-10) carries the namespace layout, the Helm value, the preflight warning text, and the runbooks.
 
-The design adds no endpoint, no error code, and no RPC. It adds one request field (`secretData`), one Helm value (`credentials.namespace`), and one optional request field and one response field on the existing `ProbeSecretAccess` call.
+The design adds no endpoint and no RPC. It adds one error code (`TOKEN_SERVICE_NOT_CONFIGURED`), one request field (`secretData`), one Helm value (`credentials.namespace`), and one optional request field and one response field on the existing `ProbeSecretAccess` call.
 
 ## Edge cases and accepted failure modes
 
 Each case below is owned by the staged text named on it.
 
-- A `tenant-admin` that resubmits a pool with the `secretRef` values it already carries is not introducing a reference and passes (SPEC-2 **Registering a Secret by reference.**). If a concurrent `platform-admin` write removed one of those references first, the locked-row check counts it as introduced and the `tenant-admin` receives `403 FORBIDDEN`.
-- A caller that copies a `lenny-cred-` reference onto another credential id, or into another pool, receives `400 VALIDATION_ERROR` (SPEC-2 **Secret references.** rule 3). A `platform-admin` cannot point one tenant's pool at another tenant's Lenny-written Secret for the same reason.
-- A pool update that drops a Lenny-written entry and also carries an invalid field returns `400` and deletes nothing (SPEC-2 **Credential values submitted through the admin API.** rule 4).
-- Accepted: a removal interrupted after the Secret delete and before the row commit leaves a reference to an absent Secret. Every read of it fails closed with `NOT_FOUND`, and a retry of the removal converges (rule 4).
-- Accepted: a gateway crash between the Secret write and the row commit, or a failed commit whose compensating delete also fails, leaves an orphaned Lenny-written Secret. Only the Token Service can read it, a later `secretData` write of the same credential id overwrites it, and tenant deletion deletes it (rule 3; SPEC-9).
-- Accepted: an update that overwrites a Lenny-written Secret in place and whose row commit fails leaves the new value in the Secret. The entry's reference is unchanged, so the next read returns the new value (rule 3).
+- A caller that copies a `lenny-cred-` reference onto another credential id in the same pool, or a `platform-admin` that copies one into another pool, receives `400 VALIDATION_ERROR` (SPEC-2 **Secret references.** rule 3). A `platform-admin` cannot point one tenant's pool at another tenant's Lenny-written Secret for the same reason.
+- Every Lenny-written Secret outcome, including the accepted residues, is owned by SPEC-2 **Credential values submitted through the admin API.** rules 3 to 6.
 - An operator-created Secret registered before it exists, including a bootstrap-seeded one under GitOps ordering, fails every read with `NOT_FOUND` until it is created, and the first read after creation succeeds (SPEC-3 **Token Service secret resolution.**, GitOps ordering bullet).
-- A Token Service read that fails with anything other than Forbidden or NotFound fails that call with a `TRANSIENT`-category error, and no earlier value is served (SPEC-3 rule 3).
-- With the Token Service disabled, `secretData` writes return `503 SERVICE_UNAVAILABLE`, no admin-time probe runs, and no credential read path exists (SPEC-2 **Credential values submitted through the admin API.** rule 6; **Admin-time Secret probe (required).** rule 5; **Credentials namespace.** rules 4 and 5).
+- With the Token Service disabled, the outcomes are owned by SPEC-2 **Credential values submitted through the admin API.** rule 6, **Admin-time Secret probe (required).** rule 5, and **Credentials namespace.** rules 4 and 5.
 - Accepted: the gateway's `delete` and `deletecollection` grants let a compromised gateway destroy credential Secrets, and a delete response can carry the objects. The keyed Token Service read already gives the gateway identity access to stored values (SPEC-2 **Credentials namespace.** rule 4), so this adds no read exposure.
 - A Secret placed in the credentials namespace that is not a credential is readable by the Token Service. Keeping such Secrets out is the operator obligation SPEC-2 **Credentials namespace.** states.
 
@@ -85,11 +80,11 @@ a pool with 3 credentials has 3 Secrets in the credentials namespace: `anthropic
 ```markdown
 **Secret references.** A `secretRef` names one Secret in the credentials namespace. Every component that accepts, stores, probes, or reads a reference applies these rules.
 
-1. A `secretRef` is either a bare Secret name or `<credentials namespace>/<name>`, where `<name>` is a DNS-1123 subdomain name. A reference that names any other namespace, has an empty segment, or has more than two segments is refused with `400 VALIDATION_ERROR` and `details.field: "secretRef"`.
-2. The gateway stores every reference in the canonical form `<credentials namespace>/<name>`, on the admin API and on the bootstrap seed. The bootstrap seed reports a reference that rule 1 or rule 3 refuses as an error on that pool entry.
+1. A `secretRef` is either `<name>` or `<credentials namespace>/<name>`, where `<name>` is a DNS-1123 subdomain name. Any other reference is refused with `400 VALIDATION_ERROR` and `details.field: "secretRef"`.
+2. The gateway converts every reference to the canonical form `<credentials namespace>/<name>` before rule 3 or **Registering a Secret by reference.** compares it, and stores it in that form, on the admin API and on the bootstrap seed. The bootstrap seed reports a reference that rule 1 or rule 3 refuses as an error on that pool entry.
 3. Secret names that begin with `lenny-cred-` are reserved for Secrets the gateway writes (**Credential values submitted through the admin API.** below). A submitted reference with that prefix is accepted only when the stored entry with the same credential id in the same pool already carries the identical reference. Any other reference with that prefix is refused with `400 VALIDATION_ERROR` and `details.field: "secretRef"`.
 
-**Registering a Secret by reference.** A write whose request submits a `secretRef` the pool does not already carry introduces that reference, and is accepted only from a caller holding the `platform-admin` role or from the bootstrap seed (`POST /v1/admin/bootstrap`). Any other caller receives `403 FORBIDDEN`, including a custom role that holds the `manage_credential_pools` permission. The admin paths that can introduce a `secretRef` are pool creation (`POST /v1/admin/credential-pools`), pool update (`PUT /v1/admin/credential-pools/{name}`), credential addition (`POST /v1/admin/credential-pools/{name}/credentials`), and credential update (`PUT /v1/admin/credential-pools/{name}/credentials/{credId}`). A reference the pool already carries on any entry is not an introduction. The gateway decides the introduced set against the pool row it holds locked for the write, so a reference that a concurrent write removed counts as introduced.
+**Registering a Secret by reference.** A write whose request submits a `secretRef` the pool does not already carry introduces that reference, and is accepted only from a caller holding the `platform-admin` role or from the bootstrap seed (`POST /v1/admin/bootstrap`). Any other caller receives `403 FORBIDDEN`, including a custom role that holds the `manage_credential_pools` permission. The admin paths that can introduce a `secretRef` are pool creation (`POST /v1/admin/credential-pools`), pool update (`PUT /v1/admin/credential-pools/{name}`), credential addition (`POST /v1/admin/credential-pools/{name}/credentials`), and credential update (`PUT /v1/admin/credential-pools/{name}/credentials/{credId}`). A reference the pool already carries on any entry is not an introduction. The gateway decides the introduced set against the pool row it holds locked for the write, so a reference that a concurrent write removed counts as introduced. **Secret references.** rule 1 applies before this check and rule 3 after it, and a write receives the code of the first check that refuses it.
 ```
 
 (e) In the **Secret shape.** table, after the row that begins "| `azure_openai` (Azure AD)", insert the row:
@@ -112,7 +107,7 @@ A Secret the gateway writes from `secretData` holds exactly the keys the request
 1. The Namespace carries the `helm.sh/resource-policy: keep` annotation, so `helm uninstall` leaves the namespace and its Secrets in place.
 2. A ResourceQuota with `pods: "0"` refuses every pod in the namespace, so no workload mounts a credential Secret.
 3. The Role `lenny-token-service-credentials` grants the `lenny-token-service` ServiceAccount `get` on `secrets` in the namespace, with no `resourceNames`, `list`, or `watch`.
-4. The Role `lenny-gateway-credential-writer` grants the `lenny-gateway` ServiceAccount `create`, `update`, `delete`, and `deletecollection` on `secrets` in the namespace, with no `get`, `list`, `watch`, or `patch`. The gateway obtains a stored value only through the Token Service keyed read ([Credential Lifecycle and Secret Management](#credential-lifecycle-and-secret-management) **Token Service secret resolution.**), which it uses for VCS tokens ([Section 14](14_workspace-plan-schema.md)), for a reference taken from a pool in the caller's tenant.
+4. The Role `lenny-gateway-credential-writer` grants the `lenny-gateway` ServiceAccount `create`, `update`, `delete`, and `deletecollection` on `secrets` in the namespace, with no `get`, `list`, `watch`, or `patch`. The gateway reads a stored value for VCS tokens ([Section 14](14_workspace-plan-schema.md)) through the Token Service keyed read ([Credential Lifecycle and Secret Management](#credential-lifecycle-and-secret-management) **Token Service secret resolution.**), for a reference taken from a pool in the caller's tenant.
 5. The rule 3 and rule 4 Roles and their RoleBindings render only when `tokenService.enabled` is true. The Namespace and the ResourceQuota render in every profile.
 6. The chart refuses to render when `credentials.namespace` equals the release namespace or names an `agentNamespaces` entry.
 7. No other Lenny ServiceAccount holds a verb on `secrets` in the namespace. The quota refuses pods, including those that the controller's cluster-wide pod grant could create.
@@ -132,12 +127,33 @@ rules:
 
 **Credential values submitted through the admin API.** A caller holding the `manage_credential_pools` permission for the pool's tenant adds or replaces a credential's value by sending `secretData` on credential addition (`POST /v1/admin/credential-pools/{name}/credentials`) or credential update (`PUT /v1/admin/credential-pools/{name}/credentials/{credId}`). `secretData` is an object whose keys are the provider's Secret keys (**Secret shape.** above) and whose values are strings. A Secret the gateway writes under these rules is a Lenny-written Secret.
 
-1. A body carries at most one of `secretRef`, `secretData`, and `roleArn`, and a body with more than one is refused with `400 VALIDATION_ERROR`. Pool creation, pool update, and the bootstrap seed refuse `secretData` with `400 VALIDATION_ERROR`.
+1. A body carries at most one of `secretRef`, `secretData`, and `roleArn`, and a body with more than one is refused with `400 VALIDATION_ERROR`. Pool creation and pool update refuse `secretData` with `400 VALIDATION_ERROR`, and the bootstrap seed reports it as an error on that pool entry.
 2. The gateway writes the Secret in the credentials namespace under the name `lenny-cred-` followed by the first 40 hexadecimal characters of SHA-256 over the tenant id, the pool name, and the credential id joined by NUL bytes, and stores the canonical reference to it on the entry. The Secret carries the annotations `lenny.dev/tenant-id`, `lenny.dev/credential-pool`, and `lenny.dev/credential-id`, and the label `lenny.dev/tenant-hash` set to the first 40 hexadecimal characters of SHA-256 over the tenant id, by which tenant deletion finds it ([Section 12.8](12_storage-architecture.md#128-compliance-interfaces)).
-3. The gateway writes the Secret while it holds the pool row lock for the write, after every check of the request has passed, as the last step before the row commits. A write against a soft-deleted pool returns `404 RESOURCE_NOT_FOUND` and writes no Secret. If the row commit fails after the Secret write, the gateway deletes the Secret under a new row lock, and only when no entry of the pool carries its reference. A credential update that carries `secretData` overwrites the Secret in place.
-4. A write that stops referencing a Lenny-written Secret deletes it before the row change commits, under the row lock and after every check of the request has passed. These writes are credential removal, a pool update or a forced bootstrap seed update that drops an entry or changes its source, a credential update that replaces the Lenny-written reference with a `secretRef` or a `roleArn`, and pool deletion. The deleted name is the one the stored reference names. A NotFound response counts as deleted. A delete failure commits nothing and returns `503 SERVICE_UNAVAILABLE`, or on the bootstrap seed an error on that pool entry. A request refused with any 4xx, and a `dryRun` request, write and delete no Secret.
-5. Revocation and re-enable leave the Secret in place.
-6. When no Token Service is configured, a `secretData` write is refused with `503 SERVICE_UNAVAILABLE`.
+3. Each operation in the table below performs the Secret operation the table gives, in addition to its row change. A dropped reference is a Lenny-written reference that the pool row carries before the write and does not carry after it. A Put creates the Secret, or replaces its data when the Secret exists. A Delete of an absent Secret succeeds.
+
+   | Operation | Secret operation |
+   |:--|:--|
+   | Credential addition or credential update carrying `secretData` | Put of the Secret that rule 2 names for the entry. On an entry that already carries that reference, the Put overwrites the value in place. |
+   | Pool deletion | Delete of each Lenny-written reference the pool carries |
+   | Tenant deletion, in Phase 4 after the `CredentialPoolStore` deletion ([Section 12.8](12_storage-architecture.md#128-compliance-interfaces)) | One delete-collection of every Secret in the credentials namespace whose `lenny.dev/tenant-hash` label matches the tenant |
+   | Credential revocation, pool revocation, and re-enable | None |
+   | Every other write to a pool, including credential removal, pool update, a credential update without `secretData`, and a bootstrap seed update applied with `--force-update` ([Section 17.6](17_deployment-topology.md#176-packaging-and-installation)) | Delete of each dropped reference |
+
+4. The gateway performs each Put and Delete while it holds the pool row lock for the write, after every check of the request has passed, as the last step before the row change commits. Pool deletion performs its Deletes and the soft delete under one row lock. Credential addition and credential update against a soft-deleted pool return `404 RESOURCE_NOT_FOUND` and perform no Secret operation.
+5. Outcomes of a Secret operation:
+   - A request refused with a 4xx performs no Secret operation.
+   - A `dryRun` request performs no Secret operation ([Section 15.1](15_external-api-surface.md#151-rest-api) **`dryRun` query parameter.**), and rule 6 refuses it as it would refuse the write.
+   - A failed Put or Delete refuses the write with `503 SERVICE_UNAVAILABLE` ([Section 15.1](15_external-api-surface.md#151-rest-api)), and the row does not change. On the bootstrap seed the failure is an error on that pool entry.
+   - A failed delete-collection fails tenant deletion Phase 4. The job stays at Phase 4 and retries the phase.
+   - The gateway takes no compensating action, and the row lock does not order a Secret operation that the kube-apiserver applies after the transaction holding the lock has ended, as on a gateway crash or a Postgres failover. A Lenny-written Secret and the committed rows can therefore disagree in the ways this table gives.
+
+   | State | Reads | Convergence |
+   |:--|:--|:--|
+   | An orphan: a Lenny-written Secret that no entry references | **Secret references.** rule 3 keeps every pool from referencing it, and only the Token Service can read it. | A later Put for the same tenant, pool, and credential id overwrites it and commits a reference to it. A tenant-deletion delete-collection that runs after the orphan is created deletes it. An orphan created after that delete-collection stays in the credentials namespace. |
+   | An entry references an absent Lenny-written Secret | Every read fails closed with `NOT_FOUND` ([Credential Lifecycle and Secret Management](#credential-lifecycle-and-secret-management) **Token Service secret resolution.** rule 3). | A later Put for the entry recreates the Secret, and a later write that drops the reference completes, because a Delete of an absent Secret succeeds. |
+   | An entry's Secret holds a value other than the last one a committed write submitted for the entry | Each read returns what the Secret holds. | A later Put for the entry overwrites the value. |
+
+6. When no Token Service is configured, the gateway has no Secret writer. A write for which rule 3 gives at least one Put or Delete is refused with `422 TOKEN_SERVICE_NOT_CONFIGURED` ([Section 15.1](15_external-api-surface.md#151-rest-api)) at the point rule 4 places that operation, and it changes nothing. On the bootstrap seed the refusal is an error on that pool entry. Before the `CredentialPoolStore` deletion, tenant deletion Phase 4 fails and retries while any pool of the tenant, including a soft-deleted pool, carries a Lenny-written reference. For a tenant with none, Phase 4 proceeds without the delete-collection, and a Lenny-written Secret that no stored reference names stays in the credentials namespace.
 7. No response carries a submitted value. The two endpoints carry secret material when the body holds `secretData`. They are excluded from HTTP access log payload capture, OpenTelemetry span attributes, and request/response logging middleware, the same treatment as `POST /v1/credentials` ([Pre-Authorized Credential Flow](#pre-authorized-credential-flow)). Only the pool name, credential id, canonical `secretRef`, and outcome are logged or audited.
 8. The value is encrypted at rest by the etcd encryption that **Encryption at rest — KMS key hierarchy.** above requires, the same layer that protects an operator-created Secret. The `TokenStore` holds user-scoped credentials ([Pre-Authorized Credential Flow](#pre-authorized-credential-flow)) and stores no value submitted through this path.
 ````
@@ -289,13 +305,13 @@ Every replacement row stays one physical line. Locate each row by its method and
 (b) Replace the row `| \`PUT\`    | \`/v1/admin/credential-pools/{name}\` | Update a credential pool (requires \`If-Match\`) |` with:
 
 ```markdown
-| `PUT`    | `/v1/admin/credential-pools/{name}`                             | Update a credential pool (requires `If-Match`). Each `secretRef` is subject to the rules and outcomes named on pool creation, and `secretData` is refused with `400 VALIDATION_ERROR`. Dropping an entry that names a Lenny-written Secret, or changing its source, deletes that Secret first ([Section 4.9](04_system-components.md#49-credential-leasing-service) **Credential values submitted through the admin API.**); a delete failure returns `503 SERVICE_UNAVAILABLE` and commits nothing. |
+| `PUT`    | `/v1/admin/credential-pools/{name}`                             | Update a credential pool (requires `If-Match`). Each `secretRef` is subject to the rules and outcomes named on pool creation, and `secretData` is refused with `400 VALIDATION_ERROR`. Lenny-written Secret handling: [Section 4.9](04_system-components.md#49-credential-leasing-service) **Credential values submitted through the admin API.** |
 ```
 
 (c) Replace the row `| \`DELETE\` | \`/v1/admin/credential-pools/{name}\` | Delete a credential pool |` with:
 
 ```markdown
-| `DELETE` | `/v1/admin/credential-pools/{name}`                             | Delete a credential pool. Each Lenny-written Secret the pool names is deleted first ([Section 4.9](04_system-components.md#49-credential-leasing-service) **Credential values submitted through the admin API.**); a delete failure returns `503 SERVICE_UNAVAILABLE` and the pool stays. |
+| `DELETE` | `/v1/admin/credential-pools/{name}`                             | Delete a credential pool. Lenny-written Secret handling: [Section 4.9](04_system-components.md#49-credential-leasing-service) **Credential values submitted through the admin API.** |
 ```
 
 (d) In the `.../credentials/{credId}/re-enable` row, replace "Requires `platform-admin`." with:
@@ -307,19 +323,19 @@ Requires the `manage_credential_pools` permission (`tenant-admin` for its own te
 (e) Replace the row `| \`POST\`   | \`/v1/admin/credential-pools/{name}/credentials\` | Add a credential to a pool. See ...` with:
 
 ```markdown
-| `POST`   | `/v1/admin/credential-pools/{name}/credentials`                 | Add a credential to a pool by `secretRef`, `roleArn`, or `secretData`. A `secretRef` is subject to the rules and outcomes named on pool creation. With `secretData` the gateway writes the Secret ([Section 4.9](04_system-components.md#49-credential-leasing-service) **Credential values submitted through the admin API.**), no response carries the value, and with no Token Service configured the write returns `503 SERVICE_UNAVAILABLE`. See [Section 24.5](24_lenny-ctl-command-reference.md#245-credential-management). |
+| `POST`   | `/v1/admin/credential-pools/{name}/credentials`                 | Add a credential to a pool by `secretRef`, `roleArn`, or `secretData`. A `secretRef` is subject to the rules and outcomes named on pool creation. Lenny-written Secret handling: [Section 4.9](04_system-components.md#49-credential-leasing-service) **Credential values submitted through the admin API.** See [Section 24.5](24_lenny-ctl-command-reference.md#245-credential-management). |
 ```
 
 (f) Replace the row `| \`PUT\`    | \`/v1/admin/credential-pools/{name}/credentials/{credId}\` | Update a credential in the pool (body may change \`secretRef\`). ...` with:
 
 ```markdown
-| `PUT`    | `/v1/admin/credential-pools/{name}/credentials/{credId}`        | Update a credential in the pool (body may change `secretRef` or carry `secretData`). Requires `If-Match`. A `secretRef` is subject to the rules and outcomes named on pool creation. `secretData` overwrites the entry's Lenny-written Secret in place or replaces the entry's source, and replacing a Lenny-written reference with a `secretRef` or `roleArn` deletes that Secret first ([Section 4.9](04_system-components.md#49-credential-leasing-service) **Credential values submitted through the admin API.**; `503 SERVICE_UNAVAILABLE` on a failed write or delete, or with no Token Service configured). See [Section 24.5](24_lenny-ctl-command-reference.md#245-credential-management). |
+| `PUT`    | `/v1/admin/credential-pools/{name}/credentials/{credId}`        | Update a credential in the pool (body may change `secretRef`, `roleArn`, or `region`, or carry `secretData`). Requires `If-Match`. A `secretRef` is subject to the rules and outcomes named on pool creation. Lenny-written Secret handling: [Section 4.9](04_system-components.md#49-credential-leasing-service) **Credential values submitted through the admin API.** See [Section 24.5](24_lenny-ctl-command-reference.md#245-credential-management). |
 ```
 
 (g) In the `DELETE` row for `/v1/admin/credential-pools/{name}/credentials/{credId}`, insert the following directly before " See [Section 24.5]":
 
 ```markdown
- A Lenny-written Secret the credential names is deleted first ([Section 4.9](04_system-components.md#49-credential-leasing-service) **Credential values submitted through the admin API.**); a delete failure returns `503 SERVICE_UNAVAILABLE` and the credential stays.
+ Lenny-written Secret handling: [Section 4.9](04_system-components.md#49-credential-leasing-service) **Credential values submitted through the admin API.**
 ```
 
 (h) Replace the error catalog row that begins "| `CREDENTIAL_SECRET_RBAC_MISSING`" with:
@@ -328,16 +344,17 @@ Requires the `manage_credential_pools` permission (`tenant-admin` for its own te
 | `CREDENTIAL_SECRET_RBAC_MISSING` | `PERMANENT` | 422    | Admin credential-pool write refused by the admin-time Secret probe ([Section 4.9](04_system-components.md#49-credential-leasing-service) **Registering a Secret by reference.** and **Admin-time Secret probe (required).**). `details.missingSecrets` lists the canonical reference of every failing Secret. Create each Secret in the credentials namespace and retry. |
 ```
 
-(i) Replace the error catalog row that begins "| `CREDENTIAL_PROBE_UNAVAILABLE`" with:
+(i) Replace the error catalog row that begins "| `CREDENTIAL_PROBE_UNAVAILABLE`" with the following two rows. Each row stays one physical line.
 
 ```markdown
 | `CREDENTIAL_PROBE_UNAVAILABLE` | `TRANSIENT` | 503    | Admin credential-pool write refused because the admin-time Secret probe returned no verdict ([Section 4.9](04_system-components.md#49-credential-leasing-service) **Registering a Secret by reference.** and **Admin-time Secret probe (required).**). `details.secretRef` names the reference whose probe could not be evaluated. Retry after resolving Token Service health. |
+| `TOKEN_SERVICE_NOT_CONFIGURED` | `PERMANENT` | 422    | Admin credential-pool write refused because no Token Service is configured ([Section 4.9](04_system-components.md#49-credential-leasing-service) **Credential values submitted through the admin API.** rule 6). Enable the Token Service and retry. |
 ```
 
 (j) In the error catalog row that begins "| `SERVICE_UNAVAILABLE`", insert the following directly after "all of which fail closed rather than degrade open." and before " `Retry-After` is set.":
 
 ```markdown
- It is also returned by an admin credential-pool write when deleting or writing a Lenny-written credential Secret fails, and by a `secretData` write when no Token Service is configured ([Section 4.9](04_system-components.md#49-credential-leasing-service) **Credential values submitted through the admin API.**); nothing is committed.
+ It is also returned by an admin credential-pool write under [Section 4.9](04_system-components.md#49-credential-leasing-service) **Credential values submitted through the admin API.** rule 5.
 ```
 
 ### SPEC-8 · spec/16_observability.md § 16.1 Metrics and § 16.4 Logging
@@ -354,13 +371,15 @@ Requires the `manage_credential_pools` permission (`tenant-admin` for its own te
 - **Credential-sensitive RPCs** (`AssignCredentials`, `RotateCredentials`, and `ProbeSecretAccess` when its request names a key, because the response then carries a credential value) are excluded from payload-level logging, gRPC access logs, and OTel trace span attributes. Only RPC name, lease ID, provider type, Secret name, and outcome are recorded.
 ```
 
-### SPEC-9 · spec/12_storage-architecture.md § 12.8 Compliance Interfaces, tenant deletion lifecycle
+### SPEC-9 · spec/12_storage-architecture.md § 12.8 Compliance Interfaces, tenant deletion lifecycle, and § 12.9 Data Classification
 
-In the Phase 4 row of the tenant deletion lifecycle table, insert the following directly before "→ `CredentialPoolStore` → `runtime_tenant_access` rows for this tenant". The row stays one physical line.
+(a) In the Phase 4 row of the tenant deletion lifecycle table, insert the following, preceded by one space, directly after "→ `CredentialPoolStore`" in "→ `CredentialPoolStore` → `runtime_tenant_access` rows for this tenant". The row stays one physical line.
 
 ```markdown
-→ Lenny-written credential Secrets (the gateway deletes every Secret in the credentials namespace whose `lenny.dev/tenant-hash` label matches the tenant, with one `deletecollection`; a failure keeps the job at Phase 4; see [Section 4.9](04_system-components.md#49-credential-leasing-service) **Credential values submitted through the admin API.** rule 2)
+→ Lenny-written credential Secrets ([Section 4.9](04_system-components.md#49-credential-leasing-service) **Credential values submitted through the admin API.** rules 3, 5, and 6)
 ```
+
+(b) In the **Default data-type mappings:** table, replace the Store cell `Postgres (encrypted, KMS-backed)` of the `Credential pool secrets` row with `Kubernetes Secrets (credentials namespace)`. The row stays one physical line.
 
 ### SPEC-10 · spec/17_deployment-topology.md § 17.2, § 17.6, § 17.7
 
@@ -438,7 +457,7 @@ Directly after the table, insert:
 (b) In the row that begins "| `lenny_credential_retire`", replace "Pool credential rotation is performed by revoking the old credential and adding a replacement via `lenny_credential_add` — see [§4.9](04_system-components.md#49-credential-leasing-service) Credential rotation workflow." with:
 
 ```markdown
-A credential added by reference is rotated by revoking it and adding a replacement via `lenny_credential_add`; a credential added by value is rotated in place by `PUT /v1/admin/credential-pools/{name}/credentials/{credId}` carrying `secretData` ([§4.9](04_system-components.md#49-credential-leasing-service) Credential rotation workflow).
+Pool credential rotation follows [§4.9](04_system-components.md#49-credential-leasing-service) Credential rotation workflow.
 ```
 
 ### SPEC-13 · spec/28_communication-channels.md § 28.7 Wire-contract artifact register
@@ -447,6 +466,14 @@ In the row that begins "| `schemas/lenny-tokenservice.proto` |", replace "and fo
 
 ```markdown
 and for the `ProbeSecretAccess` credential Secret read, which serves the admin-time probe and the gateway's keyed credential reads
+```
+
+### SPEC-14 · spec/18_build-sequence.md § 18.38 Phase 17a — Documentation, governance, community launch
+
+In the bullet that begins "- Decommission and uninstall runbook at `docs/runbooks/uninstall.md`", replace "MinIO bucket replication targets, persistent volumes)" with:
+
+```markdown
+MinIO bucket replication targets, persistent volumes, and the credentials namespace with its Secrets ([§4.9](04_system-components.md#49-credential-leasing-service) **Credentials namespace.** rule 1))
 ```
 
 ## Spec files touched
@@ -462,3 +489,4 @@ and for the `ProbeSecretAccess` credential Secret read, which serves the admin-t
 - spec/24_lenny-ctl-command-reference.md (SPEC-11)
 - spec/25_agent-operability.md (SPEC-12)
 - spec/28_communication-channels.md (SPEC-13)
+- spec/18_build-sequence.md (SPEC-14)
