@@ -5567,6 +5567,10 @@
       "title": "External API Surface",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier11_docs/open_responses_conversation_session_doc_test.go::TestOpenResponsesSessionMappingDescribesTheHeldConversationSession",
+        "tests/tier11_docs/open_responses_conversation_session_doc_test.go::TestOpenResponsesStatusComesFromTheResponsesOwnTurn",
+        "tests/tier11_docs/open_responses_conversation_session_doc_test.go::TestOpenResponsesMultiTurnNamesTheWarmAndColdContinuations",
+        "tests/tier11_docs/open_responses_conversation_session_doc_test.go::TestOpenResponsesCheckpointingBulletStatesTheTurnFailureRule",
         "pkg/gateway/environment/transcriptstore/transcriptstore_test.go::TestAppendReturnsLastSeq_spec_15",
         "tests/tier2_component/stores/transcriptstore_test.go::TestTranscriptStoreAppendReturnsLastSeq",
         "tests/tier7a_load_local/transcript_append_last_seq_race_test.go::TestTranscriptAppendConcurrentLastSeq_spec_15",
