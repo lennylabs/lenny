@@ -224,6 +224,9 @@
     "tests/tier3_contract/adapter_usage_wired/": {
       "contract": ["tests/tier3_contract/adapter_usage_wired/..."]
     },
+    "tests/tier3_contract/adapter_workspace_restore/": {
+      "contract": ["tests/tier3_contract/adapter_workspace_restore/..."]
+    },
     "tests/tier3_contract/admin_conflict_codes/": {
       "contract": ["tests/tier3_contract/admin_conflict_codes/..."]
     },

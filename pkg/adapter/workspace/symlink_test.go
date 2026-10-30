@@ -26,7 +26,7 @@ func TestMaterializeSymlinkSource_spec_7_4_458(t *testing.T) {
 	_, err := workspace.MaterializeWithPolicy(root, "", []*adapterv1.WorkspaceSource{
 		source("inlineFile", "target.txt", "payload", "644"),
 		{Type: "symlink", Path: "link.txt", LinkTarget: "target.txt"},
-	}, workspace.ArchivePolicy{AllowSymlinks: true, WorkspaceRoot: root})
+	}, workspace.ArchivePolicy{AllowSymlinks: true, WorkspaceRoot: root}, nil)
 	if err != nil {
 		t.Fatalf("MaterializeWithPolicy: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestMaterializeSymlinkSourceRejectedWithoutOptIn_spec_7_4_458(t *testing.T)
 	root := t.TempDir()
 	_, err := workspace.MaterializeWithPolicy(root, "", []*adapterv1.WorkspaceSource{
 		{Type: "symlink", Path: "link.txt", LinkTarget: "target.txt"},
-	}, workspace.ArchivePolicy{AllowSymlinks: false, WorkspaceRoot: root})
+	}, workspace.ArchivePolicy{AllowSymlinks: false, WorkspaceRoot: root}, nil)
 	if err == nil {
 		t.Fatal("symlink source without allowSymlinks succeeded, want failure")
 	}
@@ -69,7 +69,7 @@ func TestMaterializeSymlinkEscapeRolledBack_spec_13_4_665(t *testing.T) {
 	root := t.TempDir()
 	_, err := workspace.MaterializeWithPolicy(root, "", []*adapterv1.WorkspaceSource{
 		{Type: "symlink", Path: "link.txt", LinkTarget: "../../etc/passwd"},
-	}, workspace.ArchivePolicy{AllowSymlinks: true, WorkspaceRoot: root})
+	}, workspace.ArchivePolicy{AllowSymlinks: true, WorkspaceRoot: root}, nil)
 	if err == nil {
 		t.Fatal("escaping symlink succeeded, want post-promotion rollback failure")
 	}

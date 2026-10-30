@@ -860,7 +860,9 @@
         "pkg/adapter/shutdownrecord_test.go",
         "tests/tier3_contract/adapter_bind_attempt/absent_unclean_wire_test.go",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOrphanTimeoutAndAbsentAnswerAgree_spec_4_7_1",
-        "tests/tier7a_load_local/stale_slot_reaper_race_test.go"
+        "tests/tier7a_load_local/stale_slot_reaper_race_test.go",
+        "pkg/adapter/staging_restore_test.go",
+        "tests/tier3_contract/adapter_workspace_restore/restore_chunks_wire_test.go"
       ],
       "packages": [
         "pkg/adapter"
@@ -1432,7 +1434,8 @@
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestBindAcceptsRuntimeMeetingDeclaredLevel_spec_5_1",
         "tests/tier2_component/migrations/prod_columns_test.go",
         "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodRefusesRestartOnNonRestartableRuntime_spec_5_2",
-        "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodRefusesAgentSidecarRuntimeWithoutCommand_spec_5_1"
+        "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodRefusesAgentSidecarRuntimeWithoutCommand_spec_5_1",
+        "pkg/adapter/staging_restore_test.go"
       ],
       "packages": [
         "pkg/runtime"
@@ -2365,7 +2368,10 @@
         "pkg/gateway/sessionserver/terminal_writers_internal_test.go::TestFunnelAndHookWritersEmitTheTerminalEventsOnce_spec_7_2",
         "pkg/gateway/sessionserver/terminal_writers_internal_test.go::TestRESTMessageToAClosingBindingTakesTheTerminalReroute_spec_7_1",
         "tests/testinfra/lifecyclefence/paths_test.go::TestDeriveFailureRowFencedBySourceIsSourceGone_spec_7_1",
-        "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreeRecordsCloseTheirMembers_spec_8_10"
+        "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreeRecordsCloseTheirMembers_spec_8_10",
+        "pkg/adapter/staging_restore_test.go",
+        "pkg/adapter/workspace/materialize_test.go",
+        "tests/tier3_contract/adapter_workspace_restore/restore_chunks_wire_test.go"
       ],
       "packages": [
         "pkg/session"
@@ -5490,7 +5496,8 @@
         "pkg/gateway/sessionserver/gitclone_pin_test.go::TestFinalizeGitCloneRejectionBindsNothing_spec_14_1",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestBindStagesOnlyUploadsThePlanNames_spec_14_1",
         "tests/tier3_contract/rest_mcp_consistency/finalize_plan_bind_parity_test.go::TestFinalizePlanBindRejectionParity",
-        "tests/tier9_security/upload_ref_scope_test.go::TestPlanCannotFetchAnotherSessionsUpload"
+        "tests/tier9_security/upload_ref_scope_test.go::TestPlanCannotFetchAnotherSessionsUpload",
+        "pkg/adapter/staging_restore_test.go"
       ],
       "packages": [
         "pkg/workspaceplan"

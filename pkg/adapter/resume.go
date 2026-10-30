@@ -218,6 +218,24 @@ func (s *Server) restoreChunks(ctx context.Context, sessionID string, chunks []*
 	if err != nil {
 		return 0, err
 	}
+	stream := s.chunkStream(ctx, chunks)
+	restored, extractErr := workspace.ExtractTree(roots, stream)
+	_ = stream.Close()
+	return restored, extractErr
+}
+
+// chunkStream fetches each presigned GET capability through
+// CheckpointTransport.GetChunk in ascending index order and returns one
+// reader over the concatenated chunk bodies. A fetch or body-read error
+// ends the stream with that error. The caller closes the reader as soon
+// as it stops consuming, which unblocks and ends the producer goroutine
+// when extraction stops before the last chunk.
+//
+// spec: §10.1.7 — the concatenation of all chunks in index order is
+// one byte stream; chunk boundaries are never parsed in isolation.
+// spec: §7.1 (Derive restore semantics) — the first-bind restore reads
+// the same stream.
+func (s *Server) chunkStream(ctx context.Context, chunks []*adapterv1.ChunkGrant) io.ReadCloser {
 	ordered := make([]*adapterv1.ChunkGrant, len(chunks))
 	copy(ordered, chunks)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].GetIndex() < ordered[j].GetIndex() })
@@ -239,8 +257,5 @@ func (s *Server) restoreChunks(ctx context.Context, sessionID string, chunks []*
 		}
 		_ = pw.Close()
 	}()
-
-	restored, extractErr := workspace.ExtractTree(roots, pr)
-	_ = pr.Close()
-	return restored, extractErr
+	return pr
 }
