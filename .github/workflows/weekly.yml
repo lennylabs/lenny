@@ -5,9 +5,9 @@
 
 name: weekly
 
+# CI is paused (owner decision 2026-10-30): this workflow runs only when triggered
+# by hand. Restore its original triggers when CI resumes.
 on:
-  schedule:
-    - cron: '0 6 * * 0'    # 06:00 UTC every Sunday
   workflow_dispatch:
 
 concurrency:
