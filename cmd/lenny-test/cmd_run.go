@@ -666,8 +666,14 @@ func runStaticTier() (string, string) {
 			cmd := exec.Command(path, "-l", ".")
 			cmd.Dir = repoRoot()
 			out, err := cmd.CombinedOutput()
-			body := strings.TrimSpace(string(out))
-			if err != nil {
+			// gofumpt walks every directory under the root, including
+			// other agents' worktrees under .claude/worktrees/ and
+			// git-ignored scratch trees, so judge only the files of this
+			// checkout (see formatscope.go). An error whose output names
+			// only out-of-tree files is the same walk and is dropped; an
+			// error with no output at all still fails.
+			body := scopeFormatterOutput(string(out), cmd.Dir)
+			if err != nil && (body != "" || strings.TrimSpace(string(out)) == "") {
 				return body, err
 			}
 			if body != "" {
@@ -691,7 +697,9 @@ func runStaticTier() (string, string) {
 			// for both the unordered-imports list and the parse errors, and
 			// judge the check on what is left. A real source file is reported
 			// and fails exactly as before.
-			body := dropTestdataLines(string(out))
+			// The walk also reaches trees outside this checkout, as for
+			// gofumpt above; scope the report to the checkout's files.
+			body := scopeFormatterOutput(dropTestdataLines(string(out)), cmd.Dir)
 			if err != nil && body != "" {
 				return body, err
 			}
