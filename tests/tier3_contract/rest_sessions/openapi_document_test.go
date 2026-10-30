@@ -26,6 +26,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/scripts/specshift/citation"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
@@ -236,16 +238,18 @@ func TestSessionDomainDocumentedPathsHaveLiveHandlers(t *testing.T) {
 		t.Fatal("served document has no paths object")
 	}
 
-	sess := newTestServer(t)
-	// The session server wraps its mux in the §10.2 tenant gate, which
-	// exposes the mux through Mux() for route introspection.
-	h := sess.Config.Handler
+	// Route introspection reads the session server's own handler rather
+	// than newTestServer's, which sits behind the test owner-principal
+	// layer. The session server wraps its mux in the §10.2 tenant gate,
+	// which exposes the mux through Mux().
+	sess := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true}).Handler()
+	h := sess
 	if u, ok := h.(interface{ Mux() *http.ServeMux }); ok {
 		h = u.Mux()
 	}
 	mux, ok := h.(*http.ServeMux)
 	if !ok {
-		t.Fatalf("session server handler is %T, not *http.ServeMux", sess.Config.Handler)
+		t.Fatalf("session server handler is %T, not *http.ServeMux", sess)
 	}
 
 	checked := 0

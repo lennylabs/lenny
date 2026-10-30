@@ -1152,7 +1152,11 @@ func TestHeldResponsesSessionFailedWarmTurnDrainsTheInbox_spec_15(t *testing.T) 
 		Terminal:         srv,
 	})
 	post := func(prev string) *httptest.ResponseRecorder {
-		body := map[string]any{"model": "echo", "input": "hello"}
+		// The held row's owner is the creating principal's subject, so the
+		// body names that subject as its user: the continuation then asks
+		// for the user the row records and stays warm-eligible.
+		// spec: §15 (Open Responses conversation sessions), §10.2 (Session ownership).
+		body := map[string]any{"model": "echo", "input": "hello", "user": ownerprincipal.Alice}
 		if prev != "" {
 			body["previous_response_id"] = prev
 		}
