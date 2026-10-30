@@ -649,11 +649,13 @@ func (h *OpenResponsesHandler) failTurn(w http.ResponseWriter, r *http.Request, 
 // by the release timeout, so a client disconnect does not abandon them. On
 // an applied write it runs the post-terminal hook inline, which releases the
 // pod and lease. A superseded write leaves the release to the writer that
-// ended the row. A write that finds no row leaves the release to the
-// erasure that deleted it, because §12.8 erasure ends the session through
-// its terminal path, which released the pod, before it deletes the row. Any
-// other write error runs no hook, so it releases the executor binding with
-// the failed disposition itself, once.
+// ended the row. Any other write error runs no hook, so it releases the
+// executor binding with the failed disposition itself, once. That includes a
+// write that finds no row: a §12.8 erasure that deleted the row releases the
+// binding only when its CH-BINDRELEASE publish reaches this replica, and a
+// lost publish is not redelivered, so this release is the local backstop. When
+// the publish did arrive, the executor no longer holds the binding and its
+// idempotent Release makes this call a no-op.
 // spec: §15 (Open Responses conversation sessions); §7.2 (Interactive
 // Session Model); §6.2 release.
 func (h *OpenResponsesHandler) endHeldSession(reqCtx context.Context, tenantID, sessionID string) {
@@ -674,7 +676,7 @@ func (h *OpenResponsesHandler) endHeldSession(reqCtx context.Context, tenantID, 
 	switch {
 	case err == nil:
 		h.terminal.AfterTerminalWrite(ctx, from, updated, nil)
-	case errors.Is(err, sessionstore.ErrSuperseded), errors.Is(err, sessionstore.ErrNotFound):
+	case errors.Is(err, sessionstore.ErrSuperseded):
 	default:
 		disp := executor.DispositionFailed
 		releaseSingleShot(ctx, h.release(), tenantID, sessionID, &disp)

@@ -71,11 +71,16 @@ type sendCall struct {
 }
 
 // convExecutor answers each Send with "replyN" unless hook returns an error
-// for that call, and records every release disposition.
+// for that call, and records the disposition of every release that ended a
+// binding. Release is idempotent per session, as executor.SessionReleaser
+// states: a release of a session already released records nothing and
+// counts as a no-op.
 type convExecutor struct {
-	mu    sync.Mutex
-	calls []sendCall
-	disps []executor.Disposition
+	mu       sync.Mutex
+	calls    []sendCall
+	disps    []executor.Disposition
+	released map[string]bool
+	noops    int
 	// hook runs before Send answers; a non-nil error is Send's error.
 	hook func(ctx context.Context, call int, sessionID string) error
 }
@@ -96,11 +101,27 @@ func (e *convExecutor) Send(ctx context.Context, sessionID string, msgs []execut
 
 func (e *convExecutor) Close(context.Context, string) error { return nil }
 
-func (e *convExecutor) Release(_ context.Context, _ string, d executor.Disposition) error {
+func (e *convExecutor) Release(_ context.Context, sessionID string, d executor.Disposition) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.released[sessionID] {
+		e.noops++
+		return nil
+	}
+	if e.released == nil {
+		e.released = map[string]bool{}
+	}
+	e.released[sessionID] = true
 	e.disps = append(e.disps, d)
 	return nil
+}
+
+// noopReleases returns the number of releases of an already released
+// session.
+func (e *convExecutor) noopReleases() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.noops
 }
 
 func (e *convExecutor) releases() []executor.Disposition {
@@ -849,25 +870,34 @@ func TestOpenResponsesDoubleFailureReleasesOnce_spec_15(t *testing.T) {
 	}
 }
 
-// TestOpenResponsesFailureOnAnErasedSessionReleasesNothing_spec_15 pins the
-// failure exit of a turn whose session an erasure deleted mid-turn. The
-// erasure ended the session through its terminal path, which released the
-// pod, before it deleted the row, so endHeldSession's failed write finds no
-// row and the handler answers 500 without releasing the executor binding a
-// second time. Both failure points are covered: the executor failing and the
-// response commit failing on the missing row.
+// TestOpenResponsesFailureOnAnErasedSessionReleasesOnce_spec_15 pins the
+// failure exit of a turn whose session a §12.8 erasure deleted mid-turn.
+// endHeldSession's failed write finds no row, runs no post-terminal hook, and
+// falls back to its own executor release with the failed disposition. The
+// erasure's drain releases the binding only through its CH-BINDRELEASE
+// publish, which is not redelivered when lost. When the publish was lost the
+// handler's release is the only one and ends the binding. When the publish
+// arrived first the handler's release reaches an executor that no longer
+// holds the binding and is a no-op, so the binding is released once in total.
+// Both failure points are covered: the executor failing and the response
+// commit failing on the missing row.
 //
 // spec: §15 (Open Responses conversation sessions), §12.8 (Compliance Interfaces), §6.2 (Pod State Machine)
-func TestOpenResponsesFailureOnAnErasedSessionReleasesNothing_spec_15(t *testing.T) {
+func TestOpenResponsesFailureOnAnErasedSessionReleasesOnce_spec_15(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		cold    bool
-		sendErr bool
+		name         string
+		cold         bool
+		sendErr      bool
+		publishLands bool
 	}{
-		{name: "warm turn executor failure", sendErr: true},
-		{name: "warm turn commit on deleted row"},
-		{name: "cold turn executor failure", cold: true, sendErr: true},
-		{name: "cold turn commit on deleted row", cold: true},
+		{name: "warm turn executor failure, publish lost", sendErr: true},
+		{name: "warm turn commit on deleted row, publish lost"},
+		{name: "cold turn executor failure, publish lost", cold: true, sendErr: true},
+		{name: "cold turn commit on deleted row, publish lost", cold: true},
+		{name: "warm turn executor failure, publish delivered", sendErr: true, publishLands: true},
+		{name: "warm turn commit on deleted row, publish delivered", publishLands: true},
+		{name: "cold turn executor failure, publish delivered", cold: true, sendErr: true, publishLands: true},
+		{name: "cold turn commit on deleted row, publish delivered", cold: true, publishLands: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newConvFixture(t, convOptions{hold: true})
@@ -879,6 +909,11 @@ func TestOpenResponsesFailureOnAnErasedSessionReleasesNothing_spec_15(t *testing
 			f.exec.hook = func(ctx context.Context, call int, sessionID string) error {
 				if call != 2 {
 					return nil
+				}
+				if tc.publishLands {
+					// The CH-BINDRELEASE subscriber releases the binding this
+					// replica holds for the drained session.
+					_ = f.exec.Release(ctx, sessionID, executor.DispositionCancelled)
 				}
 				if err := f.inner.Delete(ctx, "acme", sessionID); err != nil {
 					t.Errorf("erase %s: %v", sessionID, err)
@@ -895,8 +930,18 @@ func TestOpenResponsesFailureOnAnErasedSessionReleasesNothing_spec_15(t *testing
 			if _, _, hooks := f.terminal.snapshot(); hooks != 0 {
 				t.Errorf("hooks = %d, want 0", hooks)
 			}
-			if got := f.exec.releases(); len(got) != 0 {
-				t.Errorf("releases = %v, want none: the erasure's terminal path released the pod", got)
+			got, noops := f.exec.releases(), f.exec.noopReleases()
+			if tc.publishLands {
+				if len(got) != 1 || got[0] != executor.DispositionCancelled {
+					t.Errorf("releases = %v, want only the erasure's release", got)
+				}
+				if noops != 1 {
+					t.Errorf("no-op releases = %d, want 1: the handler's fallback release must still run", noops)
+				}
+				return
+			}
+			if len(got) != 1 || got[0] != executor.DispositionFailed {
+				t.Errorf("releases = %v, want one DispositionFailed: a lost publish leaves the handler's release as the only one", got)
 			}
 		})
 	}

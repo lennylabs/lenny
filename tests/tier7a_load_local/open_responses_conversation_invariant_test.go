@@ -63,7 +63,9 @@ const (
 
 // orInvRuntime is the model runtime behind every session. It keeps each
 // session's received history, records the history at the end of each turn
-// keyed by the turn's token, and counts releases.
+// keyed by the turn's token, and counts releases. A release that ends a
+// binding counts in releases; a release of a session that holds no binding is
+// a no-op, as executor.SessionReleaser states, and counts in noopReleases.
 type orInvRuntime struct {
 	mu        sync.Mutex
 	bound     map[string]bool
@@ -72,14 +74,17 @@ type orInvRuntime struct {
 	firstSend map[string][]executor.Message
 	receiver  map[int]string
 	releases  map[string]int
-	faults    map[int]orInvFault
+	// noopReleases counts the releases of a session that held no binding.
+	noopReleases map[string]int
+	faults       map[int]orInvFault
 }
 
 func newORInvRuntime() *orInvRuntime {
 	return &orInvRuntime{
 		bound: map[string]bool{}, history: map[string][]executor.Message{},
 		snapshots: map[int][]executor.Message{}, firstSend: map[string][]executor.Message{},
-		receiver: map[int]string{}, releases: map[string]int{}, faults: map[int]orInvFault{},
+		receiver: map[int]string{}, releases: map[string]int{}, noopReleases: map[string]int{},
+		faults: map[int]orInvFault{},
 	}
 }
 
@@ -154,13 +159,25 @@ func (m *orInvRuntime) deliverREST(id, content string) bool {
 
 func (m *orInvRuntime) Close(ctx context.Context, id string) error { return m.Release(ctx, id, "") }
 
-// Release ends the session's binding and counts the call.
+// Release ends the session's binding and counts the call, as a no-op when
+// the session holds no binding.
 func (m *orInvRuntime) Release(_ context.Context, id string, _ executor.Disposition) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !m.bound[id] {
+		m.noopReleases[id]++
+		return nil
+	}
 	m.releases[id]++
 	m.bound[id] = false
 	return nil
+}
+
+// isBound reports whether the session still holds its binding.
+func (m *orInvRuntime) isBound(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.bound[id]
 }
 
 // orInvStore counts each committed transition of a session into a terminal
@@ -359,13 +376,20 @@ func (w *orInvWorld) terminate(id string) {
 	}
 }
 
-// erase terminates the session and deletes its row and transcript, as the
-// §12.8 erasure does.
-func (w *orInvWorld) erase(id string) {
+// erase deletes the session's row and transcript, as the §12.8 erasure does.
+// When publishLands is set, the drain's terminal transition runs first and
+// its CH-BINDRELEASE publish reaches this replica, whose post-terminal path
+// releases the binding. Otherwise the publish is lost, which is not
+// redelivered, and the row is deleted while this replica still holds the
+// binding, so a turn that fails on the missing row is the release that
+// remains.
+func (w *orInvWorld) erase(id string, publishLands bool) {
 	w.mu.Lock()
 	w.erased[id] = true
 	w.mu.Unlock()
-	w.terminate(id)
+	if publishLands {
+		w.terminate(id)
+	}
 	_ = w.store.Delete(context.Background(), orInvTenant, id)
 	_, _ = w.transcripts.DeleteBySession(context.Background(), orInvTenant, id)
 }
@@ -373,6 +397,12 @@ func (w *orInvWorld) erase(id string) {
 // rest delivers one REST message to the session and appends it to the
 // session's transcript, as a POST /v1/sessions/{id}/messages delivery does.
 func (w *orInvWorld) rest(id string) {
+	w.mu.Lock()
+	erased := w.erased[id]
+	w.mu.Unlock()
+	if erased {
+		return
+	}
 	content := "rest-" + strconv.FormatInt(w.nextToken.Add(1), 10)
 	if !w.rt.deliverREST(id, content) {
 		return
@@ -423,7 +453,7 @@ func (w *orInvWorld) drive(rng *rand.Rand, ops int) {
 		default:
 			if prev := w.pick(rng, false); prev != "" && rng.Intn(2) == 0 {
 				sid, _ := orInvSplit(prev)
-				w.erase(sid)
+				w.erase(sid, rng.Intn(2) == 0)
 			}
 		}
 	}
@@ -496,6 +526,9 @@ func (w *orInvWorld) audit() []string {
 	}
 	for _, k := range w.failed {
 		sid := w.rt.receiver[k]
+		if sid != "" && w.rt.isBound(sid) {
+			out = append(out, fmt.Sprintf("failed turn %d left session %s holding its binding", k, sid))
+		}
 		if sid == "" || w.erased[sid] {
 			continue
 		}
@@ -507,6 +540,11 @@ func (w *orInvWorld) audit() []string {
 	for sid, n := range w.rt.releases {
 		if n > 1 {
 			out = append(out, fmt.Sprintf("session %s released %d times", sid, n))
+		}
+	}
+	for sid, n := range w.rt.noopReleases {
+		if !w.erased[sid] {
+			out = append(out, fmt.Sprintf("session %s with no erasure released %d extra times", sid, n))
 		}
 	}
 	for sid, n := range w.store.terminals {
@@ -523,8 +561,11 @@ func (w *orInvWorld) audit() []string {
 // and failures, terminates, and erasures, a response id answered twice, a
 // completed response's conversation context differed from the history its
 // runtime held at the end of the turn (cut at an erased ancestor), an erased
-// head answered other than 404, a failed turn left its session live, or a
-// session was released or ended more than once. Replay with
+// head answered other than 404, a failed turn left its session live or
+// holding its executor binding (including a turn that failed on a row an
+// erasure deleted after losing its CH-BINDRELEASE publish), a session's
+// binding was ended more than once, a session no erasure touched received a
+// redundant release, or a session was ended more than once. Replay with
 // LENNY_LIFECYCLE_SEED set to the logged seed. Check reserve, commitWarm,
 // serveCold, and endHeldSession in
 // pkg/gateway/environment/translator/open_responses.go and rehydrate and
