@@ -53,8 +53,8 @@ func TestSingleShotErrorFrom(t *testing.T) {
 // a shared-service rejection into a typed *translator.SingleShotError rather
 // than an opaque error, so the adapter fails closed with the service layer's
 // code. An empty RuntimeRef trips create-and-start validation before any pod
-// claim, exercising the error-mapping branch (the happy path needs a live pod
-// and is covered at tier 5). spec: §15.2.1 rule 1; §15 single-shot compute model.
+// claim, exercising the error-mapping branch.
+// spec: §15.2.1 rule 1; §15 single-shot compute model.
 func TestSessionSingleShotBinderMapsServiceError(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	binder := sessionSingleShotBinder{srv: srv, runtimes: runtimestore.NewMemory(), capOverrides: runtimecapoverride.NewMemory()}
@@ -173,5 +173,34 @@ func TestSessionHolderForwarderAdaptsTheSessionServer_spec_29_3(t *testing.T) {
 			t.Errorf("forwarded=%v: local %v, refusals %d, body %q; want local with nothing written",
 				sessionserver.Forwarded(ctx), local, refused, rec.Body.String())
 		}
+	}
+}
+
+// TestSessionSingleShotBinderReturnsTheCreatedSession_spec_15 pins the
+// binder's success path: a create-and-start the session server accepts
+// yields a binding naming the created session and its recovery generation,
+// and a session whose runtime the registry does not hold is released after
+// its turn.
+//
+// spec: §15 built-in adapter single-shot compute model, §15 (Open Responses
+// conversation sessions), §7.1 create-and-start atomicity
+func TestSessionSingleShotBinderReturnsTheCreatedSession_spec_15(t *testing.T) {
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
+	binder := sessionSingleShotBinder{srv: srv, runtimes: runtimestore.NewMemory(), capOverrides: runtimecapoverride.NewMemory()}
+
+	binding, err := binder.BindSingleShot(context.Background(), translator.SingleShotSpec{TenantID: "acme", RuntimeRef: "chat", UserID: "alice@acme.com"})
+	if err != nil {
+		t.Fatalf("BindSingleShot = %v, want the created session", err)
+	}
+	row, gerr := store.Get(context.Background(), "acme", binding.SessionID)
+	if gerr != nil {
+		t.Fatalf("read the bound session %q: %v", binding.SessionID, gerr)
+	}
+	if binding.RecoveryGeneration != row.RecoveryGeneration {
+		t.Errorf("binding recovery generation = %d, want the row's %d", binding.RecoveryGeneration, row.RecoveryGeneration)
+	}
+	if binding.Hold {
+		t.Error("binding holds a session whose runtime the registry does not hold, want released")
 	}
 }
