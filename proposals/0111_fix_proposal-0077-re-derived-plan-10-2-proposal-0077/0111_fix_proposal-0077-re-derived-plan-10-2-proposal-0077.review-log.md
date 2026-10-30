@@ -1674,3 +1674,7 @@ WATCHOUT: Summary decision 14 (summary.md:34) states the podId binding unconditi
 FACT: controller-runtime envtest (v0.19.7) starts kube-apiserver with service-account-issuer/key/signing-key flags, so TEST-1 item 13's TokenRequest-bound VerifyPod check against envtest is feasible — EVIDENCE: $GOMODCACHE/sigs.k8s.io/controller-runtime@v0.19.7/pkg/internal/testing/controlplane/apiserver.go:347-349
 FACT: the gateway-control shutdown step exists and closes inputWaits before GracefulStop — EVIDENCE: cmd/lenny-gateway/shutdown.go:178-183; shutdown tests live in cmd/lenny-gateway/shutdown_helper_test.go
 WATCHOUT: rule M4's warm share is a nested acquisition (warm-share slot, then M4 slot); TEST-1 item 20 (M6) asserts only "the limiter's" in-flight count, so a warm-share slot leaked when the M4 wait times out is unpinned — EVIDENCE: non-spec-changes.md:100, :305
+
+### [orchestrator.decisions-2026-10-30b]
+
+- DECISION (orchestrator under the owner's standing delegation, 2026-10-30): open decisions 1 to 4 are taken as option B (refuse a cross-tenant private entry on a shared Runtime), option (a) (name ReadCredentialSecret in §16.4 and §4.7.11 item 6), option (a) (spec Role example shows the placeholder), and no INFRA-1 memory ceiling. New decision 5: private stores and private entries require enforced pod identity binding (a projected SA token with an audience, verified by FetchGitPack), and otherwise fail closed to the cold path, with the §10.3 work staged if small or filed as a prerequisite.
