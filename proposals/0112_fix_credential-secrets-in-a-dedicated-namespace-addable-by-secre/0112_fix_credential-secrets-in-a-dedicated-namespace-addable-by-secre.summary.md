@@ -96,7 +96,7 @@
 
 ## Open decisions for human to make
 
-1. **Is a documented operator obligation enough to keep the credentials namespace credential-only?** The problem statement asks the proposal to specify a guard that keeps the credentials namespace free of anything but credential Secrets, naming admission, the chart, or "a documented operator obligation with a preflight check" as the options. The staged §4.9 **Credentials namespace.** paragraph states the operator obligation and adds no preflight check, and the proposal accepts that a non-credential Secret an operator places there is readable by the Token Service. The **Non-goals** list rejects an admission policy (availability dependency) and a preflight RoleBinding or quota check (it cannot judge cluster-wide bindings, and the preflight Job holds no SAR grant). The question is whether this meets the requirement, or whether a preflight check over the namespace contents is required. The spec loop raised this for the owner and derived no recommendation; the open-decisions-and-impact-review phase supplies one.
+None. Decision 1 (keeping the credentials namespace credential-only) was decided on 2026-10-30 by the orchestrator under the owner's standing delegation. The staged chart guards stay: the render guard against the release and agent namespaces, and the `pods: "0"` quota. The operator obligation stays documented. The proposal also adds a preflight check that lists every Secret in the credentials namespace that no credential pool references and Lenny did not write. The check warns rather than fails, because an operator may create a Secret before registering it (variant A). The listing makes a stray Secret visible without blocking an install.
 
 ## Defects in the shipped tree that this proposal does not stage
 

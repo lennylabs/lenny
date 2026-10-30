@@ -543,3 +543,7 @@ OPEN [non-spec-changes.md DOCS-1]: add docs/runbooks/tenant-deletion-overdue.md,
 OPEN [non-spec-changes.md DOCS-1]: docs/runbooks/token-service-outage.md opening impact sentence ("Existing sessions holding active leases are unaffected until lease expiry") needs the VCS read impact (spec.3.review-docs-alignment.1).
 OPEN [non-spec-changes.md DOCS-1]: add a `TOKEN_SERVICE_NOT_CONFIGURED` | 422 row to docs/reference/error-catalog.md and name the code as the no-Token-Service outcome in the docs/api/admin.md bullet (spec.5.fix-G2.1, spec.6.review-docs-alignment.1, spec.7.review-docs-alignment.1).
 FACT: carried the owner OPEN from spec.3.review-security.1 (problem-statement item 1 preflight check for the credentials namespace) into summary **Open decisions for human to make** as decision 1, with no recommendation. The Settled line "Open decisions. Summary reads 'No decision is open.'" is false now. Not carried: UNVERIFIED **roleArn by tenant-admin.** (a verification question first) and **Writes to a deleting tenant.** (a summary-defects recording choice for the loop).
+
+### [orchestrator.decisions-2026-10-30e]
+
+- DECISION (orchestrator under the owner's standing delegation, 2026-10-30): open decision 1 takes the staged chart guards and the documented operator obligation, plus a preflight check that warns on every Secret in the credentials namespace that no credential pool references and Lenny did not write. It warns rather than fails, because variant A creates a Secret before it is registered.
