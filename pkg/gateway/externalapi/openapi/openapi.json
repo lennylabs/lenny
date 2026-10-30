@@ -29,7 +29,7 @@
             "required": ["code", "category", "message", "retryable"],
             "properties": {
               "code":      { "type": "string", "description": "§15.1 canonical error code (e.g. VALIDATION_ERROR, UNAUTHORIZED, MCP_PROTOCOL_VERSION_RETIRED)." },
-              "category":  { "type": "string", "enum": ["VALIDATION", "AUTH", "AUTHZ", "NOT_FOUND", "CONFLICT", "TRANSIENT", "RATE_LIMIT", "INTERNAL", "UNAVAILABLE", "TIMEOUT"], "description": "coarse classification used by SDK retry logic." },
+              "category":  { "type": "string", "enum": ["TRANSIENT", "PERMANENT", "POLICY", "UPSTREAM"], "description": "§15.1 error category (the §16.3 taxonomy) used by SDK retry logic." },
               "message":   { "type": "string", "description": "Human-readable failure summary." },
               "retryable": { "type": "boolean", "description": "true when the client should retry, with backoff bounded by suggestedRetryAfter when present." },
               "details":   { "type": "object", "additionalProperties": true, "description": "Optional structured per-error context (fields, runbook, suggestedRetryAfter, …)." }

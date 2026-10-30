@@ -4341,6 +4341,9 @@ than filing a duplicate. F-10.1.45 was already closed and needed no record.
     `targetPool`, so a wrong pool answers a retryable 503 and the pool grant is not checked.
   - [ ] **F-15.1.66** (Medium, filed from F-7.1.36): replay compares no `executionMode` and never answers
     `400 INCOMPATIBLE_RUNTIME`.
+  - [x] **F-15.1.67** (Low, filed from F-15.1.65): the served `Error` schema closes `error.category` over a
+    vocabulary the gateway never writes, so no 4xx body validates. Closed 2026-10-30 by direct fix on
+    `fix/derive-replay-validation`: the enum is the §15.1 categories, pinned to `errorclassify`.
   - [x] **F-15.1.63** (Medium): derive and replay mint no `uploadToken`, although the §15.1 replay response is
     identical to `POST /v1/sessions`. Closed 2026-10-30 by direct fix on `fix/derive-claim-and-setup-labels`:
     both handlers mint through the create path's `mintUploadToken` before the insert, store the digest and
