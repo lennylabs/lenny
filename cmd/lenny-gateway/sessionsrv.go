@@ -250,7 +250,10 @@ func (w *gatewayWiring) buildSessionServer(
 		EvalPerSessionPerMinute: *evalRLPerSessionPerMin,
 		EvalPerTenantPerMinute:  *evalRLPerTenantPerMin,
 		DefaultIsolationProfile: isolation.Profile(*defaultIsolationProfile),
-		DevMode:                 *devMode,
+		// spec: §17.5, §16.1 — label runtime_class with the controller's
+		// RuntimeClass names (F-16.1.10).
+		RuntimeClassNameOverrides: w.runtimeClassOverrides(),
+		DevMode:                   *devMode,
 		// spec: §10.2 — only a dev-mode gateway lets a request with no
 		// principal name its tenant through X-Lenny-Tenant-ID; outside dev
 		// mode the tenant comes from the verified bearer alone. F-10.2.21.

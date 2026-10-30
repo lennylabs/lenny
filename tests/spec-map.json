@@ -6156,6 +6156,9 @@
       "title": "Metrics",
       "spec_file": "spec/16_observability.md",
       "tests": [
+        "pkg/gateway/podlifecycle/podsession/runtimeclass_override_test.go::TestBinderLabelsRuntimeClassThroughTheOverride_spec_16_1",
+        "pkg/gateway/sessionserver/runtimeclass_override_internal_test.go::TestServerLabelsRuntimeClassThroughTheOverride_spec_16_1",
+        "pkg/gateway/session/recycle/runtimeclass_override_test.go::TestRecycleSeamsLabelRuntimeClassThroughTheOverride_spec_16_1",
         "pkg/gateway/sessionserver/start_pod_test.go",
         "pkg/gateway/podlifecycle/podsession/setup_failure_labels_test.go::TestSetupCommandFailureCarriesPoolAndRuntimeClass_spec_16_1",
         "pkg/observability/metrics/metrics_test.go::TestValidateAcceptsCanonicalNames",
@@ -6567,6 +6570,8 @@
       "title": "Cloud Portability",
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
+        "pkg/sandbox/isolation/runtimeclass_test.go::TestRuntimeClassOverridesKeepsOnlySetProfiles_spec_17_5",
+        "cmd/lenny-gateway/runtimeclass_test.go::TestRuntimeClassOverrideFlagsReachTheGatewayMap_spec_17_5",
         "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestManagedIngress",
         "tests/tier6_e2e_cloud/aws_resources_test.go::TestCloudKMS",
         "tests/tier6_e2e_cloud/aws_resources_test.go::TestCloudCSI",

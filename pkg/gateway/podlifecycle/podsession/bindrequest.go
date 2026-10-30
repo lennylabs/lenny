@@ -409,11 +409,20 @@ type SetupCommandFailure struct {
 }
 
 // runtimeClassOf returns the RuntimeClass name a pod of the §5.3 isolation
-// profile runs under, by the same mapping the warm-pool claim counter uses,
-// or the empty string for an unrecognized profile.
-// spec: §5.3 (Isolation Profiles); §16.1 (Metrics).
-func runtimeClassOf(profile string) string {
-	rc, _ := isolation.RuntimeClassName(isolation.Profile(profile))
+// profile runs under, honoring the §17.5 operator override the controller
+// applies to the pod's runtimeClassName, and reports false for an
+// unrecognized profile. The warm-pool claim counter and the
+// setup_command_failed count both label runtime_class through it, so both
+// agree with the controller's series under an override (F-16.1.10).
+// spec: §5.3 (Isolation Profiles); §17.5; §16.1 (Metrics).
+func (b *Binder) runtimeClassOf(profile string) (string, bool) {
+	return isolation.ResolveRuntimeClassName(isolation.Profile(profile), b.RuntimeClassNameOverrides)
+}
+
+// runtimeClassLabel is runtimeClassOf with an unrecognized profile mapped to
+// the empty label, for a failure record that carries the label as data.
+func (b *Binder) runtimeClassLabel(profile string) string {
+	rc, _ := b.runtimeClassOf(profile)
 	return rc
 }
 

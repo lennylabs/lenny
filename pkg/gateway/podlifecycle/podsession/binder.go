@@ -21,6 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
 // Binder places sessions on warm pods.
@@ -144,6 +145,16 @@ type Binder struct {
 	// keys off this denominator. Nil is a no-op.
 	// spec: §6.3, §16.1.
 	ClaimAccepted func(pool, runtimeClass string)
+	// RuntimeClassNameOverrides is the §17.5 per-profile RuntimeClass name
+	// override map, built by isolation.RuntimeClassOverrides from the same
+	// chart `isolation.runtimeClassNames` values the controller reads. The
+	// binder maps a pod's §5.3 isolation profile through it to the
+	// runtime_class label of lenny_warmpool_claims_total and of its
+	// setup_command_failed count of lenny_warmpool_warmup_failure_total, so
+	// those series name the RuntimeClass the controller stamped on the pod.
+	// Nil keeps every profile on its default name.
+	// spec: §17.5, §5.3 (Isolation Profiles), §16.1 (Metrics).
+	RuntimeClassNameOverrides map[isolation.Profile]string
 	// SDKDemotion records one §6.1 SDK-warm demotion: the binder
 	// demoted an SDK-warm pod to pod-warm because the workspace plan
 	// matched a sdkWarmBlockingPaths pattern. pool is the demoted pod's
