@@ -4,9 +4,10 @@
 
 name: dco
 
+# CI is paused (owner decision 2026-10-30): this workflow runs only when triggered
+# by hand. Restore its original triggers when CI resumes.
 on:
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
