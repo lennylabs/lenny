@@ -442,7 +442,7 @@ func (d *restDelivery) notCoordinating(row sessionstore.Session, deliverIdx []in
 	s := d.s
 	kind := messageForwardKind(d.req)
 	if kind != ForwardKindMessageNoReplyTo {
-		s.refuseForward(d.w, d.r.Context(), row, kind, ForwardNotDelivered)
+		s.refuseForward(d.w, d.r.Context(), row, kind, ForwardNotDelivered, nil)
 		return deliveryOutcome{}, false
 	}
 	outcome, terminal := s.holdOutcomeWithTTL(d.r.Context(), row, d.req, deliverIdx, s.recoveringDLQTTL(row))

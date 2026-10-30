@@ -4199,7 +4199,8 @@
         "tests/tier2_component/stores/sessionstore_test.go::TestSessionStoreConcurrencyCountsMatchPredicate_spec_11_1",
         "tests/tier3_contract/rest_mcp_consistency/cap_refusal_parity_test.go::TestResumeCapRefusalParity_spec_15_2_1",
         "tests/tier4_integration/suspended_resume_admission_test.go::TestSuspendedSessionResumeAdmissionOnCompose_spec_11_1",
-        "tests/tier7a_load_local/suspended_resume_admission_race_test.go::TestConcurrentSuspendedResumesAtQuota_spec_11_1"
+        "tests/tier7a_load_local/suspended_resume_admission_race_test.go::TestConcurrentSuspendedResumesAtQuota_spec_11_1",
+        "pkg/gateway/sessionserver/holder_forward_sites_test.go::TestForwardedCreateAndStartKeepsTheAdmissionRateLimit_spec_29_3"
       ],
       "packages": [
         "pkg/policy/admission"
@@ -4372,7 +4373,9 @@
         "tests/tier7b_load_kind/scenarios/credential_lifecycle",
         "pkg/gateway/sessionserver/holder_forward_sites_test.go::TestWiredResumeForwardRefusalsStayOutOfTheIdempotencyCache_spec_11_5",
         "pkg/gateway/mcpfabric/mcptools/holder_forward_sites_test.go::TestWiredCancelSessionForwardRefusalsStayOutOfTheIdempotencyCache_spec_11_5",
-        "pkg/gateway/sessionserver/holder_forward_marker_internal_test.go::TestForwardedMarkerFlushCarriesTheNoStoreMark_spec_29_3"
+        "pkg/gateway/sessionserver/holder_forward_marker_internal_test.go::TestForwardedMarkerFlushCarriesTheNoStoreMark_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardedResponsesTurnAtANonHolderIsNotDeliveredInAnyState_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestUnforwardedResponsesTurn_spec_29_3"
       ],
       "packages": [
         "pkg/idempotency",
@@ -5617,7 +5620,15 @@
         "tests/tier5_e2e_kind/openai_conformance_test.go",
         "tests/tier2_component/translators/openai_singleshot_lifecycle_test.go",
         "tests/tier4_integration/delegation_child_materialization_test.go",
-        "pkg/gateway/environment/translator/open_responses_test.go::TestOpenResponsesInputRequiredIsInProgress_spec_7_2"
+        "pkg/gateway/environment/translator/open_responses_test.go::TestOpenResponsesInputRequiredIsInProgress_spec_7_2",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardedResponsesTurnAtANonHolderIsNotDeliveredInAnyState_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardedResponsesTurnAtTheHolderRunsLocally_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestUnforwardedResponsesTurn_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestResponsesTurnForwardStatesAreRunningOnly_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_sites_test.go::TestForwardedCreateAndStartKeepsTheAdmissionRateLimit_spec_29_3",
+        "cmd/lenny-gateway/holder_forward_wiring_test.go::TestHolderForwardInnerRoutesOnlyTheResponsesCreate_spec_29_3",
+        "tests/tier4_integration/holder_forward_responses_test.go::TestOffHolderResponsesTurnIsServedOnTheHoldersPod_spec_29_3",
+        "tests/tier4_integration/holder_forward_responses_test.go::TestUndeliveredResponsesTurnFailsClosedInTheNativeEnvelope_spec_29_3"
       ],
       "packages": [
         "pkg/api/v1/session",
@@ -8423,7 +8434,16 @@
         "tests/tier8_chaos/holder_forward_chaos_test.go::TestCoordinatorCrashAfterReadingAForwardIsRefusedAndNotHeld_spec_29_3",
         "tests/tier8_chaos/holder_forward_chaos_test.go::TestForwardResolvesTheCoordinatorThroughThePostgresLeaseFallback_spec_10_1_1",
         "tests/tier9_security/network_policy_test.go::TestHolderForwardPortAdmitsOnlyGatewayPeers_spec_13_2_4",
-        "tests/tier9_security/network_policy_test.go::TestPublicListenerDoesNotRunARequestAsTheCallingSession_spec_29_3"
+        "tests/tier9_security/network_policy_test.go::TestPublicListenerDoesNotRunARequestAsTheCallingSession_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardedResponsesTurnAtANonHolderIsNotDeliveredInAnyState_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardedResponsesTurnAtTheHolderRunsLocally_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestUnforwardedResponsesTurn_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestOtherKindsKeepTheStateGateAheadOfTheForwardedCheck_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestResponsesTurnForwardStatesAreRunningOnly_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_sites_test.go::TestForwardedCreateAndStartKeepsTheAdmissionRateLimit_spec_29_3",
+        "cmd/lenny-gateway/holder_forward_wiring_test.go::TestHolderForwardInnerRoutesOnlyTheResponsesCreate_spec_29_3",
+        "tests/tier4_integration/holder_forward_responses_test.go::TestOffHolderResponsesTurnIsServedOnTheHoldersPod_spec_29_3",
+        "tests/tier4_integration/holder_forward_responses_test.go::TestUndeliveredResponsesTurnFailsClosedInTheNativeEnvelope_spec_29_3"
       ]
     },
     "28.7": {

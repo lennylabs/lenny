@@ -21,6 +21,7 @@ import (
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	rlcounter "github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
@@ -539,4 +540,39 @@ func TestWiredResumeForwardRefusalsStayOutOfTheIdempotencyCache_spec_11_5(t *tes
 			t.Error("the coordinator's own 409 was not stored")
 		}
 	})
+}
+
+// TestForwardedCreateAndStartKeepsTheAdmissionRateLimit_spec_29_3 pins that
+// a session create made while serving a forwarded request is still admitted
+// under the §11.1 per-runtime request-rate limit. Rule 4 exempts the
+// forwarded request itself from §11.1, but an Open Responses turn that goes
+// cold on the coordinator creates a new session, and that create is admitted
+// as an unmarked one is.
+//
+// spec: 29.3 (Interactive message send) Forwarding rule 4, 11.1 (Admission and Fairness), 15 (Open Responses conversation sessions)
+func TestForwardedCreateAndStartKeepsTheAdmissionRateLimit_spec_29_3(t *testing.T) {
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		name string
+		ctx  context.Context
+	}{
+		{"unmarked", context.Background()},
+		{"forwarded", WithForwarded(context.Background())},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			counter := rlcounter.NewMemory()
+			if _, err := counter.Incr(context.Background(), "rt:acme:echo", now); err != nil {
+				t.Fatal(err)
+			}
+			s := New(memstore.New(), Options{
+				AdmissionRateLimitCounter: counter,
+				PerRuntimePerMinute:       1,
+				Clock:                     func() time.Time { return now },
+			})
+			_, svcErr := s.CreateAndStartService(c.ctx, "acme", CreateSessionRequest{RuntimeRef: "echo"})
+			if svcErr == nil || svcErr.Code != "RATE_LIMITED" || svcErr.HTTPStatus != http.StatusTooManyRequests {
+				t.Fatalf("CreateAndStartService = %+v, want 429 RATE_LIMITED once the per-runtime limit is exhausted", svcErr)
+			}
+		})
+	}
 }
