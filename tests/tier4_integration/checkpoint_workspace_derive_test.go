@@ -434,10 +434,13 @@ type restoreFixture struct {
 	r      *lifecycleharness.Replica
 	store  *miniostore.Store
 	mstore *partialmanifeststore.MemoryStore
-	pod    *lifecycleharness.Pod
 }
 
-func newRestoreFixture(t *testing.T) *restoreFixture {
+// newRestoreFixture seeds pods idle pods. A scenario whose bind fails needs
+// more than one: the failed attempt's release deletes the per-pod claim of
+// a pod it was the only slot on, and the §4.6.1 occupancy projection moves
+// that pod to draining, so the §5.2 slot retry lands on another pod.
+func newRestoreFixture(t *testing.T, pods int) *restoreFixture {
 	t.Helper()
 	store := newLiveChunkStore(t)
 	mstore := partialmanifeststore.NewMemoryStore(nil)
@@ -446,12 +449,12 @@ func newRestoreFixture(t *testing.T) *restoreFixture {
 		t.Fatalf("object-store transport: %v", err)
 	}
 	h := lifecycleharness.New(t, lifecycleharness.Options{
-		Replicas: 1, Pods: 1, MaxConcurrentSessions: 8,
+		Replicas: 1, Pods: pods, MaxConcurrentSessions: 8,
 		ObjectStore: &lifecycleharness.ObjectStore{
 			Blobs: store, Manifests: mstore, Resolver: chunkResolver(store, mstore), Transport: transport,
 		},
 	})
-	return &restoreFixture{h: h, r: h.Replicas[0], store: store, mstore: mstore, pod: h.Cluster.Pods()[0]}
+	return &restoreFixture{h: h, r: h.Replicas[0], store: store, mstore: mstore}
 }
 
 // seedSource records a completed source session whose sealed snapshot is a
@@ -501,11 +504,15 @@ func (f *restoreFixture) finalizeAndStart(t *testing.T, id string) (int, map[str
 	return f.h.Do(f.r, http.MethodPost, "/v1/sessions/"+id+"/start", nil)
 }
 
-// slotTree reads the session's promoted slot workspace as relative path to
-// content.
+// slotTree reads the session's promoted slot workspace, on the pod its row
+// is bound to, as relative path to content.
 func (f *restoreFixture) slotTree(t *testing.T, id string) map[string]string {
 	t.Helper()
-	current := filepath.Join(f.pod.Adapter.WorkspaceBase, "slots", id, "current")
+	pod := f.h.Cluster.PodOf(f.h.Row(id).PodAssignment)
+	if pod == nil {
+		t.Fatalf("session %s is bound to no harness pod (pod assignment %q)", id, f.h.Row(id).PodAssignment)
+	}
+	current := filepath.Join(pod.Adapter.WorkspaceBase, "slots", id, "current")
 	tree := map[string]string{}
 	err := filepath.WalkDir(current, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -549,7 +556,7 @@ func wantRestoredTree() map[string]string {
 // (Session Replay Semantics); §5.1; §5.2; §14.1
 // diagnosis: a derived or replayed session started without its source snapshot, restored it from the source session's objects instead of its own copy, restored the session-file tree, or let the snapshot overwrite a plan source. Check workspaceRestore in pkg/gateway/sessionserver, mintRestoreChunks in pkg/gateway/podlifecycle/podsession, and restoreSeed in pkg/adapter.
 func TestDerivedAndReplayedSessionsStartFromTheirRestoredSnapshot_spec_7_1(t *testing.T) {
-	f := newRestoreFixture(t)
+	f := newRestoreFixture(t, 1)
 	cases := []struct {
 		name          string
 		route         string
@@ -604,13 +611,14 @@ func TestDerivedAndReplayedSessionsStartFromTheirRestoredSnapshot_spec_7_1(t *te
 // A derived chunk overwritten in place with the same number of bytes that are
 // not a gzip stream passes the gateway's chunk resolver, so the restore fails
 // inside the adapter. Every attempt fails, the §5.2 slot retry runs a second
-// FinalizeWorkspace with freshly minted grants, and /start answers 422
-// SLOT_FAILED with the transient category and leaves no started session.
+// FinalizeWorkspace with freshly minted grants on the pool's second pod, and
+// /start answers 422 SLOT_FAILED with the transient category and leaves no
+// started session on either pod.
 //
 // spec: §7.1 (Derive restore semantics); §5.2; §4.7.1
 // diagnosis: a restore that cannot complete started the session with a different workspace, was classified as a permanent slot failure and skipped the retry, or answered a status other than 422 SLOT_FAILED. Check the errRestore arm of FinalizeWorkspace in pkg/adapter and applySlotRetryPolicy in pkg/gateway/sessionserver.
 func TestCorruptDerivedChunkFailsTheStartAfterTheSlotRetry_spec_7_1(t *testing.T) {
-	f := newRestoreFixture(t)
+	f := newRestoreFixture(t, 2)
 	const source, checkpointID = "sess_restore_corrupt_source", "ck_restore_corrupt"
 	f.seedSource(t, source, checkpointID)
 	id := f.copyFrom(t, source, "derive", map[string]any{})
@@ -639,7 +647,7 @@ func TestCorruptDerivedChunkFailsTheStartAfterTheSlotRetry_spec_7_1(t *testing.T
 	junk := bytes.Repeat([]byte{'x'}, int(first.Size))
 	putChunk(t, f.store, lifecycleharness.Tenant, id, derivedCk, 0, partialmanifeststore.ChunkEncodingTarGz, junk)
 
-	finalizesBefore := f.pod.UnaryCalls("FinalizeWorkspace")
+	finalizesBefore := f.finalizeCalls()
 	code, resp := f.finalizeAndStart(t, id)
 	if code != http.StatusUnprocessableEntity {
 		t.Fatalf("start status = %d, want 422; body %v", code, resp)
@@ -652,16 +660,27 @@ func TestCorruptDerivedChunkFailsTheStartAfterTheSlotRetry_spec_7_1(t *testing.T
 	if details["category"] != "transient" {
 		t.Errorf("error.details.category = %v, want transient", details["category"])
 	}
-	if n := f.pod.UnaryCalls("FinalizeWorkspace") - finalizesBefore; n != 2 {
+	if n := f.finalizeCalls() - finalizesBefore; n != 2 {
 		t.Errorf("FinalizeWorkspace attempts = %d, want 2 (the first attempt and the §5.2 slot retry)", n)
 	}
 	if st := f.h.Row(id).State; st == session.StateRunning || st == session.StateStarting {
 		t.Errorf("session state after the failed start = %q, want not started", st)
 	}
-	if slices.Contains(f.pod.Runtime.Started(), id) {
-		t.Error("the runtime started the session after its restore failed")
+	for _, pod := range f.h.Cluster.Pods() {
+		if slices.Contains(pod.Runtime.Started(), id) {
+			t.Errorf("the runtime on pod %s started the session after its restore failed", pod.Name)
+		}
+		if _, serr := os.Stat(filepath.Join(pod.Adapter.WorkspaceBase, "slots", id, "current")); !os.IsNotExist(serr) {
+			t.Errorf("a workspace was promoted for the failed session on pod %s: %v", pod.Name, serr)
+		}
 	}
-	if _, serr := os.Stat(filepath.Join(f.pod.Adapter.WorkspaceBase, "slots", id, "current")); !os.IsNotExist(serr) {
-		t.Errorf("a workspace was promoted for the failed session: %v", serr)
+}
+
+// finalizeCalls sums the FinalizeWorkspace calls every pod's adapter served.
+func (f *restoreFixture) finalizeCalls() int {
+	n := 0
+	for _, pod := range f.h.Cluster.Pods() {
+		n += pod.UnaryCalls("FinalizeWorkspace")
 	}
+	return n
 }
