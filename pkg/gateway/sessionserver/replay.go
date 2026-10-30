@@ -134,6 +134,13 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 			map[string]any{"fields": []map[string]string{{"field": "sourceSessionId"}}})
 		return
 	}
+	// spec: §15.1 (Session Replay Semantics) — targetRuntime must be a
+	// registered runtime with the source session's executionMode; a
+	// different mode answers 400 INCOMPATIBLE_RUNTIME. It runs before the
+	// targetPool check, whose pool must be backed by this runtime.
+	if !s.requireReplayRuntimeCompatible(w, r, source, req.TargetRuntime) {
+		return
+	}
 
 	// §15.1 SEC-001 monotonicity — same rule as derive.
 	target := req.TargetIsolationProfile

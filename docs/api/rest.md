@@ -267,7 +267,7 @@ Re-run a session against a different runtime version using the same workspace an
 
 **Response:** the new session in `created` with its `uploadToken`, identical to a `POST /v1/sessions` response. The session then goes through the standard upload, finalize, and start lifecycle.
 
-**Key error codes:** `REPLAY_ON_LIVE_SESSION` (409), `INCOMPATIBLE_RUNTIME` (400), and `DERIVE_SNAPSHOT_UNAVAILABLE` (503). A `targetPool` is checked as on derive: `VALIDATION_ERROR` (400) for a pool that does not exist, is not backed by `targetRuntime`, or does not satisfy the target isolation profile, and `FORBIDDEN` (403) for a pool the tenant is not granted. The replayed session claims a warm pod at creation, so a claim failure answers the session-creation codes listed for `POST /v1/sessions/{id}/derive`.
+**Key error codes:** `REPLAY_ON_LIVE_SESSION` (409), `INCOMPATIBLE_RUNTIME` (400), and `DERIVE_SNAPSHOT_UNAVAILABLE` (503). A `targetRuntime` whose `executionMode` differs from the source session's answers `INCOMPATIBLE_RUNTIME` with `details.sourceExecutionMode` and `details.targetExecutionMode`, and a `targetRuntime` that is not registered answers `VALIDATION_ERROR` (400). A `targetPool` is checked as on derive: `VALIDATION_ERROR` (400) for a pool that does not exist, is not backed by `targetRuntime`, or does not satisfy the target isolation profile, and `FORBIDDEN` (403) for a pool the tenant is not granted. The replayed session claims a warm pod at creation, so a claim failure answers the session-creation codes listed for `POST /v1/sessions/{id}/derive`.
 
 ---
 

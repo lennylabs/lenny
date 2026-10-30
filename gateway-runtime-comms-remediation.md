@@ -4342,8 +4342,10 @@ than filing a duplicate. F-10.1.45 was already closed and needed no record.
     by direct fix on `fix/derive-replay-validation`: both handlers run the create path's selection check on
     `targetPool` before the copy, answering `400 VALIDATION_ERROR` or `403 FORBIDDEN`. Filed from the fix:
     F-15.1.67.
-  - [ ] **F-15.1.66** (Medium, filed from F-7.1.36): replay compares no `executionMode` and never answers
-    `400 INCOMPATIBLE_RUNTIME`.
+  - [x] **F-15.1.66** (Medium, filed from F-7.1.36): replay compares no `executionMode` and never answers
+    `400 INCOMPATIBLE_RUNTIME`. Closed 2026-10-30 by direct fix on `fix/derive-replay-validation`: replay
+    resolves `targetRuntime` and answers `400 INCOMPATIBLE_RUNTIME` with both modes on a mismatch, and
+    `400 VALIDATION_ERROR` for an unregistered runtime.
   - [x] **F-15.1.67** (Low, filed from F-15.1.65): the served `Error` schema closes `error.category` over a
     vocabulary the gateway never writes, so no 4xx body validates. Closed 2026-10-30 by direct fix on
     `fix/derive-replay-validation`: the enum is the §15.1 categories, pinned to `errorclassify`.

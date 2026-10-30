@@ -5639,6 +5639,8 @@
       "title": "REST API",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "pkg/gateway/sessionserver/replay_runtime_test.go::TestReplayRequiresMatchingExecutionMode_spec_15_1",
+        "tests/tier3_contract/rest_sessions/replay_incompatible_runtime_contract_test.go::TestReplayIncompatibleRuntimeContract_spec_15_1",
         "pkg/gateway/sessionserver/derive_replay_pool_selection_test.go",
         "tests/tier3_contract/rest_sessions/derive_replay_target_pool_contract_test.go::TestDeriveAndReplayTargetPoolSelectionContract_spec_15_1",
         "tests/tier9_security/derive_replay_pool_access_test.go::TestDeriveAndReplayTargetPoolEnforcesTenantAccess_spec_4",
