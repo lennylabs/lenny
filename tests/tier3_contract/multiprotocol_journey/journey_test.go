@@ -540,14 +540,17 @@ func runOpenAIChatJourney(t *testing.T, gw *journeyGateway, prompt string) {
 // --- Open Responses journey ---
 
 // runOpenResponsesJourney drives create -> prompt -> stream ->
-// terminate as the single POST /v1/responses call the Open Responses
-// protocol supports: response.created opens the envelope,
+// terminate as one POST /v1/responses call that carries no
+// previous_response_id: response.created opens the envelope,
 // response.output_text.delta streams the tokenized echo, and
 // response.completed carries the full response (including the
 // terminal "completed" status) as the streamed final chunk. spec:
-// §15.1 (Open Responses is a single-shot completion protocol with the
-// same create-and-complete-per-call contract as OpenAI Chat
-// Completions).
+// §15 (an Open Responses request with no previous_response_id creates
+// a session through the gates of the built-in adapter single-shot
+// compute model; after a successful turn the gateway keeps the session
+// running only when its conversationContinuity is "platform" and its
+// runtime declares multi_turn interaction and injection support, and
+// otherwise releases it before the response returns).
 func runOpenResponsesJourney(t *testing.T, gw *journeyGateway, prompt string) {
 	t.Helper()
 
