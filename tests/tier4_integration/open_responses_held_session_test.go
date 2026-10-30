@@ -4,80 +4,21 @@
 
 // Tier-4 integration tests for Open Responses conversation sessions on the
 // lifecycle harness. Each replica's POST /v1/responses is the translator's
-// Open Responses handler, wired as the gateway wires it: the binder runs the
-// replica's shared create-and-start service, the forwarder is the replica's
-// session server, and the session terminal is the replica's session server.
-// The binder's hold decision is fixed per test, because the gateway's binder
-// adapter lives in package main and reads a runtime registry the harness does
-// not seed.
+// Open Responses handler, which Harness.WireOpenResponses wires as the
+// gateway wires it. The binder's hold decision is fixed per test, because the
+// gateway's binder adapter reads a runtime registry the harness does not
+// seed.
 package tier4_integration_test
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
 )
-
-// harnessResponsesBinder runs the replica's create-and-start service and
-// reports hold, as the gateway's binder adapter does for a runtime whose hold
-// decision is hold.
-type harnessResponsesBinder struct {
-	h    *lifecycleharness.Harness
-	srv  *sessionserver.Server
-	hold bool
-}
-
-func (b harnessResponsesBinder) BindSingleShot(ctx context.Context, spec translator.SingleShotSpec) (translator.SingleShotBinding, error) {
-	resp, serr := b.srv.CreateAndStartService(ctx, spec.TenantID, sessionserver.CreateSessionRequest{
-		RuntimeRef: spec.RuntimeRef, UserID: spec.UserID, Environment: spec.Environment,
-	})
-	if serr != nil {
-		return translator.SingleShotBinding{}, &translator.SingleShotError{
-			HTTPStatus: serr.HTTPStatus, Code: serr.Code, Message: serr.Message,
-			RetryAfterSeconds: serr.RetryAfterSeconds, Retryable: serr.Retryable,
-		}
-	}
-	b.h.Track(resp.ID)
-	return translator.SingleShotBinding{SessionID: resp.ID, RecoveryGeneration: resp.RecoveryGeneration, Hold: b.hold}, nil
-}
-
-// harnessForwarder adapts the replica's session server to the translator's
-// holder forwarder, as the gateway's adapter does.
-type harnessForwarder struct{ srv *sessionserver.Server }
-
-func (f harnessForwarder) ForwardResponsesTurn(w http.ResponseWriter, r *http.Request, row sessionstore.Session, body []byte,
-	refuse func(http.ResponseWriter, string),
-) bool {
-	return f.srv.ForwardResponsesTurn(w, r, row, body, refuse) == sessionserver.ForwardLocal
-}
-
-func (harnessForwarder) Forwarded(ctx context.Context) bool { return sessionserver.Forwarded(ctx) }
-
-// wireResponses sets the Open Responses handler on every replica, sharing one
-// transcript store as the replicas of one deployment share one.
-func wireResponses(h *lifecycleharness.Harness, hold bool) {
-	transcripts := transcriptstore.NewMemory()
-	for _, r := range h.Replicas {
-		handler := translator.NewOpenResponsesHandler(h.Store, r.Executor, translator.OpenResponsesOptions{
-			SingleShotBinder: harnessResponsesBinder{h: h, srv: r.Server, hold: hold},
-			DefaultRuntime:   lifecycleharness.RuntimeRef,
-			Transcripts:      transcripts,
-			HolderForwarder:  harnessForwarder{srv: r.Server},
-			Terminal:         r.Server,
-			DevTenantHeader:  true,
-		})
-		r.SetResponsesHandler(handler.Handler())
-	}
-}
 
 // responsesTurnOn posts one Open Responses turn to replica r and returns the
 // response id, failing unless the turn answered 200.
@@ -114,7 +55,7 @@ func sessionOf(t *testing.T, id string) string {
 // pkg/gateway/environment/translator/open_responses.go.
 func TestHeldResponsesSessionServesThreeTurnsOnOnePod_spec_15(t *testing.T) {
 	h := newComposeWith(t, lifecycleharness.Options{Replicas: 1, Pods: 4})
-	wireResponses(h, true)
+	h.WireOpenResponses(true)
 	r := h.Replicas[0]
 
 	first := responsesTurnOn(t, h, r, "", "turn-1")
@@ -163,7 +104,7 @@ func TestHeldResponsesSessionServesThreeTurnsOnOnePod_spec_15(t *testing.T) {
 // pkg/gateway/environment/translator/open_responses.go.
 func TestUnheldResponsesSessionReleasesAfterEachTurn_spec_15(t *testing.T) {
 	h := newComposeWith(t, lifecycleharness.Options{Replicas: 1, Pods: 4})
-	wireResponses(h, false)
+	h.WireOpenResponses(false)
 	r := h.Replicas[0]
 
 	first := responsesTurnOn(t, h, r, "", "turn-1")

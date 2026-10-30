@@ -970,7 +970,9 @@
         "tests/tier4_integration/session_held_pod_integration_test.go",
         "tests/tier4_integration/stream_failure_recycle_retire_test.go",
         "tests/tier4_integration/delegation_tree_resume_peer_child_test.go",
-        "tests/tier4_integration/concurrent_slot_release_test.go"
+        "tests/tier4_integration/concurrent_slot_release_test.go",
+        "tests/tier4_integration/holder_forward_responses_test.go",
+        "tests/tier4_integration/open_responses_held_session_test.go"
       ],
       "load_local": [
         "tests/tier7a_load_local/suspension_interleaving_test.go",
@@ -1344,7 +1346,7 @@
       "unit": ["pkg/gateway/environment/translator/..."],
       "component": ["tests/tier2_component/translators/..."],
       "contract": ["tests/tier3_contract/rest_openai_chat/...", "tests/tier3_contract/rest_openai_responses/...", "tests/tier3_contract/multiprotocol_journey/..."],
-      "integration": ["tests/tier4_integration/gateway_require_auth_test.go", "tests/tier4_integration/openai_cross_tenant_test.go", "tests/tier4_integration/open_responses_held_session_test.go", "tests/tier4_integration/multi_protocol_same_deployment_test.go"],
+      "integration": ["tests/tier4_integration/gateway_require_auth_test.go", "tests/tier4_integration/openai_cross_tenant_test.go", "tests/tier4_integration/open_responses_held_session_test.go", "tests/tier4_integration/multi_protocol_same_deployment_test.go", "tests/tier4_integration/holder_forward_responses_test.go"],
       "e2e_kind": ["tests/tier5_e2e_kind/openai_conformance_test.go"],
       "load_local": ["tests/tier7a_load_local/scenarios/singleshot_admission_ordering/..."],
       "security": ["tests/tier9_security/unauthenticated_tenant_access_test.go", "tests/tier9_security/open_responses_isolation_erasure_test.go", "tests/tier9_security/open_responses_warm_user_test.go"]
