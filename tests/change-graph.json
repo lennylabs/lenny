@@ -450,6 +450,42 @@
       "load_local": ["tests/tier7a_load_local/orphan_cascade_sweeper_race_test.go"],
       "chaos": ["tests/tier8_chaos/orphan_cascade_replica_stop_test.go"]
     },
+    "tests/testinfra/ownerprincipal/": {
+      "unit": ["tests/testinfra/ownerprincipal/..."],
+      "component": ["tests/tier2_component/translators/..."],
+      "contract": [
+        "tests/tier3_contract/interceptor_immutable_envelope/...",
+        "tests/tier3_contract/multiprotocol_journey/...",
+        "tests/tier3_contract/rest_circuitbreaker/...",
+        "tests/tier3_contract/rest_idempotency/...",
+        "tests/tier3_contract/rest_mcp_consistency/...",
+        "tests/tier3_contract/rest_sessions/...",
+        "tests/tier3_contract/sdks/..."
+      ],
+      "integration": [
+        "tests/tier4_integration/credential_delivery_gate_test.go",
+        "tests/tier4_integration/cross_environment_delegation_test.go",
+        "tests/tier4_integration/delegation_credential_propagation_test.go",
+        "tests/tier4_integration/eager_claim_lifecycle_test.go",
+        "tests/tier4_integration/finalize_admission_race_test.go",
+        "tests/tier4_integration/workspace_defaults_test.go"
+      ],
+      "load_local": [
+        "tests/tier7a_load_local/finalize_admission_race_test.go",
+        "tests/tier7a_load_local/scenarios/singleshot_admission_ordering/..."
+      ],
+      "chaos": ["tests/tier8_chaos/workspace_defaults_outage_test.go"],
+      "security": [
+        "tests/tier9_security/credential_delivery_gate_test.go",
+        "tests/tier9_security/credential_lookup_failclosed_test.go",
+        "tests/tier9_security/delegation_credential_deny_leakage_test.go",
+        "tests/tier9_security/upload_ref_scope_test.go"
+      ]
+    },
+    "tests/testinfra/mcpcreate/": {
+      "unit": ["tests/testinfra/mcpcreate/...", "pkg/gateway/mcpfabric/mcptools/..."],
+      "contract": ["tests/tier3_contract/sdks/..."]
+    },
     "supervisor/": {
       "static": ["tests/tier0_static/supervisor_binary_test.go"],
       "unit": ["tests/tier1_unit/supervisor/...", "tests/testinfra/supervisorbuild/..."],
