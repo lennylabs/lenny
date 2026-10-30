@@ -62,7 +62,7 @@ graph TB
         end
         subgraph "Pod C (idle)"
             RA3[Runtime Adapter]
-            AB3["Agent Binary<br/>(not started)"]
+            AB3[Agent Binary]
         end
     end
 
@@ -132,7 +132,7 @@ The Stream Proxy has its own goroutine pool and concurrency limits. A slow clien
 Processes all file uploads from clients to pod workspaces. Uploads are streamed through the gateway (never directly to pods) to enforce tenant isolation and audit logging. Responsibilities:
 
 - **Payload validation.** Size limits, file type restrictions, and archive format validation.
-- **Staging.** Files are streamed to the pod's staging area and, for durable storage, to the Artifact Store (MinIO).
+- **Staging.** Files are streamed to the session's staging area (`/workspace/slots/{sessionId}/staging`) and, for durable storage, to the Artifact Store (MinIO).
 - **Archive extraction.** tar.gz and zip archives can be extracted during upload.
 - **Circuit breaker.** The Upload Handler has its own circuit breaker. If MinIO is degraded, uploads fail gracefully with 503 while the Stream Proxy and MCP Fabric continue operating normally.
 
@@ -189,7 +189,7 @@ A **separate process** (Kubernetes Deployment) that manages two categories of cr
 
 The Token Service is the only component with KMS decrypt permissions. It holds the envelope encryption keys for stored refresh tokens and can mint short-lived access tokens on demand. Gateway replicas communicate with the Token Service over mTLS; they receive short-lived tokens, never refresh tokens or KMS master keys.
 
-Externally, every token issuance -- initial tokens, rotation, delegation child-token minting, scoped operator tokens -- flows through the canonical [`POST /v1/oauth/token`](../api/admin.md) endpoint using the RFC 8693 grant type `urn:ietf:params:oauth:grant-type:token-exchange`. Delegation child tokens are minted with the parent session token in the `actor_token` field to preserve the chain of custody.
+Externally, token issuance -- initial tokens, self and service-principal rotation, `a2a_delegation` child-token minting, scoped operator tokens -- flows through the canonical [`POST /v1/oauth/token`](../api/admin.md) endpoint using the RFC 8693 grant type `urn:ietf:params:oauth:grant-type:token-exchange`. An external `a2a_delegation` child token is minted with the delegating caller's token in the `actor_token` field to preserve the chain of custody. Internal delegation through `lenny/delegate_task` mints no token: the delegated child's identity is its session row. The gateway mints a few tokens in process, without going through `/v1/oauth/token`: the bootstrap admin credential and its rotations (the gateway also patches the `lenny-admin-token` Secret), platform-admin impersonation bearers, and web playground bearers. The gateway and the Token Service sign with the same ES256 key held in the KMS, so a token either one signs verifies on every gateway replica, every Token Service replica, and `lenny-ops`.
 
 **High availability:** Deployed as a multi-replica Deployment (2+ replicas) with a PodDisruptionBudget. The service is stateless; all persistent state lives in Postgres and KMS. Sessions that already hold credential leases continue operating during Token Service outages; only new sessions that require credentials are affected.
 
@@ -201,10 +201,10 @@ Provides session recovery and observability capabilities, backed by **MinIO** (S
 
 **What it stores:**
 
-- **Workspace checkpoint snapshots:** Periodic tars of `/workspace/current` that enable session recovery after pod failure.
-- **Session file snapshots:** Copies of `/sessions/` contents at checkpoint time.
+- **Workspace checkpoint snapshots:** Periodic tars of the session's `/workspace/slots/{sessionId}/current` that enable session recovery after pod failure.
+- **Session file snapshots:** Copies of the session's own `/sessions/{sessionId}` contents at checkpoint time; a checkpoint captures no co-tenant's session files.
 - **Checkpoint metadata:** Generation counters, timestamps, and pod state at checkpoint time.
-- **Session logs and runtime stderr:** Durable log storage for debugging and audit.
+- **Session logs:** Durable log storage for debugging and audit.
 - **Resume metadata:** Information needed to restore a session on a new pod.
 
 **Checkpoint atomicity:** A checkpoint is all-or-nothing. The metadata record in Postgres references both the workspace snapshot and session file snapshot in MinIO. The metadata record is written only after both artifacts are successfully uploaded. If either upload fails, the entire checkpoint is discarded.
@@ -213,7 +213,7 @@ Provides session recovery and observability capabilities, backed by **MinIO** (S
 
 | Runtime level | Checkpoint method | Consistency |
 |-------------|------------------|-------------|
-| Full | Cooperative quiescence via lifecycle channel (`checkpoint_request` / `checkpoint_ready` handshake) | Consistent |
+| Full | Cooperative quiescence via CH-RUNTIMEOPS (`checkpoint_request` / `checkpoint_ready` handshake) | Consistent |
 | Standard / Basic | Best-effort snapshot without pausing the runtime | Best-effort |
 
 ---
@@ -228,21 +228,21 @@ Manages individual pod lifecycle, state transitions, and health. Built on the **
 |-----|---------|
 | `SandboxTemplate` | Declares a pool: runtime, isolation profile, resource class, warm count range, scaling policy |
 | `SandboxWarmPool` | Manages warm pod inventory with configurable `minWarm`/`maxWarm` |
-| `Sandbox` | Represents a managed agent pod. Status subresource carries the state machine. |
-| `SandboxClaim` | Represents an active session-to-pod binding. Created by the gateway on pod claim. |
+| `Sandbox` | Represents a managed agent pod. Status subresource carries the coarse occupancy phase, projected from the claim. |
+| `SandboxClaim` | Represents a pod-occupancy claim with the deterministic name `claim-<podName>`. Created by the gateway when it acquires an idle pod, deleted when the reserved hold expires or the pod terminates, when an acquisition ends the hold on a pod the pool's current configuration no longer admits for reuse, or when a release ends the occupancy without reuse ([Recycle lifecycle](../reference/execution-modes#recycle-lifecycle)). |
 
 **Key responsibilities:**
 
 - Maintain warm pod counts between `minWarm` and `maxWarm` per pool.
-- Manage pod state transitions via CRD status subresource updates.
+- Project `Sandbox.status.phase` from the per-pod `SandboxClaim` (claim existence, binding state, and disposition) as a level-triggered occupancy projection. The WarmPoolController is the sole writer of `Sandbox.status`.
 - Handle node drains gracefully (checkpoint active sessions before eviction via preStop hook).
-- Garbage-collect orphaned pods and claims.
+- Garbage-collect orphaned pods and claims, keyed to the claim's binding-transition time and a creation-timestamp fallback.
 - Track certificate expiry on idle pods and proactively replace expiring pods.
 - Manage PodDisruptionBudgets for warm pods.
 
 **Leader election:** Runs as a multi-replica Deployment with Kubernetes Lease-based leader election. During failover (up to 25 seconds on crash), existing sessions continue unaffected; only new pod creation and pool reconciliation pause.
 
-**Pod claiming:** Gateway replicas claim pods directly via the Kubernetes API using `SandboxClaim` resources with optimistic locking (`resourceVersion`-guarded compare-and-swap). This keeps the controller off the claim hot path entirely. A `ValidatingAdmissionWebhook` (`lenny-sandboxclaim-guard`) provides defense-in-depth against double-claims.
+**Pod claiming:** Gateway replicas claim pods directly via the Kubernetes API using per-pod `SandboxClaim` resources. The deterministic `claim-<podName>` name resolves the acquisition race between replicas at CREATE, and the `lenny-sandboxclaim-guard` `ValidatingAdmissionWebhook` intercepts CREATE to reject a second non-terminal claim for the same pod. Claim traffic scales with pod-occupancy episodes rather than with sessions: one claim spans many sessions on a recycling pod, and a short reserved hold extends an episode across idle gaps so a same-tenant session rebinds with no acquisition round trip. When the pool's current configuration no longer admits the pod for reuse, the next acquisition ends the hold instead of rebinding it. Binding-state transitions are `SandboxClaim.status` patches serialized by resourceVersion preconditions, and the session-to-pod binding is recorded on the Postgres session row's `pod_assignment` column. This keeps the controller off the claim hot path entirely.
 
 ---
 
@@ -263,19 +263,19 @@ Manages desired pool configuration, scaling intelligence, and variant pool sizin
 
 ### Agent Pods
 
-Each agent pod contains two processes:
+Each agent pod of a sidecar runtime contains two containers:
 
 **Runtime adapter (sidecar container).** The standardized bridge between the Lenny platform and the agent binary. It:
 - Exposes the gRPC/HTTP+mTLS interface that the gateway uses for lifecycle control.
-- Writes the adapter manifest (`/run/lenny/adapter-manifest.json`) with MCP server addresses, credential file paths, and configuration.
+- Writes the pod-scoped adapter manifest (`/run/lenny/adapter-manifest.json`) with MCP server addresses, the connection nonce, and configuration, and opens each session with a [`session_start` frame](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin) that carries the session's credential file path and other per-session context.
 - Hosts the intra-pod MCP servers (platform tools, per-connector tools) as abstract Unix socket listeners.
-- Manages the lifecycle channel (`@lenny-lifecycle`) for runtimes that implement the Full integration level.
+- Manages the CH-RUNTIMEOPS (`@lenny-runtime-ops`) for runtimes that implement the Full integration level.
 - Handles workspace staging, setup command execution, and checkpoint orchestration.
 
-**Agent binary (main container).** The actual agent runtime -- Claude Code, a LangGraph agent, a custom Python script, or any binary that implements the adapter protocol. The agent binary:
-- Reads messages from stdin (Basic integration level) or connects to MCP servers and the lifecycle channel (Standard or Full integration level).
-- Reads the adapter manifest to discover available tools and credentials.
-- Operates on files in `/workspace/current`.
+**Agent binary (main container).** The actual agent runtime -- Claude Code, a LangGraph agent, a custom Python script, or any binary that implements the adapter protocol. The container's first process is the runtime supervisor, a platform binary that launches the agent binary's configured `command` when the adapter asks it to and ends the process when the adapter asks it to. The agent binary:
+- Reads messages from stdin (Basic integration level) or connects to MCP servers and the CH-RUNTIMEOPS (Standard or Full integration level).
+- Reads the adapter manifest to discover available tools, and reads each session's [`session_start` frame](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin) for that session's credential file path.
+- Operates on files in `/workspace/slots/{sessionId}/current`.
 - Writes responses to stdout.
 
 Pods run with strict security settings: non-root user, all capabilities dropped, read-only root filesystem, writable paths limited to tmpfs and workspace volumes. The selected `RuntimeClass` (runc, gVisor, or Kata) determines the container/VM isolation level.
@@ -424,7 +424,7 @@ graph TB
     subgraph "Intra-pod"
         IP6["stdin/stdout JSON Lines<br/>Adapter ↔ Runtime (Basic level)"]
         IP7["MCP over Unix socket<br/>Adapter ↔ Runtime (Standard / Full level)"]
-        IP8["JSON Lines over Unix socket<br/>Lifecycle channel (Full level)"]
+        IP8["JSON Lines over Unix socket<br/>CH-RUNTIMEOPS (Full level)"]
     end
 
     C[Client] --> EP1 & EP2 & EP3
@@ -503,7 +503,7 @@ graph TB
 
 - **Default-deny all:** No ingress or egress by default.
 - **Allow gateway ingress:** Only the gateway (identified by namespace + pod label selector) can connect to pods, on the adapter's gRPC port only.
-- **Allow pod-to-gateway egress:** Pods can reach the gateway for the gRPC control channel and (if configured) the LLM Proxy.
+- **Allow pod-to-gateway egress:** Pods can reach the gateway for the gRPC LNK-GWCONTROL and (if configured) the LLM Proxy.
 - **Allow DNS:** Pods can resolve DNS via the cluster DNS service.
 - **No pod-to-pod communication:** Pods cannot communicate with each other. All inter-agent communication goes through the gateway's MCP Fabric via delegation.
 
@@ -520,17 +520,18 @@ Every agent pod runs with:
 | Root filesystem | Read-only |
 | Writable paths | tmpfs (`/tmp`), workspace volumes, sessions directory, artifacts directory |
 | Egress | Default-deny NetworkPolicy; allow only gateway + DNS |
-| Credentials | No standing credentials; projected ServiceAccount token + short-lived credential lease only |
-| File delivery | Gateway-mediated only; no shared storage mounts |
+| Credentials | No standing credentials; projected ServiceAccount token + short-lived credential lease only. Object-store access is granted as a gateway-minted presigned capability (single key, single method, exact `Content-Length` on a `PUT`, short expiry) and never as an object-store credential. |
+| File delivery | Gateway-mediated for all session inputs and outputs. Checkpoint chunk objects are the one exception: their bytes travel between the agent pod and object storage against gateway-minted presigned capabilities. The gateway remains the sole authority that resolves the key, validates the tenant prefix, and signs. No shared storage mounts. |
 | Adapter-agent auth | `SO_PEERCRED` UID check + manifest nonce (primary); nonce + HMAC challenge-response (fallback under gVisor) |
 
 ### What pods can and cannot do
 
 | Pods CAN | Pods CANNOT |
 |----------|-------------|
-| Read/write files in `/workspace/current` | Access the Kubernetes API server |
+| Read/write files in `/workspace/slots/{sessionId}/current` | Access the Kubernetes API server |
 | Call LLM providers through the gateway's LLM Proxy (proxy-mode pools) or directly with a short-lived materialized credential (direct-mode pools) | Hold long-lived API keys or secrets |
 | Use MCP tools via the adapter's local MCP servers | Communicate with other pods |
-| Respond to gateway lifecycle RPCs | Access MinIO, Postgres, or Redis directly |
+| `PUT` and `GET` checkpoint chunk objects to object storage against a gateway-minted presigned capability (single key, single method, short expiry) | Access Postgres or Redis directly, or reach object storage without a gateway-signed presigned capability |
+| Respond to gateway lifecycle RPCs | Hold an object-store credential, or issue `LIST`, `DELETE`, or multipart object-store operations |
 | Report usage metrics to the gateway | Mount shared storage from other pods |
 | Request human input via elicitation chain | Open arbitrary network connections (unless egress profile allows) |

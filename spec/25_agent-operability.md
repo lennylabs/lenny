@@ -11,13 +11,14 @@ Lenny is designed to be natively operable by AI agents. DevOps agents — runnin
 The operability surface defined in this section is implemented by two components:
 
 - **The gateway** — hosts the in-process operability endpoints (Section 25.3): health, capacity recommendations, version, config, and the event buffer. These all read in-process state that cannot be obtained externally.
-- **`lenny-ops`** — hosts the rest of the operability surface (Section 25.4 and the feature sections that follow): event stream, diagnostics, runbooks, platform lifecycle, audit, drift detection, backup/restore, MCP management, bundled alerting rules.
+- **`lenny-ops`** — hosts the rest of the operability surface (Section 25.4 and the feature sections that follow): event stream, diagnostics, runbooks, platform lifecycle, drift detection, backup/restore, MCP management, bundled alerting rules. The gateway serves the audit log query API (Section 25.9), which is coupled to the gateway-resident audit data plane.
 
 **`lenny-ops` is mandatory in every Lenny installation regardless of tier.** There is no supported topology without it — the features it hosts have no alternative path. Section 25.2 details the split between the two components.
 
 External dependencies and their requirement levels are summarized in Section 25.4 (Dependencies) and Section 25.15 (Failure Mode Analysis):
 
 - **Postgres, Redis, K8s API, gateway admin API** — required for full functionality; `lenny-ops` degrades gracefully when each is transiently unavailable.
+- **KMS**, when `kms.provider` is not `local`, is required at process start.
 - **Prometheus** (or any Prometheus-HTTP-API-compatible time-series backend) — optional at Tier 1 (dev), **required at Tier 2/3** (production). Several `lenny-ops` features are functionally broken without persistent time-series storage; see Section 25.4, Prometheus Requirement.
 - **MinIO** (or any S3-compatible object store) — required for backup storage; degraded only for backup verification.
 
@@ -144,6 +145,7 @@ These headers are advisory — omitting them does not affect request processing.
 │    GET  /v1/admin/platform/version    Compiled-in version info      │
 │    GET  /v1/admin/platform/config     Effective running config      │
 │    GET  /v1/admin/events/buffer       In-memory event ring buffer   │
+│    GET  /v1/admin/audit-events        Audit Log Query (25.9)        │
 │                                                                     │
 │  /metrics (Prometheus scrape target)                                │
 │                                                                     │
@@ -161,7 +163,6 @@ These headers are advisory — omitting them does not affect request processing.
 │                                           Prometheus, gateway API   │
 │  Runbook Index                 (25.7)   — read-only, bundled markdown│
 │  Platform Upgrade Orchestration(25.8)   — K8s API, Postgres         │
-│  Audit Log Query               (25.9)   — Postgres                  │
 │  Configuration Drift Detection (25.10)  — Postgres, gateway API     │
 │  Backup and Restore            (25.11)  — K8s Jobs, Postgres, MinIO │
 │  MCP Management Server         (25.12)  — translates MCP → REST     │
@@ -183,6 +184,7 @@ The split criterion is simple: **does the feature read in-process state that can
 | Event buffer (`/events/buffer`) | Yes — in-memory ring buffer of recent events. Fallback source when Redis is unavailable. | Gateway |
 | Version introspection | Yes — `ldflags`-compiled build metadata. | Gateway |
 | Running config | Yes — effective merged config lives in the running process. | Gateway |
+| Audit Log Query (25.9) | Yes — coupled to the gateway-resident audit data plane (per-tenant Postgres audit chains, RLS tenant-scoping, chain-integrity, redaction receipts, and cross-tenant scatter-gather). | Gateway |
 | Everything else | No — reads from Postgres, Redis, K8s API, Prometheus, or calls the gateway's admin API. | `lenny-ops` |
 
 ### API Conventions
@@ -201,7 +203,7 @@ To avoid ambiguity across the rest of this section:
 
 #### Canonical Degradation Envelope
 
-Any response whose data quality depends on the availability of an external dependency includes a top-level `degradation` object with a uniform schema:
+Any response whose data quality depends on the availability of an external dependency, or on in-process history having accumulated (for example the capacity-recommendation ring buffers, which start empty after a gateway restart, Section 25.3), includes a top-level `degradation` object with a uniform schema:
 
 ```json
 {
@@ -229,7 +231,7 @@ The envelope is the canonical response-level signal for every endpoint whose dat
 
 These resource-attribute fields complement the response-level `degradation` envelope — the envelope says "this response was served from a fallback source," while the resource attribute says "this specific record exists in tier X." Both pieces of information are useful and distinct.
 
-**Omitted when healthy.** Endpoints serving from their primary source omit `degradation` entirely (or return `"level": "healthy"` with no other fields set). Agents should treat an absent envelope as equivalent to healthy.
+**Omitted when healthy.** Endpoints serving from their primary source omit `degradation` entirely (or return `"level": "healthy"` with no other fields set), except that an endpoint whose data quality also depends on in-process history reports `"level": "degraded"` while it holds no history at all and returns to `"level": "healthy"` once any of its rules records a sample (the capacity-recommendation ring buffers immediately after a gateway restart, before any rule has recorded a sample, Section 25.3). Agents should treat an absent envelope as equivalent to healthy.
 
 #### Pagination
 
@@ -423,8 +425,6 @@ A unified health surface that synthesizes component status, metric thresholds, a
 #### Go Interface
 
 ```go
-// pkg/gateway/health/service.go
-
 type HealthService interface {
     GetAggregateHealth(ctx context.Context) (*AggregateHealthResponse, error)
     GetComponentHealth(ctx context.Context, component string) (*ComponentHealthResponse, error)
@@ -559,8 +559,6 @@ A rules engine that synthesizes current metrics and usage patterns into actionab
 #### Go Interface
 
 ```go
-// pkg/gateway/recommendations/service.go
-
 type CapacityService interface {
     GetRecommendations(ctx context.Context, category *string) (*RecommendationsResponse, error)
 }
@@ -586,7 +584,7 @@ Rules are deterministic heuristics, not AI. Each rule reads metric values from t
 | `retention_tuning` | Storage utilization > 80% | "Reduce artifact retention TTL" |
 | `quota_adjustment` | Quota rejection rate > 5% over 24h | "Increase tenant session quota" |
 
-**Sliding window aggregation.** The rules engine maintains in-memory ring buffers per metric (no Postgres, no Redis). Window sizes are configurable per rule (default: 24h for pool sizing, 7d for credential sizing). After a gateway restart, windows are empty and recommendations include `"confidence": 0.0` and `"dataAvailable": false`.
+**Sliding window aggregation.** The rules engine maintains in-memory ring buffers per metric (no Postgres, no Redis). Window sizes are configurable per rule (default: 24h for pool sizing, 7d for credential sizing). After a gateway restart the ring buffers start empty. While every ring buffer is empty, no per-category recommendations are generated and the response's `degradation` envelope reports `"level": "degraded"` with a warning that no rule has data yet (see **Degradation** below). The envelope returns to `"level": "healthy"` as soon as any rule records a sample; it stays `"degraded"` only for as long as no source metric appears in the gateway's registry.
 
 **Memory budget at Tier 3.** Ring buffers store one sample per emission for the configured window. Sample size is ~64 bytes (timestamp + value + labels). At Tier 3 with ~50 distinct metrics tracked and 7-day max windows:
 
@@ -605,7 +603,7 @@ Deployers disable specific rules via `platform.recommendations.disabledRules` He
 
 #### Degradation
 
-If metrics are stale (gateway recently restarted): recommendations include `"confidence": 0.0`. No recommendations are generated for categories with insufficient data.
+When no evaluated rule has samples (for example shortly after a gateway restart, when every ring buffer is empty), no per-category recommendations are generated and the response's canonical [Section 25.2](#canonical-degradation-envelope) `degradation` envelope reports `"level": "degraded"` (with `"thresholdSource": "compiled-in-defaults"` and a warning that no rule has data yet). An agent therefore distinguishes an empty `recommendations` array caused by starved windows from one caused by a healthy platform with no capacity issues. When at least one rule has samples the envelope reports `"level": "healthy"` and a rule whose own metric is still absent simply produces no entry; the response-level envelope signals the wholesale-empty (post-restart) case rather than per-rule starvation. The `recommendations` array always carries triggered, actionable entries only.
 
 #### Storage
 
@@ -652,10 +650,22 @@ Every emitted event is a [CloudEvents v1.0.2](https://github.com/cloudevents/spe
 **Single-envelope model — no double-wrapping.** Audit-bearing events carry the OCSF record **directly** in the CloudEvents `data` field with `datacontenttype: application/ocsf+json`. The CloudEvents envelope is the transport; the OCSF record is the payload; there is no intermediate container between them. Consumers parse the CloudEvents record first, read `data` as the OCSF v1.1.0 record ([§11.7](11_policy-and-controls.md#117-audit-logging) Wire Format), and apply the Lenny → OCSF field mapping. Non-audit operational events use `datacontenttype: application/json` and carry an event-specific JSON payload in `data` whose schema is documented per `type` in the catalogue ([§16.6](16_observability.md#166-operational-events-catalog)).
 
 ```go
-// pkg/gateway/events/emitter.go
-
-// OperationalEvent is a CloudEvents v1.0.2 Event — see §12.6.
-type OperationalEvent = cloudevents.Event
+// OperationalEvent is a native CloudEvents v1.0.2 structured-content
+// envelope — see §12.6 for the Event type it mirrors and the reason the
+// go-sdk type is not aliased directly. MarshalJSON emits `data` inline
+// and flattens the Lenny extension attributes into the top-level object.
+type OperationalEvent struct {
+    ID              string            `json:"id"`
+    Source          string            `json:"source,omitempty"`
+    SpecVersion     string            `json:"specversion"`
+    Type            string            `json:"type"`
+    Subject         string            `json:"subject,omitempty"`
+    Time            time.Time         `json:"time"`
+    Severity        string            `json:"severity,omitempty"`        // lenny severity extension the event-buffer query filters on
+    DataContentType string            `json:"datacontenttype,omitempty"`
+    Data            json.RawMessage   `json:"data,omitempty"`            // inline payload; the OCSF record for an audit-bearing event
+    Extensions      map[string]string `json:"-"`                         // remaining lenny* extensions, flattened onto the wire
+}
 
 type EventEmitter interface {
     Emit(ctx context.Context, event OperationalEvent) error
@@ -722,8 +732,6 @@ An in-memory ring buffer of recent operational events, exposed as an admin API e
 #### Go Interface
 
 ```go
-// pkg/gateway/events/buffer.go
-
 type EventBuffer struct {
     mu     sync.RWMutex
     events [500]OperationalEvent  // fixed-size ring buffer
@@ -777,11 +785,11 @@ None. In-process ring buffer only.
 
 ### Purpose
 
-A **mandatory** standalone service that hosts all operability features not implemented in-process by the gateway (Section 25.3). It provides the diagnostic, remediation, and lifecycle management surface for DevOps agents and operators. Every Lenny installation includes a `lenny-ops` deployment regardless of tier — there is no supported topology without it. The features it hosts (audit, backup, upgrade orchestration, drift detection, event stream, MCP management) have no alternative path.
+A **mandatory** standalone service that hosts all operability features not implemented in-process by the gateway (Section 25.3). It provides the diagnostic, remediation, and lifecycle management surface for DevOps agents and operators. Every Lenny installation includes a `lenny-ops` deployment regardless of tier — there is no supported topology without it. The features it hosts (backup, upgrade orchestration, drift detection, event stream, MCP management) have no alternative path.
 
 ### Deployment
 
-A separate Kubernetes Deployment: `lenny-ops`. Always deployed by the Helm chart. Single replica by default (leader-elected for singleton behaviors like webhook delivery and backup scheduling), scalable to multiple replicas for read-heavy workloads (audit queries, diagnostics).
+A separate Kubernetes Deployment: `lenny-ops`. Always deployed by the Helm chart. Single replica by default (leader-elected for singleton behaviors like webhook delivery and backup scheduling), scalable to multiple replicas for read-heavy workloads (diagnostics).
 
 #### Helm Values Hierarchy
 
@@ -797,7 +805,7 @@ Lenny's Helm chart uses these top-level keys. Every Helm value referenced in Sec
 | `backups` | Backup schedule, retention, encryption. |
 | `security` | OIDC, webhook signing, TLS overrides. |
 
-The full canonical values.yaml reference is maintained at `deploy/helm/lenny/values.yaml` in the repository. Tier-specific presets live at `deploy/helm/lenny/values-tier1.yaml`, `-tier2.yaml`, `-tier3.yaml` and override a defined subset of the base values (listed in the comment header of each preset file).
+The full canonical values.yaml reference is maintained at `charts/lenny/values.yaml` in the repository. Tier-specific presets live at `charts/lenny/presets/values-tier1.yaml`, `charts/lenny/presets/values-tier2.yaml`, and `charts/lenny/presets/values-tier3.yaml` and override a defined subset of the base values (listed in the comment header of each preset file).
 
 #### `lenny-ops` Helm Values
 
@@ -1039,7 +1047,7 @@ startupProbe:
   periodSeconds: 2          # 60s total — covers Postgres connection establishment
 readinessProbe:
   httpGet:
-    path: /healthz?strict=true
+    path: /healthz
     port: 8090
   failureThreshold: 3
   periodSeconds: 5
@@ -1051,8 +1059,8 @@ livenessProbe:
   periodSeconds: 10
 ```
 
-- **`/healthz`** (permissive): 200 if the process is alive and at least one of {Postgres, K8s API} is reachable. Used by liveness and startup.
-- **`/healthz?strict=true`** (strict): 200 only when both Postgres connection AND K8s API are reachable. Used by readiness — traffic is not routed to replicas that can't serve the full API.
+- **`/healthz`** (permissive): 200 if the process is alive and at least one of {Postgres, K8s API} is reachable. Used by liveness, startup, and readiness ("Startup and Readiness" below).
+- **`/healthz?strict=true`** (strict): 200 only when both the Postgres connection and the K8s API are reachable. No probe uses it. It is a diagnostic check that an operator or an agent runs against a replica to learn whether that replica can serve the full API.
 
 When the `strict=true` check returns 503, the response body identifies which dependencies are degraded so operators reading endpoint logs can diagnose the cause.
 
@@ -1249,6 +1257,10 @@ egress:
       - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
         podSelector: { matchLabels: { k8s-app: kube-dns } }
     ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+  # KMS endpoint for GetPublicKey on the §10.2 JWT signing keys. Rendered when
+  # kms.provider is not local; §13.2.4 (Gateway row) states the CIDR rule.
+  - to: [{ ipBlock: { cidr: "{{ .Values.kms.endpointCIDR }}" } }]
+    ports: [{ protocol: TCP, port: 443 }]
   # Webhook delivery (egress to internet) — host filtering enforced at the application layer (SSRF checks).
   # Two parallel `ipBlock` peers are emitted — one per address family — because
   # Kubernetes NetworkPolicy requires every `except` entry to share the address
@@ -1306,7 +1318,7 @@ egress:
 
 The internet egress for webhooks excludes cluster pod/service CIDRs, RFC1918, IPv4 link-local, IPv6 ULA, IPv6 link-local, and IMDS addresses at the network layer in addition to the application-layer SSRF checks. The two parallel `ipBlock` peers (one per address family) are required by the Kubernetes NetworkPolicy schema, which constrains every `except` entry to the enclosing `cidr`'s address family; the chart partitions the shared `egressCIDRs.excludePrivate`, `egressCIDRs.excludeIMDS`, and cluster pod/service CIDR values at render time (NET-062). Operators with stricter requirements can replace this rule with a domain-based egress policy (requires CNI support like Cilium or service mesh egress gateway). The `except` block is the same list rendered into the gateway `allow-gateway-egress-llm-upstream` NetworkPolicy (§13.2) via the shared `egressCIDRs.excludePrivate`, `excludeClusterPodCIDR`/`excludeClusterServiceCIDR`, and `excludeIMDS` Helm values — see the §13.2 normative note under `allow-gateway-egress-llm-upstream` for the SSRF symmetry guarantee and the `lenny-preflight` check that enforces it (NET-057, NET-065). The cluster-CIDR exclusion closes an SSRF gap specific to CGNAT-range pod CIDRs (`100.64.0.0/10`, the default on several managed Kubernetes providers) and custom non-RFC1918 pod CIDRs, where `excludePrivate` alone would permit an operability-plane pod — through a tenant-influenced webhook target URL resolving to an in-cluster pod IP — to dial gateway, controller, or token-service pod IPs directly on their service ports (NET-065). Cluster-CIDR discovery and drift detection re-use the NET-022 mechanism documented in §13.2 (preflight reads the cluster's actual pod/service CIDRs; WarmPoolController re-reads every 5 minutes and fires `NetworkPolicyCIDRDrift` on change); the `lenny-preflight` Job extends the NET-022 `except`-block audit to cover the `lenny-ops-egress` webhook rule as well, failing the install if either cluster CIDR is absent from the rendered `except` list.
 
-> **Normative operability-plane selector requirement (NET-061).** Any Lenny-rendered NetworkPolicy that originates from the operability plane (`lenny-ops` Deployment pods, `lenny-backup` Job pods, or any future operability-plane workload) and targets a storage, monitoring, or in-cluster platform-component destination MUST pair a `namespaceSelector` (keyed on the immutable `kubernetes.io/metadata.name` label per NET-054) with a `podSelector` on the destination pod's canonical label (`lenny.dev/component: <component>` for Lenny-rendered platform components per NET-047/NET-050, or the documented `app: <component>` key for storage/monitoring workloads rendered by upstream subcharts — `app: redis`, `app: prometheus` — matching the idiom established by `lenny-backup-job`). A `to:` clause that carries only a `namespaceSelector` permits egress to every pod in the destination namespace on the listed ports: in any deployment where storage or monitoring co-locates with `lenny-system` (including the default single-namespace install), this exposes gateway, token-service, controller, admission-webhook, and CoreDNS pods to the operability plane on Postgres/Redis/MinIO/Prometheus-shaped ports, defeating the containment boundary that §13.2's default-deny plus per-component allow-lists establish. This requirement is the operability-plane analogue of the `lenny-backup-job` two-selector rule (NET-056) and extends the NET-047/NET-050 selector-consistency audit. The `lenny-preflight` Job enforces it via the `ops-egress-selector-parity` check: it enumerates every `to:` clause in `lenny-ops-egress` and `lenny-backup-job` (and any future operability-plane NetworkPolicy registered in the chart's `operabilityEgressPolicies` list) and fails the install/upgrade if a storage/monitoring/platform-component destination clause omits the `podSelector`, if the `podSelector` uses a non-canonical label key for a Lenny-rendered platform component (Exception: the `app:` key is permitted for storage/monitoring destinations rendered by upstream subcharts — `app: redis`, `app: prometheus` — or where the operability plane's own identity is the selector target, per §13.2 line 201), or if the resolved selector matches zero pods for a component expected to be running given the rendered Helm values. The preflight deliberately fails the install rather than warning because a silently over-broad `lenny-ops-egress` rule is strictly more dangerous than a missing one — it grants access that will not be revoked until a future policy edit is deployed.
+> **Normative operability-plane selector requirement (NET-061).** Any Lenny-rendered NetworkPolicy that originates from the operability plane (`lenny-ops` Deployment pods, `lenny-backup` Job pods, or any future operability-plane workload) and targets a storage, monitoring, or in-cluster platform-component destination MUST pair a `namespaceSelector` (keyed on the immutable `kubernetes.io/metadata.name` label per NET-054) with a `podSelector` on the destination pod's canonical label (`lenny.dev/component: <component>` for Lenny-rendered platform components per NET-047/NET-050, or the documented `app: <component>` key for storage/monitoring workloads rendered by upstream subcharts — `app: redis`, `app: prometheus` — matching the idiom established by `lenny-backup-job`). A `to:` clause that carries only a `namespaceSelector` permits egress to every pod in the destination namespace on the listed ports: in any deployment where storage or monitoring co-locates with `lenny-system` (including the default single-namespace install), this exposes gateway, token-service, controller, admission-webhook, and CoreDNS pods to the operability plane on Postgres/Redis/MinIO/Prometheus-shaped ports, defeating the containment boundary that §13.2's default-deny plus per-component allow-lists establish. This requirement is the operability-plane analogue of the `lenny-backup-job` two-selector rule (NET-056) and extends the NET-047/NET-050 selector-consistency audit. The `lenny-preflight` Job enforces it via the `ops-egress-selector-parity` check: it enumerates every `to:` clause in `lenny-ops-egress` and `lenny-backup-job` (and any future operability-plane NetworkPolicy registered in the chart's `operabilityEgressPolicies` list) and fails the install/upgrade if a storage/monitoring/platform-component destination clause omits the `podSelector`, if the `podSelector` uses a non-canonical label key for a Lenny-rendered platform component (Exception: the `app:` key is permitted for storage/monitoring destinations rendered by upstream subcharts — `app: redis`, `app: prometheus` — or where the operability plane's own identity is the selector target, per §13.2), or if the resolved selector matches zero pods for a component expected to be running given the rendered Helm values. The preflight deliberately fails the install rather than warning because a silently over-broad `lenny-ops-egress` rule is strictly more dangerous than a missing one — it grants access that will not be revoked until a future policy edit is deployed.
 
 **Cross-namespace deployments.** When `lenny-system` and `lenny-agents` are separate namespaces (for tenant workload isolation), no NetworkPolicy change is required — `lenny-ops` only talks to gateway and storage, both of which live in `lenny-system`. The agent pods themselves never reach `lenny-ops`.
 
@@ -1338,7 +1350,7 @@ Singleton behaviors gated by leader election:
 - `platform_upgrade_check` cron.
 - `bundleRules` reconciler.
 
-Non-leader replicas serve **read-heavy** API traffic (audit queries, diagnostics, runbooks) and proxy mutating endpoints to the leader if needed (or accept them locally if the operation is replica-independent — most are).
+Non-leader replicas serve **read-heavy** API traffic (diagnostics, runbooks) and proxy mutating endpoints to the leader if needed (or accept them locally if the operation is replica-independent — most are).
 
 `kubectl get leases -n lenny-system lenny-ops-leader` shows the current leader's pod identity (`spec.holderIdentity`) for operator visibility.
 
@@ -1421,8 +1433,9 @@ For clusters without internet access:
 
 | Dependency | Required | Used by |
 |---|---|---|
-| Postgres | No (degraded) | Audit queries, backup jobs, upgrade state are unavailable. Diagnostics fall back to K8s API. Drift detection works with caller-supplied desired state. Remediation locks and escalations fall back to Redis or in-memory. Event subscriptions served from cache. |
+| Postgres | No (degraded) | Backup jobs and upgrade state are unavailable. Diagnostics fall back to K8s API. Drift detection works with caller-supplied desired state. Remediation locks and escalations fall back to Redis or in-memory. Event subscriptions served from cache. Lenny-issued tokens are accepted as "Authentication" **Revocation set** rules 4, 5, and 7 state. |
 | Redis | No (degraded) | Event stream falls back to gateway in-memory buffer. Remediation locks fall back to in-memory. Escalation creation falls back to in-memory. |
+| KMS (when `kms.provider` is not `local`) | Yes, at startup | Loading the verifier key set ([Section 10.2](10_gateway-internals.md#102-authentication) "Verifier key set and rotation") |
 | K8s API | Yes | Diagnostics (pod events, pod state fallback), upgrade orchestration, backup jobs, version introspection |
 | Gateway admin API | Yes | Drift reconciliation, diagnostics (pool config, connectors), version aggregation, event buffer fallback |
 | Prometheus (or compatible) | Required at Tier 2/3; optional at Tier 1 | Cross-replica health aggregation, capacity recommendations, diagnostics (pool bottleneck analysis), bundled alerting rules (Section 25.13). Has fallback paths for transient outages, but several features are functionally broken without persistent time-series storage — see Prometheus Requirement below. |
@@ -1436,7 +1449,7 @@ For clusters without internet access:
 
 `lenny-ops` has fallback paths for short Prometheus outages (per-replica fan-out via headless Service for health and recommendations, gateway `/metrics` scrape for diagnostics — see Section 25.4, Metrics Source). These fallbacks let the platform survive a transient Prometheus failure. They do not substitute for a permanently absent Prometheus, because several features depend on persistent time-series storage:
 
-- **Capacity recommendations.** Many rules use multi-day sliding windows ("pool exhausted 3+ times in 24h", "credential utilization > 70% over 7d"). These require historical data. Per-replica in-memory ring buffers reset on every gateway restart and capture only ~1/N of total traffic per replica. Without Prometheus, recommendations return `confidence: 0.0` for hours after any restart and are based on partial samples between restarts.
+- **Capacity recommendations.** Many rules use multi-day sliding windows ("pool exhausted 3+ times in 24h", "credential utilization > 70% over 7d"). These require historical data. Per-replica in-memory ring buffers reset on every gateway restart and capture only ~1/N of total traffic per replica. Without Prometheus, the recommendations response reports a `degradation` envelope with `"level": "degraded"` immediately after a restart while every ring buffer is empty, and returns to `"level": "healthy"` as soon as any rule records a sample. The recommendations that generate before the windows are fully populated are based on partial samples between restarts and carry reduced per-item confidence.
 - **Cross-replica health aggregation.** The fan-out fallback works for "what is firing right now" but cannot evaluate alert rules with `for: "15m"` clauses correctly — those need historical time-series, not point-in-time samples.
 - **Historical diagnostics.** Investigating a session or pool issue from two hours ago requires metric values from that time. The gateway's in-process registry only holds current values; without Prometheus, the data is gone.
 - **Bundled alerting rules (Section 25.13).** The rules are useless without something to load them into. If no Prometheus is present, the rules are rendered into Helm manifests but never evaluated. Human operators lose alerting entirely.
@@ -1474,7 +1487,7 @@ Tier 2/3 deployers who intentionally run without Prometheus must set `monitoring
 | Capability | With Prometheus | Without Prometheus (transient) | Without Prometheus (permanent) |
 |---|---|---|---|
 | Cross-replica health aggregation | Aggregate alert state from `GET /api/v1/alerts` | Fan-out via headless Service, worst-of merge | Same as transient — works, but `for: "15m"` alerts misfire because no history exists |
-| Capacity recommendations | Aggregate metrics from PromQL, full window data | Fan-out, highest-confidence merge | `confidence: 0.0` after every restart; ring buffers only have ~1/N replica's worth of recent data |
+| Capacity recommendations | Aggregate metrics from PromQL, full window data | Fan-out, highest-confidence merge | `degradation.level: "degraded"` immediately after a restart until the first rule records a sample, then `"healthy"`; ring buffers only have ~1/N replica's worth of recent data |
 | Pool bottleneck diagnostics | Range queries against historical data | Per-replica `/metrics` scrape, point-in-time only | Same as transient — works, but no trend analysis |
 | Bundled alerting rules → human alerts | Loaded by Prometheus, fired via Alertmanager | Same (rules already loaded) | Not loaded; humans receive no alerts |
 | Historical session/pool investigation | Range queries against historical data | Falls back to in-process metric values, current-only | No historical data available |
@@ -1491,7 +1504,6 @@ The "transient" column is acceptable for short outages (minutes to a few hours).
 |------|-------------------|-----------|
 | Ops-specific tables (`ops_remediation_locks`, `ops_lock_epoch`, `ops_lock_conflicts`, `ops_idempotency_keys`, `ops_escalations`, `ops_backups`, `ops_backup_schedule`, `ops_retention_policy`, `ops_restore_state`, `ops_event_subscriptions`, `ops_event_deliveries`, `platform_upgrade_state`, `platform_upgrade_check_cache`, `bootstrap_seed_snapshot`, `audit_log_deferred_writes`) | `PlatformPostgres()` | Platform-scoped, not per-tenant or per-session. Low volume. Must be reachable without a tenant or session ID. |
 | Session diagnostics | `SessionShard(sessionID)` | Reads `sessions` and `agent_pod_state` from the shard that owns the session. |
-| Audit queries | `AuditShard(tenantID)` | Per-tenant for filtered queries. Platform-admin cross-tenant queries use `AllAuditShards()` for scatter-gather. |
 | Platform-tenant audit events referencing a non-platform `target_tenant_id` (`security.audit_write_rejected`, `admin.impersonation_*`, `gdpr.legal_hold_overridden_tenant`, `legal_hold.escrow_region_resolved`, `legal_hold.escrowed`, `legal_hold.escrow_released`, `compliance.profile_decommissioned`, `DataResidencyViolationAttempt` with `operation: "platform_audit_write"`) | `PlatformPostgres(region)` when the target tenant's `dataResidencyRegion` is set; falls back to `PlatformPostgres()` when unset | CMP-058, fail-closed. The *fact* of a platform-tenant event referencing a regulated target tenant is itself personal data describing that tenant; it must reside in the target's jurisdiction. Unresolvable region (target `dataResidencyRegion` set but `storage.regions.<region>.postgresEndpoint` missing or unreachable) raises `PLATFORM_AUDIT_REGION_UNRESOLVABLE` (HTTP 422, `PERMANENT`) — a mirror of `BACKUP_REGION_UNRESOLVABLE` and `LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE`. See [§11.7](11_policy-and-controls.md#117-audit-logging) "Platform-tenant audit event residency". |
 | Backup (`pg_dump`) | All shards via `AllSessionShards()` + `PlatformPostgres()` (single-region) or `PlatformPostgres(region)` per region (multi-region; see Backup pipeline residency in [§12.8](12_storage-architecture.md#128-compliance-interfaces)) | Full backups dump every shard. |
 
@@ -1504,7 +1516,7 @@ The "transient" column is acceptable for short outages (minutes to a few hours).
 | Data | StoreRouter method | Rationale |
 |------|-------------------|-----------|
 | Event stream (`ops:events:stream`) | `PlatformRedis()` | Platform-scoped event stream, not tenant-routed. |
-| Remediation locks (`ops:lock:{scope}`) | `PlatformRedis()` | Platform-scoped coordination keys. |
+| Remediation locks (`ops:{lock}:*`, see Tier 2 — Redis) | `PlatformRedis()` | Platform-scoped coordination keys under one hash tag. |
 | Escalation buffer (`ops:escalations:{id}`) | `PlatformRedis()` | Platform-scoped operational records. |
 | Webhook cursor tracking | `PlatformRedis()` | Platform-scoped delivery state. |
 
@@ -1518,7 +1530,7 @@ All ops Redis keys use the `ops:` prefix to avoid collisions with tenant-scoped 
 
 Scale `lenny-ops` to multiple replicas when:
 
-- **Read query load is high.** Audit queries, diagnostics, drift reports, and event-stream connections from many concurrent agents create CPU/memory pressure on a single replica. Indicator: sustained CPU > 70% on the `lenny-ops` pod, or `lenny_ops_rate_limited_total` consistently incrementing for read endpoints.
+- **Read query load is high.** Diagnostics, drift reports, and event-stream connections from many concurrent agents create CPU/memory pressure on a single replica. Indicator: sustained CPU > 70% on the `lenny-ops` pod, or `lenny_ops_rate_limited_total` consistently incrementing for read endpoints.
 - **Many concurrent SSE connections.** Each SSE connection is a long-lived goroutine. With > ~500 concurrent connections, a single replica can become memory-pressured. Indicator: `lenny_ops_events_sse_active_connections` > 500.
 - **High webhook subscription count.** Each subscription spawns a delivery goroutine on the leader. With > ~200 subscriptions and high event throughput, the leader's webhook delivery pipeline can become a bottleneck. Indicator: `lenny_ops_webhook_backlog` > 100 sustained.
 
@@ -1554,11 +1566,21 @@ For most deployments, the answer to question 1 is "no" and a single-replica depl
 
 ### Startup and Readiness
 
-`lenny-ops` starts its HTTP listener immediately. Individual endpoint handlers report dependency status rather than crashing — same philosophy as the gateway health endpoint. Readiness probe: `GET /healthz` returns 200 when the Postgres connection is established or when the K8s API is reachable (either dependency suffices for readiness, since most endpoints can operate in degraded mode without Postgres).
+`lenny-ops` starts its HTTP listener immediately after it loads the verifier key set of [Section 10.2](10_gateway-internals.md#102-authentication) "Verifier key set and rotation". The revocation set ("Authentication" below) is an input to neither the listener nor readiness. Individual endpoint handlers report dependency status rather than crashing — same philosophy as the gateway health endpoint. Readiness probe: `GET /healthz` returns 200 when the Postgres connection is established or when the K8s API is reachable (either dependency suffices for readiness, since most endpoints can operate in degraded mode without Postgres).
 
 ### Authentication
 
-Same OIDC middleware as the gateway admin API. `lenny-ops` validates JWT tokens using the same OIDC issuer and JWKS endpoint. Requires `platform-admin` or `tenant-admin` role on all endpoints. No anonymous access except `/healthz`.
+Same OIDC middleware as the gateway admin API. `lenny-ops` validates upstream IdP tokens against the same OIDC issuer as the gateway, and validates Lenny-issued tokens, whatever their audience, against the verifier key set defined in [Section 10.2](10_gateway-internals.md#102-authentication) "Verifier key set and rotation". Requires `platform-admin` or `tenant-admin` role on all endpoints. No anonymous access except `/healthz`.
+
+**Revocation set.** `lenny-ops` checks each Lenny-issued token the key set verifies against an in-memory revocation set:
+
+1. The set holds the `jti` of every row that [Section 13.3](13_security-model.md#133-credential-flow) "Authoritative durability for revocation" says a starting gateway replica loads. `lenny-ops` reads those rows from Postgres at startup and every 30 seconds after, and each successful read replaces the set with the rows it returns and the `jti` of each event rule 2 added after the read began.
+2. While Redis is reachable, `lenny-ops` adds the `jti` of each `token.revoked` event ([Section 13.3](13_security-model.md#133-credential-flow) "Token rotation and revocation") when the event arrives.
+3. A token whose `jti` is in the set is refused with the response a gateway replica returns for a revoked token ([Section 13.3](13_security-model.md#133-credential-flow) "Token rotation and revocation").
+4. Until the first successful read since the process started, every Lenny-issued token is refused with the response a gateway replica returns when it cannot reach Postgres to validate a token ([Section 13.3](13_security-model.md#133-credential-flow) "Authoritative durability for revocation"). Rule 4 takes precedence over rules 3 and 7.
+5. After that read, a failed read leaves the set unchanged and a token not in the set is accepted unless rule 7 refuses it. `lenny-ops` does not apply the gateway replica's refusal to validate while Postgres is unreachable ([Section 13.3](13_security-model.md#133-credential-flow) "Authoritative durability for revocation"), and it makes no per-request `issued_tokens` read.
+6. Rules 1 to 5 do not apply to upstream IdP tokens.
+7. A token that carries the `origin: "playground"` claim ([Section 27.3](27_web-playground.md#273-authentication)) is refused with the response that [Section 27.3.1](27_web-playground.md#2731-oidc-cookie-to-mcp-bearer-exchange) "Per-request revocation check" gives a revoked bearer, because a gateway replica checks its revocation in the playground revocation key, which `lenny-ops` does not read.
 
 Callers are also subject to the optional `scope` JWT claim (Section 25.1, Scoped Tokens; RFC 9068). When present, the claim narrows the caller's effective tool surface below the role ceiling — a `platform-admin` token with `"scope": "tools:pool:* tools:health:read"` can call only pool tools and health reads despite its role theoretically permitting more.
 
@@ -1638,9 +1660,9 @@ An agent arriving with a valid token has no built-in way to know what it can do 
   "links": {
     "authorizedTools": "/v1/admin/me/authorized-tools",
     "myOperations": "/v1/admin/me/operations",
-    "myRecentAudit": "/v1/admin/audit-events?actorId=sa-prod-watchdog-01&limit=50",
-    "platformHealth": "/v1/admin/health/summary",
-    "openApi": "/v1/openapi.json"
+    "myRecentAudit": "https://lenny-gateway:8443/v1/admin/audit-events?actorId=sa-prod-watchdog-01&limit=50",
+    "platformHealth": "https://lenny-gateway:8443/v1/admin/health/summary",
+    "openApi": "https://lenny-gateway:8443/v1/openapi.json"
   }
 }
 ```
@@ -1663,7 +1685,7 @@ Any authenticated caller may call `/v1/admin/me` and its sub-endpoints — they 
 
 #### Degradation
 
-If Postgres is unreachable, `/v1/admin/me` still returns — `identity`, `authorization`, `rateLimits`, `token`, `platform`, `capabilities` are all derivable from the authenticated request alone or from `lenny-ops` process state. Only `links.myRecentAudit` is degraded (audit is Postgres-backed); the canonical `degradation` envelope (Section 25.2) is populated accordingly.
+If Postgres is unreachable, `/v1/admin/me` still returns — `identity`, `authorization`, `rateLimits`, `token`, `platform`, `capabilities` are all derivable from the authenticated request alone or from `lenny-ops` process state. The `links` are unaffected by a `lenny-ops` Postgres outage: `links.myRecentAudit` targets the gateway-resident audit query API (Section 25.9), so following it succeeds whenever the gateway and its Postgres are up regardless of whether `lenny-ops`'s Postgres is reachable. The canonical `degradation` envelope (Section 25.2) is populated accordingly.
 
 If the MCP Management Server is unreachable, `/v1/admin/me/authorized-tools` returns `503 AUTHORIZED_TOOLS_UNAVAILABLE` with a suggestion to use the OpenAPI spec at `/v1/openapi.json` plus the caller's `authorization` block to derive the tool surface locally.
 
@@ -1743,7 +1765,7 @@ Read-only. Mutations still go to the owning subsystem (`POST /v1/admin/platform/
         "proceed":  "POST /v1/admin/platform/upgrade/proceed",
         "pause":    "POST /v1/admin/platform/upgrade/pause",
         "rollback": "POST /v1/admin/platform/upgrade/rollback",
-        "audit":    "GET /v1/admin/audit-events?operationId=upgrade-550e8400-e29b-41d4-a716-446655440000"
+        "audit":    "GET https://lenny-gateway:8443/v1/admin/audit-events?operationId=upgrade-550e8400-e29b-41d4-a716-446655440000"
       },
       "cancellable": true,
       "metadata": { "targetVersion": "1.6.0", "previousVersion": "1.5.0" }
@@ -2168,7 +2190,7 @@ The lock service attempts storage tiers in order, falling back on failure. Each 
 | Tier | Store | Acquire mechanism | Coordination scope | When used |
 |------|-------|-------------------|--------------------|-----------|
 | 1 | Postgres | `INSERT ... ON CONFLICT (scope) DO NOTHING RETURNING *` | All replicas (shared table) | Default — both stores available |
-| 2 | Redis | `SET NX EX` with Lua script writing `{lockID, epoch, revision}` atomically | All replicas (shared keyspace) | Postgres unreachable |
+| 2 | Redis | Lua script over the `ops:{lock}:` keys that checks the scope key and writes the lock with the current outage epoch atomically | All replicas (shared keyspace) | Postgres unreachable |
 | 3 | In-memory | `sync.Map` + per-replica TTL wheel | Depends on `ops.locks.memoryTier` (see below) | Both Postgres and Redis unreachable |
 
 **Tier 1 — Postgres (default):**
@@ -2194,12 +2216,30 @@ Acquisitions at Tier 1 use `epoch = 0` (reserved for the Postgres tier). `Acquir
 
 **Tier 2 — Redis:**
 
-Uses a Lua script on key `ops:lock:{scope}` that atomically:
-1. Reads the current outage epoch from `ops:lock-epoch:current` (see Tier Transitions).
-2. Checks for an existing non-expired lock.
-3. On no conflict, writes `{lockID, scope, operation, acquiredBy, operationID, acquiredAt, expiresAt, epoch, revision}` with `PEXPIREAT`.
+Every Tier 2 key starts with `ops:{lock}:`, whose `{lock}` segment is a Redis Cluster hash tag ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes) **Braces in key patterns**), so every Tier 2 key hashes to one slot:
 
-`acquiredAt` and `expiresAt` are derived from `redis.call('TIME')` so locks across replicas use a consistent clock source. Release uses a similar CAS script that verifies the lock ID matches before deleting.
+- `ops:{lock}:scope:<scope>` (the scope key) is a hash whose `id` field holds the lock ID and whose `data` field holds the serialized lock record.
+- `ops:{lock}:id:<lockID>` (the ID key) holds the scope, so a lock ID resolves to its scope key.
+- `ops:{lock}:epoch` (the epoch key) holds the Redis-side outage epoch (see Tier Transitions).
+
+`<scope>` and `<lockID>` are placeholders: the key carries the value without angle brackets.
+
+Acquire runs one Lua script over the scope key, the ID key, and the epoch key that atomically:
+1. Returns `409 REMEDIATION_LOCK_CONFLICT` with the existing lock record when the scope key exists.
+2. Reads the current outage epoch from the epoch key, treating an absent key as 0, and stamps it as the record's `epoch`.
+3. Writes the serialized `Lock` record (see Lock Struct) to the scope key and the scope to the ID key, and sets both keys to expire after the requested TTL.
+
+`lenny-ops` computes `acquiredAt` and `expiresAt` from a Redis `TIME` reading (see Clock Source) taken immediately before it runs a script that writes a lock record, and that script sets the expiry of the keys it writes as a TTL relative to the moment it runs.
+
+Extend, steal, and release resolve the lock ID through the ID key, read the stored lock record, and apply their change with one compare-and-set script over the scope key and the ID key. The script writes the new record, or deletes both keys on release, only when the stored record is identical to the record that was read. A lock ID whose scope key holds a different lock ID is treated as absent. When the comparison fails, `lenny-ops` reads the lock again and decides again:
+1. An absent lock returns `404 REMEDIATION_LOCK_NOT_FOUND`.
+2. On extend and release, a lock whose `acquiredBy` is no longer the caller returns `403 LOCK_NOT_OWNED`.
+3. Any other change retries the operation.
+4. After three failed comparisons the operation returns `409 REMEDIATION_LOCK_CONFLICT` and writes nothing.
+
+The split-brain reconciliation (see Tier Transitions) removes a losing Redis lock with a script that deletes the scope key and the ID key only when the stored lock ID matches, regardless of `acquiredBy`.
+
+The Redis client re-sends a command whose reply it lost, so each Tier 2 write in this section tolerates a repeat: an acquire whose scope key already holds its own lock ID at revision 0 returns that lock in place of the conflict that acquire step 1 returns, a compare-and-set whose stored record is identical to the new record counts as success without a write, a repeated release finds the lock absent, a repeated reconciliation removal deletes nothing, and a repeated `INCR` of the epoch key (see Tier Transitions) advances the epoch twice, which keeps it monotonic.
 
 **Tier 3 — In-memory:**
 
@@ -2215,10 +2255,10 @@ The default (`"single-replica-only"`) matches the recommendation for the v1 depl
 
 The critical failure mode in a naive tiered design is split-brain: agent A holds a lock in Postgres; Postgres fails; agent B acquires the same lock in Redis; both run concurrently. Lenny prevents this with **outage epochs**:
 
-**Outage epochs.** A monotonically-increasing integer stored **in both Postgres (`ops_lock_epoch.current`) and Redis (`ops:lock-epoch:current`)**. The dual-store epoch is the foundation of split-brain detection — storing it only in Redis would leave a gap during simultaneous Postgres+Redis outages. Maintenance:
+**Outage epochs.** A monotonically-increasing integer stored **in both Postgres (`ops_lock_epoch.current`) and Redis (`ops:{lock}:epoch`)**. The dual-store epoch is the foundation of split-brain detection — storing it only in Redis would leave a gap during simultaneous Postgres+Redis outages. Maintenance:
 
-- On Postgres → Tier 2 transition: the service increments the Redis-side epoch via `INCR ops:lock-epoch:current`, stamps the new value onto every Tier 2 acquisition. The Postgres-side epoch will be brought up to date during the next reconciliation pass (see below).
-- On Tier 2 → Postgres recovery: the service reads `MAX(ops:lock-epoch:current_redis, ops_lock_epoch.current_postgres)`, writes the max back to Postgres in the same transaction that performs reconciliation, and resumes Tier 1 service.
+- On Postgres → Tier 2 transition: the service increments the Redis-side epoch via `INCR ops:{lock}:epoch`, stamps the new value onto every Tier 2 acquisition. The Postgres-side epoch will be brought up to date during the next reconciliation pass (see below).
+- On Tier 2 → Postgres recovery: the service reads the maximum of `ops:{lock}:epoch` and `ops_lock_epoch.current`, writes the max back to Postgres in the same transaction that performs reconciliation, and resumes Tier 1 service.
 - On Tier 3 (both stores down) operation: `lenny-ops` records the outage start time and an in-memory `pendingEpochIncrement` flag. When **either** Redis or Postgres recovers first, the recovering store's epoch counter is incremented by 1 and stamped with the outage start time. When the second store recovers, the standard `MAX(redis_epoch, postgres_epoch)` reconciliation brings them into sync.
 
 Because both stores hold the epoch and reconciliation uses the maximum, the system is **safe under any single-store outage and any out-of-order recovery sequence**. The only failure mode is "neither store ever recovers," in which case Lenny is effectively offline.
@@ -2272,9 +2312,9 @@ The losing holder (always notified via the heartbeat path) can either back off (
 
 #### Clock Source
 
-All TTLs and `expiresAt` timestamps are authored by a single clock per tier:
+All TTLs and `expiresAt` timestamps are authored by a server-side clock source per tier:
 - Tier 1: Postgres `now() at time zone 'UTC'`.
-- Tier 2: Redis `TIME` command (via Lua script).
+- Tier 2: Redis `TIME` command, which any primary of a Redis Cluster may answer.
 - Tier 3: the `lenny-ops` process clock.
 
 Agents do not pass `expiresAt` in the request body; they pass `ttlSeconds`. The server computes `expiresAt = server_clock + ttlSeconds`. This removes client-side clock dependence and most clock-skew failure modes. Clock skew between nodes running Postgres and Redis is bounded by NTP (operator-managed); `lenny-ops` monitors drift and alerts when Postgres ↔ Redis skew exceeds 10s (see Self-Monitoring).
@@ -2319,7 +2359,7 @@ Deployers scaling `lenny-ops` beyond a single replica should review `ops.locks.m
 
 | Code | Category | HTTP | Description |
 |------|----------|------|-------------|
-| `REMEDIATION_LOCK_CONFLICT` | `POLICY` | 409 | Another agent holds a lock on this scope. Response includes `splitBrain: true` if a split-brain condition was detected. |
+| `REMEDIATION_LOCK_CONFLICT` | `POLICY` | 409 | Another agent holds a lock on this scope, or a Tier 2 extend, steal, or release exhausted its compare-and-set retries (see Storage Tiers). Response includes `splitBrain: true` if a split-brain condition was detected. |
 | `REMEDIATION_LOCK_NOT_FOUND` | `PERMANENT` | 404 | Lock ID not found or already expired. |
 | `LOCK_SCOPE_FORBIDDEN` | `AUTH` | 403 | The caller's role does not authorize this lock scope. |
 | `LOCK_NOT_OWNED` | `AUTH` | 403 | Caller is not the lock's `acquiredBy`; use `Steal` to take over an existing lock. |
@@ -2465,7 +2505,7 @@ The `created_at` column is **not** defaulted to `now()` — the application supp
 
 ### Self-Monitoring
 
-`lenny-ops` monitors its own operational health and emits structured events when it degrades. This closes the "who watches the watcher" gap — the external watchdog agent receives health signals about `lenny-ops` itself through the same event stream it uses for platform events.
+`lenny-ops` monitors its own operational health and emits structured events when it degrades. This closes the "who watches the watcher" gap — the external watchdog agent receives health signals about `lenny-ops` itself through the same event stream it uses for platform events. `lenny-ops` also monitors the Postgres ↔ Redis dependency clock skew; the `>10s` skew condition fires the `OpsClockSkewExceeded` warning alert (see [Section 16.5](16_observability.md#165-alerting-rules-and-slos)).
 
 #### Self-Health Checks
 
@@ -2567,6 +2607,8 @@ A real-time feed of platform operational events. `lenny-ops` reads from the Redi
 | `PUT` | `/v1/admin/event-subscriptions/{id}` | Update subscription filters |
 | `DELETE` | `/v1/admin/event-subscriptions/{id}` | Delete a subscription |
 | `GET` | `/v1/admin/event-subscriptions/{id}/deliveries` | Recent delivery attempts |
+
+The `GET /v1/admin/event-subscriptions/{id}/deliveries` endpoint is paginated with the canonical Section 25.2 envelope. It accepts `?cursor=` (an opaque continuation token from the previous response) and `?limit=` (page size, default 100, max 1000). Delivery attempts are returned newest-first, keyset-paginated over the delivery record's primary key; `pagination.cursorKind` is `"pk"`. An omitted or empty `cursor` returns the first page. When the supplied cursor can no longer be honored (the referenced delivery has aged out under the `deliveryRetentionDays` retention purge), the response returns the canonical `pagination.gapDetected: true` envelope with `oldestAvailableCursor` set to the oldest retained delivery cursor, matching the gap semantics defined in Section 25.2.
 
 ### Go Interface
 
@@ -3217,8 +3259,6 @@ The `runbook` field is the runbook name as used in `GET /v1/admin/runbooks/{name
 The mapping from issue/component to runbook is maintained in the gateway's health service as a simple lookup table:
 
 ```go
-// pkg/gateway/health/runbook_links.go
-
 var issueRunbooks = map[string]string{
     "WARM_POOL_EXHAUSTED":      "warm-pool-exhaustion",
     "WARM_POOL_LOW":            "warm-pool-exhaustion",
@@ -3671,12 +3711,12 @@ Reads from the existing `audit_log` table (Section 11.7) via `StoreRouter.AuditS
 - `verified` — hash matches its predecessor's hash; tamper-free.
 - `broken` — hash does NOT match predecessor; tampering or data corruption (and no `RedactionReceipt` is present to authorize the discontinuity).
 - `unchecked` — verification wasn't performed (e.g., cross-shard boundary where hashes are per-shard).
-- `redacted_gdpr` — row was rewritten in place by the [§12.8](12_storage-architecture.md#128-compliance-interfaces) `DeleteByUser` OCSF dead-letter PII redaction step under GDPR Article 17. The discontinuity is authorized and accompanied by a signed `RedactionReceipt` ([§12.8](12_storage-architecture.md#128-compliance-interfaces) schema) pinning the rewrite to a specific erasure job, legal basis, and redactor identity. External verifiers accept `redacted_gdpr` as a valid discontinuity only after verifying the receipt's signature and matching its `(original_hash, new_hash)` pair to the observed chain rewrite boundary; otherwise they MUST classify the row as `broken` and fire the `AuditRedactionReceiptMissing` alert ([§16.5](16_observability.md#165-alerting-rules-and-slos)).
+- `redacted_gdpr` — row was rewritten in place by the [§12.8](12_storage-architecture.md#128-compliance-interfaces) `DeleteByUser` OCSF dead-letter PII redaction step under GDPR Article 17. The discontinuity is authorized and accompanied by a signed `RedactionReceipt` ([§12.8](12_storage-architecture.md#128-compliance-interfaces) schema) pinning the rewrite to a specific erasure job, legal basis, and redactor identity. External verifiers accept `redacted_gdpr` as a valid discontinuity only after verifying the receipt's signature and matching its `original_hash` to the redacted row's preserved pre-redaction hash; otherwise they MUST classify the row as `broken` and fire the `AuditRedactionReceiptMissing` alert ([§16.5](16_observability.md#165-alerting-rules-and-slos)).
 
-**Chain gap detection.** `chainIntegrity` also detects **temporal gaps** caused by degraded-mode writes (not just tampering):
+**Chain gap detection.** `chainIntegrity` also detects **temporal gaps** in the audit sequence. A gap has more than one cause beyond tampering: a degraded-mode write during a Postgres outage, and a routine `nextval` transaction rollback that consumes a per-tenant sequence value without committing a row while Postgres is available. The per-tenant audit `sequence_number` is allocated by `nextval` ([§11.7](11_policy-and-controls.md#117-audit-logging)), and a `nextval` value is not returned to the sequence on rollback, so an aborted audit-write transaction leaves an interior gap in the sequence even though every committed row still links to its predecessor by `prev_hash`. The gap is therefore distinguished by the `prev_hash` linkage rather than by sequence density: an intact-link gap is benign, and only a gap accompanied by a non-linking `prev_hash` indicates tampering.
 
-- `gap_suspected` — sequence number jumps in the event stream suggest a gap (e.g., event #1000 then #1150 with no events between). Returned when querying across a period during which Postgres was unavailable.
-- The response's `auditMetadata` object lists suspected gap windows: `[{"start": "2026-04-16T10:22Z", "end": "2026-04-16T10:30Z", "reason": "postgres_unreachable"}]`. This is computed from `ops_postgres_outage_log` (a small table recording when `lenny-ops` detected Postgres unreachable) and cross-referenced with event sequence numbers.
+- `gap_suspected` — sequence number jumps in the event stream suggest a gap (e.g., event #1000 then #1150 with no events between). This is an advisory, non-alarming signal with two sources. The first is a period during which Postgres was unavailable, recorded in `ops_postgres_outage_log`. The second is a benign `nextval` transaction rollback that occurred while Postgres was available, which leaves no `ops_postgres_outage_log` window and an intact `prev_hash` chain across the gap. The two are distinguished by whether an `ops_postgres_outage_log` window covers the gap and by whether the `prev_hash` chain links across it: the outage case carries a window, and the rollback case carries none while remaining chain-linked. Neither is a broken chain; only a gap accompanied by a non-linking `prev_hash` is `broken`.
+- The response's `auditMetadata` object lists suspected gap windows: `[{"start": "2026-04-16T10:22Z", "end": "2026-04-16T10:30Z", "reason": "postgres_unreachable"}]`. An outage-attributed window is computed from `ops_postgres_outage_log` (a small table recording when `lenny-ops` detected Postgres unreachable) and cross-referenced with event sequence numbers. A `gap_suspected` gap that no `ops_postgres_outage_log` window covers and whose `prev_hash` chain links across it is a benign `nextval` rollback gap that requires no reconciliation and no operator action; it is reported with `reason: "nextval_rollback"` rather than an outage window, and it is never re-stamped `rechained_post_outage`.
 
 **Degraded-mode write semantics.** When `lenny-ops` creates audit events during a Postgres outage (via buffered escalations, flushed locks, etc.), the events are written to the audit log during reconciliation with their **original timestamps** (not the flush timestamp). A dedicated `audit_log_deferred_writes` table tracks these for reconciliation:
 
@@ -3927,7 +3967,7 @@ type BackupService interface {
 type Backup struct {
     ID            string          `json:"id"`
     Type          string          `json:"type"`            // "full", "postgres", "config"
-    Status        string          `json:"status"`          // "running", "completed", "failed", "verifying", "verified"
+    Status        string          `json:"status"`          // "pending", "running", "completed", "failed", "verifying", "verified", "verification_failed", "expired"
     StartedAt     time.Time       `json:"startedAt"`
     CompletedAt   *time.Time      `json:"completedAt,omitempty"`
     SizeBytes     int64           `json:"sizeBytes,omitempty"`
@@ -4127,7 +4167,7 @@ The retention enforcement Job runs after each successful backup AND on a daily c
 
 ### Backup Verification
 
-`POST /v1/admin/backups/{id}/verify` creates a K8s Job that:
+`POST /v1/admin/backups/{id}/verify` sets the `ops_backups` row to `status: "verifying"` and creates a K8s Job that:
 1. Downloads the backup archive from MinIO.
 2. Validates the SHA-256 checksum.
 3. For Postgres backups: runs `pg_restore --list` to verify the dump is readable (no actual data restoration).
@@ -4261,7 +4301,7 @@ The verification recommendation is stronger at higher tiers because backups that
 CREATE TABLE ops_backups (
     id              TEXT PRIMARY KEY,
     type            TEXT NOT NULL,            -- 'full', 'postgres', 'config'
-    status          TEXT NOT NULL,            -- 'running', 'completed', 'failed', 'verified', 'verification_failed'
+    status          TEXT NOT NULL,            -- 'pending', 'running', 'completed', 'failed', 'verifying', 'verified', 'verification_failed', 'expired'
     started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at    TIMESTAMPTZ,
     size_bytes      BIGINT,
@@ -4336,7 +4376,7 @@ If Postgres is down: backup creation, listing, and scheduling all fail (503). Ba
 | `BACKUP_REGION_UNRESOLVABLE` | `PERMANENT` | 422 | A shard's resolved `dataResidencyRegion` has no corresponding `backups.regions.<region>` entry, or the region's MinIO endpoint / KMS key is unreachable. Fail-closed mirror of `REGION_CONSTRAINT_UNRESOLVABLE`; emits `DataResidencyViolationAttempt` audit event ([§12.8](12_storage-architecture.md#128-compliance-interfaces) "Backup pipeline residency"). |
 | `ARTIFACT_REPLICATION_REGION_UNRESOLVABLE` | `PERMANENT` | 422 | The ArtifactStore replication runtime residency preflight ([§25.11](#2511-backup-and-restore-api) "Runtime residency preflight") observed a jurisdiction-tag mismatch between the source region's `dataResidencyRegion` and the destination bucket's advertised `lenny.dev/jurisdiction-region` tag, a missing tag, a DNS rebinding outside `backups.regions.<region>.allowedDestinationCidrs` (when set), or a failed tag-probe against the destination. Fail-closed mirror of `BACKUP_REGION_UNRESOLVABLE` for the continuous-replication surface. Replication for the affected region is suspended and does not auto-resume; operator must fix the jurisdiction mismatch and invoke `POST /v1/admin/artifact-replication/{region}/resume` (`platform-admin`, audited). Emits `DataResidencyViolationAttempt` audit event (`operation: "artifact_replication"`) and increments `lenny_minio_replication_residency_violation_total`; raises the `ArtifactReplicationResidencyViolation` critical alert ([§16.5](16_observability.md#165-alerting-rules-and-slos)). |
 | `LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE` | `PERMANENT` | 422 | Phase 3.5 of the tenant force-delete lifecycle ([§12.8](12_storage-architecture.md#128-compliance-interfaces) tenant deletion lifecycle, **Legal hold interaction during deletion**) aborted because the tenant's resolved `dataResidencyRegion` has no corresponding `storage.regions.<region>.legalHoldEscrow` entry, the regional escrow bucket endpoint is unreachable, or the regional escrow KMS key (`platform:legal_hold_escrow:<region>`) cannot be resolved. Fail-closed mirror of `BACKUP_REGION_UNRESOLVABLE` / `ARTIFACT_REPLICATION_REGION_UNRESOLVABLE` applied to the legal-hold escrow surface, so that EU-pinned held evidence is never migrated to a non-EU escrow bucket under the platform `legal_hold_escrow_kek`. Emits `DataResidencyViolationAttempt` audit event (`operation: "legal_hold_escrow"`) and raises the `LegalHoldEscrowResidencyViolation` critical alert ([§16.5](16_observability.md#165-alerting-rules-and-slos)). The tenant is left in Phase 3.5 `deleting` state; operator must add the missing `storage.regions.<region>.legalHoldEscrow` configuration (or restore endpoint/KMS reachability) and re-invoke `POST /v1/admin/tenants/{id}/force-delete` with `acknowledgeHoldOverride: true`. |
-| `PLATFORM_AUDIT_REGION_UNRESOLVABLE` | `PERMANENT` | 422 | A platform-tenant audit event referencing a non-platform `target_tenant_id` (see [§11.7](11_policy-and-controls.md#117-audit-logging) "Platform-tenant audit event residency") could not be written because the target tenant's `dataResidencyRegion` has no corresponding `storage.regions.<region>.postgresEndpoint` entry, or that region's platform-Postgres is unreachable. Fail-closed mirror of `BACKUP_REGION_UNRESOLVABLE` for the platform-tenant audit-write surface (CMP-058). The originating operation halts (impersonation issuance, Phase 3.5 escrow ledger write, `compliance.profile_decommissioned`, etc.). Emits `DataResidencyViolationAttempt` audit event (`operation: "platform_audit_write"`) and raises the `PlatformAuditResidencyViolation` critical alert. Operator must configure the missing `storage.regions.<region>.postgresEndpoint` entry (chart render validation rejects the release if missing) and retry. See [Section 11.7](11_policy-and-controls.md#117-audit-logging) and Storage Routing above. |
+| `PLATFORM_AUDIT_REGION_UNRESOLVABLE` | `PERMANENT` | 422 | A platform-tenant audit event referencing a non-platform `target_tenant_id` (see [§11.7](11_policy-and-controls.md#117-audit-logging) "Platform-tenant audit event residency") could not be written because the target tenant's `dataResidencyRegion` has no corresponding `storage.regions.<region>.postgresEndpoint` entry, or that region's platform-Postgres is unreachable. Fail-closed mirror of `BACKUP_REGION_UNRESOLVABLE` for the platform-tenant audit-write surface (CMP-058). Emits `DataResidencyViolationAttempt` audit event (`operation: "platform_audit_write"`) and raises the `PlatformAuditResidencyViolation` critical alert. Operator must configure the missing `storage.regions.<region>.postgresEndpoint` entry (chart render validation rejects the release if missing) and retry. See [Section 11.7](11_policy-and-controls.md#117-audit-logging) and Storage Routing above. |
 
 ### Audit Events
 
@@ -4508,13 +4548,12 @@ Each tool is defined with a JSON Schema `inputSchema`. Example for `lenny_pool_s
 
 ### OpenAPI Schema Discovery
 
-The canonical API contract is exposed as an OpenAPI 3.1 document served by `lenny-ops`:
+The canonical API contract is exposed as an OpenAPI 3.1 document served by the gateway:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/v1/openapi.json` | Full OpenAPI 3.1 document (JSON) for the entire operability surface — both gateway admin-API endpoints that `lenny-ops` proxies/aggregates and `lenny-ops`'s own endpoints. |
+| `GET` | `/v1/openapi.json` | Full OpenAPI 3.1 document (JSON) for the entire operability surface — both the gateway admin-API endpoints and `lenny-ops`'s own endpoints. |
 | `GET` | `/v1/openapi.yaml` | Same content, YAML. |
-| `GET` | `/v1/openapi/{endpoint-id}` | Schema fragment for a single endpoint (useful for tool generation). |
 
 The OpenAPI document is generated at build time from the same Go type definitions used by the server, ensuring it can't drift from the implementation. The MCP tool schemas referenced below are derived from this OpenAPI document — a single build-time `openapi-to-mcp` step produces the tool inventory from the OpenAPI.
 
@@ -4579,8 +4618,8 @@ During MCP initialization, the agent declares its capabilities in the `initializ
 | Capability declaration | Filter effect |
 |---|---|
 | `{"access": ["admin-api"]}` (or omitted) | All tools the caller's scopes permit. Default. |
-| `{"access": ["admin-api"], "scope": "operability"}` | Only operability tools (health, diagnostics, runbooks, events, audit, drift, backup/restore, upgrade, locks, escalations, caller identity, operations inventory). |
-| `{"access": ["admin-api"], "scope": "admin"}` | Only platform-management tools (tenant/pool/credential/runtime/quota lifecycle). |
+| `{"access": ["admin-api"], "scope": "operability"}` | Only operability tools, classified by the tool's `x-lenny-scope` domain prefix (`tools:{domain}:{action}`). The operability domains are `health`, `diagnostics`, `runbooks`, `events`, `audit`, `drift`, `backup`, `restore`, `upgrade`, `locks`, `escalation`, `logs`, `me` (caller identity), `operations` (operations inventory), `recommendations`, and the introspection and control domains `config`, `schema`, `sessions`, `tree`, `platform`, and `preflight`. A tool whose domain is in this set is an operability tool regardless of whether it is served by lenny-ops or proxied to the gateway admin API. |
+| `{"access": ["admin-api"], "scope": "admin"}` | Only platform-management tools, classified as every tool whose `x-lenny-scope` domain prefix is not in the operability-domain set above (for example `tenant`, `pool`, `credential_pool`, `runtime`, `quota`, `user`, `rbac`, `connector`, `environment`, `delegation_policy`, and the other platform-lifecycle domains). The operability and admin sets partition the full tool inventory. |
 | `{"access": ["admin-api"], "readOnly": true}` | Only observation-category tools regardless of domain. |
 | `{"access": ["admin-api"], "nonDestructive": true}` | Excludes tools with `x-lenny-category: "destructive"`. |
 | `{"access": ["admin-api"], "tenantScoped": true}` | Only tools whose underlying endpoints are accessible to `tenant-admin` callers. |
@@ -4859,8 +4898,8 @@ The following command groups wrap the operability APIs. Same conventions as Sect
 
 | Commands | Target | How `lenny-ctl` knows |
 |---|---|---|
-| `health`, `recommendations` | Gateway admin API | Direct to gateway URL (`--server` flag) |
-| `events`, `diagnose`, `runbooks`, `upgrade`, `audit`, `drift`, `backup`, `locks`, `escalations`, `logs`, `mcp-management` | `lenny-ops` | `--ops-server` flag, or auto-discovered via `GET /v1/admin/platform/version` (gateway response includes `opsServiceURL`) |
+| `health`, `recommendations`, `audit` | Gateway admin API | Direct to gateway URL (`--server` flag). The `audit` family targets the gateway-resident audit query API (Section 25.9). |
+| `events`, `diagnose`, `runbooks`, `upgrade`, `drift`, `backup`, `locks`, `escalations`, `logs`, `mcp-management` | `lenny-ops` | `--ops-server` flag, or auto-discovered via `GET /v1/admin/platform/version` (gateway response includes `opsServiceURL`) |
 
 ### Runbook Commands
 
@@ -4988,16 +5027,16 @@ The following command groups wrap the operability APIs. Same conventions as Sect
 
 | Failure | Impact |
 |---|---|
-| **Gateway crash-loop** | `lenny-ops` stays up. Watchdog calls diagnostics, fetches runbooks, queries audit trail. Remediation steps that call the gateway admin API will fail — the agent sees this and escalates or waits for gateway recovery. Gateway appears as unreachable in connectivity check. Event stream loses the gateway buffer fallback — if Redis is also down, events are unavailable. |
+| **Gateway crash-loop** | `lenny-ops` stays up. Watchdog calls diagnostics and fetches runbooks. Remediation steps that call the gateway admin API will fail, as will audit queries (the audit query API is gateway-resident, Section 25.9) — the agent sees this and escalates or waits for gateway recovery. Gateway appears as unreachable in connectivity check. Event stream loses the gateway buffer fallback — if Redis is also down, events are unavailable. |
 | **Gateway overloaded** | `lenny-ops` has an independent resource budget. Zero contention with client traffic. Health and recommendations on the gateway remain lightweight (in-process reads). |
-| **Postgres down** | Audit queries, backup management, and upgrade state machine are unavailable. Diagnostics degrade to K8s API data (partial results, 207). Drift detection works when caller supplies desired state. Remediation locks fall back to Redis (or in-memory). Escalation creation works (Redis or in-memory fallback). Event stream and webhook delivery are unaffected. Health endpoint on gateway still works (in-process metrics). |
+| **Postgres down** | Backup management and upgrade state machine are unavailable. Diagnostics degrade to K8s API data (partial results, 207). Drift detection works when caller supplies desired state. Remediation locks fall back to Redis (or in-memory). Escalation creation works (Redis or in-memory fallback). Event stream and webhook delivery are unaffected. Health endpoint on gateway still works (in-process metrics). `lenny-ops` accepts Lenny-issued tokens as [Section 25.4](#254-the-lenny-ops-service) "Authentication" **Revocation set** rules 4, 5, and 7 state. |
 | **Redis down** | Event stream falls back to gateway in-memory event buffer — degraded but functional. Webhook delivery continues from buffer with cached subscriptions. Remediation locks fall back to in-memory (if Postgres also down). Health endpoint still works (in-process circuit breaker cache fallback). |
-| **Postgres + Redis both down** | Core operational loop still functions in degraded mode: event stream via gateway buffer, diagnostics via K8s API (partial), remediation locks in-memory (single-replica only), escalation creation in-memory (202 Accepted), drift detection with caller-supplied desired state, webhook delivery from buffer with cached subscriptions **provided `lenny-ops` was running with a populated cache before the outage** (a `lenny-ops` cold start during the outage produces an empty subscription cache and no webhook deliveries until Postgres recovers). Unavailable: audit queries, backup management, upgrade state machine, subscription CRUD, retry history, idempotency-required endpoints (including `restore/execute` — see Total-Outage Recovery for the manual recovery path). |
+| **Postgres + Redis both down** | Core operational loop still functions in degraded mode: event stream via gateway buffer, diagnostics via K8s API (partial), remediation locks in-memory (single-replica only), escalation creation in-memory (202 Accepted), drift detection with caller-supplied desired state, webhook delivery from buffer with cached subscriptions **provided `lenny-ops` was running with a populated cache before the outage** (a `lenny-ops` cold start during the outage produces an empty subscription cache and no webhook deliveries until Postgres recovers). Unavailable: backup management, upgrade state machine, subscription CRUD, retry history, idempotency-required endpoints (including `restore/execute` — see Total-Outage Recovery for the manual recovery path). `lenny-ops` accepts Lenny-issued tokens as [Section 25.4](#254-the-lenny-ops-service) "Authentication" **Revocation set** rules 4, 5, and 7 state. |
 | **`lenny-ops` degraded** | Self-monitoring detects internal degradation (Postgres pool, Redis lag, memory pressure) and emits `ops_health_status_changed` to the event stream (Redis or gateway buffer). Watchdog receives this event and can poll `GET /v1/admin/ops/health` for details. |
-| **`lenny-ops` crash** | Gateway continues serving client traffic unaffected. Diagnostics, runbook index, audit, drift, backup, and upgrade APIs are unavailable. Watchdog detects ops service down via Ingress health check failure (no response from `/healthz`). In-memory escalations and remediation locks are lost (Redis/Postgres copies survive if those stores are up). |
+| **`lenny-ops` crash** | Gateway continues serving client traffic unaffected. Diagnostics, runbook index, drift, backup, and upgrade APIs are unavailable. The audit query API stays available because it is gateway-resident (Section 25.9). Watchdog detects ops service down via Ingress health check failure (no response from `/healthz`). In-memory escalations and remediation locks are lost (Redis/Postgres copies survive if those stores are up). |
 | **`lenny-ops` + gateway both down** | Total platform outage. Watchdog detects both unreachable. |
 | **Prometheus transiently down** | Gateway health and recommendations endpoints still work per-replica (in-process metrics). `lenny-ops` aggregation falls back to per-replica fan-out via headless Service: health uses worst-of merge, recommendations use highest-confidence merge. Pool diagnostics fall back to scraping individual replicas' `/metrics` — point-in-time values only. See Section 25.13 for fallback behavior of bundled vs. operator-customized alerting rules. |
-| **Prometheus permanently absent** | Acceptable at Tier 1; **strongly discouraged at Tier 2/3** (preflight emits a WARN). Beyond the transient-down behavior above, the long-term degradations described in Section 25.4, Prometheus Requirement, apply: capacity recommendations return `confidence: 0.0` after every restart; alert rules with `for: "15m"` clauses misfire because no historical data exists; humans receive no Alertmanager pages because bundled rules are never loaded; agents cannot investigate sessions/pools from past time windows. |
+| **Prometheus permanently absent** | Acceptable at Tier 1; **strongly discouraged at Tier 2/3** (preflight emits a WARN). Beyond the transient-down behavior above, the long-term degradations described in Section 25.4, Prometheus Requirement, apply: the capacity-recommendations response reports `degradation.level: "degraded"` immediately after a restart while every ring buffer is empty and returns to `"healthy"` once any rule records a sample; alert rules with `for: "15m"` clauses misfire because no historical data exists; humans receive no Alertmanager pages because bundled rules are never loaded; agents cannot investigate sessions/pools from past time windows. |
 
 The key property of this architecture: `lenny-ops` being up while the gateway is down is the high-value scenario — the ops surface remains available precisely when it's most needed. The reverse (ops down, gateway up) is low-impact — client traffic is fine, only ops tooling is unavailable. The degraded-mode design ensures that even during storage outages (Postgres and/or Redis down), the core operational loop — detect, diagnose, coordinate, escalate — continues to function, because these are exactly the scenarios where DevOps agents need the ops surface most.
 

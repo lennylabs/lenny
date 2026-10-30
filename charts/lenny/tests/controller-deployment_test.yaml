@@ -1,0 +1,668 @@
+suite: lenny-controller deployment
+templates:
+  - controller-deployment.yaml
+tests:
+  - it: renders the Deployment and the metrics Service
+    asserts:
+      - hasDocuments:
+          count: 2
+
+  - it: renders a Deployment named lenny-controller
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lenny-controller
+
+  - it: runs two replicas with leader election by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 2
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --leader-elect
+
+  # spec: §9.1 — the controller points each agent pod's
+  # adapter at the gateway's GatewayControl listener so a type:agent
+  # runtime's platform tool calls reach the gateway platform tool
+  # surface. F-9.1.1.
+  - it: points agent-pod adapters at the gateway GatewayControl listener
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      gateway.grpcPort: 50051
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-grpc-addr=lenny-gateway.NAMESPACE.svc:50051
+
+  # spec: §10.3 (NET-064) — when set the controller stamps the
+  # audience-bound projected SA token on every warm pod. F-10.3.5.
+  - it: passes --sa-token-audience when global.saTokenAudience is set
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      global.saTokenAudience: lenny-gateway-acme
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --sa-token-audience=lenny-gateway-acme
+
+  - it: omits --sa-token-audience when global.saTokenAudience is unset (chart default)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --sa-token-audience=
+
+  # spec: §13.2 (NET-071) — when minio.tls.caBundle carries the object-store
+  # CA PEM, the agent-objectstore-ca ConfigMap renders and the controller
+  # names it via --objectstore-ca-configmap so it can project the CA into
+  # every agent pod. The flag and the ConfigMap render under the same
+  # condition; the flag without the ConfigMap would point the adapter at a
+  # ConfigMap that does not exist.
+  - it: passes --objectstore-ca-configmap when minio.tls.caBundle is set
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      minio:
+        endpoint: "minio.acme.example:9443"
+        tls:
+          caBundle: |
+            -----BEGIN CERTIFICATE-----
+            MIIBdummyObjectStoreCAcertificatePEMforagentpodTLStrust
+            -----END CERTIFICATE-----
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --objectstore-ca-configmap=lenny-objectstore-ca
+
+  - it: omits --objectstore-ca-configmap when minio.tls.caBundle is empty (chart default)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --objectstore-ca-configmap=lenny-objectstore-ca
+
+  # spec: §13.2 (K8S-033) — the controller points every agent pod's
+  # resolver at the dedicated CoreDNS Service ClusterIP. F-13.2.4.
+  - it: passes --dedicated-dns-cluster-ip when coredns.clusterIP is set
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      coredns.clusterIP: 10.96.0.53
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --dedicated-dns-cluster-ip=10.96.0.53
+
+  - it: omits --dedicated-dns-cluster-ip when the dedicated CoreDNS is disabled
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      coredns.deploy: false
+      coredns.clusterIP: 10.96.0.53
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --dedicated-dns-cluster-ip=10.96.0.53
+
+  - it: runs under the lenny-controller service account
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: lenny-controller
+
+  - it: applies the restricted pod security posture
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - contains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop
+          content: ALL
+
+  - it: defaults the image tag to the chart appVersion
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/lennylabs/lenny-controller:0.1.0
+
+  - it: renders no data-store env with stock values
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - isNull:
+          path: spec.template.spec.containers[0].env
+
+  - it: wires LENNY_POSTGRES_DSN from the datastore Secret when postgres.dsn is set
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      postgres.dsn: "postgres://lenny:lenny@db.svc:5432/lenny?sslmode=disable"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POSTGRES_DSN
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: postgres-dsn
+
+  - it: omits the egress-capture image arg by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --egress-capture-image=lenny-egress-capture:e2e
+
+  - it: renders the egress-capture image arg when controller.egressCaptureImage is set
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      controller.egressCaptureImage: "lenny-egress-capture:e2e"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --egress-capture-image=lenny-egress-capture:e2e
+
+  # spec: §16.9 — F-16.9.2. The controller is a canonical Prometheus
+  # scrape target; the metrics listener flag and the named metrics
+  # containerPort both bind controller.metricsPort so the binary, the
+  # NetworkPolicy, and the Service agree on one port (default 9090).
+  - it: binds the metrics listener and containerPort on controller.metricsPort
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --metrics-bind-address=:9090
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: metrics
+            containerPort: 9090
+
+  - it: tracks a controller.metricsPort override on the flag and the containerPort
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      controller.metricsPort: 9123
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --metrics-bind-address=:9123
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: metrics
+            containerPort: 9123
+
+  # spec: §16.9 — F-16.9.1. Without a Service carrying the
+  # lenny.dev/component: controller label and the named metrics port, the
+  # Prometheus Operator cannot translate the ServiceMonitor controller
+  # selector entry into a scrape target.
+  - it: renders the lenny-controller metrics Service
+    documentSelector:
+      path: kind
+      value: Service
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lenny-controller
+      - equal:
+          path: metadata.labels["lenny.dev/component"]
+          value: controller
+      - equal:
+          path: spec.selector["lenny.dev/component"]
+          value: controller
+      - contains:
+          path: spec.ports
+          content:
+            name: metrics
+            port: 9090
+            targetPort: metrics
+
+  - it: tracks a controller.metricsPort override on the Service port
+    documentSelector:
+      path: kind
+      value: Service
+    set:
+      controller.metricsPort: 9123
+    asserts:
+      - contains:
+          path: spec.ports
+          content:
+            name: metrics
+            port: 9123
+            targetPort: metrics
+
+  # spec: §10.5 / §17.1 — the
+  # controller declares an explicit, auditable RollingUpdate strategy
+  # rather than relying on the Kubernetes 25% default. F-10.5.9.
+  - it: renders the §10.5 / §17.1 RollingUpdate strategy by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.strategy.type
+          value: RollingUpdate
+      - equal:
+          path: spec.strategy.rollingUpdate.maxUnavailable
+          value: 1
+      - equal:
+          path: spec.strategy.rollingUpdate.maxSurge
+          value: 1
+
+  - it: honors a controller.rollingUpdate override
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      controller.rollingUpdate.maxUnavailable: 0
+      controller.rollingUpdate.maxSurge: 2
+    asserts:
+      - equal:
+          path: spec.strategy.rollingUpdate.maxUnavailable
+          value: 0
+      - equal:
+          path: spec.strategy.rollingUpdate.maxSurge
+          value: 2
+
+  # spec: §17.8.6 ImageResolver — the gateway, lenny-ops, controllers,
+  # lenny-backup, and the warm-pool controller resolve every image
+  # reference from platform.registry.*. F-17.8.2.
+  - it: resolves the controller image from platform.registry.url
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      platform.registry.url: registry.acme.internal/lenny
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: registry.acme.internal/lenny/lenny-controller:0.1.0
+
+  - it: a platform.registry override wins over the url default
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      platform.registry.url: registry.acme.internal/lenny
+      platform.registry.overrides:
+        lenny-controller: mirror.acme.internal/lenny-controller@sha256:abc123
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: mirror.acme.internal/lenny-controller@sha256:abc123
+
+  - it: propagates platform.registry.pullSecretName to imagePullSecrets
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      platform.registry.pullSecretName: acme-regcred
+    asserts:
+      - contains:
+          path: spec.template.spec.imagePullSecrets
+          content:
+            name: acme-regcred
+
+  - it: renders no imagePullSecrets when no pull secret is configured
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - isNull:
+          path: spec.template.spec.imagePullSecrets
+
+  # spec: §17.8.2 controller-tuning table — F-17.8.6. A stock render
+  # leaves the limiter/concurrency/queue/dedup/grace flags to the binary
+  # defaults (which match the Tier 1 column).
+  - it: omits the controller-tuning flags by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --max-concurrent-reconciles=1
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --create-qps=20
+
+  - it: renders the controller-tuning flags when controller.tuning is set
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      controller.tuning:
+        podCreateQPS: 80
+        podCreateBurst: 200
+        statusUpdateQPS: 120
+        statusUpdateBurst: 400
+        maxConcurrentReconciles: 15
+        workqueueMaxDepth: 10000
+        statusUpdateDedupWindow: 250ms
+        initialFillGracePeriod: 120s
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --create-qps=80
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --create-burst=200
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --status-qps=120
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --status-burst=400
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --max-concurrent-reconciles=15
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --workqueue-max-depth=10000
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --status-update-dedup-window=250ms
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --initial-fill-grace-period=120s
+
+  # spec: §4.7.10 (Runtime supervisor); §28.5.3 (CH-SUPERVISE, Timing);
+  # §17.8.1. A stock render leaves the supervisor image unset and the
+  # supervise timing flags to the controller defaults.
+  - it: omits the supervisor image and supervise timing flags by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --supervise-ping-interval=5s
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --warm-up-timeout=2m
+
+  - it: renders the supervisor image and supervise timing flags when set
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      controller.supervisorImage: ghcr.io/lennylabs/lenny-supervisor@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      controller.tuning:
+        supervisePingInterval: 3s
+        supervisePingTimeout: 4s
+        superviseWaitTimeout: 6m
+        warmUpTimeout: 90s
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --supervisor-image=ghcr.io/lennylabs/lenny-supervisor@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --supervise-ping-interval=3s
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --supervise-ping-timeout=4s
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --supervise-wait-timeout=6m
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --warm-up-timeout=90s
+
+  # spec: §17.8.2 controller-tuning table — "Controller pod
+  # anti-affinity". F-17.8.6.
+  - it: renders a preferred anti-affinity against the PSC by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution
+          content:
+            weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  lenny.dev/component: pool-scaling-controller
+              topologyKey: kubernetes.io/hostname
+      - isNull:
+          path: spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution
+
+  - it: renders a required anti-affinity when controller.antiAffinity is required
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      controller.antiAffinity: required
+    asserts:
+      - contains:
+          path: spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution
+          content:
+            labelSelector:
+              matchLabels:
+                lenny.dev/component: pool-scaling-controller
+            topologyKey: kubernetes.io/hostname
+      - isNull:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution
+
+  # spec: §17.8.2 controller-tuning table — the Tier 3 preset pins the
+  # Tier 3 column (15 reconciles, 250ms dedup) and required anti-affinity.
+  - it: applies the Tier 3 controller-tuning column from the tier-3 preset
+    documentSelector:
+      path: kind
+      value: Deployment
+    values:
+      - ../presets/values-tier3.yaml
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 3
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --max-concurrent-reconciles=15
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --status-update-dedup-window=250ms
+      - contains:
+          path: spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution
+          content:
+            labelSelector:
+              matchLabels:
+                lenny.dev/component: pool-scaling-controller
+            topologyKey: kubernetes.io/hostname
+
+  # spec: §5.2 / §6.4 — F-6.1.3. A stock render leaves
+  # the resource classes to the binary defaults (small/medium/large with
+  # tmpfs-accounted memory limits).
+  - it: omits resource-class flags by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --resource-class=medium=requests.cpu:500m,requests.memory:2Gi,limits.cpu:2,limits.memory:2Gi
+
+  - it: renders a --resource-class override when controller.resourceClasses is set
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      controller.resourceClasses.medium.requests.cpu: 500m
+      controller.resourceClasses.medium.requests.memory: 2Gi
+      controller.resourceClasses.medium.limits.cpu: "2"
+      controller.resourceClasses.medium.limits.memory: 2Gi
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --resource-class=medium=requests.cpu:500m,requests.memory:2Gi,limits.cpu:2,limits.memory:2Gi
+
+  # spec: §13.1 — the controller stamps the operator-tunable
+  # non-root pod UIDs (default 65532/65533/65534) onto every agent pod;
+  # the lenny-webhook Deployments are wired from the same security.podUIDs
+  # values so a built pod passes the pod-security UID checks. F-13.1.16.
+  - it: stamps the default non-root pod UIDs by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --adapter-uid=65532
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --agent-uid=65533
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --cred-readers-gid=65534
+
+  - it: renders overridden non-root pod UIDs from security.podUIDs
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      security.podUIDs.adapter: 70000
+      security.podUIDs.agent: 70001
+      security.podUIDs.credReadersGID: 70002
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --adapter-uid=70000
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --agent-uid=70001
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --cred-readers-gid=70002
+
+  # spec: §4.6.1 Warm Pool Controller (Pod Lifecycle), "Orphaned
+  # SandboxClaim detection" — the leader-elected GarbageCollect loop and the
+  # agent_pod_state mirror reconciler list the agent namespaces, and the
+  # binary registers both only when --agent-namespaces names at least one
+  # namespace and LENNY_POSTGRES_DSN is set. The chart never rendered the
+  # flag, so no install ran the GC (F-4.6.30). The flag is one
+  # comma-separated value, the form splitNamespaces parses.
+  - it: renders --agent-namespaces from the default agentNamespaces
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --agent-namespaces=lenny-agents,lenny-agents-kata
+
+  - it: renders --agent-namespaces for a single agent namespace
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      agentNamespaces:
+        - name: acme-agents
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --agent-namespaces=acme-agents
+
+  - it: renders every agent namespace, in declared order, as one comma-separated --agent-namespaces value
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      agentNamespaces:
+        - name: acme-agents
+        - name: globex-agents
+        - name: initech-agents
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --agent-namespaces=acme-agents,globex-agents,initech-agents
+      # A repeated flag would keep only the last value (flag.StringVar), so
+      # the chart must render exactly one --agent-namespaces argument.
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --agent-namespaces=initech-agents
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --agent-namespaces=acme-agents
+
+  - it: omits --agent-namespaces when agentNamespaces is empty
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      agentNamespaces: []
+    asserts:
+      # An unguarded template would render the bare "--agent-namespaces="
+      # argument here.
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --agent-namespaces=
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --leader-elect
+
+  # The orphan-claim GC's active-session lookup and the mirror both need
+  # Postgres. With postgres.dsn set, the Deployment carries both inputs the
+  # binary gates the two runnables on.
+  - it: wires both GC inputs, the agent namespaces and the Postgres DSN, when postgres.dsn is set
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      postgres.dsn: "postgres://lenny:lenny@db.svc:5432/lenny?sslmode=disable"
+      agentNamespaces:
+        - name: acme-agents
+        - name: globex-agents
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --agent-namespaces=acme-agents,globex-agents
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POSTGRES_DSN
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: postgres-dsn

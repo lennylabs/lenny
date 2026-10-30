@@ -163,7 +163,7 @@ Lenny follows a milestone-gated development process where each milestone has def
 | Milestone | Spec/18 phase | Key deliverables |
 |:----------|:--------------|:-----------------|
 | **Foundation** | Phase 0 | License (ADR-008), ADR-007 verification, repository setup, branch-protection and DCO policy, CI pipeline. |
-| **First working slice** | Phase 2 | `make run` local dev mode, echo runtime, `cmd/lenny-compliance --level basic`, runtime-author SDKs (Go, Python, TypeScript), `CONTRIBUTING.md`, `GOVERNANCE.md` draft, startup-latency benchmark. |
+| **First working slice** | Phase 2 | `make run` local dev mode, echo runtime, the `lenny runtime validate` conformance suite, runtime-author SDKs (Go, Python, TypeScript), `CONTRIBUTING.md`, `GOVERNANCE.md` draft, startup-latency benchmark. |
 | **Pre-hardening baselines** | Phase 13.5 | Tier 7 cloud load scenarios, Postgres write-pattern benchmark, HPA/KEDA pipeline, Tier 1→2 and Tier 2→3 promotion-gate validation. |
 | **SLO validation** | Phase 14.5 | Full security hardening active (Phase 14: pod-security webhook, release-time cosign signing, JWT signing-key rotation, NetworkPolicy parity audits), Phase 13.5 scenarios re-run under hardening. |
 | **Community launch** | Phase 17a | Reference runtime catalog (`claude-code`, `gemini-cli`, `codex`, `cursor-cli`, `chat`, `langgraph`, `mastra`, `openai-assistants`, and `crewai`), `lenny-ctl install` wizard, `kubectl-lenny` krew plugin, embedded mode (`lenny up`), web playground, `GOVERNANCE.md` finalized, BDfN → steering committee transition. |

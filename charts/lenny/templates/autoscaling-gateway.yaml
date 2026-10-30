@@ -1,0 +1,158 @@
+{{- /*
+The §10.1 gateway horizontal scaler. The gateway is the §4.1 edge and
+its load is bursty, so it scales on the §4.1 SCL-026 leading-indicator
+metrics rather than CPU alone.
+
+This template renders exactly one scaler resource, selected by
+autoscaling.provider, and so enforces the §10.1 SCL-024 mutual
+exclusion: KEDA creates and manages its own HorizontalPodAutoscaler
+through the ScaledObject controller, and a standalone HPA targeting the
+same Deployment would make both controllers write spec.replicas and
+oscillate. The two branches below are exclusive.
+
+  provider: hpa  — a standalone autoscaling/v2 HorizontalPodAutoscaler.
+    The §4.1 SCL-026 primary scale-out trigger (request queue depth) is
+    a Pods metric; CPU and the optional secondary metric (active
+    streams) are surfaced alongside it. No ScaledObject is rendered.
+  provider: keda — a keda.sh/v1alpha1 ScaledObject with a Prometheus
+    scaler trigger on the §4.1 SCL-026 primary scale-out metric. The
+    §10.1 scale-up / scale-down behavior is carried in the ScaledObject's
+    advanced.horizontalPodAutoscalerConfig.behavior field, NOT a
+    separate HPA manifest. No standalone HorizontalPodAutoscaler is
+    rendered.
+
+Every scale metric is named through the lenny.autoscaling.metric.*
+helpers (§4.1 SCL-026), so a metric rename is a one-line edit in
+_helpers.tpl.
+
+The whole template is gated on autoscaling.enabled. A stock render
+leaves it off so no KEDA or Prometheus Adapter install is assumed; the
+§17.8.4 tier presets enable it.
+*/ -}}
+{{- if .Values.autoscaling.enabled }}
+{{- $a := .Values.autoscaling }}
+{{- $provider := $a.provider }}
+{{- if not (or (eq $provider "hpa") (eq $provider "keda")) }}
+{{- fail (printf "autoscaling.provider must be \"hpa\" or \"keda\", got %q (§10.1 SCL-024)" $provider) }}
+{{- end }}
+{{- $primaryMetric := include "lenny.autoscaling.metric.primaryScaleOut" . }}
+{{- $secondaryMetric := include "lenny.autoscaling.metric.secondaryMetric" . }}
+{{- if eq $provider "hpa" }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: lenny-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: gateway
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: lenny-gateway
+  minReplicas: {{ $a.minReplicas }}
+  maxReplicas: {{ $a.maxReplicas }}
+  metrics:
+    # §4.1 SCL-026 primary scale-out trigger: request queue depth
+    # reacts to back-pressure before CPU rises.
+    - type: Pods
+      pods:
+        metric:
+          name: {{ $primaryMetric }}
+        target:
+          type: AverageValue
+          averageValue: {{ $a.queueDepthTarget | quote }}
+    # CPU utilization, surfaced alongside the queue-depth trigger.
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $a.targetCPUUtilizationPercent }}
+    {{- if gt (int $a.activeStreamsTarget) 0 }}
+    # §4.1 SCL-026 secondary HPA metric: in-flight streaming
+    # connections per replica.
+    - type: Pods
+      pods:
+        metric:
+          name: {{ $secondaryMetric }}
+        target:
+          type: AverageValue
+          averageValue: {{ $a.activeStreamsTarget | quote }}
+    {{- end }}
+  behavior:
+    # §10.1 aggressive scale-up: react immediately, then add the larger
+    # of double the replicas or a fixed pod count per 15s period.
+    scaleUp:
+      stabilizationWindowSeconds: {{ $a.scaleUp.stabilizationWindowSeconds }}
+      selectPolicy: Max
+      policies:
+        - type: Percent
+          value: {{ $a.scaleUp.percentValue }}
+          periodSeconds: {{ $a.scaleUp.percentPeriodSeconds }}
+        - type: Pods
+          value: {{ $a.scaleUp.podValue }}
+          periodSeconds: {{ $a.scaleUp.podPeriodSeconds }}
+    # §10.1 scale-down protection: one pod per period behind a long
+    # stabilization window so a traffic dip does not mass-evict
+    # replicas. The §17.1 maxUnavailable:1 PDB is the binding limit.
+    scaleDown:
+      stabilizationWindowSeconds: {{ $a.scaleDown.stabilizationWindowSeconds }}
+      policies:
+        - type: Pods
+          value: {{ $a.scaleDown.podValue }}
+          periodSeconds: {{ $a.scaleDown.podPeriodSeconds }}
+{{- else }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: lenny-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: gateway
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: lenny-gateway
+  minReplicaCount: {{ $a.minReplicas }}
+  maxReplicaCount: {{ $a.maxReplicas }}
+  # §10.1: KEDA polls Prometheus directly on this interval, bypassing
+  # the Prometheus Adapter cache and cutting the pipeline lag to ~20s.
+  pollingInterval: {{ $a.keda.pollingInterval }}
+  cooldownPeriod: {{ $a.keda.cooldownPeriod }}
+  advanced:
+    # §10.1 SCL-024: the scale-up / scale-down behavior is carried here,
+    # in the HPA that KEDA generates from this ScaledObject, rather than
+    # in a separate standalone HorizontalPodAutoscaler manifest.
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: {{ $a.scaleUp.stabilizationWindowSeconds }}
+          selectPolicy: Max
+          policies:
+            - type: Percent
+              value: {{ $a.scaleUp.percentValue }}
+              periodSeconds: {{ $a.scaleUp.percentPeriodSeconds }}
+            - type: Pods
+              value: {{ $a.scaleUp.podValue }}
+              periodSeconds: {{ $a.scaleUp.podPeriodSeconds }}
+        scaleDown:
+          stabilizationWindowSeconds: {{ $a.scaleDown.stabilizationWindowSeconds }}
+          policies:
+            - type: Pods
+              value: {{ $a.scaleDown.podValue }}
+              periodSeconds: {{ $a.scaleDown.podPeriodSeconds }}
+  triggers:
+    # §4.1 SCL-026 primary scale-out trigger. KEDA's Prometheus scaler
+    # queries the metric directly and targets the per-replica average.
+    - type: prometheus
+      metadata:
+        serverAddress: {{ $a.keda.prometheusServerAddress | quote }}
+        metricName: {{ $primaryMetric }}
+        query: {{ printf "avg(%s)" $primaryMetric | quote }}
+        threshold: {{ $a.queueDepthTarget | quote }}
+{{- end }}
+{{- end }}

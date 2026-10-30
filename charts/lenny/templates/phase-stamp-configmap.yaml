@@ -1,0 +1,85 @@
+{{- /*
+lenny-deployment-phase-stamp ConfigMap (§17.2 feature-flag downgrade
+enforcement, layers 1 and 2). Records, per admission-plane feature
+flag, when the flag was first enabled (layer 1), and fails the render
+fail-closed when a recorded-enabled flag is being disabled without an
+operator acknowledgement (layer 2).
+
+Write semantics are append-only: a flag key is written only on the
+false-to-true transition, and re-renders preserve the original
+enabledAt by reading the live ConfigMap through lookup. The chart is
+the sole writer; no Lenny component mutates the ConfigMap at runtime.
+The elicitation-content-integrity floor key is rewritten on every
+render because lowering the floor is a legitimate posture change.
+
+The ConfigMap is a pre-install/pre-upgrade hook at weight -20 so it
+exists before the lenny-preflight Job at weight -10. Each enabled flag
+also stamps a lenny.dev/flag-<flag-slug>-enabled label (the slug is the
+kebab-case rendering of the Helm-values path: llmProxy -> llm-proxy,
+drainReadiness -> drain-readiness, compliance -> compliance) so
+kube-state-metrics surfaces it as label_lenny_dev_flag_<slug>_enabled on
+kube_configmap_labels, the series the §16.5 / §17.2
+AdmissionPlaneFeatureFlagDowngrade alert matches on. The data keys stay
+camelCase (one per features.<flag> value) per §17.2 layer 1.
+spec: §16.5; §17.2. F-17.2.5.
+*/ -}}
+{{- $existing := lookup "v1" "ConfigMap" .Release.Namespace "lenny-deployment-phase-stamp" -}}
+{{- $prior := dict -}}
+{{- if $existing -}}
+{{-   $prior = $existing.data -}}
+{{- end -}}
+{{- /*
+§17.2, layer 2 — fail-closed chart render-time downgrade guard.
+On every helm install/upgrade this hook reads the live phase-stamp
+ConfigMap through lookup; for any admission-plane feature flag the
+ConfigMap records with enabled: true that this render disables, the
+render fails with PHASE_STAMP_FEATURE_FLAG_DOWNGRADE unless the operator
+has set acceptFeatureFlagDowngrade.<flag>=true. The acknowledgement
+override matches the layer-3 preflight check (pkg/preflight.CheckPhaseStamp)
+so an acknowledged downgrade passes both gates rather than failing at one.
+On a fresh install lookup returns no prior ConfigMap, so the guard is a
+no-op until a flag has been recorded enabled by a prior install. The
+guard runs before $flags is assembled so a forbidden downgrade aborts
+the release before any phase-stamp data is rewritten. F-17.2.7.
+*/ -}}
+{{- $accepted := .Values.acceptFeatureFlagDowngrade | default dict -}}
+{{- range $flag := list "llmProxy" "drainReadiness" "compliance" -}}
+{{-   if hasKey $prior $flag -}}
+{{-     $priorEntry := index $prior $flag | fromJson -}}
+{{-     if $priorEntry.enabled -}}
+{{-       if not (index $.Values.features $flag) -}}
+{{-         if not (index $accepted $flag) -}}
+{{-           fail (printf "PHASE_STAMP_FEATURE_FLAG_DOWNGRADE: admission-plane feature flag %q is recorded as enabled in the lenny-deployment-phase-stamp ConfigMap (enabledAt=%s) but this render disables it. Set acceptFeatureFlagDowngrade.%s=true to acknowledge the downgrade (see §17.2)." $flag $priorEntry.enabledAt $flag) -}}
+{{-         end -}}
+{{-       end -}}
+{{-     end -}}
+{{-   end -}}
+{{- end -}}
+{{- $stampedAt := dateInZone "2006-01-02T15:04:05Z07:00" now "UTC" -}}
+{{- $flags := dict -}}
+{{- range $flag := list "llmProxy" "drainReadiness" "compliance" -}}
+{{-   if hasKey $prior $flag -}}
+{{-     $flags = set $flags $flag (index $prior $flag) -}}
+{{-   else if (index $.Values.features $flag) -}}
+{{-     $flags = set $flags $flag (dict "enabled" true "enabledAt" $stampedAt | toJson) -}}
+{{-   end -}}
+{{- end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lenny-deployment-phase-stamp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    {{- range $flag, $_ := $flags }}
+    lenny.dev/flag-{{ kebabcase $flag }}-enabled: "true"
+    {{- end }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-20"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  security.elicitationContentIntegrity.floor: {{ .Values.security.elicitationContentIntegrity.floor | quote }}
+  {{- range $flag, $value := $flags }}
+  {{ $flag }}: {{ $value | quote }}
+  {{- end }}

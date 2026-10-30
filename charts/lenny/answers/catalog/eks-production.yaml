@@ -1,0 +1,34 @@
+# §17.9.2 answer file: eks-production.
+#
+# Dimensions fixed: cluster=eks, backends=cloud-managed, environment=prod,
+# isolationProfile=sandboxed. Tier 3 capable: layer values-tier2.yaml or
+# values-tier3.yaml for the larger capacity envelope (§17.8.2).
+#
+# Layering: with presets/values-tier2.yaml or values-tier3.yaml. Supply
+# the RDS Proxy, ElastiCache, and S3 endpoints in an overrides file.
+#
+# Leaves open: capacity tier, connection endpoints, bucket names.
+
+cluster: eks
+backends: cloud-managed
+environment: prod
+isolationProfile: sandboxed
+# Network posture (§13.2, §17.6). The chart's universal egress except-rules
+# block RFC1918 ranges and the cloud metadata endpoint (169.254.169.254,
+# the EC2/EKS IMDS) on every cluster (NET-002/057/062), so an eks install
+# needs no cluster-specific egress tightening here. webhookIngressCIDR stays
+# 0.0.0.0/0 by default because the EKS control plane calls admission webhooks
+# from a control-plane IP that is impractical to pin without cloud-specific
+# knowledge (§17.9). Narrow it to your account's documented control-plane
+# CIDR when your provider publishes one.
+# webhookIngressCIDR: "REPLACE-eks-control-plane-cidr"
+postgres:
+  connectionPooler: external
+  dsn: "postgres://lenny@REPLACE-rds-proxy.acme.us-east-1.rds.amazonaws.com:5432/lenny?sslmode=require"
+redis:
+  provider: external
+  url: "rediss://REPLACE-elasticache-primary.acme.cache.amazonaws.com:6379"
+objectStorage:
+  provider: s3
+  bucket: "REPLACE-acme-lenny-artifacts"
+  region: "us-east-1"

@@ -1,0 +1,308 @@
+// SPDX-License-Identifier: MIT
+
+package tier0_static
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/lennylabs/lenny/tests/testinfra/schematest"
+)
+
+// resolveChangeGraphTiers mirrors the prefix-match semantics that
+// lenny-test uses to turn a changed path into a tier set (see
+// tiersForChangedPath in cmd/lenny-test): a glob key applies to a
+// changed path when the key is a prefix of the path. Every matching
+// key contributes the tiers it lists. The guard tests below assert on
+// the tier set this resolution produces, so they catch a change-graph
+// map that under-selects for a given path without depending on the
+// unexported resolver in package main.
+func resolveChangeGraphTiers(t *testing.T, changedPath string) map[string]bool {
+	t.Helper()
+	root := schematest.RepoRoot(t)
+	body, err := os.ReadFile(filepath.Join(root, "tests", "change-graph.json"))
+	if err != nil {
+		t.Fatalf("read change-graph.json: %v", err)
+	}
+	var doc struct {
+		Globs map[string]map[string][]string `json:"globs"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("parse change-graph.json: %v", err)
+	}
+	tiers := map[string]bool{}
+	for key, perTier := range doc.Globs {
+		if strings.HasPrefix(changedPath, key) {
+			for tier := range perTier {
+				tiers[tier] = true
+			}
+		}
+	}
+	return tiers
+}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// spec: 25.4 (the lenny-ops service; opsserver HTTP endpoint surface)
+// diagnosis: A change under pkg/ops/opsserver no longer selects its
+//
+//	tier-3 contract suite. The tier3_contract/ops_endpoints suite drives
+//	the pkg/ops/opsserver HTTP handlers directly (it imports opsserver
+//	and calls opsserver.New), so an endpoint or wire-contract change to
+//	opsserver must run those contract tests. When the change graph omits
+//	the contract tier for pkg/ops/opsserver, `lenny-test --changed` and
+//	`--since` under-select and a broken opsserver endpoint contract ships
+//	untested. Re-add the "contract" mapping in tests/change-graph.json.
+func TestChangeGraphOpsserverSelectsContractTier(t *testing.T) {
+	t.Parallel()
+
+	// A representative opsserver source change (any file under the
+	// package). §25.4's endpoints are served from pkg/ops/opsserver and
+	// pinned by the tier-3 ops_endpoints contract suite.
+	tiers := resolveChangeGraphTiers(t, "pkg/ops/opsserver/mcp.go")
+
+	for _, want := range []string{"unit", "contract"} {
+		if !tiers[want] {
+			t.Errorf("change to pkg/ops/opsserver resolved to tiers %v; expected it to include %q so the tier-3 ops_endpoints contract suite is selected",
+				sortedKeys(tiers), want)
+		}
+	}
+}
+
+// spec: 25.4 (the lenny-ops service; opsserver HTTP endpoint surface)
+// diagnosis: A change to the tier-3 ops_endpoints contract suite itself
+//
+//	does not select the contract tier, so editing or extending an
+//	opsserver contract test does not re-run it under `lenny-test
+//	--changed`/`--since`. tests/tier3_contract/ops_endpoints/** must map
+//	to the contract tier in tests/change-graph.json.
+func TestChangeGraphOpsEndpointsSuiteSelectsContractTier(t *testing.T) {
+	t.Parallel()
+
+	tiers := resolveChangeGraphTiers(t, "tests/tier3_contract/ops_endpoints/mcp_test.go")
+
+	if !tiers["contract"] {
+		t.Errorf("change to tests/tier3_contract/ops_endpoints resolved to tiers %v; expected it to include %q",
+			sortedKeys(tiers), "contract")
+	}
+}
+
+// opsPackagesWithUnitSuite enumerates every pkg/ops/<pkg> directory that
+// carries an in-package *_test.go file. Such a package owns a unit suite
+// that pins its §25 behavior, so a change under it must select at least
+// the unit tier. It returns the package directory (relative to the repo
+// root) and a representative non-test source path inside it.
+func opsPackagesWithUnitSuite(t *testing.T) map[string]string {
+	t.Helper()
+	root := schematest.RepoRoot(t)
+	opsDir := filepath.Join(root, "pkg", "ops")
+	entries, err := os.ReadDir(opsDir)
+	if err != nil {
+		t.Fatalf("read pkg/ops: %v", err)
+	}
+	out := map[string]string{}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		pkgDir := filepath.Join(opsDir, e.Name())
+		files, err := os.ReadDir(pkgDir)
+		if err != nil {
+			t.Fatalf("read %s: %v", pkgDir, err)
+		}
+		hasUnitTest := false
+		representative := ""
+		for _, f := range files {
+			if f.IsDir() || !strings.HasSuffix(f.Name(), ".go") {
+				continue
+			}
+			if strings.HasSuffix(f.Name(), "_test.go") {
+				hasUnitTest = true
+				continue
+			}
+			if representative == "" {
+				representative = f.Name()
+			}
+		}
+		if !hasUnitTest {
+			continue
+		}
+		if representative == "" {
+			// A package with only test files still owns a unit suite;
+			// use a synthetic source path (prefix resolution only needs
+			// the change-graph key to be a prefix of the changed path).
+			representative = "doc.go"
+		}
+		relKey := filepath.ToSlash(filepath.Join("pkg", "ops", e.Name()))
+		out[relKey] = relKey + "/" + representative
+	}
+	return out
+}
+
+// spec: 25.4 (the lenny-ops service; agent-operability package surface)
+// diagnosis: A pkg/ops/<pkg> package that owns an in-package unit suite
+//
+//	resolves to an empty tier set (static only) through
+//	tests/change-graph.json, so a change to it selects no unit/contract/
+//	integration tests under `lenny-test --changed`/`--since` and its
+//	suite silently stops running on the diff that touched it. Every
+//	pkg/ops/* package that ships _test.go files must carry a
+//	change-graph glob whose tiers include "unit". Add the missing glob
+//	mapping in tests/change-graph.json for the package named in the
+//	failure.
+func TestChangeGraphOpsPackagesWithSuiteSelectUnitTier(t *testing.T) {
+	t.Parallel()
+
+	pkgs := opsPackagesWithUnitSuite(t)
+	if len(pkgs) == 0 {
+		t.Fatal("found no pkg/ops/* package with an in-package unit suite; enumeration is broken")
+	}
+	for key, changedPath := range pkgs {
+		tiers := resolveChangeGraphTiers(t, changedPath)
+		if len(tiers) == 0 {
+			t.Errorf("a change to %s resolved to an empty tier set (static only); it owns a unit suite, so tests/change-graph.json must map %q to at least the unit tier",
+				changedPath, key)
+			continue
+		}
+		if !tiers["unit"] {
+			t.Errorf("a change to %s resolved to tiers %v; it owns an in-package unit suite, so the resolution must include %q",
+				changedPath, sortedKeys(tiers), "unit")
+		}
+	}
+}
+
+// spec: 25.4 (the lenny-ops service; backup, upgrade, and drift surfaces)
+// diagnosis: pkg/ops/backup, pkg/ops/upgradeservice, and
+//
+//	pkg/ops/driftservice each own a dedicated tier-3 contract suite under
+//	tests/tier3_contract/ops_endpoints (backup_test.go, upgrade_test.go,
+//	drift_against_target_test.go), and backup and upgradeservice also own
+//	tier-4 integration suites (backup_restore_test.go /
+//	backup_degradation_test.go, release_channel_fetch_test.go). When
+//	tests/change-graph.json omits the contract/integration tier for one
+//	of these packages, `lenny-test --changed`/`--since` under-selects and
+//	a wire-contract or multi-service regression in that package ships
+//	untested. Add the missing tier mapping in tests/change-graph.json.
+func TestChangeGraphOpsDedicatedSuitesSelectHigherTiers(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		pkg   string
+		tiers []string
+	}{
+		{"pkg/ops/backup", []string{"unit", "contract", "integration"}},
+		{"pkg/ops/upgradeservice", []string{"unit", "contract", "integration"}},
+		{"pkg/ops/driftservice", []string{"unit", "contract"}},
+	}
+	for _, tc := range cases {
+		tiers := resolveChangeGraphTiers(t, tc.pkg+"/change.go")
+		for _, want := range tc.tiers {
+			if !tiers[want] {
+				t.Errorf("a change to %s resolved to tiers %v; it owns a dedicated %s suite, so the resolution must include %q",
+					tc.pkg, sortedKeys(tiers), want, want)
+			}
+		}
+	}
+}
+
+// spec: 25.4 (the lenny-ops service; mandatory standalone deployment)
+// diagnosis: cmd/lenny-ops has no change-graph glob entry, so a change to
+//
+//	the mandatory lenny-ops binary resolves to an empty tier set (static
+//	only) and its in-package unit suite (main_test.go,
+//	doctorremediator_test.go, webhookdelivery_test.go, and the rest of the
+//	cmd/lenny-ops/*_test.go files) is never selected by `lenny-test
+//	--changed`, `--pkg cmd/lenny-ops`, or `--since`. The sibling binaries
+//	cmd/lenny-gateway, cmd/lenny-test, and cmd/lenny-token-service each
+//	carry a change-graph entry; cmd/lenny-ops needs the same "unit"
+//	mapping in tests/change-graph.json.
+func TestChangeGraphLennyOpsBinarySelectsUnitTier(t *testing.T) {
+	t.Parallel()
+
+	tiers := resolveChangeGraphTiers(t, "cmd/lenny-ops/main.go")
+	if !tiers["unit"] {
+		t.Errorf("a change to cmd/lenny-ops resolved to tiers %v; the mandatory lenny-ops binary owns an in-package unit suite, so the resolution must include %q",
+			sortedKeys(tiers), "unit")
+	}
+}
+
+// spec: 25.5 (operational event stream; webhook delivery and SSRF protections)
+// diagnosis: One of the §25.5 event-stream packages resolves to a tier
+//
+//	set that omits a higher tier its own tests occupy, so a diff to that
+//	package no longer selects its component/contract/integration/security
+//	§25.5 suite under `lenny-test --changed`/`--since`. The §25.5 event
+//	stream (`lenny-ops` reads the Redis stream and exposes SSE, polling,
+//	and webhook delivery) is implemented across pkg/ops/events,
+//	pkg/ops/eventsubscription, pkg/ops/opsservice, and pkg/webhookdelivery;
+//	each is pinned by suites at these tiers: the tier-2 eventstream
+//	component suite, the tier-3 cloudevents/ops_endpoints contract suites,
+//	the tier-4 event_stream / event_subscription_cold_start /
+//	escalation_webhook_under_outage integration suites, and the tier-9
+//	event_webhook_ssrf security suite. pkg/webhookdelivery in particular
+//	sits outside pkg/ops, so no pkg/ops-scoped guard covers it. When
+//	tests/change-graph.json under-maps one of these packages, an SSRF,
+//	webhook-outage, or CloudEvents-contract regression in that package
+//	ships untested. Add the missing tier mapping in
+//	tests/change-graph.json for the package named in the failure.
+func TestChangeGraphEventStreamPackagesSelectHigherTiers(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		pkg   string
+		tiers []string
+	}{
+		{"pkg/ops/events", []string{"unit", "component", "contract", "integration"}},
+		{"pkg/ops/eventsubscription", []string{"unit", "contract", "integration", "security"}},
+		{"pkg/ops/opsservice", []string{"integration", "security"}},
+		{"pkg/webhookdelivery", []string{"unit", "contract", "integration", "security"}},
+	}
+	for _, tc := range cases {
+		tiers := resolveChangeGraphTiers(t, tc.pkg+"/change.go")
+		for _, want := range tc.tiers {
+			if !tiers[want] {
+				t.Errorf("a change to %s resolved to tiers %v; its §25.5 event-stream tests occupy the %s tier, so the resolution must include %q",
+					tc.pkg, sortedKeys(tiers), want, want)
+			}
+		}
+	}
+}
+
+// spec: 25.12 (MCP Management Server; the CI suite's two authorization
+// sweeps over every MCP tool, and the tier-3 initialize/tools/call wire
+// contract)
+// diagnosis: A change under pkg/ops/mcp no longer selects the tier-3
+//
+//	ops_endpoints contract suite or the tier-9 MCP management
+//	authorization sweep. tests/tier3_contract/ops_endpoints/mcp_test.go
+//	drives the §25.12 initialize/tools/call wire contract directly, and
+//	tests/tier9_security/mcp_management_authz_sweep_test.go iterates
+//	mcp.NewRegistry().All() to assert every generated tool enforces its
+//	scope and role gate. When the change graph omits the contract or
+//	security tier for pkg/ops/mcp, `lenny-test --changed`/`--since`
+//	under-selects and a broken MCP wire contract, or a newly generated
+//	tool that skips its scope or role gate, ships untested. Add the
+//	missing tier mapping(s) in tests/change-graph.json.
+func TestChangeGraphMCPPackageSelectsContractAndSecurityTiers(t *testing.T) {
+	t.Parallel()
+
+	tiers := resolveChangeGraphTiers(t, "pkg/ops/mcp/tools.go")
+
+	for _, want := range []string{"unit", "contract", "security"} {
+		if !tiers[want] {
+			t.Errorf("a change to pkg/ops/mcp resolved to tiers %v; expected it to include %q so the tier-3 ops_endpoints contract suite and the tier-9 MCP management authorization sweep are selected",
+				sortedKeys(tiers), want)
+		}
+	}
+}

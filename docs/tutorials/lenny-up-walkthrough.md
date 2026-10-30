@@ -13,7 +13,7 @@ description: Install the Lenny CLI, bring up the local stack, run a session agai
 {: .highlight }
 > **Status: planned.** This walkthrough is scheduled for the initial tutorial set. The canonical behavior is defined in the spec sections linked below; until the walkthrough lands, follow the spec or [Your First Session](first-session) for a hands-on introduction.
 
-`lenny up` is the zero-config local bring-up: one command spins up the gateway, Postgres, Redis, and the bundled reference runtime catalog (`chat`, `claude-code`, `gemini-cli`, `codex`, `cursor-cli`, `langgraph`, `mastra`, `openai-assistants`, `crewai`) in a single-binary embedded stack (k3s with embedded Postgres/Redis/KMS/OIDC), and opens the web playground in your browser.
+`lenny up` is the zero-config local bring-up: one command renders the production chart under a development profile and runs the gateway, the controllers, and the bundled reference runtime catalog (`chat`, `claude-code`, `gemini-cli`, `codex`, `cursor-cli`, `langgraph`, `mastra`, `openai-assistants`, `crewai`) as pods in an embedded k3s. The application data stores are in-process in-memory backends inside the gateway pod, so there is no separate Postgres, Redis, KMS, or identity-provider process. The command opens the web playground in your browser.
 
 ## What this walkthrough will cover
 

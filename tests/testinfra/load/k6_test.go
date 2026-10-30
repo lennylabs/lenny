@@ -86,7 +86,7 @@ func TestAssertBaselineSeeds(t *testing.T) {
 	t.Setenv("LENNY_UPDATE_BASELINE", "1")
 	tmp := t.TempDir()
 	res := Result{Scenario: "test", MetricMS: map[string]float64{"p99": 100}}
-	path := filepath.Join(tmp, "tests", "tier7_load", "baselines", "test.json")
+	path := filepath.Join(tmp, "tests", "tier7b_load_kind", "baselines", "test.json")
 	// Synthesise a fake repo root so writeBaseline lands in tmp.
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("setup: %v", err)
@@ -94,5 +94,56 @@ func TestAssertBaselineSeeds(t *testing.T) {
 	writeBaseline(t, path, res)
 	if _, err := os.Stat(path); err != nil {
 		t.Errorf("baseline not seeded: %v", err)
+	}
+}
+
+// spec: §6.3 / F-6.3.17 — writeBaseline preserves operator-
+// edited Notes across LENNY_UPDATE_BASELINE refreshes. Without the
+// carry-over, a baseline refresh would silently strip §6.3 cross-
+// references and measurement-gap annotations.
+func TestWriteBaselinePreservesNotes_spec_6_3_F_6_3_17(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "test.json")
+	original := Result{
+		Scenario: "test",
+		MetricMS: map[string]float64{"p95": 113.4},
+		Notes:    "§6.3 budgets ≤100ms; baseline at 113ms is recorded as measurement.",
+	}
+	writeBaseline(t, path, original)
+
+	// Simulate a k6 refresh: the harness fills in fresh metrics but
+	// does not produce Notes. writeBaseline must carry Notes forward.
+	refreshed := Result{
+		Scenario: "test",
+		MetricMS: map[string]float64{"p95": 110.0},
+	}
+	writeBaseline(t, path, refreshed)
+
+	final, err := readBaseline(path)
+	if err != nil {
+		t.Fatalf("readBaseline: %v", err)
+	}
+	if final.Notes == "" {
+		t.Errorf("Notes was stripped by refresh; want carry-over of operator annotation")
+	}
+	if final.MetricMS["p95"] != 110.0 {
+		t.Errorf("metric values not updated: %v", final.MetricMS)
+	}
+}
+
+// spec: §6.3 / F-6.3.17 — when the caller supplies new Notes,
+// the new Notes win over any prior value.
+func TestWriteBaselineNotesOverride_spec_6_3_F_6_3_17(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "test.json")
+	writeBaseline(t, path, Result{Notes: "old"})
+	writeBaseline(t, path, Result{Notes: "new"})
+
+	final, err := readBaseline(path)
+	if err != nil {
+		t.Fatalf("readBaseline: %v", err)
+	}
+	if final.Notes != "new" {
+		t.Errorf("Notes override failed: got %q, want %q", final.Notes, "new")
 	}
 }

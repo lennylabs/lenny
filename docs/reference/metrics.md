@@ -104,6 +104,7 @@ Emitted by the gateway when `deliveryMode: proxy` pools are active. The gateway 
 | `lenny_gateway_llm_translation_duration_seconds` | Histogram | `pool`, `provider`, `proxy_dialect`, `direction`: `request`, `response` | Wall-clock time the gateway spends converting between the dialect exposed to the runtime and the upstream provider's wire format, per request or response leg. Upstream network time is excluded; this histogram measures translator CPU only. Subcomponent of `lenny_gateway_llm_proxy_request_duration_seconds`. | -- |
 | `lenny_gateway_llm_translation_errors_total` | Counter | `pool`, `provider`, `error_type`: `unsupported_field`, `schema_mismatch`, `auth_failed`, `timeout`, `streaming_interrupted`, `upstream_4xx`, `upstream_5xx` | Translator failures by category. `schema_mismatch` covers both incoming pod-request validation and upstream response-shape drift. `upstream_5xx` feeds the LLM routing subsystem's circuit breaker; `auth_failed` triggers the Fallback Flow. | `LLMTranslationSchemaDrift` (Warning). |
 | `lenny_gateway_llm_upstream_egress_anomaly_total` | Counter | -- | Outbound connection attempts observed from the gateway pod to destinations outside the `allow-gateway-egress-llm-upstream` NetworkPolicy allowlist. Detected via eBPF connection tracking where available, or via NetworkPolicy drop counters as a fallback. The source is transparent to the operator; the metric is always present. | `LLMUpstreamEgressAnomaly` (Critical). |
+| `lenny_gateway_token_usage_anomaly_total` | Counter | `tenant_id`, `reason`: `zero_delta`, `implausibly_small` | Direct-mode token-usage integrity signal. In direct mode the pod egresses to the provider directly, so the runtime adapter is the sole observer of token counts and the gateway pulls them over `ReportUsage`. Increments when a direct-mode session under-reports usage: more than the operator-tunable count of consecutive zero-token deltas (`zero_delta`), or a token-per-call ratio below the operator-tunable implausibly-small threshold (`implausibly_small`). `session_id` is excluded as a high-cardinality label; per-session attribution is in structured logs emitted alongside each increment. Steady-state near zero. | `TokenUsageAnomaly` (Warning). |
 | `lenny_gateway_max_sessions_per_replica` | Gauge | `delivery_mode`: `proxy`, `direct` | Maximum concurrent sessions this replica can serve under the given delivery mode. Computed at startup from Helm `maxSessionsPerReplica` (direct) or `maxSessionsPerReplicaProxyMode` (proxy). Operators compute the proxy-vs-direct ratio for capacity planning. | -- |
 
 ---
@@ -113,11 +114,13 @@ Emitted by the gateway when `deliveryMode: proxy` pools are active. The gateway 
 | Metric | Type | Labels | Description | Used by |
 |:-------|:-----|:-------|:------------|:--------|
 | `lenny_session_startup_duration_seconds` | Histogram | `pool`, `runtime_class`, `isolation_profile` | Wall-clock time from pod claim to session ready (excluding file upload). | `StartupLatencyBurnRate`, `StartupLatencyGVisorBurnRate` alerts. |
+| `lenny_session_startup_phase_duration_seconds` | Histogram | `phase`, `runtime_class` | Per-phase startup latency (`pod_claim`, `workspace_materialization`, `setup_commands`, `credential_assignment`, `agent_session_start`). | §6.3 per-phase budget validation, including the deployer-controlled setup-command budget (≤ 3s runc / ≤ 1s gVisor recommended). |
 | `lenny_session_time_to_first_token_seconds` | Histogram | `pool`, `runtime_class`, `isolation_profile` | Wall-clock time from session start request to first streaming event emitted to client. | `TTFTBurnRate` alert. |
-| `lenny_session_pod_released_during_suspension_total` | Counter | `pool`, `tenant_id` | Increments when `maxSuspendedPodHoldSeconds` fires and pod is released. | Operational monitoring. |
+| `lenny_session_pod_released_during_suspension_total` | Counter | `pool`, `tenant_id` | Increments when a suspended session's pod hold ends and the pod or slot is successfully released. An idle suspension, whose hold is zero, also increments it. | Operational monitoring. |
 | `lenny_session_suspension_checkpoint_failed_total` | Counter | `pool`, `tenant_id` | Increments when checkpoint attempt before pod release fails. | Operational monitoring. |
 | `lenny_session_error_total` | Counter | `tenant_id`, `session_type`, `variant_id` | Session errors by variant. | Experiment rollback triggers. |
 | `lenny_session_total` | Counter | `tenant_id`, `session_type`, `variant_id` | Total sessions by variant. | Experiment rollback trigger denominator. |
+| `lenny_session_expiry_total` | Counter | `pool`, `reason` | Sessions terminated by a platform expiry clock. Reasons: `max_session_age`, `max_idle_time`. The `max_idle_time` series counts sessions that cannot be idle-suspended and were expired under the `maxClientIdleSeconds` bound, and `suspended` sessions that reached the suspended-session lifetime `gateway.maxSuspendedSessionSeconds`. | Idle-expiry and age-cap monitoring. |
 
 ---
 
@@ -125,19 +128,22 @@ Emitted by the gateway when `deliveryMode: proxy` pools are active. The gateway 
 
 | Metric | Type | Labels | Description | Used by |
 |:-------|:-----|:-------|:------------|:--------|
-| `lenny_warmpool_idle_pods` | Gauge | `pool` | Pods in `idle` state ready to be claimed. | `WarmPoolLow`, `WarmPoolExhausted`, `PodClaimQueueSaturated` alerts. |
+| `lenny_warmpool_idle_pods` | Gauge | `pool` | Pods in `idle` state ready to be claimed. Idle pods pinned to a tenant are excluded. | `WarmPoolLow`, `WarmPoolExhausted`, `PodClaimQueueSaturated` alerts. |
+| `lenny_warmpool_reserved_pods` | Gauge | `pool` | Pods whose occupancy claim is in the `reserved` hold window, excluded from idle inventory. | Reserved-hold-window monitoring. |
 | `lenny_warmpool_pod_startup_duration_seconds` | Histogram | `pool`, `isolation_profile` | Time from pod creation to `idle` state. | `WarmPoolReplenishmentSlow` alert. |
 | `lenny_warmpool_replenishment_rate` | Gauge | `pool` | Pods per minute entering `idle` state. | Operational monitoring. |
-| `lenny_warmpool_warmup_failure_total` | Counter | `pool`, `runtime_class`, `error_type` | Pods failing to reach `idle` during warm-up. Error types: `image_pull_error`, `setup_command_failed`, `resource_quota_exceeded`, `node_pressure`. | `WarmPoolReplenishmentFailing` alert. |
+| `lenny_warmpool_warmup_failure_total` | Counter | `pool`, `runtime_class`, `error_type` | Warm-up and setup failures. The `image_pull_error`, `resource_quota_exceeded`, and `node_pressure` error types count a pod that fails to reach `idle` during warm-up. The `setup_command_failed` error type counts a session whose setup commands fail. | `WarmPoolReplenishmentFailing` alert. |
 | `lenny_warmpool_cold_start_total` | Counter | `pool` | Sessions served from cold pod or exhausted pool. | Operational monitoring. |
 | `lenny_warmpool_fill_duration_seconds` | Histogram | `pool` | Time from pool creation to reaching `minWarm` ready pods. | Operational monitoring. |
 | `lenny_warmpool_claims_total` | Counter | `pool`, `runtime_class` | Warm pod transitions from `idle` to `claimed`. | SDK-warm demotion rate computation. |
-| `lenny_warmpool_sdk_demotions_total` | Counter | `pool`, `runtime_class` | SDK-warm pod demoted to pod-warm before assignment. | SDK-warm circuit-breaker threshold. |
+| `lenny_warmpool_sdk_demotions_total` | Counter | `pool`, `runtime_class` | SDK-warm pod demoted to pod-warm. | SDK-warm circuit-breaker threshold. |
 | `lenny_warmpool_idle_pod_minutes` | Counter | `pool`, `resource_class` | Cumulative idle pod-minutes. | `WarmPoolIdleCostHigh` alert; warm pool cost estimation. |
 | `lenny_warmpool_sdk_connect_timeout_total` | Counter | `pool` | SDK warm connection establishment timeouts. | `SDKConnectTimeout` alert. |
 | `lenny_pool_bootstrap_mode` | Gauge | `pool` | 1 = bootstrap scaling active, 0 = formula-driven. | `PoolBootstrapMode` alert. |
 | `lenny_pool_config_reconciliation_lag_seconds` | Gauge | `pool` | Time since last CRD reconciliation from Postgres. | `PoolConfigDrift` alert. |
 | `lenny_pool_draining_sessions_total` | Gauge | `pool` | In-flight sessions during pool drain. | Drain progress monitoring. |
+| `lenny_pool_security_degraded` | Gauge | `pool` | `1` while the pool renders nonce-only `SO_PEERCRED` pods (its `deploymentModel: sidecar` runtime sets `requireSoPeercred: false` and the pool carries `acknowledgeNonceOnlyAuth: true`), or while a nonce-only pod remains after the operator reverted the runtime field; `0` otherwise. Published by the WarmPoolController in the same reconcile step that writes the `SecurityDegradedMode=True` condition on the `SandboxTemplate`. See [Adapter-Agent Boundary](../operator-guide/security.md#adapter-agent-boundary). | `PoolSecurityDegraded` alert. |
+| `lenny_crd_ssa_conflict_total` | Counter | `crd`, `controller` | Increments once per five-consecutive-409 SSA stuck episode on a CRD field a controller does not own; per-resource identity is on the `crd_ssa_conflict_stuck` structured log. | `CRDSSAConflictStuck` alert. |
 
 ### Pod claim metrics
 
@@ -149,15 +155,32 @@ Emitted by the gateway when `deliveryMode: proxy` pools are active. The gateway 
 | `lenny_pod_claim_timeout_total` | Counter | `pool` | Pod claim attempts that timed out. | Operational monitoring. |
 | `lenny_pod_claim_fallback_total` | Counter | -- | Postgres-backed fallback claim path activations. | Primary claim path health monitoring. |
 
-### Task and concurrent mode metrics
+### Session recycle and slot metrics
 
 | Metric | Type | Labels | Description |
 |:-------|:-----|:-------|:------------|
-| `lenny_task_pod_scrub_failure_count` | Gauge | `k8s_pod_name`, `pool`, `runtime_class` | Per-pod scrub failure count in task mode. |
-| `lenny_task_pod_retirement_total` | Counter | `reason`, `pool`, `runtime_class` | Pod retirements. Reasons: `task_count_limit`, `uptime_limit`, `scrub_failure_limit`. |
-| `lenny_task_reuse_count` | Histogram | `pool`, `k8s_pod_name` | Tasks executed per pod in task mode. |
-| `lenny_slot_failure_total` | Counter | `error_type`, `pool`, `k8s_pod_name` | Slot failures in concurrent-workspace mode. |
+| `lenny_pod_scrub_failure_count` | Gauge | `k8s_pod_name`, `pool`, `runtime_class` | Per-pod scrub failure count on a recycling session-mode pod. |
+| `lenny_gateway_pod_retirement_total` | Counter | `reason`, `pool`, `runtime_class` | Gateway-initiated pod retirements. Reasons: `session_count_limit`, `scrub_failure_limit`. Counted at the recycle disposition on a single-session pool and at the per-release `maxSessionsPerPod` drain on a concurrent non-`vm-restart` pool. |
+| `lenny_controller_pod_retirement_total` | Counter | `reason`, `pool`, `runtime_class` | Controller-initiated pod retirements from the WarmPoolController's level-triggered `maxPodUptimeSeconds` drain. Reason: `uptime_limit`. Sum with the gateway counter for total retirements: `lenny:pod_retirement:total = sum(lenny_gateway_pod_retirement_total) + sum(lenny_controller_pod_retirement_total)`. |
+| `lenny_pod_session_reuse_count` | Histogram | `pool`, `k8s_pod_name` | Sessions served per pod under `recycle.enabled`. |
+| `lenny_slot_failure_total` | Counter | `error_type`, `pool`, `k8s_pod_name` | Per-slot failures on session-mode pods with `maxConcurrentSessions > 1`. |
+| `lenny_slot_compensation_superseded_total` | Counter | `pool`, `k8s_pod_name`, `error_type` | Compensating `Shutdown` requests that the adapter answered `superseded` after a failed bind. The adapter holds an entry for the session that the compensation is not addressed to, so the reclaim released nothing and the slot is not leaked. `error_type` is `refusal` when the compensated attempt failed on a `SLOT_BIND_ATTEMPT_SUPERSEDED` or `SLOT_BIND_ALREADY_STARTED` refusal, which such a compensation answers routinely, and `failure` for any other failure, where the answer marks a race between bind attempts. |
+| `lenny_adapter_leaked_slots` | Gauge | `pod_id`, `pool` | Per-pod count of slots in the `leaked` sub-state. A leaked slot stays counted until the pod terminates. `pod_id` carries the pod name. The gateway emits this gauge. |
 | `lenny_slot_pod_replacement_total` | Counter | `pool`, `k8s_pod_name` | Pod replacements triggered by slot failures. |
+
+---
+
+## Adapter metrics
+
+These counters are emitted by the adapter process inside each agent pod. The default scrape target set does not reach agent pods (the adapter exposes no metrics listener, and the monitoring ingress covers only `lenny-system` components), so these counters are outside the default scrape set until a deployer wires an adapter scrape target. The pool-level `lenny_pool_security_degraded` gauge above is the controller-published signal the bundled `PoolSecurityDegraded` alert evaluates.
+
+| Metric | Type | Labels | Description | Used by |
+|:-------|:-----|:-------|:------------|:--------|
+| `lenny_adapter_sopeercred_disabled_total` | Counter | -- | Increments on every pod start in nonce-only mode (`requireSoPeercred: false`). Outside the default scrape set. Deployers who wire an adapter scrape target alert on `lenny_adapter_sopeercred_disabled_total > 0`. | Deployer-configured adapter alert (see [Adapter-Agent Boundary](../operator-guide/security.md#adapter-agent-boundary)). |
+| `lenny_adapter_sopeercred_selftest_failed_total` | Counter | -- | Increments when the adapter's `SO_PEERCRED` self-test fails. Outside the default scrape set. | Operational monitoring. |
+| `lenny_adapter_set_tracing_context_dropped_total` | Counter | -- | Increments when a runtime's `set_tracing_context` frame names a session that is not the live binding of the Attach stream that delivered it and the adapter drops it. Outside the default scrape set. | Operational monitoring. |
+| `lenny_adapter_unaddressed_frame_rejected_total` | Counter | `frame_type` | Increments once per Attach stream that rejects a session-scoped frame carrying no per-session identifier on a pod holding more than one slot. One such frame on a pod holding two live streams increments the counter twice. Outside the default scrape set. | Operational monitoring. |
+| `lenny_slot_shutdown_untokened_entry_total` | Counter | -- | Increments when a `Shutdown` that carries a bind attempt token meets a slot registry entry that carries none. The adapter answers `superseded` and removes nothing, so the series counts the reclaims that met an entry no bind attempt owns, such as an entry a start created. Outside the default scrape set. | Operational monitoring. |
 
 ---
 
@@ -188,7 +211,7 @@ Emitted by the gateway when `deliveryMode: proxy` pools are active. The gateway 
 | `lenny_token_service_circuit_state` | Gauge | -- | Token Service circuit breaker: 0=closed, 1=half-open, 2=open. | `TokenServiceUnavailable` alert. |
 | `lenny_token_service_secret_reloads_total` | Counter | `secret_name`, `outcome` | Secret reload outcomes: `success`, `not_found`, `parse_error`. | Operational monitoring. |
 | `lenny_oauth_token_5xx_total` | Counter | `tenant_id`, `error_type` | `/v1/oauth/token` responses that returned 5xx. Error types: `token_store_unavailable`, `internal_error`, `crypto_error`. | `TokenStoreUnavailable` alert. |
-| `lenny_credential_rotation_inflight_ceiling_hit_total` | Counter | `pool`, `trigger` | Increments when the 300-second in-flight gate ceiling is hit for any rotation whose `trigger != proactive_renewal` and the adapter is forced to send `credentials_rotated` regardless of outstanding in-flight LLM requests. Non-zero values indicate a compromised or buggy runtime that failed to emit `llm_request_completed` within the ceiling. | `OutstandingInflightAtRotationCeiling` alert. |
+| `lenny_credential_rotation_inflight_ceiling_hit_total` | Counter | `pool`, `trigger` | Increments when the 300-second in-flight gate ceiling is hit for any rotation whose `trigger != proactive_renewal` and the adapter is forced to send `credentials_rotated` regardless of outstanding in-flight LLM requests. The gate polls the pod-wide per-provider in-flight counter, so on a pod holding more than one bound session a co-tenant's outstanding request for the same provider can drive the ceiling on its own. Non-zero values indicate a compromised or buggy runtime that failed to emit `llm_request_completed` within the ceiling once that cause is excluded. | `OutstandingInflightAtRotationCeiling` alert. |
 
 ### Credential pool metrics
 
@@ -223,7 +246,7 @@ These are derived from credential lifecycle counters, not directly named in the 
 | `lenny_delegation_deadlock_resolution_total` | Counter | `pool`, `resolution` | How deadlocks are resolved: `client_input`, `child_cancel`, `timeout`. | Operational monitoring. |
 | `lenny_delegation_deadlock_duration_seconds` | Histogram | `pool` | Time from deadlock detection to resolution. | Operational monitoring. |
 | `lenny_delegation_budget_return_usage_lag_total` | Counter | -- | Budget return unable to read parent's actual usage counter. | Operational monitoring. |
-| `lenny_delegation_budget_keys_expired_total` | Counter | `pool`, `tenant_id` | Lua script returns `BUDGET_KEYS_EXPIRED`. | `DelegationBudgetKeysExpired` alert. |
+| `lenny_delegation_budget_keys_expired_total` | Counter | `pool`, `tenant_id` | Increments on each `BUDGET_KEYS_EXPIRED` detection: a `delegate_task` reservation finds the tree's sentinel key absent on its retry. A budget return that finds the sentinel absent is not a detection. | `DelegationBudgetKeysExpired` alert. |
 | `lenny_delegation_would_have_blocked_total` | Counter | `pool`, `tenant_id`, `layer`, `mode` | Self-recursive delegation hops that the §8.2 three-layer AND gate would have rejected. `layer ∈ {platform, runtime, policy}` (every layer that evaluated `false` at the offending hop); `mode ∈ {enforce, warn}`. Under `mode: enforce` the hop was rejected with `DELEGATION_CYCLE_DETECTED`; under `mode: warn` the hop was admitted with a `delegation.cycle_warning` audit event. Use to size the policy-flip impact before promoting `mode: warn` to `mode: enforce`. Not emitted under `mode: permissive` (cycle detection disabled). | `CycleDetectionWarnModeBlocking` alert (rolled-up `mode="warn"` signal) and `CycleDetectionModeUnsafe` standing alert (`mode: permissive` posture). |
 | `lenny_export_file_scans_total` | Counter | `pool`, `tenant_id`, `policy_name`, `interceptor_ref`, `outcome` | Exported files routed through the `PreExportMaterialization` interceptor when `DelegationPolicy.contentPolicy.scanExportedFiles` is `true`. Outcomes: `admitted`, `modified`, `rejected`, `failed_open`, `failed_closed`. Increments once per file per delegation. | Operational monitoring; operators should alert on persistent `failed_open` volume. |
 | `lenny_export_file_scan_duration_seconds` | Histogram | `pool`, `tenant_id`, `interceptor_ref` | End-to-end wall-clock duration of a `PreExportMaterialization` interceptor call for a single exported file. | Operational monitoring. |
@@ -324,7 +347,7 @@ These are derived from credential lifecycle counters, not directly named in the 
 
 | Metric | Type | Labels | Description | Used by |
 |:-------|:-----|:-------|:------------|:--------|
-| `lenny_workspace_seal_duration_seconds` | Histogram | `pool`, `outcome` | Seal completion time: `success`, `timeout`. | `WorkspaceSealStuck` alert. |
+| `lenny_workspace_seal_duration_seconds` | Histogram | `pool`, `outcome` | Seal-and-export completion time: `success`, `timeout`, `permanent`. The `permanent` outcome records a seal that ended on a permanent condition (a permanent adapter error, a session binding lost during the seal, or a deleted session row) and returned immediately without retrying. | `WorkspaceSealStuck` alert (fires on the `outcome="timeout"` arm alone). |
 
 ---
 
@@ -349,7 +372,7 @@ These are derived from credential lifecycle counters, not directly named in the 
 | `lenny_pgaudit_grant_events_total` | Counter | `statement_type` | pgaudit events forwarded to sink: `GRANT`, `REVOKE`, `DDL`. | `PgAuditSinkDeliveryFailed` alert. |
 | `lenny_mcp_deprecated_version_active_sessions` | Gauge | -- | Sessions on deprecated MCP protocol versions. | Deprecation monitoring. |
 | `lenny_circuit_breaker_open` | Gauge | `circuit_name` | 1 when breaker is open, 0 when closed. | `CircuitBreakerActive` alert. |
-| `lenny_audit_redaction_receipt_missing_total` | Counter | -- | Rows classified `chainIntegrity=redacted_gdpr` where the corresponding signed `RedactionReceipt` is absent, signature-invalid, or the `(original_hash, new_hash)` pair does not match the observed chain rewrite. Steady-state value is zero. | `AuditRedactionReceiptMissing` alert. |
+| `lenny_audit_redaction_receipt_missing_total` | Counter | -- | Rows classified `chainIntegrity=redacted_gdpr` where the corresponding signed `RedactionReceipt` is absent, signature-invalid, or its `original_hash` does not match the redacted row's preserved pre-redaction hash. Steady-state value is zero. | `AuditRedactionReceiptMissing` alert. |
 | `lenny_playground_dev_tenant_not_seeded_total` | Counter | -- | `/playground/*` requests rejected with `503 LENNY_PLAYGROUND_DEV_TENANT_NOT_SEEDED` because the `authMode=dev` configured `devTenantId` was not yet present in Postgres. Should be non-zero only during the post-install bootstrap window. | Operational monitoring. |
 
 ---
@@ -454,7 +477,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `MinIOUnavailable` | `rate(lenny_artifact_upload_error_total{error_type="minio_unreachable"}[2m]) > 0` sustained for > 1 min; cluster-wide MinIO ArtifactStore unreachable | Critical |
 | `EtcdUnavailable` | API server etcd connectivity errors sustained > 15s | Critical |
 | `CredentialPoolExhausted` | Any credential pool has 0 assignable credentials for > 30s | Critical |
-| `CredentialCompromised` | Revoked credential has active leases for > 30s (pool-scoped: `lenny_credential_revoked_with_active_leases`; user-scoped: `lenny_user_credential_revoked_with_active_leases`) | Critical |
+| `CredentialCompromised` | Revoked credential has an active lease not shadowed by a deny-list entry for > 30s (pool-scoped: `lenny_credential_revoked_with_active_leases`; user-scoped: `lenny_user_credential_revoked_with_active_leases`); clears once every active lease against the credential is on the deny list or terminated in direct mode | Critical |
 | `TokenServiceUnavailable` | Token Service circuit breaker open for > 30s | Critical |
 | `ControllerLeaderElectionFailed` | Lease not renewed within `leaseDuration` (15s) | Critical |
 | `DedicatedDNSUnavailable` | All dedicated CoreDNS replicas have zero ready pods for > 30s | Critical |
@@ -468,13 +491,13 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `DataResidencyViolationAttempt` | Cross-border transfer attempt detected | Critical |
 | `PgBouncerAllReplicasDown` | All PgBouncer pods have zero ready replicas (self-managed only) | Critical |
 | `SessionEvictionTotalLoss` | Both MinIO and Postgres unavailable during eviction | Critical |
-| `DelegationBudgetKeysExpired` | `BUDGET_KEYS_EXPIRED` returned by Lua script | Critical |
+| `DelegationBudgetKeysExpired` | A `delegate_task` reservation detects `BUDGET_KEYS_EXPIRED` | Critical |
 | `BillingStreamEntryAgeHigh` | Oldest billing stream entry exceeds 80% of TTL | Critical |
 | `TokenStoreUnavailable` | `rate(lenny_oauth_token_5xx_total{error_type="token_store_unavailable"}[1m]) > 0` sustained > 30s | Critical |
 | `LLMUpstreamEgressAnomaly` | `rate(lenny_gateway_llm_upstream_egress_anomaly_total[1m]) > 0` | Critical |
 | `ArtifactReplicationResidencyViolation` | `rate(lenny_minio_replication_residency_violation_total[5m]) > 0` — ArtifactStore replication residency preflight observed a jurisdiction-tag mismatch, missing tag, DNS rebinding, or failed destination tag-probe. Replication for the affected region is suspended. | Critical |
 | `LegalHoldEscrowResidencyViolation` | `rate(lenny_legal_hold_escrow_region_unresolvable_total[5m]) > 0` — Phase 3.5 of tenant force-delete aborted because the resolved escrow region has no corresponding `storage.regions.<region>.legalHoldEscrow` entry, or the region's escrow KMS key / bucket endpoint is unreachable. The operator must configure the missing region-scoped escrow target before re-invoking force-delete. Fail-closed mirror of `ArtifactReplicationResidencyViolation` for the legal-hold escrow surface (CMP-054). | Critical |
-| `PlatformAuditResidencyViolation` | `rate(lenny_platform_audit_region_unresolvable_total[5m]) > 0` — A platform-tenant audit event referencing a non-platform `target_tenant_id` (impersonation, legal-hold escrow ledger, compliance decommission) failed to commit because the target tenant's regional platform-Postgres is misconfigured or unreachable. The originating operation halts. The operator must configure the missing `storage.regions.<region>.postgresEndpoint` entry (or restore platform-Postgres reachability) before retrying. Fail-closed mirror of `LegalHoldEscrowResidencyViolation` for the platform-tenant audit-write surface (CMP-058). | Critical |
+| `PlatformAuditResidencyViolation` | `rate(lenny_platform_audit_region_unresolvable_total[5m]) > 0` — A platform-tenant audit event referencing a non-platform `target_tenant_id` (impersonation, legal-hold escrow ledger, compliance decommission) failed to commit because the target tenant's regional platform-Postgres is misconfigured or unreachable. The operator must configure the missing `storage.regions.<region>.postgresEndpoint` entry (or restore platform-Postgres reachability) before retrying. Fail-closed mirror of `LegalHoldEscrowResidencyViolation` for the platform-tenant audit-write surface (CMP-058). | Critical |
 | `AuditRedactionReceiptMissing` | `increase(lenny_audit_redaction_receipt_missing_total[15m]) > 0` — a row classified `chainIntegrity=redacted_gdpr` has no matching signed `RedactionReceipt`. | Critical |
 | `T4KmsKeyUnusable` | `time() - lenny_t4_kms_probe_last_success_timestamp > 2 * storage.t4KmsProbeInterval` — T4 envelope-encryption probe from the leader-elected gateway goroutine has not succeeded within twice its poll interval (default `storage.t4KmsProbeInterval: 300s`, min 60s). T4 writes fail closed until the KMS key is reachable again. | Critical |
 | `ElicitationContentTamperDetected` | `increase(lenny_elicitation_content_tamper_detected_total{enforcement_mode="enforce"}[5m]) > 0` — narrowed to the `enforce` stream of the counter: an intermediate pod re-emitted an MCP `elicitation/create` wire frame for an existing `elicitation_id` with a `{message, schema}` pair diverging from the gateway-recorded original under a tenant whose effective enforcement mode is `enforce`; forward dropped with `ELICITATION_CONTENT_TAMPERED` per the gateway-origin-binding invariant (§9.2). Fires immediately on any non-zero increment in the `enforce` stream. Labels `origin_pod`, `tampering_pod`, `enforcement_mode`. | Critical |
@@ -503,6 +526,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `GatewaySubsystemCircuitOpen` | Any subsystem circuit breaker open for > 60s | Warning |
 | `LLMTranslationLatencyHigh` | `histogram_quantile(0.95, rate(lenny_gateway_llm_translation_duration_seconds_bucket[5m])) > 0.1` sustained > 5 min | Warning |
 | `LLMTranslationSchemaDrift` | `rate(lenny_gateway_llm_translation_errors_total{error_type="schema_mismatch"}[5m]) > 0` sustained > 5 min | Warning |
+| `TokenUsageAnomaly` | `sum by (tenant_id) (rate(lenny_gateway_token_usage_anomaly_total[5m])) > 0` sustained > 5 min — a direct-mode session under-reports token usage (`reason="zero_delta"` or `reason="implausibly_small"`). The runtime is the sole observer of provider token counts in direct mode; a sustained rate signals under-reporting. See [token-usage-anomaly](../runbooks/token-usage-anomaly.md). | Warning |
 | `ExperimentIsolationRejections` | `rate(lenny_experiment_isolation_rejections_total[5m]) > 0` sustained > 2 min — runtime isolation-monotonicity fail-closed rejections from the `ExperimentRouter`. Steady-state zero because the admission-time check catches misconfiguration pre-activation. | Warning |
 | `PoolConfigDrift` | Postgres/CRD generation mismatch for > 60s | Warning |
 | `WarmPoolReplenishmentSlow` | P95 startup duration > 2x baseline for > 5 min | Warning |
@@ -513,7 +537,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `WorkspaceSealStuck` | Seal operation retrying beyond `maxWorkspaceSealDurationSeconds` | Warning |
 | `CoordinatorHandoffSlow` | P95 handoff duration > 5s for > 5 min | Warning |
 | `StorageQuotaHigh` | Artifact storage > 80% of tenant quota | Warning |
-| `LegalHoldCheckpointAccumulationProjectedBreach` | `(lenny_storage_quota_bytes_used + sum by (tenant_id) (lenny_legal_hold_checkpoint_projected_growth_bytes)) > 0.9 * lenny_tenant_storage_quota_bytes and on(tenant_id) lenny_tenant_legal_hold_active_count > 0` — predictive alert that a tenant's projected 24-hour legal-hold checkpoint growth plus current usage will cross 90% of the tenant's configured `storageQuotaBytes` bucket; see [legal-hold-quota-pressure](../runbooks/legal-hold-quota-pressure.html). | Warning |
+| `LegalHoldCheckpointAccumulationProjectedBreach` | `(lenny_storage_quota_bytes_used + sum by (tenant_id) (lenny_legal_hold_checkpoint_projected_growth_bytes)) > 0.9 * lenny_tenant_storage_quota_bytes and on(tenant_id) lenny_tenant_legal_hold_active_count > 0` — predictive alert that a tenant's projected 24-hour legal-hold checkpoint growth plus current usage will cross 90% of the tenant's configured `storageQuotaBytes` bucket; see [legal-hold-quota-pressure](../runbooks/legal-hold-quota-pressure.md). | Warning |
 | `ErasureJobFailed` | Erasure job failed | Warning |
 | `TenantDeletionOverdue` | Deletion exceeds 80% of the deployment size's SLA | Warning |
 | `BillingStreamBackpressure` | Redis stream depth > 80% of max for > 60s | Warning |
@@ -525,12 +549,13 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `LegalHoldOverrideUsed` | `gdpr.legal_hold_overridden` audit event emitted — `platform-admin` invoked user erase with `acknowledgeHoldOverride: true` | Warning |
 | `LegalHoldOverrideUsedTenant` | `gdpr.legal_hold_overridden_tenant` audit event emitted — `platform-admin` invoked tenant force-delete with `acknowledgeHoldOverride: true` | Warning |
 | `CompliancePostureDecommissioned` | `compliance.profile_decommissioned` audit event emitted — `platform-admin` invoked `POST /v1/admin/tenants/{id}/compliance-profile/decommission` to lower a regulated `complianceProfile`; generic `PUT` downgrades are rejected with `COMPLIANCE_PROFILE_DOWNGRADE_PROHIBITED` | Warning |
-| `OutstandingInflightAtRotationCeiling` | `lenny_credential_rotation_inflight_ceiling_hit_total` incremented — the 300s in-flight gate ceiling was hit on a non-proactive rotation | Warning |
+| `OutstandingInflightAtRotationCeiling` | `lenny_credential_rotation_inflight_ceiling_hit_total` incremented — the 300s in-flight gate ceiling was hit on a non-proactive rotation, either because the rotating session's runtime withheld `llm_request_completed` or because a co-tenant session's outstanding request for the same provider gated the pod-wide counter | Warning |
 | `PreStopCapFallbackRateHigh` | Per-replica combined share of 90s-conservative-fallback selections (`source="postgres_null"` + `source="cache_miss_max_tier"`) exceeds 5% over 15 min | Warning |
 | `DrainReadinessWebhookUnavailable` | `lenny-drain-readiness` webhook unreachable; node drains skip MinIO health check | Warning |
 | `EphemeralContainerCredGuardUnavailable` | `up{job="lenny-ephemeral-container-cred-guard"} == 0` sustained > 5 min; all `update` operations on `pods/ephemeralcontainers` in agent namespaces are denied while the webhook is down (credential-boundary invariant remains protected by fail-closed policy). See spec §16.5 for canonical expression. | Warning |
 | `AdmissionPlaneFeatureFlagDowngrade` | The `lenny-deployment-phase-stamp` ConfigMap records `lenny.dev/flag-<slug>-enabled="true"` for a feature flag whose gated ValidatingWebhookConfiguration is absent from the cluster, sustained > 2 min. One PrometheusRule per `(flag, webhook)` pair in the Feature-gated chart inventory (§17.2); each rule carries static `flag_name` and `expected_webhook_name` labels. Sole runtime signal for feature-flag downgrade drift because the paired per-webhook `*Unavailable` alert does not fire when its `PrometheusRule` was removed alongside the webhook Deployment via the feature-flag flip. See spec §16.5 for the full four-pair expression. | Warning |
 | `CircuitBreakerStale` | `lenny_circuit_breaker_cache_stale_seconds > 60` on any gateway replica; admission decisions are being served against stale state | Warning |
+| `PoolSecurityDegraded` | `lenny_pool_security_degraded == 1` for any pool — the pool is rendering nonce-only `SO_PEERCRED` pods (its `deploymentModel: sidecar` runtime sets `requireSoPeercred: false` and the pool carries `acknowledgeNonceOnlyAuth: true`), or a nonce-only pod remains after the operator reverted the runtime field. The adapter-agent `SO_PEERCRED` authentication boundary is in its degraded fallback for this pool, and the state is under a human-review SLA. Published by the WarmPoolController alongside the `SecurityDegradedMode=True` condition on the `SandboxTemplate`. Deployers who wire a scrape target for adapter metrics additionally alert on `lenny_adapter_sopeercred_disabled_total > 0`. See [nonce-only-mode](../runbooks/nonce-only-mode.md). | Warning |
 
 ### SLO burn-rate alerts
 

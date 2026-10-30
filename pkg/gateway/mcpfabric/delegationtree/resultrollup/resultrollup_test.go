@@ -1,0 +1,412 @@
+// SPDX-License-Identifier: MIT
+
+package resultrollup_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/resultrollup"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionusage"
+	"github.com/lennylabs/lenny/pkg/sessionrecord"
+)
+
+func mustCreate(t *testing.T, store *memstore.Store, s sessionstore.Session) {
+	t.Helper()
+	if err := store.Create(context.Background(), s); err != nil {
+		t.Fatalf("create %s: %v", s.ID, err)
+	}
+}
+
+// fixedNow returns a stable clock so wall-clock arithmetic is deterministic.
+func fixedNow(ts time.Time) func() time.Time { return func() time.Time { return ts } }
+
+// TestUsageDerivesTimeDimensions_spec_8_8_897 confirms a terminal
+// session's usage carries the accumulated tokens plus the wallClock /
+// podMinutes / credentialLeaseMinutes derived from the row.
+func TestUsageDerivesTimeDimensions_spec_8_8_897(t *testing.T) {
+	ctx := context.Background()
+	sessions := memstore.New()
+	tokens := sessionusage.NewMemory()
+	archive := treearchive.NewMemory()
+
+	created := time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)
+	// 120s wall-clock → 2.0 pod-minutes and 2.0 lease-minutes.
+	terminal := created.Add(120 * time.Second)
+	sess := sessionstore.Session{
+		ID: "child1", TenantID: "acme", RootSessionID: "child1",
+		State: session.StateCompleted, PodAssignment: "pod-xyz",
+		CreatedAt: created, UpdatedAt: terminal,
+	}
+	mustCreate(t, sessions, sess)
+	_ = tokens.Add(ctx, "acme", "child1", 15000, 8000)
+
+	b := resultrollup.New(sessions, tokens, archive, fixedNow(terminal))
+	u := b.Usage(ctx, sess)
+	if u == nil {
+		t.Fatal("Usage returned nil")
+	}
+	if u.InputTokens != 15000 || u.OutputTokens != 8000 {
+		t.Fatalf("tokens = %d/%d, want 15000/8000", u.InputTokens, u.OutputTokens)
+	}
+	if u.WallClockSeconds != 120 {
+		t.Fatalf("wallClock = %v, want 120", u.WallClockSeconds)
+	}
+	if u.PodMinutes != 2.0 || u.CredentialLeaseMinutes != 2.0 {
+		t.Fatalf("podMin/leaseMin = %v/%v, want 2.0/2.0", u.PodMinutes, u.CredentialLeaseMinutes)
+	}
+}
+
+// TestUsageNoPodLeavesPodAndLeaseZero confirms a session that never bound
+// a pod (e.g. a create-time failure) reports zero pod / lease minutes
+// rather than fabricating them from wall-clock.
+func TestUsageNoPodLeavesPodAndLeaseZero(t *testing.T) {
+	ctx := context.Background()
+	sessions := memstore.New()
+	tokens := sessionusage.NewMemory()
+	created := time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)
+	sess := sessionstore.Session{
+		ID: "c", TenantID: "acme", RootSessionID: "c",
+		State: session.StateFailed, PodAssignment: "",
+		CreatedAt: created, UpdatedAt: created.Add(60 * time.Second),
+	}
+	mustCreate(t, sessions, sess)
+	b := resultrollup.New(sessions, tokens, treearchive.NewMemory(), fixedNow(created))
+	u := b.Usage(ctx, sess)
+	if u.WallClockSeconds != 60 {
+		t.Fatalf("wallClock = %v, want 60", u.WallClockSeconds)
+	}
+	if u.PodMinutes != 0 || u.CredentialLeaseMinutes != 0 {
+		t.Fatalf("podMin/leaseMin = %v/%v, want 0/0", u.PodMinutes, u.CredentialLeaseMinutes)
+	}
+}
+
+// TestTreeUsageLeaf_spec_8_8_904 confirms a leaf task's treeUsage equals
+// its own usage with totalTasks=1 (all-descendants-settled is trivially
+// satisfied for a leaf).
+func TestTreeUsageLeaf_spec_8_8_904(t *testing.T) {
+	ctx := context.Background()
+	sessions := memstore.New()
+	tokens := sessionusage.NewMemory()
+	created := time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)
+	sess := sessionstore.Session{
+		ID: "leaf", TenantID: "acme", RootSessionID: "leaf",
+		State: session.StateCompleted, PodAssignment: "pod",
+		CreatedAt: created, UpdatedAt: created.Add(60 * time.Second),
+	}
+	mustCreate(t, sessions, sess)
+	_ = tokens.Add(ctx, "acme", "leaf", 100, 50)
+	b := resultrollup.New(sessions, tokens, treearchive.NewMemory(), fixedNow(created))
+	u := b.Usage(ctx, sess)
+	tu := b.TreeUsage(ctx, sess, u)
+	if tu == nil {
+		t.Fatal("treeUsage nil for a settled leaf")
+	}
+	if tu.TotalTasks != 1 {
+		t.Fatalf("totalTasks = %d, want 1", tu.TotalTasks)
+	}
+	if tu.InputTokens != 100 || tu.OutputTokens != 50 {
+		t.Fatalf("tokens = %d/%d, want 100/50", tu.InputTokens, tu.OutputTokens)
+	}
+}
+
+// TestTreeUsageSumsSettledSubtree_spec_8_8_904 confirms treeUsage sums a
+// parent's own usage plus each live-terminal descendant's, counting the
+// whole subtree in totalTasks.
+func TestTreeUsageSumsSettledSubtree_spec_8_8_904(t *testing.T) {
+	ctx := context.Background()
+	sessions := memstore.New()
+	tokens := sessionusage.NewMemory()
+	created := time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)
+
+	root := sessionstore.Session{
+		ID: "root", TenantID: "acme", RootSessionID: "root",
+		State: session.StateCompleted, PodAssignment: "p0",
+		CreatedAt: created, UpdatedAt: created.Add(60 * time.Second),
+	}
+	childA := sessionstore.Session{
+		ID: "a", TenantID: "acme", RootSessionID: "root", ParentSessionID: "root",
+		State: session.StateCompleted, PodAssignment: "p1",
+		CreatedAt: created, UpdatedAt: created.Add(120 * time.Second),
+	}
+	childB := sessionstore.Session{
+		ID: "b", TenantID: "acme", RootSessionID: "root", ParentSessionID: "root",
+		State: session.StateCompleted, PodAssignment: "p2",
+		CreatedAt: created, UpdatedAt: created.Add(30 * time.Second),
+	}
+	mustCreate(t, sessions, root)
+	mustCreate(t, sessions, childA)
+	mustCreate(t, sessions, childB)
+	_ = tokens.Add(ctx, "acme", "root", 1000, 100)
+	_ = tokens.Add(ctx, "acme", "a", 2000, 200)
+	_ = tokens.Add(ctx, "acme", "b", 3000, 300)
+
+	b := resultrollup.New(sessions, tokens, treearchive.NewMemory(), fixedNow(created))
+	u := b.Usage(ctx, root)
+	tu := b.TreeUsage(ctx, root, u)
+	if tu == nil {
+		t.Fatal("treeUsage nil for a fully-settled subtree")
+	}
+	if tu.TotalTasks != 3 {
+		t.Fatalf("totalTasks = %d, want 3", tu.TotalTasks)
+	}
+	if tu.InputTokens != 6000 || tu.OutputTokens != 600 {
+		t.Fatalf("tokens = %d/%d, want 6000/600", tu.InputTokens, tu.OutputTokens)
+	}
+	// wallClock: root 60 + a 120 + b 30 = 210; pod/lease minutes 3.5 each.
+	if tu.WallClockSeconds != 210 {
+		t.Fatalf("wallClock = %v, want 210", tu.WallClockSeconds)
+	}
+	if tu.PodMinutes != 3.5 || tu.CredentialLeaseMinutes != 3.5 {
+		t.Fatalf("podMin/leaseMin = %v/%v, want 3.5/3.5", tu.PodMinutes, tu.CredentialLeaseMinutes)
+	}
+}
+
+// TestTreeUsageNullWhenDescendantUnsettled_spec_8_8_917 confirms a parent
+// whose child is still running has a null treeUsage even though the parent
+// itself is terminal.
+func TestTreeUsageNullWhenDescendantUnsettled_spec_8_8_917(t *testing.T) {
+	ctx := context.Background()
+	sessions := memstore.New()
+	tokens := sessionusage.NewMemory()
+	created := time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)
+	root := sessionstore.Session{
+		ID: "root", TenantID: "acme", RootSessionID: "root",
+		State: session.StateCompleted, PodAssignment: "p0",
+		CreatedAt: created, UpdatedAt: created.Add(60 * time.Second),
+	}
+	running := sessionstore.Session{
+		ID: "kid", TenantID: "acme", RootSessionID: "root", ParentSessionID: "root",
+		State: session.StateRunning, PodAssignment: "p1",
+		CreatedAt: created, UpdatedAt: created.Add(10 * time.Second),
+	}
+	mustCreate(t, sessions, root)
+	mustCreate(t, sessions, running)
+	b := resultrollup.New(sessions, tokens, treearchive.NewMemory(), fixedNow(created.Add(90*time.Second)))
+	u := b.Usage(ctx, root)
+	if tu := b.TreeUsage(ctx, root, u); tu != nil {
+		t.Fatalf("treeUsage = %+v, want nil (descendant unsettled)", tu)
+	}
+}
+
+// TestTreeUsageReadsArchivedDescendant_spec_8_8_904 confirms a reclaimed
+// descendant (gone from live rows, present only in the §8.10 archive)
+// contributes its baked-in usage to the parent's treeUsage rollup.
+func TestTreeUsageReadsArchivedDescendant_spec_8_8_904(t *testing.T) {
+	ctx := context.Background()
+	sessions := memstore.New()
+	tokens := sessionusage.NewMemory()
+	archive := treearchive.NewMemory()
+	created := time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)
+
+	root := sessionstore.Session{
+		ID: "root", TenantID: "acme", RootSessionID: "root",
+		State: session.StateCompleted, PodAssignment: "p0",
+		CreatedAt: created, UpdatedAt: created.Add(60 * time.Second),
+	}
+	mustCreate(t, sessions, root)
+	_ = tokens.Add(ctx, "acme", "root", 1000, 100)
+
+	// The child's live row is gone (reclaimed); only its archived
+	// TaskResult survives, with usage baked in.
+	childResult, _ := json.Marshal(sessionrecord.Result{
+		SchemaVersion: sessionrecord.SchemaVersion, TaskID: "kid", State: "completed",
+		Usage: &sessionrecord.Usage{InputTokens: 500, OutputTokens: 50, WallClockSeconds: 30, PodMinutes: 0.5, CredentialLeaseMinutes: 0.5},
+	})
+	if err := archive.Archive(ctx, treearchive.ArchivedNode{
+		TenantID: "acme", RootSessionID: "root", NodeSessionID: "kid",
+		ParentSessionID: "root", State: "completed", Result: string(childResult),
+		SettledAt: created.Add(40 * time.Second),
+	}); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+
+	b := resultrollup.New(sessions, tokens, archive, fixedNow(created))
+	u := b.Usage(ctx, root)
+	tu := b.TreeUsage(ctx, root, u)
+	if tu == nil {
+		t.Fatal("treeUsage nil; archived descendant should settle the subtree")
+	}
+	if tu.TotalTasks != 2 {
+		t.Fatalf("totalTasks = %d, want 2 (root + archived kid)", tu.TotalTasks)
+	}
+	if tu.InputTokens != 1500 || tu.OutputTokens != 150 {
+		t.Fatalf("tokens = %d/%d, want 1500/150", tu.InputTokens, tu.OutputTokens)
+	}
+}
+
+// TestTreeUsageNilWhenRootNonTerminal confirms an in-progress task has a
+// null treeUsage per §8.8, regardless of descendants.
+func TestTreeUsageNilWhenRootNonTerminal_spec_8_8_917(t *testing.T) {
+	ctx := context.Background()
+	sessions := memstore.New()
+	created := time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)
+	root := sessionstore.Session{
+		ID: "root", TenantID: "acme", RootSessionID: "root",
+		State: session.StateRunning, PodAssignment: "p0",
+		CreatedAt: created, UpdatedAt: created.Add(5 * time.Second),
+	}
+	mustCreate(t, sessions, root)
+	b := resultrollup.New(sessions, sessionusage.NewMemory(), treearchive.NewMemory(), fixedNow(created.Add(10*time.Second)))
+	u := b.Usage(ctx, root)
+	if tu := b.TreeUsage(ctx, root, u); tu != nil {
+		t.Fatalf("treeUsage = %+v, want nil (root non-terminal)", tu)
+	}
+}
+
+// TestNilBuilderSafe confirms a nil *Builder returns nil rollups rather
+// than panicking, so a gateway wired without the accumulator degrades
+// cleanly.
+func TestNilBuilderSafe(t *testing.T) {
+	var b *resultrollup.Builder
+	sess := sessionstore.Session{ID: "x", State: session.StateCompleted}
+	if u := b.Usage(context.Background(), sess); u != nil {
+		t.Fatalf("nil builder Usage = %+v, want nil", u)
+	}
+	if tu := b.TreeUsage(context.Background(), sess, &sessionrecord.Usage{}); tu != nil {
+		t.Fatalf("nil builder TreeUsage = %+v, want nil", tu)
+	}
+}
+
+// failingLister fails ListByRoot.
+type failingLister struct{ *memstore.Store }
+
+func (failingLister) ListByRoot(context.Context, string, string) ([]sessionstore.Session, error) {
+	return nil, context.DeadlineExceeded
+}
+
+// failingReplay fails Replay.
+type failingReplay struct{ treearchive.Store }
+
+func (failingReplay) Replay(context.Context, string, string) ([]treearchive.ArchivedNode, error) {
+	return nil, errors.New("archive unavailable")
+}
+
+// failingGetMany fails GetMany.
+type failingGetMany struct{ sessionusage.Store }
+
+func (failingGetMany) GetMany(context.Context, string, []string) (map[string]sessionusage.Tokens, error) {
+	return nil, errors.New("usage unavailable")
+}
+
+// subtreeFixture seeds root → child → {live grandchild, archived-only
+// grandchild} plus a sibling of child, each with recorded tokens.
+func subtreeFixture(t *testing.T) (*memstore.Store, *sessionusage.Memory, treearchive.Store, sessionstore.Session) {
+	t.Helper()
+	ctx := context.Background()
+	sessions := memstore.New()
+	tokens := sessionusage.NewMemory()
+	archive := treearchive.NewMemory()
+	child := sessionstore.Session{ID: "child", TenantID: "acme", ParentSessionID: "root", RootSessionID: "root", DelegationDepth: 1, State: session.StateRunning}
+	for _, s := range []sessionstore.Session{
+		{ID: "root", TenantID: "acme", RootSessionID: "root", State: session.StateRunning},
+		child,
+		{ID: "gc", TenantID: "acme", ParentSessionID: "child", RootSessionID: "root", DelegationDepth: 2, State: session.StateCompleted},
+		{ID: "sibling", TenantID: "acme", ParentSessionID: "root", RootSessionID: "root", DelegationDepth: 1, State: session.StateRunning},
+	} {
+		mustCreate(t, sessions, s)
+	}
+	_ = tokens.Add(ctx, "acme", "root", 10000, 10000)
+	_ = tokens.Add(ctx, "acme", "child", 100, 50)
+	_ = tokens.Add(ctx, "acme", "gc", 20, 5)
+	_ = tokens.Add(ctx, "acme", "sibling", 7000, 0)
+	body, _ := json.Marshal(sessionrecord.Result{Usage: &sessionrecord.Usage{InputTokens: 300, OutputTokens: 200}})
+	if err := archive.Archive(ctx, treearchive.ArchivedNode{
+		TenantID: "acme", RootSessionID: "root", NodeSessionID: "gone", ParentSessionID: "child",
+		State: string(session.StateCompleted), Result: string(body),
+	}); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	child.State = session.StateCancelled
+	return sessions, tokens, archive, child
+}
+
+// TestSubtreeTokensSumsLiveAndArchivedDescendants_spec_8_3 asserts that the
+// subtree consumption is the session's own tokens plus every descendant's,
+// with a descendant whose live row is gone counted from its archived usage,
+// and that ancestors and siblings are excluded.
+//
+// spec: §8.3 (Return on completion), §8.10
+func TestSubtreeTokensSumsLiveAndArchivedDescendants_spec_8_3(t *testing.T) {
+	sessions, tokens, archive, child := subtreeFixture(t)
+	got, err := resultrollup.New(sessions, tokens, archive, nil).SubtreeTokens(context.Background(), child)
+	if err != nil {
+		t.Fatalf("SubtreeTokens: %v", err)
+	}
+	if want := int64(150 + 25 + 500); got != want {
+		t.Errorf("SubtreeTokens = %d, want %d", got, want)
+	}
+}
+
+// TestSubtreeTokensCountsArchivedStartNode_spec_8_3 asserts that a start
+// node with an archive record and no live row contributes the tokens its
+// archived TaskResult.usage carries. Its session_usage row was deleted with
+// its session row during the usage quiescence wait, so reading the start node
+// from session_usage would drop its own consumption and credit those tokens
+// back to the root.
+//
+// spec: §8.3 (Usage quiescence before budget return), §8.3 (Return on
+// completion), §8.10
+func TestSubtreeTokensCountsArchivedStartNode_spec_8_3(t *testing.T) {
+	ctx := context.Background()
+	sessions := memstore.New()
+	tokens := sessionusage.NewMemory()
+	archive := treearchive.NewMemory()
+	child := sessionstore.Session{ID: "child", TenantID: "acme", ParentSessionID: "root", RootSessionID: "root", DelegationDepth: 1, State: session.StateRunning}
+	for _, s := range []sessionstore.Session{
+		{ID: "root", TenantID: "acme", RootSessionID: "root", State: session.StateRunning},
+		child,
+		{ID: "gc", TenantID: "acme", ParentSessionID: "child", RootSessionID: "root", DelegationDepth: 2, State: session.StateCompleted},
+	} {
+		mustCreate(t, sessions, s)
+	}
+	_ = tokens.Add(ctx, "acme", "root", 10000, 10000)
+	_ = tokens.Add(ctx, "acme", "gc", 20, 5)
+	// The child's session row, and with it its session_usage row, is reclaimed
+	// after the child was archived: no live row and no usage tokens remain.
+	if err := sessions.Delete(ctx, "acme", "child"); err != nil {
+		t.Fatalf("delete child: %v", err)
+	}
+	body, _ := json.Marshal(sessionrecord.Result{Usage: &sessionrecord.Usage{InputTokens: 400, OutputTokens: 100}})
+	if err := archive.Archive(ctx, treearchive.ArchivedNode{
+		TenantID: "acme", RootSessionID: "root", NodeSessionID: "child", ParentSessionID: "root",
+		State: string(session.StateCompleted), Result: string(body),
+	}); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	child.State = session.StateCompleted
+	got, err := resultrollup.New(sessions, tokens, archive, nil).SubtreeTokens(ctx, child)
+	if err != nil {
+		t.Fatalf("SubtreeTokens: %v", err)
+	}
+	if want := int64(500 + 25); got != want {
+		t.Errorf("SubtreeTokens = %d, want %d (the archived start node's own tokens dropped out)", got, want)
+	}
+}
+
+// TestSubtreeTokensErrors_spec_8_3 asserts that a ListByRoot, Replay, or
+// GetMany error, and a Builder missing a store, each return an error.
+//
+// spec: §8.3 (Return on completion)
+func TestSubtreeTokensErrors_spec_8_3(t *testing.T) {
+	sessions, tokens, archive, child := subtreeFixture(t)
+	for name, b := range map[string]*resultrollup.Builder{
+		"ListByRoot":     resultrollup.New(failingLister{sessions}, tokens, archive, nil),
+		"Replay":         resultrollup.New(sessions, tokens, failingReplay{archive}, nil),
+		"GetMany":        resultrollup.New(sessions, failingGetMany{tokens}, archive, nil),
+		"no token store": resultrollup.New(sessions, nil, archive, nil),
+		"no archive":     resultrollup.New(sessions, tokens, nil, nil),
+		"nil Builder":    nil,
+	} {
+		if _, err := b.SubtreeTokens(context.Background(), child); err == nil {
+			t.Errorf("%s: SubtreeTokens returned no error", name)
+		}
+	}
+}

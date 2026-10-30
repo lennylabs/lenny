@@ -1,0 +1,3 @@
+// The same citation is written on two lines of one file.
+// spec: §4.1 line 40
+// and again: §4.1 line 40

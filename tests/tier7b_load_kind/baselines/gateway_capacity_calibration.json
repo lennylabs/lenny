@@ -1,0 +1,39 @@
+{
+  "scenario": "gateway_capacity_calibration",
+  "version": "0.0.0-placeholder",
+  "note": "Placeholder baseline for the §4.1 Phase 2 calibration harness. The PR-cadence smoke does not exercise this scenario; values are populated by an operator-driven calibration run per scenarios/gateway_capacity_calibration/README.md before Tier 2 promotion.",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "duration": "0s",
+  "vus": 0,
+  "metric_ms": {
+    "avg": 0,
+    "p50": 0,
+    "p90": 0,
+    "p95": 0,
+    "p99": 0,
+    "p999": 0
+  },
+  "error_rate": 0,
+  "throughput_per_sec": 0,
+  "calibration_outputs": {
+    "max_sessions_per_replica": null,
+    "extraction_thresholds": {
+      "stream_proxy": {
+        "queue_depth": null,
+        "p99_attach_latency_seconds": null
+      },
+      "upload_handler": {
+        "active_concurrent": null,
+        "p99_latency_seconds": null
+      },
+      "mcp_fabric": {
+        "active_delegations": null,
+        "p99_orchestration_latency_seconds": null
+      },
+      "llm_proxy": {
+        "active_connections": null,
+        "p99_ttfb_seconds": null
+      }
+    }
+  }
+}

@@ -1,0 +1,157 @@
+{{- /*
+§12.5 — MinIO bucket configuration Job.
+
+Configures the MinIO artifact bucket the gateway writes to:
+
+  - `mc mb` — create the bucket idempotently when it does not exist
+  - `mc anonymous set none` — pin the bucket private
+  - `mc version enable` — enable bucket versioning (§12.5)
+  - `mc ilm add` — install the bucket-wide delete-marker and
+    noncurrent-version lifecycle rules (§12.5)
+
+Runs as a post-install/post-upgrade Helm hook so the bucket lifecycle
+is applied the first time the chart points at a fresh MinIO; the rule
+overlay is idempotent so re-runs are safe.
+
+The Job is enabled when:
+  - the chart points at a real MinIO (minio.endpoint set),
+  - and minio.lifecycle.enabled is true (default).
+*/ -}}
+{{- $minio := .Values.minio | default dict -}}
+{{- $hasMinio := and $minio $minio.endpoint (ne $minio.endpoint "") -}}
+{{- $lifecycle := $minio.lifecycle | default dict -}}
+{{- $enabled := true -}}
+{{- if hasKey ($lifecycle | default dict) "enabled" -}}
+{{- $enabled = $lifecycle.enabled -}}
+{{- end -}}
+{{- if and $hasMinio $enabled }}
+{{- $tls := $minio.tls | default dict -}}
+{{- $useSSL := true -}}
+{{- if hasKey ($tls | default dict) "enabled" -}}
+{{- $useSSL = $tls.enabled -}}
+{{- end -}}
+{{- $scheme := "https" -}}
+{{- if not $useSSL -}}
+{{- $scheme = "http" -}}
+{{- end -}}
+{{- /* §12.5 — when the self-managed MinIO serving cert is issued by a CA
+   outside the system trust store, the operator names a ConfigMap (key
+   ca.crt) the Job mounts so mc verifies the endpoint against it. mc is a
+   Go binary and reads the directory via SSL_CERT_DIR alongside the system
+   roots. */ -}}
+{{- $minioCABundle := (default "" $tls.caBundleConfigMap) -}}
+{{- $noncurrentDays := default 1 $lifecycle.noncurrentExpirationDays -}}
+{{- $mcImage := default "pgsty/mc:RELEASE.2026-10-26T00-00-00Z@sha256:ce62c9053c69ce12a527a322345b5ad9f44b5f8a7b8189f82e516f2e3f30f1d8" $lifecycle.image -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lenny-minio-bucket-lifecycle
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: minio-bucket-lifecycle
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "lenny.labels" . | nindent 8 }}
+        lenny.dev/component: minio-bucket-lifecycle
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mc
+          image: {{ $mcImage | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            # MINIO_ACCESS_KEY and MINIO_SECRET_KEY are declared before
+            # MC_HOST_lenny because Kubernetes $(VAR) env substitution only
+            # expands a reference to a variable defined earlier in the list.
+            # A forward reference is left literal, so MC_HOST_lenny would
+            # otherwise carry the unexpanded text "$(MINIO_ACCESS_KEY)" as
+            # the access key and mc would fail with "The Access Key Id you
+            # provided does not exist in our records." Keep these two first.
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: minio-access-key
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: minio-secret-key
+            - name: MC_HOST_lenny
+              value: "{{ $scheme }}://$(MINIO_ACCESS_KEY):$(MINIO_SECRET_KEY)@{{ $minio.endpoint }}"
+            # mc writes its config under $HOME/.mc by default; with
+            # readOnlyRootFilesystem and no home dir for uid 1000 that mkdir
+            # fails ("/.mc: read-only file system"). Point the config at the
+            # writable emptyDir mounted below, in every mode.
+            - name: MC_CONFIG_DIR
+              value: /tmp/.mc
+            {{- if $minioCABundle }}
+            # §12.5 — add the operator-supplied MinIO CA directory to mc's
+            # Go trust pool so it verifies the HTTPS endpoint against the CA
+            # outside the system roots.
+            - name: SSL_CERT_DIR
+              value: /etc/lenny/minio-ca
+            {{- end }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              # §12.5 — versioning enable.
+              # §12.5 — bucket-wide delete-marker + noncurrent
+              # version expiration via `mc ilm add`.
+              mc mb --ignore-existing lenny/{{ $minio.bucket }}
+              mc anonymous set none lenny/{{ $minio.bucket }}
+              mc version enable lenny/{{ $minio.bucket }}
+              mc ilm add lenny/{{ $minio.bucket }} \
+                --expired-object-delete-marker \
+                --noncurrentversion-expiration-days {{ $noncurrentDays }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          volumeMounts:
+            - name: mc-config
+              mountPath: /tmp
+            {{- if $minioCABundle }}
+            # §12.5 — the operator-supplied MinIO CA bundle (key ca.crt),
+            # added to mc's Go trust pool via SSL_CERT_DIR above.
+            - name: lenny-minio-ca
+              mountPath: /etc/lenny/minio-ca
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: mc-config
+          emptyDir: {}
+        {{- if $minioCABundle }}
+        - name: lenny-minio-ca
+          configMap:
+            name: {{ $minioCABundle | quote }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
+{{- end }}

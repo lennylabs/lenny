@@ -79,8 +79,8 @@ See [krew installation](krew-install.md) for kubectl-plugin details. Everything 
 
 `lenny-ctl` talks to two services:
 
-- The **gateway** for every `admin`-prefixed command (all of Sections 24.1-24.14 below). Target: `--api-url` / `LENNY_API_URL`.
-- **`lenny-ops`** for the Section 25 operability commands (`me`, `operations`, `events`, `diagnose`, `runbooks`, `upgrade`, `audit`, `drift`, `backup`, `restore`, `locks`, `escalations`, `logs`, `mcp-management`). Target: `--ops-server` / `LENNY_OPS_URL`, or auto-discovered from the gateway.
+- The **gateway** for every `admin`-prefixed command (all of Sections 24.1-24.14 below) and for the `audit` family, which targets the gateway-resident audit query API (`/v1/admin/audit-events`). Target: `--api-url` / `LENNY_API_URL`.
+- **`lenny-ops`** for the Section 25 operability commands (`me`, `operations`, `events`, `diagnose`, `runbooks`, `upgrade`, `drift`, `backup`, `restore`, `locks`, `escalations`, `logs`, `mcp-management`). Target: `--ops-server` / `LENNY_OPS_URL`, or auto-discovered from the gateway.
 
 Discovery rules:
 
@@ -109,6 +109,7 @@ Seed Day-1 configuration into an empty deployment.
 | Resource exists, identical | No-op | No-op |
 | Resource exists, differs | Skip (logged as WARN) | Update (PUT with overwrite) |
 | Security-critical field change | Error (blocked) | Error (blocked) |
+| Tenant entry whose `id` is the reserved `platform`, or that names an existing tenant in the `deleting` or `deleted` state | Error (no tenant is created or changed; exit code 2, or 1 when no entry succeeds) | Error (blocked) |
 
 ### Exit Codes
 
@@ -127,6 +128,7 @@ Validate infrastructure prerequisites before or after installation.
 | Command | Description | Min Role |
 |---|---|---|
 | `lenny-ctl preflight --config <values.yaml>` | Run all preflight checks | `platform-admin` (API) / none (standalone) |
+| `lenny-ctl preflight supervisor --runtime-class <name> --config <values.yaml>` | Create a one-off pod from the runtime supervisor image under the named RuntimeClass, run the supervisor's property self-test, report each property, and delete the pod. Exits non-zero when a property that gates a `restart` pod fails. Runs in standalone mode only, through the current `kubeconfig` context. Run it again when the container runtime version changes. | Kubernetes permission to create, get, and delete pods and to get `pods/log` in the agent namespace |
 
 ### Execution Modes
 
@@ -262,7 +264,7 @@ lenny-ctl preflight --config values.yaml \
 
 | Command | Description | Min Role |
 |---|---|---|
-| `lenny-ctl admin users rotate-token --user <name>` | Rotate admin token (internally calls `POST /v1/oauth/token` with RFC 8693 token-exchange grant) and patch K8s Secret | `platform-admin` |
+| `lenny-ctl admin users rotate-token --user <name>` | Rotate the initial admin token: the CLI calls `POST /v1/admin/users/{user}/rotate-token` and the gateway mints the new token in process, patches the `lenny-admin-token` Kubernetes Secret, and revokes the prior token | `platform-admin` |
 | `lenny-ctl admin users invalidate --user <name>` | Invalidate all active sessions for a user | `platform-admin` |
 
 ---
@@ -294,9 +296,11 @@ lenny-ctl preflight --config values.yaml \
 
 | Command | Description | Min Role |
 |---|---|---|
-| `lenny-ctl admin legal-holds set --resource-type <type> --resource-id <id> --note <text>` | Set a legal hold on a session or artifact | `platform-admin` / `tenant-admin` |
-| `lenny-ctl admin legal-holds clear --resource-type <type> --resource-id <id>` | Clear a legal hold | `platform-admin` / `tenant-admin` |
-| `lenny-ctl admin legal-holds list` | List active legal holds (filterable by `--tenant-id`, `--resource-type`) | `platform-admin` / `tenant-admin` |
+| `lenny-ctl admin legal-holds set --resource-type <type> --resource-id <id> --note <text>` | Set a legal hold on a session or artifact | `platform-admin` / `tenant-admin` (tenant-admin: not while its tenant is `deleting`) |
+| `lenny-ctl admin legal-holds clear --resource-type <type> --resource-id <id>` | Clear a legal hold | `platform-admin` / `tenant-admin` (tenant-admin: not while its tenant is `deleting`) |
+| `lenny-ctl admin legal-holds list` | List active legal holds (filterable by `--tenant-id`, `--resource-type`) | `platform-admin` / `tenant-admin` (tenant-admin: not while its tenant is `deleting`) |
+
+A tenant-admin of a tenant in the `deleting` state cannot call the API. A platform-admin releases its holds or force-deletes it.
 
 ---
 
@@ -432,7 +436,7 @@ lenny-ctl admin credential-pools list
 
 ## Session Operations
 
-Session commands route through the **MCP** client SDK, not REST. They exercise the same code path that any other MCP client uses — the CLI embeds the Lenny Go client SDK and opens a full MCP session for the duration of the command. The short form `lenny session` is preferred in developer-facing examples; the long form `lenny-ctl session` is preferred in operator runbooks. Both are identical.
+Session commands route through the **MCP** client SDK, and `lenny session new` with `--workspace` or `--file` stages the workspace over the REST API. The MCP commands exercise the same code path that any other MCP client uses — the CLI embeds the Lenny Go client SDK and opens a full MCP session for the duration of the command. The short form `lenny session` is preferred in developer-facing examples; the long form `lenny-ctl session` is preferred in operator runbooks. Both are identical.
 
 | Command | Description | Min Role |
 |---|---|---|
@@ -441,7 +445,7 @@ Session commands route through the **MCP** client SDK, not REST. They exercise t
 | `lenny session send <sessionId> <message>` | Send a user message to an existing session. If the CLI is not attached, the message is delivered and the CLI exits. | `user` (owner) |
 | `lenny session interrupt <sessionId>` | Send an interrupt to a running session. | `user` (owner) |
 | `lenny session cancel <sessionId>` | Cancel a session cooperatively. | `user` (owner) |
-| `lenny session list [--runtime <name>] [--status <status>]` | List the caller's sessions. The one session command that also works over REST for non-interactive callers. | `user` |
+| `lenny session list [--runtime <name>] [--status <status>]` | List the caller's sessions. | `user` |
 | `lenny session get <sessionId>` | Fetch a session's current state. | `user` (owner) |
 | `lenny session logs <sessionId> [--since <time>]` | Fetch session logs from the event store (paginated, streamable via SSE). | `user` (owner) |
 
@@ -463,15 +467,15 @@ Session commands route through the **MCP** client SDK, not REST. They exercise t
 
 ## Local Stack
 
-The Embedded Mode stack (`lenny up`) is managed entirely through local-only commands. They do not require a remote `LENNY_API_URL` — the embedded gateway binds to `https://localhost:8443` by default.
+The Embedded Mode stack (`lenny up`) is managed entirely through local-only commands. They do not require a remote `LENNY_API_URL` — the embedded gateway is reachable at `https://localhost:8443` through a loopback-only host-side forwarder.
 
 | Command | Description |
 |---|---|
-| `lenny up` | Start the embedded k3s / Postgres / Redis / KMS / OIDC / gateway / controllers / reference runtimes stack. Idempotent. Prints the local gateway URL and the non-suppressible "NOT for production use" banner. |
-| `lenny down [--purge]` | Gracefully terminate all embedded components. `--purge` additionally deletes `~/.lenny/`. |
+| `lenny up` | Render the production chart under a development profile and run the gateway, controllers, and reference runtimes as pods in the embedded k3s, on in-process in-memory stores with no separate Postgres, Redis, KMS, or identity-provider process. Idempotent. Prints the local gateway URL and the non-suppressible "NOT for production use" banner. |
+| `lenny down [--purge]` | Gracefully terminate all embedded components. The in-memory application stores are ephemeral and not preserved across `lenny down`. A non-`--purge` `lenny down` keeps the persisted substrate and imported-image store; `--purge` additionally removes them. |
 | `lenny status` | Print component health, active session count, and resource usage. |
-| `lenny logs [<component>] [--follow]` | Tail merged logs, or filter to one of `gateway`, `controller`, `ops`, `postgres`, `redis`, `kms`, `oidc`, `runtime-<name>`. |
-| `lenny restart [<component>]` | Restart a single embedded component without tearing down the rest of the stack. |
+| `lenny logs [<component>] [--follow]` | Tail merged logs, or filter to one of `gateway`, `controller`, `ops`, `k3s`, or `runtime-<name>`. The component logs are streamed from the backing pods. |
+| `lenny restart [<component>]` | Rollout-restart one of the pod-backed components (`gateway`, `controller`, `ops`) as a Kubernetes Deployment through the embedded kubeconfig, without tearing down the rest of the stack. |
 
 Invoked as `lenny` (short name) these commands default to the local stack; invoked as `lenny-ctl <same-command>` they behave identically but are documented under the operator-tool framing.
 
@@ -494,7 +498,7 @@ The wizard orchestrates the flow from [Installation](installation): cluster dete
 
 ## Agent-Operability Commands
 
-These commands target `lenny-ops` (the management plane) rather than the gateway. See [Server discovery and routing](#server-discovery-and-routing) for how `--ops-server` is resolved.
+These commands target `lenny-ops` (the management plane) rather than the gateway, with one exception: the `lenny-ctl audit` family targets the gateway-resident audit query API (see [Audit](#audit-lenny-ctl-audit) below). See [Server discovery and routing](#server-discovery-and-routing) for how `--ops-server` is resolved.
 
 ### Identity (`lenny-ctl me`)
 
@@ -539,6 +543,8 @@ These commands target `lenny-ops` (the management plane) rather than the gateway
 | `lenny-ctl runbooks get <name>` | Print the full structured runbook (machine-parseable steps) | `platform-admin` |
 
 ### Audit (`lenny-ctl audit`)
+
+Unlike the other commands in this section, the `lenny-ctl audit` family targets the **gateway** (`--api-url` / `LENNY_API_URL`) rather than `lenny-ops`. The audit query API is gateway-resident (`/v1/admin/audit-events`), backed by the gateway's per-tenant Postgres audit chains.
 
 | Command | Description | Min Role |
 |---|---|---|

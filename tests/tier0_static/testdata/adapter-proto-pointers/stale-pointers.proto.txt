@@ -1,0 +1,27 @@
+// Fixture: the three intra-pod comments of the shipped gateway <-> adapter
+// gRPC contract as they read while they still attributed intra-pod material
+// to §4.7. The gate must report every site.
+
+service Adapter {
+  // GetObservedIntegrationLevel reports the §5.1 / §15.4.3 integration
+  // level the adapter observed the runtime actually implement, derived
+  // from whether the runtime completed the §4.7
+  // lifecycle_capabilities/lifecycle_support exchange (full) and whether
+  // it connected to the intra-pod platform MCP server (standard).
+  rpc GetObservedIntegrationLevel(GetObservedIntegrationLevelRequest) returns (GetObservedIntegrationLevelResponse) {}
+}
+
+message InterruptResponse {
+  enum Status {
+    STATUS_INTERRUPT_TIMEOUT = 2; // deadline elapsed with no acknowledgement (§4.7)
+    STATUS_BUSY = 3;             // operation lock rejected the interrupt (§4.7)
+  }
+}
+
+message GetObservedIntegrationLevelRequest {
+  // wait_ms bounds how long the adapter waits for the runtime to complete
+  // its first §4.7 lifecycle handshake before classifying. A Full-level
+  // runtime dials the CH-RUNTIMEOPS shortly after boot, so a generous
+  // window avoids misclassifying a slow-to-connect runtime.
+  int32 wait_ms = 1;
+}

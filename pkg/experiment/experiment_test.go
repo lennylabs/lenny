@@ -25,6 +25,160 @@ func TestStatusIsRoutable(t *testing.T) {
 	}
 }
 
+func TestStatusCanTransitionTo(t *testing.T) {
+	valid := []struct{ from, to Status }{
+		{StatusActive, StatusPaused},
+		{StatusActive, StatusConcluded},
+		{StatusPaused, StatusActive},
+		{StatusPaused, StatusConcluded},
+	}
+	for _, c := range valid {
+		if !c.from.CanTransitionTo(c.to) {
+			t.Errorf("%q → %q should be a valid §10.7 transition", c.from, c.to)
+		}
+	}
+	invalid := []struct{ from, to Status }{
+		{StatusConcluded, StatusActive}, // concluded is immutable
+		{StatusConcluded, StatusPaused}, // concluded is immutable
+		{StatusActive, StatusActive},    // not a transition
+		{StatusPaused, StatusPaused},    // not a transition
+	}
+	for _, c := range invalid {
+		if c.from.CanTransitionTo(c.to) {
+			t.Errorf("%q → %q must not be a valid transition", c.from, c.to)
+		}
+	}
+}
+
+// routeExp builds a single-variant Definition for the Route tests. A
+// weight near 1 routes essentially every key to the variant; a weight
+// near 0 routes essentially every key to control.
+func routeExp(id string, weight float64, status Status, mode TargetingMode) Definition {
+	return Definition{
+		ID: id, Status: status, BaseRuntime: "r",
+		Variants:      []Variant{{ID: id + "-v", Weight: weight}},
+		TargetingMode: mode, Sticky: StickyUser, Propagation: PropagationInherit,
+	}
+}
+
+func TestRouteFirstMatchWins(t *testing.T) {
+	a := routeExp("exp-a", 0.9999, StatusActive, TargetingPercentage)
+	b := routeExp("exp-b", 0.9999, StatusActive, TargetingPercentage)
+	got := Route([]Definition{a, b}, "alice", "sess-1")
+	if got.ExperimentID != "exp-a" || got.VariantID != "exp-a-v" {
+		t.Errorf("Route = %+v, want the first experiment's enrollment", got)
+	}
+}
+
+func TestRouteSkipsControlAssignments(t *testing.T) {
+	// exp-a routes virtually every key to control; exp-b routes to its variant.
+	a := routeExp("exp-a", 0.0001, StatusActive, TargetingPercentage)
+	b := routeExp("exp-b", 0.9999, StatusActive, TargetingPercentage)
+	got := Route([]Definition{a, b}, "alice", "sess-1")
+	if got.ExperimentID != "exp-b" {
+		t.Errorf("Route = %+v, want exp-b (a control assignment is skipped)", got)
+	}
+}
+
+func TestRouteNoMatchReturnsZero(t *testing.T) {
+	a := routeExp("exp-a", 0.0001, StatusActive, TargetingPercentage)
+	if got := Route([]Definition{a}, "alice", "sess-1"); got != (Assignment{}) {
+		t.Errorf("Route = %+v, want a zero Assignment when every experiment yields control", got)
+	}
+}
+
+func TestRouteSkipsPausedAndExternal(t *testing.T) {
+	paused := routeExp("paused", 0.9999, StatusPaused, TargetingPercentage)
+	external := routeExp("external", 0.9999, StatusActive, TargetingExternal)
+	if got := Route([]Definition{paused, external}, "alice", "sess-1"); got != (Assignment{}) {
+		t.Errorf("Route = %+v, want zero — paused and external-mode experiments are not routed", got)
+	}
+}
+
+func TestSkippedAfterListsLaterRoutableExperiments(t *testing.T) {
+	// The session enrolls in exp-a; exp-b and exp-c are routable
+	// percentage-mode experiments created after it.
+	a := routeExp("exp-a", 0.9999, StatusActive, TargetingPercentage)
+	b := routeExp("exp-b", 0.9999, StatusActive, TargetingPercentage)
+	c := routeExp("exp-c", 0.9999, StatusActive, TargetingPercentage)
+	got := SkippedAfter([]Definition{a, b, c}, "exp-a", false)
+	if len(got) != 2 || got[0] != "exp-b" || got[1] != "exp-c" {
+		t.Errorf("SkippedAfter = %v, want [exp-b exp-c]", got)
+	}
+}
+
+func TestSkippedAfterExcludesEarlierExperiments(t *testing.T) {
+	// exp-a is created before the enrolled exp-b. The first-match rule
+	// did not skip exp-a — it was evaluated and lost — so it is not in
+	// the audit set.
+	a := routeExp("exp-a", 0.9999, StatusActive, TargetingPercentage)
+	b := routeExp("exp-b", 0.9999, StatusActive, TargetingPercentage)
+	c := routeExp("exp-c", 0.9999, StatusActive, TargetingPercentage)
+	got := SkippedAfter([]Definition{a, b, c}, "exp-b", false)
+	if len(got) != 1 || got[0] != "exp-c" {
+		t.Errorf("SkippedAfter = %v, want [exp-c] — exp-a precedes the enrolled experiment", got)
+	}
+}
+
+func TestSkippedAfterExcludesNonRoutable(t *testing.T) {
+	// Paused and concluded experiments are never routed, so the
+	// first-match rule did not skip them. With externalEvaluated false
+	// the external experiment is excluded too — RouteMixed skipped it
+	// regardless of first-match.
+	a := routeExp("exp-a", 0.9999, StatusActive, TargetingPercentage)
+	paused := routeExp("paused", 0.9999, StatusPaused, TargetingPercentage)
+	external := routeExp("external", 0.9999, StatusActive, TargetingExternal)
+	concluded := routeExp("concluded", 0.9999, StatusConcluded, TargetingPercentage)
+	live := routeExp("live", 0.9999, StatusActive, TargetingPercentage)
+	got := SkippedAfter([]Definition{a, paused, external, concluded, live}, "exp-a", false)
+	if len(got) != 1 || got[0] != "live" {
+		t.Errorf("SkippedAfter = %v, want [live] only", got)
+	}
+}
+
+func TestSkippedAfterIncludesExternalWhenEvaluated(t *testing.T) {
+	// When RouteMixed ran with an external evaluator, an external-mode
+	// experiment after the enrolled one was a live candidate the
+	// first-match rule skipped — it belongs in the audit set.
+	a := routeExp("exp-a", 0.9999, StatusActive, TargetingPercentage)
+	external := routeExp("external", 0.9999, StatusActive, TargetingExternal)
+	pct := routeExp("pct", 0.9999, StatusActive, TargetingPercentage)
+	got := SkippedAfter([]Definition{a, external, pct}, "exp-a", true)
+	if len(got) != 2 || got[0] != "external" || got[1] != "pct" {
+		t.Errorf("SkippedAfter(externalEvaluated) = %v, want [external pct]", got)
+	}
+}
+
+func TestSkippedAfterLastCandidateIsEmpty(t *testing.T) {
+	a := routeExp("exp-a", 0.9999, StatusActive, TargetingPercentage)
+	b := routeExp("exp-b", 0.9999, StatusActive, TargetingPercentage)
+	if got := SkippedAfter([]Definition{a, b}, "exp-b", false); got != nil {
+		t.Errorf("SkippedAfter = %v, want nil — the enrolled experiment is the last candidate", got)
+	}
+}
+
+func TestSkippedAfterEmptyOrUnknownEnrollment(t *testing.T) {
+	a := routeExp("exp-a", 0.9999, StatusActive, TargetingPercentage)
+	if got := SkippedAfter([]Definition{a}, "", false); got != nil {
+		t.Errorf("SkippedAfter(\"\") = %v, want nil", got)
+	}
+	if got := SkippedAfter([]Definition{a}, "absent", false); got != nil {
+		t.Errorf("SkippedAfter(unknown) = %v, want nil", got)
+	}
+}
+
+func TestRouteStickyUserUsesUserID(t *testing.T) {
+	e := routeExp("exp", 0.9999, StatusActive, TargetingPercentage) // sticky: user
+	// An anonymous session (empty userID) yields control under sticky:user.
+	if got := Route([]Definition{e}, "", "sess-1"); got != (Assignment{}) {
+		t.Errorf("Route with no userID = %+v, want zero (anonymous → control)", got)
+	}
+	// A named user routes to the variant.
+	if got := Route([]Definition{e}, "alice", "sess-1"); got.ExperimentID != "exp" {
+		t.Errorf("Route with a userID = %+v, want enrollment", got)
+	}
+}
+
 func TestAllTargetingModesIsExhaustive(t *testing.T) {
 	if got := len(AllTargetingModes()); got != 2 {
 		t.Errorf("AllTargetingModes() returned %d, want 2 per §10.7", got)
@@ -34,6 +188,27 @@ func TestAllTargetingModesIsExhaustive(t *testing.T) {
 func TestAllStickyValuesIsExhaustive(t *testing.T) {
 	if got := len(AllStickyValues()); got != 3 {
 		t.Errorf("AllStickyValues() returned %d, want 3 per §10.7", got)
+	}
+}
+
+func TestPropagateContextInherit(t *testing.T) {
+	got := PropagateContext("exp-1", "treatment", PropagationInherit)
+	if !got.UseParentContext || got.ExperimentID != "exp-1" || got.VariantID != "treatment" {
+		t.Errorf("PropagateContext(inherit) = %+v, want the parent's enrollment verbatim", got)
+	}
+}
+
+func TestPropagateContextControl(t *testing.T) {
+	got := PropagateContext("exp-1", "treatment", PropagationControl)
+	if !got.UseParentContext || got.ExperimentID != "exp-1" || got.VariantID != ControlVariantID {
+		t.Errorf("PropagateContext(control) = %+v, want exp-1 forced onto control", got)
+	}
+}
+
+func TestPropagateContextIndependent(t *testing.T) {
+	got := PropagateContext("exp-1", "treatment", PropagationIndependent)
+	if got.UseParentContext {
+		t.Errorf("PropagateContext(independent) = %+v, want UseParentContext false — the child routes afresh", got)
 	}
 }
 
@@ -83,11 +258,12 @@ func TestDefinitionRejectsReservedControlID(t *testing.T) {
 }
 
 func TestDefinitionRejectsBadWeights(t *testing.T) {
+	// spec: §10.7 — each weight in [0.0, 1.0); a
+	// 1.0 weight always violates the cross-Σ < 1.0 rule.
 	cases := []struct {
 		name    string
 		weights []float64
 	}{
-		{"zero weight", []float64{0}},
 		{"weight one", []float64{1.0}},
 		{"weight over one", []float64{1.5}},
 		{"negative weight", []float64{-0.1}},
@@ -107,6 +283,23 @@ func TestDefinitionRejectsBadWeights(t *testing.T) {
 				t.Errorf("bad weights %v should be rejected", c.weights)
 			}
 		})
+	}
+}
+
+// spec: §10.7 — weight: 0.0 is operationally a no-op (no
+// traffic to the variant) and must be admitted so deployers can stage a
+// variant before turning on traffic. F-10.7.16.
+func TestDefinitionAcceptsZeroWeightVariant(t *testing.T) {
+	d := Definition{
+		ID: "x", Status: StatusActive, BaseRuntime: "r",
+		TargetingMode: TargetingPercentage, Sticky: StickyUser, Propagation: PropagationInherit,
+		Variants: []Variant{
+			{ID: "staged", Weight: 0},
+			{ID: "live", Weight: 0.1},
+		},
+	}
+	if err := d.Validate(); err != nil {
+		t.Fatalf("staged variant with weight 0 should be admitted: %v", err)
 	}
 }
 

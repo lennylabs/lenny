@@ -1,0 +1,466 @@
+// SPDX-License-Identifier: MIT
+
+// Tier-11 sweep for the retired pod-global working directory.
+//
+// Every session is bound to a slot on every pod, whatever the pool's
+// sessionPolicy.maxConcurrentSessions, so a session's working directory
+// is /workspace/slots/{sessionId}/current and no pod-global
+// /workspace/current exists. Every surviving reference to that path is
+// false, so the retirement is asserted as a sweep over the surfaces the
+// path reaches rather than as the list of sites one change happened to
+// touch.
+//
+// The sweep carries three predicates, because two of the ways a
+// restatement goes wrong leave no occurrence of the retired literal
+// behind. A statement that names the staging area and the promotion
+// target together is half-restated when only its /workspace/current
+// token moves, which promotes files across two unrelated trees. A
+// statement of a checkpoint bundle is half-restated when its workspace
+// half moves onto the slot tree and its session-file half keeps the
+// pod-global /sessions/ root, which snapshots a co-tenant's session
+// files.
+//
+// spec: 6.4 (pod filesystem layout), 6.1 (the pod-global staging tree the retirement keeps)
+
+package tier11_docs_test
+
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+// retiredPodGlobalWorkspacePath is the working directory that exists on
+// no pod.
+const retiredPodGlobalWorkspacePath = "/workspace/current"
+
+// workspaceSweepSource is this file, which the widened sweep reads. Its
+// every occurrence of the retired literal is a specimen: the constant,
+// the recorded exemptions, and the table-driven cases that pin each
+// predicate.
+const workspaceSweepSource = "tests/tier11_docs/workspace_path_literal_sweep_test.go"
+
+// workspaceSlotRoot is the prefix of every per-session tree that
+// replaced it.
+const workspaceSlotRoot = "/workspace/slots/"
+
+// podGlobalStagingPath is the pod-global staging tree the retirement
+// keeps. Naming it on the same line as a per-session tree is the
+// half-restated promotion path.
+const podGlobalStagingPath = "/workspace/staging"
+
+// permittedWorkspaceRetirementStatements are the occurrences of the
+// retired literal that state its retirement. Each is keyed by the
+// repository-relative file it stands in and matched as a substring of
+// the trimmed line text, so a line that moves keeps its exemption and a
+// line that is reworded loses it. The exemption covers the statement's
+// own occurrence, so any further occurrence on the same line is still
+// reported. Every other occurrence sends a reader to a directory no pod
+// has.
+var permittedWorkspaceRetirementStatements = map[string][]string{
+	filepath.Join("spec", "06_warm-pod-model.md"): {
+		"No pod-global `/workspace/current` path exists.",
+		"No global `/workspace/current` path exists, and the runtime MUST NOT assume one.",
+	},
+	filepath.Join("docs", "runtime-author-guide", "lifecycle.md"): {
+		"No pod-global working directory (`/workspace/current`) exists.",
+	},
+	filepath.Join("pkg", "adapter", "slotlayout", "slotlayout.go"): {
+		"No pod-global `/workspace/current` path exists:",
+	},
+	filepath.Join("cmd", "runtimes", "echo-concurrent", "main_test.go"): {
+		"// pod-global /workspace/current alternative.",
+	},
+	filepath.Join("pkg", "controller", "sandbox", "podspec", "podspec_test.go"): {
+		"// the pod-global `/workspace/current` exists on no pod. The builder",
+		`if strings.Contains(joined, "/workspace/current") {`,
+		`t.Errorf("%s argv names the retired pod-global /workspace/current: %v", tc.container, args)`,
+	},
+	filepath.Join("cmd", "lenny-ctl", "runtimescaffold", "scaffold_test.go"): {
+		`// collapsed each language template declared "/workspace/current" as a`,
+		`if strings.Contains(string(raw), "/workspace/current") {`,
+		`t.Errorf("%s names the retired pod-global /workspace/current", name)`,
+	},
+	// The suites state the retirement as an assertion that the path is
+	// absent and as the diagnosis that explains the assertion. Each such
+	// occurrence is recorded here, so a suite that instead restates the
+	// retired path as the current layout is reported.
+	filepath.Join("tests", "tier11_docs", "pod_filesystem_layout_doc_reconciliation_test.go"): {
+		"// `/workspace/slots/{sessionId}/current` and no pod-global `/workspace/current`",
+		"//\tnames the retired pod-global `/workspace/current` and the per-session",
+		"\"No pod-global working directory (`/workspace/current`) exists\",",
+		"//\t`/workspace/current`. That path exists on no pod, so a runtime written",
+	},
+	filepath.Join("tests", "tier11_docs", "session_scoped_frame_population_doc_reconciliation_test.go"): {
+		"//\t`/workspace/current` that no pod has. A failure here means the page the",
+	},
+	filepath.Join("tests", "tier2_component", "migrations", "checkpoint_slot_id_drop_test.go"): {
+		`//	retired pod-global /workspace/current fails every resume against a pod that`,
+		`{retired, "/workspace/current"},`,
+		"VALUES ($1, 'acme', 'created', 'echo', $1, '/workspace/current')`, session); err != nil {",
+	},
+	filepath.Join("tests", "tier2_component", "warmlayout", "warm_layout_test.go"): {
+		`// /workspace/current is absent. EnsureWarmWorkspaceLayout takes no pool`,
+		`// on, a pod-global /workspace/current. Under §6.4 a session's cwd is its own`,
+	},
+	filepath.Join("tests", "tier4_integration", "concurrent_workspace_test.go"): {
+		`// workspace or into a pod-global /workspace/current. Second, per-slot`,
+		`// into a pod-global /workspace/current), or the per-slot response was not`,
+		`// pod-global /workspace/current appears. This pins the §6.4 per-slot layout:`,
+		`// the runtime MUST NOT assume a global /workspace/current.`,
+		`// The pod-global /workspace/current is retired on every pool class, so`,
+		`t.Errorf("pod-global /workspace/current exists (err=%v); §6.4 retires the path on every pod", err)`,
+	},
+	filepath.Join("tests", "tier5_e2e_kind", "execution_modes_test.go"): {
+		`// A's. The pod-global /workspace/current is retired on every pool class,`,
+		`"[ -e /workspace/current ] && echo present || echo absent",`,
+		`t.Errorf("pod %s: /workspace/current is %s; §6.4 retires the pod-global path on every pool class, "+`,
+		"// `/workspace/current` path exists.",
+		`// materializes into a pod-global /workspace/current on a real agent pod.`,
+		`t.Errorf("pod %s: /workspace/current is %s; §6.4 retires the pod-global path", pod, podGlobal)`,
+		"// 06_warm-pod-model.md) — \"No global `/workspace/current` path exists,",
+		`// a sibling slot's tree, or a pod-global /workspace/current appeared on a`,
+		`// §6.4: the pod-global /workspace/current is retired rather than kept as`,
+		`t.Errorf("pod %s: /workspace/current is %s; §6.4 retires the pod-global path, and every session "+`,
+		`"pod-global /workspace/current exists", pod, sessA.ID, sessB.ID)`,
+	},
+}
+
+// spec: 6.4
+// diagnosis: the retired-workspace sweep reads the reader-facing and
+//
+//	library roots alone. The retired working directory is restated in a
+//	test header and in a diagnosis comment under tests/ as often as it is
+//	in prose, and a suite that names it as the current layout is the one
+//	surface a sweep over the other roots never reads. A failure means the
+//	root set no longer reaches the suites.
+func TestTheWorkspaceSweepReadsTheTestRoot(t *testing.T) {
+	roots := map[string]bool{}
+	for _, rel := range workspaceSweepRoots {
+		roots[rel] = true
+	}
+	for _, rel := range append(append([]string{}, retirementSweepRoots...), "tests") {
+		if !roots[rel] {
+			t.Errorf("workspaceSweepRoots omits %s, so a retired workspace literal under it is unread", rel)
+		}
+	}
+	root := repoRoot(t)
+	for _, path := range workspaceSweepSurfaces(t, root) {
+		if strings.HasPrefix(mustRel(t, root, path), "tests"+string(filepath.Separator)) {
+			return
+		}
+	}
+	t.Fatal("the workspace sweep walked no file under tests")
+}
+
+// spec: 6.4
+// diagnosis: a swept surface still names the pod-global
+//
+//	/workspace/current. That directory exists on no pod: the adapter
+//	materializes each session's workspace under
+//	/workspace/slots/{sessionId}/current. A runtime author, an operator,
+//	or a scaffolded runtime that follows the surviving site reads and
+//	writes a directory outside every session's tree. A failure names the
+//	file and line to restate on the per-session slot path.
+func TestNoSurfaceNamesTheRetiredPodGlobalWorkingDirectory(t *testing.T) {
+	root := repoRoot(t)
+	seen := map[string]map[string]bool{}
+	for _, path := range withoutSweepSource(t, root, workspaceSweepSurfaces(t, root), workspaceSweepSource) {
+		rel := mustRel(t, root, path)
+		permitted := permittedWorkspaceRetirementStatements[rel]
+		for i, line := range strings.Split(readSweptFile(t, path), "\n") {
+			if !strings.Contains(line, retiredPodGlobalWorkspacePath) {
+				continue
+			}
+			trimmed := strings.TrimSpace(line)
+			residue, matched := stripPermitted(permitted, trimmed)
+			for _, statement := range matched {
+				if seen[rel] == nil {
+					seen[rel] = map[string]bool{}
+				}
+				seen[rel][statement] = true
+			}
+			if !strings.Contains(residue, retiredPodGlobalWorkspacePath) {
+				continue
+			}
+			t.Errorf("%s:%d names the retired pod-global working directory; each session's workspace is %s{sessionId}/current:\n%s",
+				rel, i+1, workspaceSlotRoot, trimmed)
+		}
+	}
+	// An exemption that outlives its sentence would silently widen the
+	// sweep's permitted set, so every permitted statement must still stand
+	// where it is recorded.
+	for rel, statements := range permittedWorkspaceRetirementStatements {
+		for _, statement := range statements {
+			if !seen[rel][statement] {
+				t.Errorf("%s no longer carries the retirement statement %q; drop the exemption or restore the statement", rel, statement)
+			}
+		}
+	}
+}
+
+// spec: 6.4, 6.1
+// diagnosis: a swept surface states the pod-global staging tree and a
+//
+//	per-session slot tree on one line, which is what a half-restated
+//	promotion path leaves behind: the /workspace/current token moved onto
+//	the slot tree and the staging clause beside it did not. Every
+//	PrepareWorkspace lands in /workspace/slots/{sessionId}/staging, so the
+//	surviving line promotes files across two unrelated trees. A failure
+//	names the line to restate whole.
+func TestNoSurfaceStatesThePodGlobalStagingTreeBesideASlotTree(t *testing.T) {
+	root := repoRoot(t)
+	for _, path := range withoutSweepSource(t, root, workspaceSweepSurfaces(t, root), workspaceSweepSource) {
+		for i, line := range strings.Split(readSweptFile(t, path), "\n") {
+			if !strings.Contains(line, podGlobalStagingPath) || !strings.Contains(line, workspaceSlotRoot) {
+				continue
+			}
+			t.Errorf("%s:%d states the pod-global staging tree and a per-session slot tree on one line; the promotion source is %s{sessionId}/staging:\n%s",
+				mustRel(t, root, path), i+1, workspaceSlotRoot, strings.TrimSpace(line))
+		}
+	}
+}
+
+// bareSessionsRoot matches an occurrence of the pod session-file root
+// that is not a segment of a longer identifier such as the REST route
+// /v1/sessions/. The capture is the segment that follows the root, which
+// is the session identifier the per-session tree is keyed on.
+var bareSessionsRoot = regexp.MustCompile(`(^|[^0-9A-Za-z])/sessions/([^/\s"'` + "`" + `)\]]*)`)
+
+// statesBareSessionsRoot reports whether the line names the pod
+// session-file root with no session-identifier segment after it. An
+// occurrence that carries a segment is per-session however the segment
+// is spelled, as the documented placeholder, as a concrete identifier in
+// a walkthrough, or as a reader-facing stand-in, so the predicate reads
+// the presence of a segment rather than one spelling of it. The empty
+// capture is the bare root, which is the half-restated checkpoint bundle
+// the sweep exists to catch.
+func statesBareSessionsRoot(line string) bool {
+	for _, m := range bareSessionsRoot.FindAllStringSubmatch(line, -1) {
+		if m[2] == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// spec: 6.4
+// diagnosis: a swept surface states a per-session workspace tree and the
+//
+//	pod-global /sessions/ root on one line, which is what a half-restated
+//	checkpoint bundle leaves behind: the workspace half moved onto the
+//	slot tree and the session-file half did not. The adapter resolves the
+//	session tmpfs to /sessions/{sessionId} on every pod, so the surviving
+//	line describes a checkpoint that snapshots a co-tenant's session
+//	files. A failure names the line to restate whole.
+func TestNoSurfaceStatesTheBareSessionsRootBesideASlotTree(t *testing.T) {
+	root := repoRoot(t)
+	for _, path := range withoutSweepSource(t, root, workspaceSweepSurfaces(t, root), workspaceSweepSource) {
+		for i, line := range strings.Split(readSweptFile(t, path), "\n") {
+			if !strings.Contains(line, workspaceSlotRoot) {
+				continue
+			}
+			if !statesBareSessionsRoot(line) {
+				continue
+			}
+			t.Errorf("%s:%d states a per-session workspace tree and the bare pod session-file root on one line; the session tmpfs is /sessions/{sessionId}:\n%s",
+				mustRel(t, root, path), i+1, strings.TrimSpace(line))
+		}
+	}
+}
+
+// spec: 6.4
+// diagnosis: the bare-root predicate reads one spelling of the session
+//
+//	segment rather than its presence. A line that already addresses both
+//	halves per session, spelling the segment as a concrete identifier in
+//	a walkthrough or as a reader-facing stand-in, is then reported as a
+//	half-restated checkpoint bundle, and the only way to green the sweep
+//	is to rewrite a correct statement into the placeholder spelling. A
+//	failure means the predicate is spelling-bound again.
+func TestTheBareSessionsRootPredicateReadsTheSegmentRatherThanItsSpelling(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		line string
+		want bool
+	}{
+		{
+			name: "the documented placeholder addresses a session",
+			line: "the bundle copies `/workspace/slots/{sessionId}/current` and `/sessions/{sessionId}`",
+		},
+		{
+			name: "a concrete identifier addresses a session",
+			line: "the bundle copies `/workspace/slots/sess-7/current` and `/sessions/sess-7`",
+		},
+		{
+			name: "a reader-facing stand-in addresses a session",
+			line: "the bundle copies `/workspace/slots/<session-id>/current` and `/sessions/<session-id>`",
+		},
+		{
+			name: "the REST collection route is not the pod session-file root",
+			line: "POST /v1/sessions/ alongside /workspace/slots/{sessionId}/current",
+		},
+		{
+			name: "the root with no segment is the bare root",
+			line: "the bundle copies `/workspace/slots/{sessionId}/current` and `/sessions/`",
+			want: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := statesBareSessionsRoot(tc.line); got != tc.want {
+				t.Errorf("statesBareSessionsRoot(%q) = %t; want %t", tc.line, got, tc.want)
+			}
+		})
+	}
+}
+
+// stripPermitted removes every permitted retirement statement the line
+// carries and returns the text that remains together with the statements
+// that matched. The exemption is stated over an occurrence rather than
+// over a line, because a markdown paragraph is one physical line and
+// each prose exemption is a whole paragraph: exempting the line would
+// excuse any further occurrence a later sentence in that paragraph
+// introduces.
+func stripPermitted(permitted []string, line string) (residue string, matched []string) {
+	residue = line
+	for _, statement := range permitted {
+		if !strings.Contains(residue, statement) {
+			continue
+		}
+		residue = strings.ReplaceAll(residue, statement, "")
+		matched = append(matched, statement)
+	}
+	return residue, matched
+}
+
+// spec: 6.4
+// diagnosis: a permitted retirement statement exempts the whole line it
+//
+//	stands on rather than its own occurrence. Each prose exemption is a
+//	full markdown paragraph, which is one physical line, so a sentence
+//	added to that paragraph naming the retired pod-global working
+//	directory would send a reader to a directory no pod has and the sweep
+//	would stay green. A failure means the exemption is line-wide again.
+func TestAPermittedRetirementStatementExemptsOnlyItsOwnOccurrence(t *testing.T) {
+	const permittedStatement = "No pod-global `/workspace/current` path exists."
+	line := permittedStatement + " Write build output to " + retiredPodGlobalWorkspacePath + " instead."
+
+	residue, matched := stripPermitted([]string{permittedStatement}, line)
+	if len(matched) != 1 || matched[0] != permittedStatement {
+		t.Errorf("stripPermitted recorded %q as the statements it matched; want the one permitted statement", matched)
+	}
+	if !strings.Contains(residue, retiredPodGlobalWorkspacePath) {
+		t.Errorf("a live occurrence beside the permitted statement was excused with it; residue: %q", residue)
+	}
+
+	// A line carrying the permitted statement alone is still exempt.
+	residue, matched = stripPermitted([]string{permittedStatement}, permittedStatement)
+	if len(matched) != 1 {
+		t.Errorf("the permitted statement alone recorded %q as matched; want it recorded once", matched)
+	}
+	if strings.Contains(residue, retiredPodGlobalWorkspacePath) {
+		t.Errorf("the permitted statement alone was reported as a surviving occurrence; residue: %q", residue)
+	}
+}
+
+// readSweptFile reads one swept surface, failing the test when the walk
+// named a file that cannot be read.
+func readSweptFile(t *testing.T, path string) string {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(body)
+}
+
+// podAttributedStaging matches a statement that attributes the staging
+// area to the pod. The pod-global /workspace/staging tree is retained as
+// a directory, so the phrase is only false where it names where staged
+// content lands.
+var podAttributedStaging = regexp.MustCompile(`(?i)\bpod(-global|'s|s')?\s+staging\b`)
+
+// stagedContentDestinationCue matches the wording that turns a mention
+// of the staging area into a statement of where staged content lands.
+var stagedContentDestinationCue = regexp.MustCompile(`(?i)\b(upload|uploads|uploaded|stream|streams|streamed|accepts|accepted|lands|written|writes|promot\w*)\b`)
+
+// stagingStatements returns the statements of a swept surface a
+// staging-destination predicate reads: every physical line, plus the
+// join of each consecutive pair whose pod-attributed staging phrase
+// straddles the boundary between them. A comment reflow can wrap the
+// subject and the object of one sentence onto separate lines, which a
+// per-line predicate misses; joining every pair unconditionally instead
+// fuses two unrelated rows of a filesystem-layout listing into one false
+// statement, so the join is taken only where the phrase itself spans the
+// two lines. Each statement carries the line it starts on.
+func stagingStatements(body string) []statementWindow {
+	lines := strings.Split(body, "\n")
+	statements := make([]statementWindow, 0, len(lines))
+	for i, line := range lines {
+		text := stripStatementMarkers(line)
+		statements = append(statements, statementWindow{line: i + 1, text: text})
+		if i+1 >= len(lines) {
+			continue
+		}
+		joined := text + " " + stripStatementMarkers(lines[i+1])
+		if straddlesBoundary(podAttributedStaging.FindAllStringIndex(joined, -1), len(text)) {
+			statements = append(statements, statementWindow{line: i + 1, text: joined})
+		}
+	}
+	return statements
+}
+
+// statementWindow is one statement of a swept surface together with the
+// line the statement starts on.
+type statementWindow struct {
+	line int
+	text string
+}
+
+// straddlesBoundary reports whether any match begins before the join
+// boundary and ends after it, which is what a phrase wrapped across two
+// lines looks like once the lines are joined.
+func straddlesBoundary(matches [][]int, boundary int) bool {
+	for _, m := range matches {
+		if m[0] < boundary && m[1] > boundary {
+			return true
+		}
+	}
+	return false
+}
+
+// stripStatementMarkers removes the leading comment, list, and
+// indentation markers a carrier prefixes a continued statement with, so
+// joining two lines yields the prose the author wrote.
+func stripStatementMarkers(line string) string {
+	return strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "/#*->| \t"))
+}
+
+// spec: 6.4, 6.1
+// diagnosis: a swept surface states that staged content lands in the
+//
+//	pod's staging area. Every session is bound to a slot, so every
+//	PrepareWorkspace writes into /workspace/slots/{sessionId}/staging and
+//	FinalizeWorkspace promotes from there into that session's current
+//	tree. The pod-global /workspace/staging directory is retained but is
+//	not what the RPC writes into, so the surviving statement points a
+//	reader of the contract at the wrong tree for the source half of the
+//	promotion. A failure names the statement to restate on the
+//	per-session staging tree.
+func TestNoSurfaceLandsStagedContentInThePodStagingArea(t *testing.T) {
+	root := repoRoot(t)
+	for _, path := range withoutSweepSource(t, root, workspaceSweepSurfaces(t, root), workspaceSweepSource) {
+		for _, window := range stagingStatements(readSweptFile(t, path)) {
+			if !podAttributedStaging.MatchString(window.text) {
+				continue
+			}
+			if !stagedContentDestinationCue.MatchString(window.text) {
+				continue
+			}
+			t.Errorf("%s:%d states that staged content lands in the pod's staging area; every upload lands in %s{sessionId}/staging:\n%s",
+				mustRel(t, root, path), window.line, workspaceSlotRoot, window.text)
+		}
+	}
+}

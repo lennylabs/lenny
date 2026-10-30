@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Lenny ZAP scan policy (§12.9.6). Tuned for the gateway's REST and
+  Lenny ZAP scan policy (TESTING.md §12.9.6). Tuned for the gateway's REST and
   MCP surfaces. The policy disables a small set of test categories
   that fire false positives on the gateway's intentional behavior
   (e.g., the OPTIONS preflight returns 405 by design) and keeps the

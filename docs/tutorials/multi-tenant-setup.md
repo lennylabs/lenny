@@ -164,10 +164,12 @@ curl -s -X POST http://localhost:8080/v1/admin/tenants \
   }' | jq .
 ```
 
-The handler automatically creates a per-tenant Postgres billing sequence:
+The handler automatically creates two per-tenant Postgres sequences, one for the billing ledger and one for the audit ledger. Each sequence name is a fixed per-ledger prefix (`billing_seq_` or `audit_seq_`) followed by a 40-character hexadecimal digest of the tenant ID. The digest keeps every sequence name within the 63-byte Postgres identifier limit and collision-free across tenants, so a long or prefix-sharing tenant ID cannot collapse two tenants onto the same sequence object:
 
 ```sql
-CREATE SEQUENCE IF NOT EXISTS billing_seq_tn_01J5ACME001
+CREATE SEQUENCE IF NOT EXISTS billing_seq_<40-hex-digest-of-tenant-id>
+    START WITH 1 INCREMENT BY 1 NO CYCLE;
+CREATE SEQUENCE IF NOT EXISTS audit_seq_<40-hex-digest-of-tenant-id>
     START WITH 1 INCREMENT BY 1 NO CYCLE;
 ```
 
@@ -650,10 +652,17 @@ def test_cross_tenant_artifact_invisible(acme_token, globex_token):
     session_id = resp.json()["session_id"]
     upload_token = resp.json()["uploadToken"]
 
-    # Upload a file
-    requests.post(f"{GATEWAY}/v1/sessions/{session_id}/upload",
-        headers={"X-Upload-Token": upload_token},
-        files={"files": ("secret.txt", b"Acme confidential data")})
+    # Upload a file as the raw body, then bind a plan that places it at secret.txt
+    resp = requests.post(f"{GATEWAY}/v1/sessions/{session_id}/upload",
+        headers={"Authorization": f"Bearer {acme_token}",
+                 "X-Lenny-Upload-Token": upload_token},
+        data=b"Acme confidential data")
+    upload_ref = resp.json()["uploadRef"]
+    requests.post(f"{GATEWAY}/v1/sessions/{session_id}/finalize",
+        headers={"Authorization": f"Bearer {acme_token}",
+                 "X-Lenny-Upload-Token": upload_token},
+        json={"workspacePlan": {"schemaVersion": 1, "sources": [
+            {"type": "uploadFile", "path": "secret.txt", "uploadRef": upload_ref}]}})
 
     # Globex tries to download it
     resp = requests.get(f"{GATEWAY}/v1/sessions/{session_id}/artifacts/secret.txt",

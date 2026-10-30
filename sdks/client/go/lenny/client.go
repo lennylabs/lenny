@@ -1,0 +1,544 @@
+// SPDX-License-Identifier: MIT
+
+package lenny
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"math/rand"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// userAgent identifies the SDK in the User-Agent request header.
+const userAgent = "lenny-client-sdk-go"
+
+// Client is the §15.1 REST gateway client. Construct it with New.
+// A Client is safe for concurrent use by multiple goroutines.
+type Client struct {
+	baseURL    string
+	httpClient *http.Client
+	auth       Authenticator
+	tenantID   string
+	retry      RetryPolicy
+	clock      func() time.Time
+	rng        *rand.Rand
+}
+
+// Option configures a Client at construction.
+type Option func(*Client)
+
+// WithHTTPClient sets the underlying *http.Client. The default is a
+// client with a 30-second timeout.
+func WithHTTPClient(hc *http.Client) Option {
+	return func(c *Client) {
+		if hc != nil {
+			c.httpClient = hc
+		}
+	}
+}
+
+// WithAuth sets the authentication credential the Client attaches to
+// every request. See BearerToken and APIKey.
+func WithAuth(a Authenticator) Option {
+	return func(c *Client) { c.auth = a }
+}
+
+// WithTenant sets the development X-Lenny-Tenant-ID header. The
+// minimal gateway honors this header to scope requests to a tenant
+// when no OIDC principal is present. Production deployments derive
+// the tenant from the authenticated principal and ignore the header.
+func WithTenant(tenantID string) Option {
+	return func(c *Client) { c.tenantID = tenantID }
+}
+
+// WithRetryPolicy overrides DefaultRetryPolicy. Unset fields of the
+// supplied policy are filled from DefaultRetryPolicy.
+func WithRetryPolicy(p RetryPolicy) Option {
+	return func(c *Client) { c.retry = p.normalized() }
+}
+
+// WithClock overrides the time source. Tests inject a deterministic
+// clock; production leaves this unset.
+func WithClock(clock func() time.Time) Option {
+	return func(c *Client) {
+		if clock != nil {
+			c.clock = clock
+		}
+	}
+}
+
+// New returns a Client bound to baseURL. baseURL is the gateway
+// origin (for example https://gateway.acme.com); the /v1 path prefix
+// is appended by the SDK. New returns an error when baseURL is empty
+// or does not parse as an absolute URL.
+func New(baseURL string, opts ...Option) (*Client, error) {
+	if baseURL == "" {
+		return nil, errors.New("lenny: base URL is required")
+	}
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("lenny: base URL is invalid: %w", err)
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return nil, fmt.Errorf("lenny: base URL %q must be absolute", baseURL)
+	}
+	c := &Client{
+		baseURL:    strings.TrimRight(baseURL, "/"),
+		httpClient: &http.Client{Timeout: 30 * time.Second},
+		retry:      DefaultRetryPolicy,
+		clock:      func() time.Time { return time.Now() },
+		rng:        rand.New(rand.NewSource(time.Now().UnixNano())),
+	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c, nil
+}
+
+// requestOptions carries per-call settings threaded through do.
+type requestOptions struct {
+	idempotencyKey string
+}
+
+// RequestOption customizes a single request.
+type RequestOption func(*requestOptions)
+
+// WithIdempotencyKey attaches an Idempotency-Key header to the
+// request. The §11.5 gateway middleware replays the cached response
+// when the same key is presented again with the same body within the
+// key's TTL. Use it on POST /v1/sessions so a retried create does
+// not produce a second session.
+func WithIdempotencyKey(key string) RequestOption {
+	return func(o *requestOptions) { o.idempotencyKey = key }
+}
+
+// CreateSession calls POST /v1/sessions. The request is retried on a
+// retryable error per the Client's retry policy. Pass
+// WithIdempotencyKey so a retry is collapsed by the gateway's
+// idempotency middleware rather than producing a duplicate session.
+func (c *Client) CreateSession(ctx context.Context, req CreateSessionRequest, opts ...RequestOption) (*CreateSessionResult, error) {
+	var out CreateSessionResult
+	if err := c.do(ctx, http.MethodPost, "/v1/sessions", req, &out, opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetSession calls GET /v1/sessions/{id}.
+func (c *Client) GetSession(ctx context.Context, id string, opts ...RequestOption) (*Session, error) {
+	var out Session
+	if err := c.do(ctx, http.MethodGet, "/v1/sessions/"+url.PathEscape(id), nil, &out, opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListSessions calls GET /v1/sessions, applying the filters in opt.
+// It returns one page; iterate with the returned NextCursor or use
+// IterateSessions for an all-pages helper.
+func (c *Client) ListSessions(ctx context.Context, opt ListOptions, opts ...RequestOption) (*SessionPage, error) {
+	q := url.Values{}
+	if opt.State != "" {
+		q.Set("state", string(opt.State))
+	}
+	if opt.Runtime != "" {
+		q.Set("runtime", opt.Runtime)
+	}
+	if opt.Cursor != "" {
+		q.Set("cursor", opt.Cursor)
+	}
+	if opt.Limit > 0 {
+		q.Set("limit", strconv.Itoa(opt.Limit))
+	}
+	path := "/v1/sessions"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	// spec: §15.1 — the gateway returns the canonical
+	// `{items, cursor, hasMore, total?}` cursor-paginated envelope.
+	var raw struct {
+		Items   []Session `json:"items"`
+		Cursor  string    `json:"cursor"`
+		HasMore bool      `json:"hasMore"`
+		Total   *int64    `json:"total"`
+	}
+	if err := c.do(ctx, http.MethodGet, path, nil, &raw, opts...); err != nil {
+		return nil, err
+	}
+	return &SessionPage{
+		Sessions:   raw.Items,
+		NextCursor: raw.Cursor,
+		HasMore:    raw.HasMore,
+		Total:      raw.Total,
+	}, nil
+}
+
+// IterateSessions walks every page of a GET /v1/sessions listing,
+// invoking yield once per session. Iteration stops when yield
+// returns false, when a page returns an error, or when the listing
+// is exhausted. It is the cursor-iteration helper for the §15.6
+// pagination-cursors contract.
+func (c *Client) IterateSessions(ctx context.Context, opt ListOptions, yield func(Session) bool) error {
+	cursor := opt.Cursor
+	for {
+		pageOpt := opt
+		pageOpt.Cursor = cursor
+		page, err := c.ListSessions(ctx, pageOpt)
+		if err != nil {
+			return err
+		}
+		for _, s := range page.Sessions {
+			if !yield(s) {
+				return nil
+			}
+		}
+		if !page.HasMore || page.NextCursor == "" {
+			return nil
+		}
+		cursor = page.NextCursor
+	}
+}
+
+// DeleteSession calls DELETE /v1/sessions/{id}. The §15.1 contract
+// moves a non-terminal session to the cancelled state and returns
+// the updated envelope.
+func (c *Client) DeleteSession(ctx context.Context, id string, opts ...RequestOption) (*Session, error) {
+	return c.transition(ctx, http.MethodDelete, id, "", opts...)
+}
+
+// Finalize calls POST /v1/sessions/{id}/finalize, transitioning a
+// created session to ready.
+func (c *Client) Finalize(ctx context.Context, id string, opts ...RequestOption) (*Session, error) {
+	return c.transition(ctx, http.MethodPost, id, "finalize", opts...)
+}
+
+// Start calls POST /v1/sessions/{id}/start, transitioning a ready
+// session through starting to running. It sends the request once and
+// retries neither an error response nor a transport failure, whatever the
+// Client's retry policy: a /start that fails after the gateway wrote
+// starting leaves the session failed, so a repeated /start is refused, and
+// neither a 5xx nor a transport failure tells the client whether that write
+// happened. Recover from a failed Start by creating a new session.
+//
+// spec: §15.1 (/start), §15.6 (Client SDKs), §7.2 (starting → failed)
+func (c *Client) Start(ctx context.Context, id string, opts ...RequestOption) (*Session, error) {
+	return c.transitionAttempts(ctx, http.MethodPost, id, "start", 1, opts...)
+}
+
+// Interrupt calls POST /v1/sessions/{id}/interrupt, transitioning a
+// running session to suspended.
+func (c *Client) Interrupt(ctx context.Context, id string, opts ...RequestOption) (*Session, error) {
+	return c.transition(ctx, http.MethodPost, id, "interrupt", opts...)
+}
+
+// Terminate calls POST /v1/sessions/{id}/terminate, transitioning a
+// non-terminal session to completed.
+func (c *Client) Terminate(ctx context.Context, id string, opts ...RequestOption) (*Session, error) {
+	return c.transition(ctx, http.MethodPost, id, "terminate", opts...)
+}
+
+// Resume calls POST /v1/sessions/{id}/resume on a session in
+// awaiting_client_action or suspended. The call returns the session in its
+// new state, resume_pending when the session waits for a restore, or running
+// when a suspended session resumed on the pod it holds; the restore's outcome
+// arrives on the session's event stream.
+func (c *Client) Resume(ctx context.Context, id string, opts ...RequestOption) (*Session, error) {
+	return c.transition(ctx, http.MethodPost, id, "resume", opts...)
+}
+
+// transition issues a no-body state-mutating call. action is the
+// trailing path segment (finalize, start, ...); an empty action
+// targets the bare /v1/sessions/{id} path for DELETE.
+func (c *Client) transition(ctx context.Context, method, id, action string, opts ...RequestOption) (*Session, error) {
+	return c.transitionAttempts(ctx, method, id, action, c.retry.MaxAttempts, opts...)
+}
+
+// transitionAttempts is transition with the request loop's attempt limit
+// given explicitly.
+func (c *Client) transitionAttempts(ctx context.Context, method, id, action string, maxAttempts int, opts ...RequestOption) (*Session, error) {
+	path := "/v1/sessions/" + url.PathEscape(id)
+	if action != "" {
+		path += "/" + action
+	}
+	var out Session
+	if err := c.doAttempts(ctx, method, path, nil, &out, maxAttempts, opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// SendMessages calls POST /v1/sessions/{id}/messages with the supplied
+// batch and returns the §15.4 delivery receipt plus the executor's
+// synchronous output. Each payload may carry `inReplyTo` and
+// `delivery`; see MessagePayload. A client addresses a session rather
+// than a slot: the path's session identifier names the slot the
+// gateway delivers to.
+//
+// spec: §15.1 messages endpoint; §15.4 delivery_receipt;
+// §7.2.
+func (c *Client) SendMessages(ctx context.Context, id string, req SendMessagesRequest, opts ...RequestOption) (*SendMessagesResponse, error) {
+	if len(req.Messages) == 0 {
+		return nil, errors.New("lenny: SendMessages requires at least one message")
+	}
+	var out SendMessagesResponse
+	path := "/v1/sessions/" + url.PathEscape(id) + "/messages"
+	if err := c.do(ctx, http.MethodPost, path, req, &out, opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetTranscript calls GET /v1/sessions/{id}/transcript with optional
+// afterSeq / limit filters. spec: §15.1.
+func (c *Client) GetTranscript(ctx context.Context, id string, opt TranscriptOptions, opts ...RequestOption) (*TranscriptResponse, error) {
+	q := url.Values{}
+	if opt.AfterSeq > 0 {
+		q.Set("afterSeq", strconv.FormatUint(opt.AfterSeq, 10))
+	}
+	if opt.Limit > 0 {
+		q.Set("limit", strconv.Itoa(opt.Limit))
+	}
+	path := "/v1/sessions/" + url.PathEscape(id) + "/transcript"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out TranscriptResponse
+	if err := c.do(ctx, http.MethodGet, path, nil, &out, opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// SessionLogs calls GET /v1/sessions/{id}/logs and returns one page of
+// the §15.1 session-log envelope. It is the REST transport the
+// §24.17 `lenny session logs` command uses. The SDK requests the JSON
+// list view (the do helper sets Accept: application/json) rather than the
+// SSE tail. Pass LogsOptions.Since to apply the §24.17 `--since` filter.
+func (c *Client) SessionLogs(ctx context.Context, id string, opt LogsOptions, opts ...RequestOption) (*LogsPage, error) {
+	q := url.Values{}
+	if !opt.Since.IsZero() {
+		q.Set("since", opt.Since.UTC().Format(time.RFC3339))
+	}
+	if opt.Cursor != "" {
+		q.Set("cursor", opt.Cursor)
+	}
+	if opt.Limit > 0 {
+		q.Set("limit", strconv.Itoa(opt.Limit))
+	}
+	path := "/v1/sessions/" + url.PathEscape(id) + "/logs"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out LogsPage
+	if err := c.do(ctx, http.MethodGet, path, nil, &out, opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ApproveToolUse calls POST /v1/sessions/{id}/tool-use/{toolCallID}/approve
+// to resolve a pending tool-use interaction the agent is blocked on.
+//
+// spec: §7.2 table; §15.1.
+func (c *Client) ApproveToolUse(ctx context.Context, id, toolCallID string, opts ...RequestOption) (*InteractionResolution, error) {
+	path := "/v1/sessions/" + url.PathEscape(id) + "/tool-use/" + url.PathEscape(toolCallID) + "/approve"
+	var out InteractionResolution
+	if err := c.do(ctx, http.MethodPost, path, struct{}{}, &out, opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DenyToolUse calls POST /v1/sessions/{id}/tool-use/{toolCallID}/deny
+// with an optional human-readable reason recorded in the audit row.
+//
+// spec: §7.2 table; §15.1.
+func (c *Client) DenyToolUse(ctx context.Context, id, toolCallID, reason string, opts ...RequestOption) (*InteractionResolution, error) {
+	path := "/v1/sessions/" + url.PathEscape(id) + "/tool-use/" + url.PathEscape(toolCallID) + "/deny"
+	body := struct {
+		Reason string `json:"reason,omitempty"`
+	}{Reason: reason}
+	var out InteractionResolution
+	if err := c.do(ctx, http.MethodPost, path, body, &out, opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RespondElicitation calls
+// POST /v1/sessions/{id}/elicitations/{elicitationID}/respond with the
+// supplied response value. The runtime receives the value and unblocks
+// the pending `lenny/request_elicitation` call.
+//
+// spec: §7.2 table; §9.2; §15.1.
+func (c *Client) RespondElicitation(ctx context.Context, id, elicitationID string, response any, opts ...RequestOption) (*InteractionResolution, error) {
+	path := "/v1/sessions/" + url.PathEscape(id) + "/elicitations/" + url.PathEscape(elicitationID) + "/respond"
+	body := struct {
+		Response any `json:"response"`
+	}{Response: response}
+	var out InteractionResolution
+	if err := c.do(ctx, http.MethodPost, path, body, &out, opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DismissElicitation calls
+// POST /v1/sessions/{id}/elicitations/{elicitationID}/dismiss to
+// cancel a pending elicitation request.
+//
+// spec: §7.2 table; §9.2; §15.1.
+func (c *Client) DismissElicitation(ctx context.Context, id, elicitationID string, opts ...RequestOption) (*InteractionResolution, error) {
+	path := "/v1/sessions/" + url.PathEscape(id) + "/elicitations/" + url.PathEscape(elicitationID) + "/dismiss"
+	var out InteractionResolution
+	if err := c.do(ctx, http.MethodPost, path, struct{}{}, &out, opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// do executes one REST call with retry. It marshals body to JSON
+// (when non-nil), sends the request, retries retryable failures per
+// the Client's retry policy, and decodes a 2xx response into out.
+// A non-2xx response is decoded into an *APIError.
+func (c *Client) do(ctx context.Context, method, path string, body, out any, opts ...RequestOption) error {
+	return c.doAttempts(ctx, method, path, body, out, c.retry.MaxAttempts, opts...)
+}
+
+// doAttempts is the request loop of do, making at most maxAttempts
+// attempts; a maxAttempts of 1 sends the request once.
+func (c *Client) doAttempts(ctx context.Context, method, path string, body, out any, maxAttempts int, opts ...RequestOption) error {
+	var ro requestOptions
+	for _, opt := range opts {
+		opt(&ro)
+	}
+
+	var bodyBytes []byte
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("lenny: marshal request body: %w", err)
+		}
+		bodyBytes = b
+	}
+
+	policy := c.retry
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if attempt > 1 {
+			delay := policy.delayForAttempt(attempt-1, c.rng)
+			if err := sleepCtx(ctx, delay); err != nil {
+				return err
+			}
+		}
+
+		status, respBody, err := c.roundTrip(ctx, method, path, bodyBytes, ro)
+		if err != nil {
+			// A transport-level failure (connection refused, DNS) is
+			// retried like a TRANSIENT error.
+			lastErr = err
+			continue
+		}
+
+		if status >= 200 && status < 300 {
+			if out == nil || len(respBody) == 0 {
+				return nil
+			}
+			if err := json.Unmarshal(respBody, out); err != nil {
+				return fmt.Errorf("lenny: decode %s %s response: %w", method, path, err)
+			}
+			return nil
+		}
+
+		apiErr := decodeAPIError(status, respBody)
+		lastErr = apiErr
+		if apiErr.Retryable && attempt < maxAttempts {
+			continue
+		}
+		return apiErr
+	}
+	return lastErr
+}
+
+// roundTrip performs a single HTTP request and returns the status
+// code and response body. It does not interpret the body.
+func (c *Client) roundTrip(ctx context.Context, method, path string, bodyBytes []byte, ro requestOptions) (int, []byte, error) {
+	var reqBody io.Reader
+	if bodyBytes != nil {
+		reqBody = bytes.NewReader(bodyBytes)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reqBody)
+	if err != nil {
+		return 0, nil, fmt.Errorf("lenny: build request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", userAgent)
+	if bodyBytes != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if ro.idempotencyKey != "" {
+		req.Header.Set("Idempotency-Key", ro.idempotencyKey)
+	}
+	if c.tenantID != "" {
+		req.Header.Set("X-Lenny-Tenant-ID", c.tenantID)
+	}
+	if c.auth != nil {
+		if err := c.auth.Apply(req); err != nil {
+			return 0, nil, fmt.Errorf("lenny: apply auth: %w", err)
+		}
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return resp.StatusCode, nil, fmt.Errorf("lenny: read response body: %w", err)
+	}
+	return resp.StatusCode, respBody, nil
+}
+
+// decodeAPIError parses a non-2xx response body into an *APIError.
+// When the body does not carry a §15.1 envelope, the error code is
+// left empty and Retryable is inferred from the HTTP status.
+func decodeAPIError(status int, body []byte) *APIError {
+	var envelope struct {
+		Error APIError `json:"error"`
+	}
+	if err := json.Unmarshal(body, &envelope); err == nil && envelope.Error.Code != "" {
+		apiErr := envelope.Error
+		apiErr.HTTPStatus = status
+		return &apiErr
+	}
+	return &APIError{
+		Message:    strings.TrimSpace(string(body)),
+		Retryable:  retryableStatus(status),
+		HTTPStatus: status,
+	}
+}
+
+// sleepCtx waits for d or until ctx is done, whichever is first. It
+// returns ctx.Err() when the context is canceled.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}

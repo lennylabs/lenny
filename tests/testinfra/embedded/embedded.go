@@ -1,0 +1,323 @@
+// SPDX-License-Identifier: MIT
+
+// Package embedded is the testinfra helper that drives the §17.4
+// Embedded Mode CLI (cmd/lenny) end to end for the quick-start smoke
+// test. It builds the lenny binary, then runs `lenny up`,
+// `lenny session new`, and `lenny down` against a temporary LENNY_HOME
+// so a test can assert the documented bring-up, session-create, and
+// tear-down path through the real supervisor process rather than the
+// in-process http.Handler.
+//
+// Embedded Mode brings up an embedded k3s cluster and runs the production
+// gateway and controllers as in-cluster pods rendered from the chart under
+// a development profile (§17.4 in-cluster control plane). The cluster
+// substrate is cross-platform: on Linux k3s runs as a managed child
+// process, and on macOS and Windows the same pinned k3s version runs as a
+// container under Docker Desktop's Linux VM (§17.4 Embedded Mode). The host
+// therefore needs a writable container runtime, and on macOS and Windows it
+// needs the docker CLI on PATH so Docker Desktop supplies the Linux kernel
+// the binary cannot embed. On first run the bring-up also needs network
+// access to download the k3s bundle and imports the platform image bundle
+// into the embedded containerd (§17.4). `lenny up` auto-seeds the echo runtime with
+// a runnable image digest, an applied Runtime CRD, and a single-pod warm
+// pool, so `session new --runtime echo` places a session on a pod with no
+// operator setup; the §26 reference runtimes ship placeholder-pinned
+// (§17.4 / catalog.go) and need a registered pullable image, an applied
+// Runtime CRD, and a warm pool before a session against one starts. The
+// bring-up is therefore expensive and host-dependent; SkipUnlessAvailable
+// gates the test behind an explicit LENNY_EMBEDDED_SMOKE opt-in and the
+// cross-platform substrate prerequisite (Linux, or a non-Linux host with
+// Docker on PATH) so the unit and tier-4 suites stay green on developer
+// laptops and CI runners that lack the substrate. This mirrors the
+// envtest and kind opt-in convention.
+package embedded
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/lennylabs/lenny/pkg/embedded/k3s"
+	"github.com/lennylabs/lenny/tests/testinfra/schematest"
+)
+
+// SmokeOptInEnv names the opt-in environment variable that enables the
+// Embedded Mode smoke test. The bring-up provisions k3s and imports the
+// platform image bundle into the embedded containerd, so the test runs only
+// where an operator has declared the host able to host it.
+const SmokeOptInEnv = "LENNY_EMBEDDED_SMOKE"
+
+// RuntimeEnv names the environment variable that selects the runtime
+// `lenny session new` targets in the smoke test. `lenny up` auto-seeds the
+// echo runtime with a runnable image digest, an applied Runtime CRD, and a
+// single-pod warm pool, so the test-smoke-embedded Makefile target defaults
+// this to echo (the only invocation surface), and the smoke places a session
+// with no operator setup. The §26 reference catalog ships placeholder-pinned
+// images, so pointing the smoke at one of those runtimes requires an
+// operator to register a pullable image, apply a Runtime CRD, and create a
+// warm pool first. When this variable is unset it falls back to
+// DefaultRuntime.
+const RuntimeEnv = "LENNY_EMBEDDED_SMOKE_RUNTIME"
+
+// DefaultRuntime is the runtime the smoke test targets when RuntimeEnv
+// is unset. chat is the §26.7 user-facing default `lenny up` surfaces; the
+// test-smoke-embedded Makefile target overrides RuntimeEnv to echo, the
+// credential-free runtime `lenny up` runs on a pod out of the box.
+const DefaultRuntime = "chat"
+
+// UpTimeoutEnv names the environment variable that overrides the
+// foreground `lenny up` deadline the smoke test waits under. The smoke
+// test runs against a fresh LENNY_HOME, so first run downloads the k3s
+// bundle and imports the platform image bundle into the embedded
+// containerd before the stack is ready. On a cold cache with slow network
+// those steps can exceed the DefaultUpTimeout default, so an operator
+// running the test on a slow or cold-cache host raises the deadline
+// here (the test-coverage escape hatch for resource-dependent heavy
+// tiers; a warm cache or a faster link keeps the default sufficient).
+// The value is a Go duration string (for example "10m"). spec: §17.4.
+const UpTimeoutEnv = "LENNY_EMBEDDED_UP_TIMEOUT"
+
+// DefaultUpTimeout is the foreground `lenny up` deadline the smoke test
+// waits under when UpTimeoutEnv is unset. It matches the §17.4 lifecycle
+// ceiling the product code bounds the foreground wait at
+// (pkg/embedded/stack/lifecycle.go), so a warm-cache bring-up completes
+// inside it.
+const DefaultUpTimeout = 6 * time.Minute
+
+// UpTimeout returns the foreground `lenny up` deadline: the duration
+// parsed from UpTimeoutEnv when it is set to a valid positive Go
+// duration, otherwise DefaultUpTimeout. An unset, empty, malformed, or
+// non-positive value falls back to the default so a typo cannot silently
+// disable the deadline.
+func UpTimeout() time.Duration {
+	if v := strings.TrimSpace(os.Getenv(UpTimeoutEnv)); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return DefaultUpTimeout
+}
+
+// SidecarRuntimeTarballEnv names the environment variable that points the
+// custom-sidecar tier-4 leg at a docker-save tarball of a genuine
+// sidecar-model runtime image. `lenny up` imports only the platform bundle
+// and the embedded-model echo seed, so the custom-sidecar leg must import a
+// distinct sidecar-model image to prove placement is runtime-agnostic rather
+// than echo-only. The reference sidecar-model runtime is runtime-echo
+// (cmd/runtimes/echo): it dials the abstract @lenny-runtime socket the
+// stamped lenny-adapter container binds and speaks the §28.5.3 JSONL
+// protocol the adapter bridges, exactly the contract a sidecar-model runtime
+// container fulfills (unlike runtime-echo-embedded, the §4.7 embedded model
+// that links the adapter as a library and serves gRPC itself). The
+// test-smoke-embedded Makefile target builds and stages it and sets this
+// variable. spec: §17.4 (the runtime-agnostic custom-runtime walkthrough),
+// §4.7 (the sidecar deployment model), §28.5.3 (the JSONL contract the
+// runtime container speaks to the adapter).
+const SidecarRuntimeTarballEnv = "LENNY_SIDECAR_RUNTIME_TARBALL"
+
+// SidecarRuntimeImage is the OCI reference the custom-sidecar tier-4 leg
+// imports the staged sidecar-model tarball under and references in the
+// runtime's Runtime CRD. It is the build tag the runtime-echo sidecar image
+// carries (the same tag the Makefile docker-saves), so the imported image
+// resolves by tag from the embedded containerd store under the default
+// IfNotPresent pull policy with no registry pull. spec: §4.7, §17.4.
+const SidecarRuntimeImage = "ghcr.io/lennylabs/runtime-echo:dev"
+
+// SidecarRuntimeTarball returns the staged sidecar-model runtime tarball
+// path from SidecarRuntimeTarballEnv, or the empty string when the variable
+// is unset or names a path that does not exist. An empty return signals the
+// custom-sidecar leg to skip its import-and-place sequence (the
+// test-coverage tier-5/6 escape hatch: the genuine sidecar image is a
+// docker-save artifact the leg cannot synthesize, so a host without it
+// states the dependency and skips rather than reusing the echo image).
+func SidecarRuntimeTarball() string {
+	v := strings.TrimSpace(os.Getenv(SidecarRuntimeTarballEnv))
+	if v == "" {
+		return ""
+	}
+	if fi, err := os.Stat(v); err != nil || fi.IsDir() {
+		return ""
+	}
+	return v
+}
+
+// available reports whether the host can provision the Embedded Mode
+// substrate and run the smoke test, returning a human-readable reason
+// when it cannot. The checks are: the go toolchain is on PATH (the
+// helper builds cmd/lenny), the host can provision the embedded k3s
+// substrate (k3s.SupportedPlatform — Linux unconditionally, macOS and
+// Windows when the docker CLI is on PATH so Docker Desktop supplies the
+// Linux VM), and the LENNY_EMBEDDED_SMOKE opt-in is set (the bring-up is
+// expensive and network-dependent on first run). Reusing the production
+// SupportedPlatform gate keeps the test prerequisite in lockstep with
+// the launcher-selection gate, so a host that the smoke test runs on is
+// exactly a host where `lenny up` provisions a real cluster.
+//
+// spec: §17.4 (the embedded k3s substrate is provisioned per host
+// operating system, as a managed child process on Linux and a
+// Docker-backed container on macOS and Windows where Docker Desktop
+// supplies the Linux VM).
+func available() (bool, string) {
+	if _, err := exec.LookPath("go"); err != nil {
+		return false, "go toolchain not on PATH"
+	}
+	if !k3s.SupportedPlatform() {
+		return false, "embedded k3s substrate is unavailable: on " + runtime.GOOS +
+			" the docker CLI must be on PATH so Docker Desktop supplies the Linux VM the embedded k3s runs in (§17.4 Embedded Mode)"
+	}
+	if !truthy(os.Getenv(SmokeOptInEnv)) {
+		return false, "set " + SmokeOptInEnv + "=1 to run the Embedded Mode smoke test (provisions k3s and imports the platform image bundle)"
+	}
+	return true, ""
+}
+
+// truthy reports whether v is an affirmative environment-variable value.
+func truthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// SkipUnlessAvailable skips the test unless the host can provision the
+// Embedded Mode substrate and the operator has opted in. The host is
+// able when k3s.SupportedPlatform reports the substrate provisionable
+// (Linux, or a non-Linux host with the docker CLI on PATH so Docker
+// Desktop supplies the Linux VM) and LENNY_EMBEDDED_SMOKE is set.
+// spec: §17.4.
+func SkipUnlessAvailable(t testing.TB) {
+	t.Helper()
+	if ok, reason := available(); !ok {
+		t.Skipf("embedded: %s", reason)
+	}
+}
+
+// Runtime returns the runtime the smoke test should target: RuntimeEnv
+// when set, otherwise DefaultRuntime.
+func Runtime() string {
+	if v := strings.TrimSpace(os.Getenv(RuntimeEnv)); v != "" {
+		return v
+	}
+	return DefaultRuntime
+}
+
+// Build compiles cmd/lenny into a fresh temp binary and returns its path.
+// The §17.4 control plane runs as in-cluster pods rendered from the chart
+// (the gateway and controller come from the imported platform image bundle,
+// not sibling host binaries), so only the lenny binary is built here. A
+// build failure fails the test.
+func Build(t testing.TB) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "lenny-embedded-it-*")
+	if err != nil {
+		t.Fatalf("embedded.Build: mkdtemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	root := schematest.RepoRoot(t)
+	bin := filepath.Join(dir, "lenny")
+	cmd := exec.Command("go", "build", "-o", bin, "./cmd/lenny")
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("embedded.Build: build cmd/lenny: %v\n%s", err, out)
+	}
+	return bin
+}
+
+// BuildCtl compiles cmd/lenny-ctl into a fresh temp binary and returns its
+// path. The §17.4 custom-runtime walkthrough registers a runtime through
+// `lenny-ctl runtime publish --skip-push` (the registry-record half), which
+// the short-name lenny binary does not embed, so the custom-runtime smoke leg
+// builds lenny-ctl separately. A build failure fails the test.
+func BuildCtl(t testing.TB) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "lenny-ctl-it-*")
+	if err != nil {
+		t.Fatalf("embedded.BuildCtl: mkdtemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	root := schematest.RepoRoot(t)
+	bin := filepath.Join(dir, "lenny-ctl")
+	cmd := exec.Command("go", "build", "-o", bin, "./cmd/lenny-ctl")
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("embedded.BuildCtl: build cmd/lenny-ctl: %v\n%s", err, out)
+	}
+	return bin
+}
+
+// RunBin executes an arbitrary built binary with LENNY_HOME=home under a
+// timeout, returning its captured stdout, stderr, and exit code. It mirrors
+// Run but takes the binary path explicitly so a test can drive the sibling
+// lenny-ctl binary (the custom-runtime registry-record step) alongside the
+// lenny binary. A timeout or a start error fails the test; a non-zero exit is
+// returned so the caller can assert on it.
+func RunBin(t testing.TB, bin, home string, timeout time.Duration, args ...string) Result {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Env = append(os.Environ(), "LENNY_HOME="+home)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	res := Result{Stdout: stdout.String(), Stderr: stderr.String()}
+	if ctx.Err() == context.DeadlineExceeded {
+		t.Fatalf("embedded: `%s %s` timed out after %s\nstdout:\n%s\nstderr:\n%s",
+			filepath.Base(bin), strings.Join(args, " "), timeout, res.Stdout, res.Stderr)
+	}
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			res.ExitCode = ee.ExitCode()
+		} else {
+			t.Fatalf("embedded: run `%s %s`: %v", filepath.Base(bin), strings.Join(args, " "), err)
+		}
+	}
+	return res
+}
+
+// Result is the outcome of one CLI invocation.
+type Result struct {
+	Stdout   string
+	Stderr   string
+	ExitCode int
+}
+
+// Run executes `lenny <args...>` with LENNY_HOME=home under a timeout,
+// returning its captured stdout, stderr, and exit code. A timeout or a
+// start error fails the test; a non-zero exit is returned so the caller
+// can assert on it.
+func Run(t testing.TB, bin, home string, timeout time.Duration, args ...string) Result {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Env = append(os.Environ(), "LENNY_HOME="+home)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	res := Result{Stdout: stdout.String(), Stderr: stderr.String()}
+	if ctx.Err() == context.DeadlineExceeded {
+		t.Fatalf("embedded: `lenny %s` timed out after %s\nstdout:\n%s\nstderr:\n%s",
+			strings.Join(args, " "), timeout, res.Stdout, res.Stderr)
+	}
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			res.ExitCode = ee.ExitCode()
+		} else {
+			t.Fatalf("embedded: run `lenny %s`: %v", strings.Join(args, " "), err)
+		}
+	}
+	return res
+}

@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: MIT
+# The file name is resolved to a channel whose naming table states the
+# retired spelling for one carrier that is not the file-name stem.
+kind: identifier-senses
+version: 1
+entries:
+  - file: pkg/adapter/lifecyclechannel.go
+    path: true
+    channel: CH-RUNTIMEOPS

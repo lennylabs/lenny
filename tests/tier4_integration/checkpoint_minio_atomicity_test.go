@@ -1,0 +1,251 @@
+// SPDX-License-Identifier: MIT
+
+//go:build integration
+
+// Tier-4 integration coverage for the §4.4 / §10.1 checkpoint-atomicity
+// contract, re-expressed against the gateway-driven grant/confirm upload
+// driver that replaced the deleted in-adapter single-object upload bridge.
+//
+// The checkpoint upload no longer flows through an in-adapter sink that
+// PUTs one object: the gateway drives the bidirectional Checkpoint stream,
+// mints one presigned PUT capability per chunk, confirms each committed
+// chunk with Stat, and finalises the manifest row on the terminal frame.
+// This file drives the real gateway checkpointer over a live gRPC stream
+// against a chunked producer and a prefix-capable object store, and pins
+// the atomicity contract:
+//
+//   - the intent row is partial = true from INSERT, before the first
+//     chunk confirms;
+//   - it flips to partial = false only after every declared byte is
+//     Stat-confirmed;
+//   - a chunk PUT that fails past the retry budget leaves partial = true,
+//     and the DeleteObject sweep removes the chunks the aborted attempt
+//     wrote.
+//
+// The §13.2 signature-binding enforcement (a live object store refusing a
+// widened capability) is covered separately by
+// checkpoint_capability_enforcement_test.go against a live MinIO
+// container; this file exercises the store-agnostic driver contract.
+//
+// spec: §4.4 (Event / Checkpoint Store atomicity), §10.1 (gateway-driven
+// chunked checkpoint upload, intent-row-first ordering, finalisation).
+
+package tier4_integration_test
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/lennylabs/lenny/pkg/checkpoint"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+)
+
+// spec: §10.1 — the intent row is partial = true from INSERT and flips to
+// partial = false / complete only after every declared byte is
+// Stat-confirmed.
+// diagnosis: the manifest flipped to complete before every declared byte
+// was Stat-confirmed, so a resume could read a torn checkpoint.
+func TestCheckpointFinalisesCompleteOnlyAfterEveryByteConfirmed(t *testing.T) {
+	adapter := &cpChunkedAdapter{probeBytes: 30, chunkLens: []int64{10, 10, 10}, failAfter: -1, truncateAfter: -1}
+	h := newCPDriverHarness(t, adapter)
+
+	if err := h.cp.Checkpoint(context.Background(), cpTenant, cpSession); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	rec := h.latestManifest(t)
+	if rec.Partial {
+		t.Errorf("manifest partial = true, want false after every declared byte confirmed")
+	}
+	if rec.ManifestReason != partialmanifeststore.ReasonComplete {
+		t.Errorf("manifest_reason = %q, want complete", rec.ManifestReason)
+	}
+	if rec.ChunkCount != 3 {
+		t.Errorf("chunk_count = %d, want 3", rec.ChunkCount)
+	}
+	// Every chunk object is present in the store: a complete checkpoint is
+	// not swept.
+	if got := h.store.count(rec.ChunkObjectKeyPrefix); got != 3 {
+		t.Errorf("objects under prefix = %d, want 3 (complete checkpoint retained)", got)
+	}
+}
+
+// spec: §4.4 / §10.1.7 — a PUT that fails past the retry budget
+// leaves partial = true and the DeleteObject sweep removes the chunks the
+// aborted attempt confirmed before the failure.
+// diagnosis: a PUT that exhausted its retry budget either finalised the
+// manifest or left orphaned chunks in the store, so the abort path leaks
+// storage or exposes an incomplete checkpoint.
+func TestCheckpointLeavesPartialAndSweepsChunksOnPutFailure(t *testing.T) {
+	// Chunk 0 commits; chunk 1's PUT is reported as a retry-exhausted
+	// object-store failure (a CheckpointFailed frame), so the stream
+	// terminates without a Summary.
+	adapter := &cpChunkedAdapter{
+		probeBytes:    30,
+		chunkLens:     []int64{10, 10, 10},
+		failAfter:     0,
+		failCode:      "SlowDown",
+		truncateAfter: -1,
+	}
+	h := newCPDriverHarness(t, adapter)
+
+	if err := h.cp.Checkpoint(context.Background(), cpTenant, cpSession); err == nil {
+		t.Fatal("Checkpoint succeeded despite a retry-exhausted PUT, want failure")
+	}
+	rec := h.latestManifest(t)
+	if !rec.Partial {
+		t.Errorf("manifest partial = false, want true after a PUT failure")
+	}
+	// The abort sweep ran over the attempt's prefix, so the confirmed chunk
+	// object is gone.
+	if got := h.store.count(rec.ChunkObjectKeyPrefix); got != 0 {
+		t.Errorf("objects under prefix = %d after the sweep, want 0", got)
+	}
+	if !h.store.sweptPrefix(rec.ChunkObjectKeyPrefix) {
+		t.Errorf("abort sweep did not run over prefix %q", rec.ChunkObjectKeyPrefix)
+	}
+}
+
+// spec: §10.1 / §4.4 — a deadline-fire abort finalises
+// manifest_reason = 'timeout' and RETAINS its row and confirmed chunks for
+// the resume path, rather than sweeping them the way a stream_truncated
+// abort does. A pod lost at the drain deadline must leave chunks to restore
+// from.
+// diagnosis: a failure here (reason stream_truncated, or the confirmed chunk
+// swept) means the deadline fire is misclassified, so the sweep destroys the
+// exact chunks the reassembly-on-resume path consumes and a pod lost at the
+// drain deadline has nothing to restore from.
+func TestCheckpointDeadlineFireRetainsChunksForResume(t *testing.T) {
+	adapter := &cpChunkedAdapter{
+		probeBytes:    30,
+		chunkLens:     []int64{10, 10, 10},
+		failAfter:     -1,
+		truncateAfter: -1,
+		stall:         true,
+		stallAfter:    0, // commit chunk 0, then go silent until the deadline fires
+	}
+	h := newCPDriverHarness(t, adapter)
+	h.cp.Deadline = 300 * time.Millisecond
+
+	if err := h.cp.Checkpoint(context.Background(), cpTenant, cpSession); err == nil {
+		t.Fatal("Checkpoint succeeded despite the attempt deadline firing, want failure")
+	}
+	rec := h.latestManifest(t)
+	if !rec.Partial {
+		t.Errorf("manifest partial = false, want true after a deadline fire")
+	}
+	if rec.ManifestReason != partialmanifeststore.ReasonTimeout {
+		t.Errorf("manifest_reason = %q, want timeout", rec.ManifestReason)
+	}
+	// The confirmed chunk is retained, not swept: the resume path reassembles it.
+	if got := h.store.count(rec.ChunkObjectKeyPrefix); got == 0 {
+		t.Errorf("objects under prefix = 0 after a timeout finalise, want the confirmed chunk retained")
+	}
+	if h.store.sweptPrefix(rec.ChunkObjectKeyPrefix) {
+		t.Errorf("timeout finalise swept prefix %q; a deadline-fire row is retained for resume", rec.ChunkObjectKeyPrefix)
+	}
+}
+
+// spec: §10.1 — a stream that truncates before the Summary leaves
+// partial = true; the confirmed chunks are swept because no resume will
+// consume a stream_truncated attempt.
+// diagnosis: a stream that truncated before the Summary was treated as
+// complete or its confirmed chunks were not swept, leaking objects or
+// admitting a resume over a truncated attempt.
+func TestCheckpointLeavesPartialOnTruncatedStream(t *testing.T) {
+	adapter := &cpChunkedAdapter{probeBytes: 30, chunkLens: []int64{10, 10, 10}, failAfter: -1, truncateAfter: 0}
+	h := newCPDriverHarness(t, adapter)
+
+	if err := h.cp.Checkpoint(context.Background(), cpTenant, cpSession); err == nil {
+		t.Fatal("Checkpoint succeeded on a truncated stream, want failure")
+	}
+	rec := h.latestManifest(t)
+	if !rec.Partial {
+		t.Errorf("manifest partial = false, want true after a truncated stream")
+	}
+	if rec.ManifestReason != partialmanifeststore.ReasonStreamTruncated {
+		t.Errorf("manifest_reason = %q, want stream_truncated", rec.ManifestReason)
+	}
+	if got := h.store.count(rec.ChunkObjectKeyPrefix); got != 0 {
+		t.Errorf("objects under prefix = %d after the sweep, want 0", got)
+	}
+}
+
+// spec: §4.4 "Checkpoint abort cleanup" — a stream-truncation abort whose sweep
+// deletes every chunk object soft-deletes the manifest row after a final prefix
+// list returns empty, the same disposition the resume and §12.5 backstop paths
+// reach. Leaving the emptied partial row active (deleted_at IS NULL) would let a
+// later resume's highest-generation selector pick a row whose chunks are gone
+// and fall back to a stale full checkpoint.
+//
+// diagnosis: the abort sweep deleted the chunk objects but never soft-deleted
+// the manifest row, deferring the whole soft-delete to the §12.5 backstop, so
+// the emptied row stayed active until the next GC cycle. This test drives a
+// truncated stream, lets the sweep empty the prefix, and asserts the row is
+// soft-deleted in-process; it fails against the pre-fix code where the row
+// stayed active.
+func TestCheckpointAbortSweepSoftDeletesRowAfterPrefixEmpty(t *testing.T) {
+	adapter := &cpChunkedAdapter{probeBytes: 30, chunkLens: []int64{10, 10, 10}, failAfter: -1, truncateAfter: 0}
+	h := newCPDriverHarness(t, adapter)
+
+	if err := h.cp.Checkpoint(context.Background(), cpTenant, cpSession); err == nil {
+		t.Fatal("Checkpoint succeeded on a truncated stream, want failure")
+	}
+	rec := h.latestManifest(t)
+	if !rec.Partial {
+		t.Errorf("manifest partial = false, want true after a truncated stream")
+	}
+	if got := h.store.count(rec.ChunkObjectKeyPrefix); got != 0 {
+		t.Fatalf("objects under prefix = %d after the sweep, want 0", got)
+	}
+	if rec.DeletedAt.IsZero() {
+		t.Error("manifest row still active after the abort sweep emptied the prefix, want soft-deleted in-process")
+	}
+	if _, err := h.manifests.LatestActive(context.Background(), cpTenant, cpSession); err == nil {
+		t.Error("LatestActive still returns the swept row, want no active row after in-process soft-delete")
+	}
+}
+
+// spec: §4.4 "Checkpoint abort cleanup"; §4.4 — when a chunk
+// DeleteObject fails during the abort sweep the gateway increments
+// lenny_checkpoint_orphaned_objects_total (labeled by pool and trigger) for that
+// object and leaves the manifest row active (deleted_at IS NULL) so the §12.5
+// backstop re-selects the prefix and retries the delete.
+//
+// diagnosis: the abort sweep passed a nil delete-error callback and discarded
+// the sweep error, so a failed DeleteObject on the abort path emitted no
+// orphaned-object counter — the named metric never fired on its dominant
+// drain/abort failure mode. This test fails the object store's delete during a
+// truncated-stream sweep and asserts one counter emission and an active row; it
+// fails against the pre-fix code that emitted none.
+func TestCheckpointAbortSweepCountsOrphanOnDeleteFailure(t *testing.T) {
+	adapter := &cpChunkedAdapter{probeBytes: 30, chunkLens: []int64{10, 10, 10}, failAfter: -1, truncateAfter: 0}
+	h := newCPDriverHarness(t, adapter)
+	if _, err := h.sessions.Update(context.Background(), cpTenant, cpSession,
+		func(s *sessionstore.Session) error { s.PoolRef = "tier-1"; return nil }); err != nil {
+		t.Fatalf("set session pool: %v", err)
+	}
+	h.store.failDelete = true
+
+	if err := h.cp.Checkpoint(context.Background(), cpTenant, cpSession); err == nil {
+		t.Fatal("Checkpoint succeeded on a truncated stream, want failure")
+	}
+	rec := h.latestManifest(t)
+	if got := h.metrics.orphanCount(); got != 1 {
+		t.Fatalf("orphaned-object emissions = %d, want 1 on a failed abort-sweep delete", got)
+	}
+	if h.metrics.orphanedPool != "tier-1" {
+		t.Errorf("orphaned-object pool = %q, want %q (the session's bound pool)", h.metrics.orphanedPool, "tier-1")
+	}
+	if h.metrics.orphanedTrigger != string(checkpoint.TriggerPeriodic) {
+		t.Errorf("orphaned-object trigger = %q, want %q", h.metrics.orphanedTrigger, checkpoint.TriggerPeriodic)
+	}
+	// The failed delete leaves the row active so the §12.5 backstop retries.
+	if !rec.DeletedAt.IsZero() {
+		t.Error("manifest row soft-deleted despite a failed chunk delete, want left active for the backstop")
+	}
+	if got := h.store.count(rec.ChunkObjectKeyPrefix); got == 0 {
+		t.Error("chunk object removed despite a failed delete, want retained under the active row")
+	}
+}

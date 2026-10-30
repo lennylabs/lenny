@@ -3,22 +3,17 @@
 # Spec sections explicitly exempt from the "every section has at least one
 # test" rule. Each exemption requires a justification. `lenny-test validate-maps`
 # reads this file when reconciling spec headings against the spec map.
+#
+# An entry under the `pending-implementation` reason exempts a heading that
+# exists with no implementation key yet. That exemption is temporary, so the
+# entry also carries `blocker`, naming the open item whose closure retires it,
+# and `opened_at`, the date it was written in YYYY-MM-DD. Both fields are named
+# and validated as the shared register contract in tests/registers/ names and
+# validates them.
 
 version: 1
 
 exceptions:
-
-  - section: "1"
-    reason: non-normative
-    justification: Executive summary. Restates content normatively covered elsewhere.
-
-  - section: "2"
-    reason: non-normative
-    justification: Goals and non-goals. Aspirations and exclusions; no behavior to verify.
-
-  - section: "3"
-    reason: non-normative
-    justification: High-level architecture diagram. Visual only; the behavioral contracts it sketches are covered in §4 onward.
 
   - section: "18"
     reason: non-normative
@@ -60,46 +55,333 @@ exceptions:
     reason: non-normative
     justification: Procedural guidance for adding new reference runtimes. The conformance harness in §15.4 validates whatever runtime is added.
 
-  - section: "27"
-    reason: post-v1
-    justification: Web playground is feature-flag-gated and disabled by default. Reaches v1 only when playground.enabled rolls out alongside an admin UI.
-
   - section: "27.1"
     reason: non-normative
     justification: Web playground purpose and non-goals. Aspirational framing for the feature.
 
-  - section: "27.2"
-    reason: post-v1
-    justification: Web playground placement and gating. Behavior covered when §27 ships.
-
-  - section: "27.3"
-    reason: post-v1
-    justification: Web playground authentication. Behavior covered when §27 ships.
-
   - section: "27.4"
-    reason: post-v1
-    justification: Web playground UI surface. Behavior covered when §27 ships.
-
-  - section: "27.5"
-    reason: post-v1
-    justification: Web playground protocol. Behavior covered when §27 ships.
-
-  - section: "27.6"
-    reason: post-v1
-    justification: Web playground session lifecycle and cleanup. Behavior covered when §27 ships.
-
-  - section: "27.7"
-    reason: post-v1
-    justification: Web playground asset serving and CSP. Behavior covered when §27 ships.
-
-  - section: "27.8"
-    reason: post-v1
-    justification: Web playground metrics. Behavior covered when §27 ships.
-
-  - section: "27.9"
-    reason: post-v1
-    justification: Web playground security considerations. Behavior covered when §27 ships.
+    reason: non-normative
+    justification: Web playground UI surface. Visual layout description without executable behavior; the bundled SPA assets are covered by the §27.7 asset-serving tests.
 
   - section: "27.10"
     reason: non-normative
     justification: Web playground roll-forward notes. Forward-compatibility guidance, no executable behavior.
+
+
+  # Wave 0 spec-map reconciliation: non-normative sections (design
+  # philosophy, overviews, summaries, examples, reference tables) and
+  # deferred sections whose feature is built by a later wave. A
+  # deferred entry is removed and replaced with test references by the
+  # wave that closes its phase.
+  - section: "8.1"
+    reason: non-normative
+    justification: Design-philosophy rationale for recursive delegation as a platform primitive; the testable invariants are normative in §8.2 and §8.3.
+  - section: "9"
+    reason: non-normative
+    justification: Chapter heading for MCP integration; the normative surface is §9.1 through §9.4.
+  - section: "11.8"
+    reason: non-normative
+    justification: Security incident response is deployer runbook guidance built from primitives normative in §11.4, §11.7, and §12.8.
+  - section: "12.1"
+    reason: non-normative
+    justification: One-paragraph storage design principle; the mandatory erasure primitives it states are verified under §12.8.
+  - section: "12.7"
+    reason: non-normative
+    justification: Design-guidance list for the pluggable-storage interface boundary; states no behavior of its own.
+  - section: "15.3"
+    reason: non-normative
+    justification: Pointer paragraph stating gateway-to-pod transport is gRPC over mTLS; the RPC surface is normative in §4.7 and §15.4.
+  - section: "15.5"
+    reason: non-normative
+    justification: API-versioning and stability policy; the schemaVersion mechanism it cites is verified under §14 and §11.2.1.
+  - section: "16.2"
+    reason: deferred
+    justification: Per-session latency-breakpoint instrumentation is added in Wave 7 (Phase 14.5).
+  - section: "16.9"
+    reason: deferred
+    justification: The ServiceMonitor, PodMonitor, and PrometheusRule chart templates ship in Wave 5 (Phase 2.5).
+  - section: "17.1"
+    reason: non-normative
+    justification: Kubernetes-resource inventory table; the chart templates are verified under §17.2 and the helm-unittest suites.
+  - section: "17.8"
+    reason: non-normative
+    justification: Introductory paragraph for the capacity-planning subsections; states no behavior of its own.
+  - section: "17.8.1"
+    reason: non-normative
+    justification: Quick-reference table of operational defaults that restates values bound elsewhere.
+  - section: "17.8.2"
+    reason: non-normative
+    justification: Per-tier sizing reference table of recommended starting values; advisory.
+  - section: "17.8.3"
+    reason: non-normative
+    justification: Procedural operator checklist for promoting between capacity tiers.
+  - section: "17.8.4"
+    reason: deferred
+    justification: Tier preset values files ship in Wave 6 (Phase 17a).
+  - section: "17.8.5"
+    reason: deferred
+    justification: The lenny-ops Deployment chart templates ship in Wave 5.
+  - section: "25.1"
+    reason: non-normative
+    justification: Design philosophy and external-agent model; the concrete mechanisms are normative in §15.1 and §13.
+  - section: "25.2"
+    reason: non-normative
+    justification: Architecture overview of the gateway and lenny-ops split; states no behavior of its own.
+  - section: "25.15"
+    reason: non-normative
+    justification: Failure-mode analysis table and a human total-outage recovery runbook.
+  - section: "25.16"
+    reason: non-normative
+    justification: Deployment-topology summary presenting illustrative layouts.
+  - section: "25.17"
+    reason: non-normative
+    justification: End-to-end worked operational example; illustrative narrative.
+  - section: "26"
+    reason: non-normative
+    justification: Reference-runtime catalog intro and conventions; per-runtime behavior is §26.3 through §26.11.
+  - section: "26.2"
+    reason: non-normative
+    justification: Shared-pattern description for the coding-agent runtimes; verified through the §26.3 to §26.6 entries.
+  - section: "26.3"
+    reason: deferred
+    justification: The claude-code reference runtime is built in Wave 6 (Phase 11).
+  - section: "26.4"
+    reason: deferred
+    justification: The gemini-cli reference runtime is built in Wave 6 (Phase 11).
+  - section: "26.5"
+    reason: deferred
+    justification: The codex reference runtime is built in Wave 6 (Phase 11).
+  - section: "26.6"
+    reason: deferred
+    justification: The cursor-cli reference runtime is built in Wave 6 (Phase 11).
+  - section: "26.7"
+    reason: deferred
+    justification: The chat reference runtime is built in Wave 6 (Phase 11).
+  - section: "26.8"
+    reason: deferred
+    justification: The langgraph reference runtime is built in Wave 6 (Phase 11).
+  - section: "26.9"
+    reason: deferred
+    justification: The mastra reference runtime is built in Wave 6 (Phase 11).
+  - section: "26.10"
+    reason: deferred
+    justification: The openai-assistants reference runtime binary lives in the external repo github.com/lennylabs/runtime-openai-assistants per §26 ("Distinction from bundled runtimes") and the §26.10 Repository field; only echo variants are in-monorepo. In-tree registration surfaces (catalog, chart Runtime CR, compliance baseline) are present and tested.
+  - section: "26.11"
+    reason: deferred
+    justification: The crewai reference runtime binary lives in the external repo github.com/lennylabs/runtime-crewai per §26 ("Distinction from bundled runtimes") and the §26.11 Repository field; only echo variants are in-monorepo. In-tree registration surfaces (catalog, chart Runtime CR, compliance baseline) are present and tested.
+  - section: "8.7"
+    reason: deferred
+    justification: The §8.7 file-export model (glob rebasing, destPrefix, symlink validation) is unimplemented; built in Wave 2 (Phase 9).
+
+  # The build-sequence phase headings. Section 18 as a whole is exempt as
+  # non-normative directional guidance, and each phase heading carries its
+  # own entry because coverage is reconciled one heading at a time.
+  - section: "18.2"
+    reason: non-normative
+    justification: Table mapping the build phases to the waves that run them. Ordering material with no behavior of its own.
+  - section: "18.3"
+    reason: non-normative
+    justification: Build sequence Phase 0 (Bootstrap the infrastructure repo). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.4"
+    reason: non-normative
+    justification: Build sequence Phase 1 (Core types and wire contracts). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.5"
+    reason: non-normative
+    justification: Build sequence Phase 1.5 (Database migration framework). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.6"
+    reason: non-normative
+    justification: Build sequence Phase 2 (Adapter protocol, `make run`, ImageResolver, startup benchmark). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.7"
+    reason: non-normative
+    justification: Build sequence Phase 2.5 (Observability foundation, shared rule packages). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.8"
+    reason: non-normative
+    justification: Build sequence Phase 2.8 (`streaming-echo` runtime). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.9"
+    reason: non-normative
+    justification: Build sequence Phase 3 (Pool scaling, delegation policy, runtime upgrade, mTLS). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.10"
+    reason: non-normative
+    justification: Build sequence Phase 3.5 (Admission policies, `lenny-ops` first deploy). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.11"
+    reason: non-normative
+    justification: Build sequence Phase 4 (Session manager, REST). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.12"
+    reason: non-normative
+    justification: Build sequence Phase 4.5 (Admin API foundation, authentication, bootstrap). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.13"
+    reason: non-normative
+    justification: Build sequence Phase 5 (ExternalAdapterRegistry, MCP/Completions/Open Responses). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.14"
+    reason: non-normative
+    justification: Build sequence Phase 5.4 (etcd encryption at rest). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.15"
+    reason: non-normative
+    justification: Build sequence Phase 5.5 (Basic credential leasing, Token Service). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.16"
+    reason: non-normative
+    justification: Build sequence Phase 5.6 (Targeted security design review (credential)). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.17"
+    reason: non-normative
+    justification: Build sequence Phase 5.75 (Minimum viable policy enforcement). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.18"
+    reason: non-normative
+    justification: Build sequence Phase 5.8 (LLM Proxy, `lenny-direct-mode-isolation` admission webhook). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.19"
+    reason: non-normative
+    justification: Build sequence Phase 6 (Interactive sessions, SDKs). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.20"
+    reason: non-normative
+    justification: Build sequence Phase 6.5 (Incremental load test (streaming)). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.21"
+    reason: non-normative
+    justification: Build sequence Phase 7 (Policy engine (quotas, budgets, audit hooks)). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.22"
+    reason: non-normative
+    justification: Build sequence Phase 8 (Checkpoint/resume, drain-readiness webhook). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.23"
+    reason: non-normative
+    justification: Build sequence Phase 9 (Delegation, `delegation-echo`). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.24"
+    reason: non-normative
+    justification: Build sequence Phase 9.5 (Incremental load test (delegation)). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.25"
+    reason: non-normative
+    justification: Build sequence Phase 10 (MCP fabric (virtual child interfaces, elicitation chain)). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.26"
+    reason: non-normative
+    justification: Build sequence Phase 11 (Advanced credentials, multi-provider translators, revocation). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.27"
+    reason: non-normative
+    justification: Build sequence Phase 11.5 (Incremental load test (credential lifecycle)). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.28"
+    reason: non-normative
+    justification: Build sequence Phase 12a (Token Service hardening (KMS envelope, OAuth)). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.29"
+    reason: non-normative
+    justification: 'Build sequence Phase 12b (`type: mcp` runtime support). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.'
+  - section: "18.30"
+    reason: non-normative
+    justification: Build sequence Phase 12c (`sessionPolicy` presets and service mode). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.31"
+    reason: non-normative
+    justification: Build sequence Phase 13 (Full observability, audit, `lenny-backup`, compliance webhooks). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.32"
+    reason: non-normative
+    justification: Build sequence Phase 13.5 (Pre-hardening full-system load baseline). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.34"
+    reason: non-normative
+    justification: Build sequence Phase 14.5 (Post-hardening SLO re-validation). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.35"
+    reason: non-normative
+    justification: Build sequence Phase 15 (Environment resource, RBAC, cross-environment delegation). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.36"
+    reason: non-normative
+    justification: Build sequence Phase 16 (Experiments, PoolScalingController integration). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.37"
+    reason: non-normative
+    justification: Build sequence Phase 16.5 (Experiment load test SLO re-validation). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.38"
+    reason: non-normative
+    justification: Build sequence Phase 17a (Documentation, governance, community launch). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.39"
+    reason: non-normative
+    justification: Build sequence Phase 17b (Memory, semantic caching, eval hooks). The phase orders implementation work and states no behavior of its own; the sections its deliverables implement carry the tests.
+  - section: "18.40"
+    reason: non-normative
+    justification: Statement of which build phases must precede which. Ordering material with no behavior of its own.
+
+  # The channel contract cards and the end-to-end scenario traces. Each
+  # heading landed with its section and has no implementation key yet,
+  # so it is exempt under pending-implementation until the remediation
+  # step named in its blocker lands the tests that encode it. The entry
+  # is replaced by a tests/spec-map.json key in the change that closes
+  # the blocker.
+  - section: "28.5"
+    reason: pending-implementation
+    justification: The contract-card template. No gate reads the card fields yet; the specification and test tooling step lands the gate that holds every card to the stated field order.
+    blocker: R3
+    opened_at: 2026-08-15
+  - section: "28.5.1"
+    reason: pending-implementation
+    justification: The gateway-to-pod cards. The generation stamp every operational gateway-to-pod RPC carries is validated by the pod only once the holder eviction path lands it.
+    blocker: R16
+    opened_at: 2026-08-15
+  - section: "28.5.2"
+    reason: pending-implementation
+    justification: The pod-to-gateway cards. The adapter-to-gateway control direction and its hold state have no client today, so no test exercises the channel this boundary carries.
+    blocker: R12
+    opened_at: 2026-08-15
+  - section: "28.5.5"
+    reason: pending-implementation
+    justification: The pod-egress cards. The proxy dialects the boundary carries reach no route today, so the card's contract is untested.
+    blocker: R11
+    opened_at: 2026-08-15
+  - section: "28.5.6"
+    reason: pending-implementation
+    justification: The control-plane card. The drain-readiness webhook the card names renders under a flag that is off by default; the deployment-boundary step flips it and gates it.
+    blocker: R6
+    opened_at: 2026-08-15
+  - section: "28.5.7"
+    reason: pending-implementation
+    justification: The gateway-to-store card. Cross-replica event relay is unimplemented, so no test exercises the channel this boundary carries.
+    blocker: R19
+    opened_at: 2026-08-15
+  - section: "28.6"
+    reason: pending-implementation
+    justification: The exclusivity and concurrency model. The multi-replica and concurrent-slot harness is the surface that can assert one holder at a time and the disposition of a second opener.
+    blocker: R7
+    opened_at: 2026-08-15
+  - section: "29"
+    reason: pending-implementation
+    justification: The chapter carries the off-holder matrix keyed by session-scoped client route. The session REST surface gains its coordinator gate, and the matrix its assertions, in the step that lands that gate.
+    blocker: R10
+    opened_at: 2026-08-15
+  - section: "29.1"
+    reason: non-normative
+    justification: Participant glossary and step notation for the traces that follow. Fixes how a trace is written and introduces no participant or boundary of its own.
+  - section: "29.2"
+    reason: pending-implementation
+    justification: The session-start trace. Bind-time coordinator resolution is the leg the trace turns on and it is unimplemented.
+    blocker: R13
+    opened_at: 2026-08-15
+  - section: "29.3"
+    reason: pending-implementation
+    justification: The interactive message-send trace. Message-plane durability and the cross-replica input wait are the legs the trace turns on and they are unimplemented.
+    blocker: R20
+    opened_at: 2026-08-15
+  - section: "29.4"
+    reason: pending-implementation
+    justification: The interrupt, terminate, and delete trace. The session terminate route never reaches the pod today; the coordinator gate on the session REST surface is the step that makes the trace assertable.
+    blocker: R10
+    opened_at: 2026-08-15
+  - section: "29.5"
+    reason: pending-implementation
+    justification: The checkpoint-capture trace. The barrier acknowledgement and the hold state the trace passes through land with the adapter-to-gateway control direction.
+    blocker: R12
+    opened_at: 2026-08-15
+  - section: "29.6"
+    reason: pending-implementation
+    justification: The restore-and-resume trace. A concurrent-session pool cannot be restored onto a concurrent pod today; the concurrent-slot resume and restore step lands the path the trace states.
+    blocker: R22
+    opened_at: 2026-08-15
+  - section: "29.7"
+    reason: pending-implementation
+    justification: The gateway-drain trace. The preStop checkpoint and the barrier-timeout partial-capture path the trace follows land with the holder eviction path.
+    blocker: R16
+    opened_at: 2026-08-15
+  - section: "29.8"
+    reason: pending-implementation
+    justification: The coordinator handoff and crash-takeover trace. Coordinator resolution at bind time is the mechanism the handoff rests on and it is unimplemented.
+    blocker: R13
+    opened_at: 2026-08-15
+  - section: "29.9"
+    reason: pending-implementation
+    justification: The agent-pod eviction trace. The adapter emits no eviction event and the preStop hook drives no checkpoint today; both land with the holder eviction path.
+    blocker: R16
+    opened_at: 2026-08-15
+  - section: "29.10"
+    reason: pending-implementation
+    justification: The structural analysis of the concurrent-session pod. What a pod partitions per slot and what it shares is assertable once the concurrent-slot harness exists.
+    blocker: R7
+    opened_at: 2026-08-15

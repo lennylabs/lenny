@@ -47,17 +47,17 @@ func TestComputeStandardSession(t *testing.T) {
 }
 
 // Task-mode reduces the steady-state pod count by mode_factor.
-// Using the same inputs above with mode_factor=10 (i.e., each pod
-// serves ~10 tasks before recycling), burst_mode_factor=1 (task pods
-// process sequentially):
+// A session pool with an explicit mode_factor reduces the steady term.
+// Using the same inputs above with mode_factor=10 (the pod serves ~10
+// sessions before recycling), burst_mode_factor=1 (sequential reuse):
 //
 //	steady = 105 / 10 = 10.5
 //	burst  = 50 / 1   = 50
 //	target = ceil(60.5) = 61
-func TestComputeTaskModeReducesSteady(t *testing.T) {
+func TestComputeModeFactorReducesSteady(t *testing.T) {
 	got, err := New().Compute(ScalingInputs{
 		PoolType:          PoolStandard,
-		Mode:              ModeTask,
+		Mode:              ModeSession,
 		BaseDemandP95:     2,
 		BurstP99Claims:    5,
 		SafetyFactor:      1.5,
@@ -71,19 +71,19 @@ func TestComputeTaskModeReducesSteady(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got.MinWarm != 61 {
-		t.Errorf("task-mode MinWarm: want 61, got %d", got.MinWarm)
+		t.Errorf("mode-factor MinWarm: want 61, got %d", got.MinWarm)
 	}
 }
 
-// Concurrent mode reduces both terms. Using maxConcurrent=8:
+// Service mode reduces both terms. Using maxConcurrent=8:
 //
 //	steady = 105 / 8 = 13.125
 //	burst  = 50 / 8  = 6.25
 //	target = ceil(19.375) = 20
-func TestComputeConcurrentModeReducesBothTerms(t *testing.T) {
+func TestComputeServiceModeReducesBothTerms(t *testing.T) {
 	got, err := New().Compute(ScalingInputs{
 		PoolType:          PoolStandard,
-		Mode:              ModeConcurrent,
+		Mode:              ModeService,
 		BaseDemandP95:     2,
 		BurstP99Claims:    5,
 		SafetyFactor:      1.5,
@@ -97,7 +97,7 @@ func TestComputeConcurrentModeReducesBothTerms(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got.MinWarm != 20 {
-		t.Errorf("concurrent MinWarm: want 20, got %d", got.MinWarm)
+		t.Errorf("service MinWarm: want 20, got %d", got.MinWarm)
 	}
 }
 

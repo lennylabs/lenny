@@ -1,0 +1,280 @@
+// SPDX-License-Identifier: MIT
+
+package plan_test
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/lennylabs/lenny/pkg/controller/warmpool/plan"
+	"github.com/lennylabs/lenny/pkg/sandbox/state"
+)
+
+func idle(names ...string) []plan.Pod {
+	pods := make([]plan.Pod, len(names))
+	for i, n := range names {
+		pods[i] = plan.Pod{Name: n, Phase: state.Idle}
+	}
+	return pods
+}
+
+func TestCompute(t *testing.T) {
+	tests := []struct {
+		name string
+		in   plan.Inputs
+		want plan.Plan
+	}{
+		{
+			name: "empty pool creates up to minWarm",
+			in:   plan.Inputs{MinWarm: 3, MaxWarm: 10},
+			want: plan.Plan{Create: 3},
+		},
+		{
+			name: "pool already at target is left alone",
+			in:   plan.Inputs{MinWarm: 3, MaxWarm: 10, Pods: idle("a", "b", "c")},
+			want: plan.Plan{WarmCount: 3, ReadyCount: 3},
+		},
+		{
+			name: "pool below target creates the gap",
+			in:   plan.Inputs{MinWarm: 3, MaxWarm: 10, Pods: idle("a")},
+			want: plan.Plan{Create: 2, WarmCount: 1, ReadyCount: 1},
+		},
+		{
+			name: "pool above target drains the excess idle pods",
+			in:   plan.Inputs{MinWarm: 3, MaxWarm: 10, Pods: idle("a", "b", "c", "d", "e")},
+			want: plan.Plan{Drain: []string{"a", "b"}, WarmCount: 5, ReadyCount: 5},
+		},
+		{
+			name: "maxWarm caps the create count below minWarm",
+			in:   plan.Inputs{MinWarm: 10, MaxWarm: 5},
+			want: plan.Plan{Create: 5},
+		},
+		{
+			name: "warming pods count as warm but not ready",
+			in: plan.Inputs{MinWarm: 3, MaxWarm: 10, Pods: []plan.Pod{
+				{Name: "w1", Phase: state.Warming},
+				{Name: "w2", Phase: state.SDKConnecting},
+				{Name: "i1", Phase: state.Idle},
+			}},
+			want: plan.Plan{WarmCount: 3, ReadyCount: 1},
+		},
+		{
+			name: "warming pods reduce the create count",
+			in: plan.Inputs{MinWarm: 3, MaxWarm: 10, Pods: []plan.Pod{
+				{Name: "w1", Phase: state.Warming},
+				{Name: "w2", Phase: state.Warming},
+			}},
+			want: plan.Plan{Create: 1, WarmCount: 2},
+		},
+		{
+			name: "claimed pods are not warm inventory",
+			in: plan.Inputs{MinWarm: 3, MaxWarm: 10, Pods: []plan.Pod{
+				{Name: "c1", Phase: state.Claimed},
+				{Name: "i1", Phase: state.Idle},
+			}},
+			want: plan.Plan{Create: 2, WarmCount: 1, ReadyCount: 1},
+		},
+		{
+			// With one session mode a pod serving concurrent sessions
+			// projects the coarse claimed phase (the former slot_active
+			// value collapsed into claimed), so it is not warm inventory:
+			// the planner counts neither pod as warm and creates the gap.
+			name: "concurrently-occupied claimed pods are not warm inventory",
+			in: plan.Inputs{MinWarm: 2, MaxWarm: 10, Pods: []plan.Pod{
+				{Name: "c1", Phase: state.Claimed},
+				{Name: "c2", Phase: state.Claimed},
+			}},
+			want: plan.Plan{Create: 2},
+		},
+		{
+			// A claimed pod is never a drain candidate even above target:
+			// only idle pods drain, so the planner sheds idle and leaves
+			// the claimed pod (whose claim carries live sessions) untouched.
+			name: "claimed pod is not a drain candidate even above target",
+			in: plan.Inputs{MinWarm: 1, MaxWarm: 10, Pods: []plan.Pod{
+				{Name: "c1", Phase: state.Claimed},
+				{Name: "c2", Phase: state.Claimed},
+				{Name: "i1", Phase: state.Idle},
+			}},
+			want: plan.Plan{WarmCount: 1, ReadyCount: 1},
+		},
+		{
+			// spec: §4.6.2 — a reserved pod is occupied: excluded from
+			// WarmCount/ReadyCount and surfaced separately in ReservedCount.
+			// Draining and terminal pods are ignored entirely.
+			name: "reserved counts occupied; draining and terminal ignored",
+			in: plan.Inputs{MinWarm: 2, MaxWarm: 10, Pods: []plan.Pod{
+				{Name: "i1", Phase: state.Idle},
+				{Name: "d1", Phase: state.Draining},
+				{Name: "f1", Phase: state.Failed},
+				{Name: "t1", Phase: state.Terminated},
+				{Name: "r1", Phase: state.Reserved},
+			}},
+			want: plan.Plan{Create: 1, WarmCount: 1, ReadyCount: 1, ReservedCount: 1},
+		},
+		{
+			// spec: §4.6.2 "reserved pods count as occupied" — a reserved
+			// pod depresses claimable idle inventory, so the planner must
+			// create the gap toward minWarm rather than treating the held
+			// pod as available.
+			name: "reserved pod does not count toward minWarm",
+			in: plan.Inputs{MinWarm: 2, MaxWarm: 10, Pods: []plan.Pod{
+				{Name: "r1", Phase: state.Reserved},
+				{Name: "r2", Phase: state.Reserved},
+			}},
+			want: plan.Plan{Create: 2, ReservedCount: 2},
+		},
+		{
+			// A reserved pod is never a drain candidate even above target:
+			// only idle pods drain. The planner sheds idle and leaves the
+			// reserved pod (held for its pinned tenant) untouched.
+			name: "reserved pod is not a drain candidate even above target",
+			in: plan.Inputs{MinWarm: 1, MaxWarm: 10, Pods: []plan.Pod{
+				{Name: "r1", Phase: state.Reserved},
+				{Name: "r2", Phase: state.Reserved},
+				{Name: "i1", Phase: state.Idle},
+			}},
+			want: plan.Plan{WarmCount: 1, ReadyCount: 1, ReservedCount: 2},
+		},
+		{
+			name: "cold pool with minWarm zero creates nothing",
+			in:   plan.Inputs{MinWarm: 0, MaxWarm: 5},
+			want: plan.Plan{},
+		},
+		{
+			name: "over target drains idle only, leaving warming pods",
+			in: plan.Inputs{MinWarm: 3, MaxWarm: 10, Pods: []plan.Pod{
+				{Name: "i1", Phase: state.Idle},
+				{Name: "i2", Phase: state.Idle},
+				{Name: "i3", Phase: state.Idle},
+				{Name: "i4", Phase: state.Idle},
+				{Name: "w1", Phase: state.Warming},
+				{Name: "w2", Phase: state.Warming},
+			}},
+			want: plan.Plan{Drain: []string{"i1", "i2", "i3"}, WarmCount: 6, ReadyCount: 4},
+		},
+		{
+			name: "drain is capped at the idle pod count",
+			in: plan.Inputs{MinWarm: 0, MaxWarm: 10, Pods: []plan.Pod{
+				{Name: "i1", Phase: state.Idle},
+				{Name: "i2", Phase: state.Idle},
+				{Name: "w1", Phase: state.Warming},
+				{Name: "w2", Phase: state.Warming},
+				{Name: "w3", Phase: state.Warming},
+			}},
+			want: plan.Plan{Drain: []string{"i1", "i2"}, WarmCount: 5, ReadyCount: 2},
+		},
+		{
+			name: "negative bounds are clamped to zero",
+			in:   plan.Inputs{MinWarm: -5, MaxWarm: -3, Pods: idle("a")},
+			want: plan.Plan{Drain: []string{"a"}, WarmCount: 1, ReadyCount: 1},
+		},
+		{
+			name: "minWarm above maxWarm targets maxWarm",
+			in:   plan.Inputs{MinWarm: 8, MaxWarm: 3},
+			want: plan.Plan{Create: 3},
+		},
+		{
+			name: "minWarm above maxWarm drains down to maxWarm",
+			in:   plan.Inputs{MinWarm: 8, MaxWarm: 3, Pods: idle("a", "b", "c", "d", "e")},
+			want: plan.Plan{Drain: []string{"a", "b"}, WarmCount: 5, ReadyCount: 5},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := plan.Compute(tc.in)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Compute() = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestComputeDrainIsDeterministic confirms the drain list is stable
+// regardless of the order pods are observed in, so successive
+// reconcile passes do not retire a different arbitrary pod each time.
+func TestComputeDrainIsDeterministic(t *testing.T) {
+	forward := plan.Inputs{MinWarm: 1, MaxWarm: 10, Pods: idle("delta", "alpha", "charlie", "bravo")}
+	reverse := plan.Inputs{MinWarm: 1, MaxWarm: 10, Pods: idle("bravo", "charlie", "alpha", "delta")}
+
+	gotForward := plan.Compute(forward)
+	gotReverse := plan.Compute(reverse)
+
+	if !reflect.DeepEqual(gotForward, gotReverse) {
+		t.Fatalf("drain plan depends on pod input order: %+v vs %+v", gotForward, gotReverse)
+	}
+	want := []string{"alpha", "bravo", "charlie"}
+	if !reflect.DeepEqual(gotForward.Drain, want) {
+		t.Errorf("Drain = %v, want %v (sorted ascending)", gotForward.Drain, want)
+	}
+}
+
+func pinned(names ...string) []plan.Pod {
+	pods := make([]plan.Pod, len(names))
+	for i, n := range names {
+		pods[i] = plan.Pod{Name: n, Phase: state.Idle, Pinned: true}
+	}
+	return pods
+}
+
+// spec: 5.2 (Pinned idle inventory), 4.6.1 (Warm Pool Controller)
+func TestComputePinnedIdleInventory_spec_5_2(t *testing.T) {
+	tests := []struct {
+		name string
+		in   plan.Inputs
+		want plan.Plan
+	}{
+		{
+			name: "pinned pods are not minWarm inventory and drain at maxWarm == minWarm",
+			in:   plan.Inputs{MinWarm: 2, MaxWarm: 2, Pods: pinned("p1", "p2")},
+			want: plan.Plan{Create: 2, PinnedIdleCount: 2, DrainPinned: []string{"p1", "p2"}},
+		},
+		{
+			name: "maxWarm above minWarm keeps one pinned pod and drains the first in sorted order",
+			in:   plan.Inputs{MinWarm: 2, MaxWarm: 3, Pods: pinned("p2", "p1")},
+			want: plan.Plan{Create: 2, PinnedIdleCount: 2, DrainPinned: []string{"p1"}},
+		},
+		{
+			name: "a wide maxWarm keeps every pinned pod",
+			in:   plan.Inputs{MinWarm: 2, MaxWarm: 4, Pods: pinned("p1", "p2")},
+			want: plan.Plan{Create: 2, PinnedIdleCount: 2},
+		},
+		{
+			name: "zero bounds drain every idle pod, pinned and unpinned",
+			in:   plan.Inputs{MinWarm: 0, MaxWarm: 0, Pods: append(pinned("p1"), idle("u1", "u2")...)},
+			want: plan.Plan{WarmCount: 2, ReadyCount: 2, PinnedIdleCount: 1, Drain: []string{"u1", "u2"}, DrainPinned: []string{"p1"}},
+		},
+		{
+			name: "a pinned reserved pod counts only as reserved",
+			in:   plan.Inputs{MinWarm: 1, MaxWarm: 1, Pods: []plan.Pod{{Name: "r1", Phase: state.Reserved, Pinned: true}}},
+			want: plan.Plan{Create: 1, ReservedCount: 1},
+		},
+		{
+			name: "an unpinned idle pod counts as before",
+			in:   plan.Inputs{MinWarm: 1, MaxWarm: 1, Pods: idle("u1")},
+			want: plan.Plan{WarmCount: 1, ReadyCount: 1},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := plan.Compute(tc.in)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("Compute = %+v, want %+v", got, tc.want)
+			}
+			if len(got.Drain) > got.ReadyCount || got.ReadyCount > got.WarmCount {
+				t.Errorf("want len(Drain) <= ReadyCount <= WarmCount, got %d, %d, %d", len(got.Drain), got.ReadyCount, got.WarmCount)
+			}
+			for _, d := range got.Drain {
+				for _, p := range got.DrainPinned {
+					if d == p {
+						t.Errorf("%s is in both Drain and DrainPinned", d)
+					}
+				}
+			}
+			if got.WarmCount+got.Create-len(got.Drain) < 0 || got.ReadyCount-len(got.Drain) < 0 {
+				t.Errorf("a status count goes negative: %+v", got)
+			}
+		})
+	}
+}

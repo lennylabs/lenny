@@ -1,0 +1,45 @@
+{{- /*
+Per-agent-namespace ResourceQuota (§17.2 resource governance, §17.8.2
+capacity-tier reference). One ResourceQuota is rendered into every
+namespace declared in agentNamespaces. It caps total pods and the
+aggregate CPU, memory, and ephemeral-storage requests so a controller
+bug or a misconfigured minWarm cannot exhaust cluster resources.
+
+The default values are the §17.8.2 ResourceQuota tier defaults; the
+chart selects the row matching capacityPlanning.tier. A per-namespace
+override at agentNamespaces[].resourceQuota replaces the tier-selected
+values for that one namespace, for deployments that size a namespace
+(for example lenny-agents-kata) differently from the tier baseline.
+
+Gated by resourceGovernance.resourceQuota.enabled (default true). §17.2
+requires the ResourceQuota in every agent namespace, and the
+lenny-preflight Job fails the install when it is missing, so the gate
+exists only for clusters that govern agent-namespace capacity by
+another mechanism.
+*/ -}}
+{{- if .Values.resourceGovernance.resourceQuota.enabled }}
+{{- $tier := .Values.capacityPlanning.tier }}
+{{- $tiers := .Values.resourceGovernance.resourceQuota.tiers }}
+{{- $preset := index $tiers $tier }}
+{{- if not $preset }}
+{{- fail (printf "capacityPlanning.tier is %q but resourceGovernance.resourceQuota.tiers has no matching entry; set tier to one of tier1, tier2, or tier3 (§17.8.2)" $tier) }}
+{{- end }}
+{{- range $ns := .Values.agentNamespaces }}
+{{- $q := mergeOverwrite (deepCopy $preset) (default dict $ns.resourceQuota) }}
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: lenny-agent-quota
+  namespace: {{ $ns.name }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+    lenny.dev/component: resource-governance
+spec:
+  hard:
+    pods: {{ $q.pods | quote }}
+    requests.cpu: {{ $q.requestsCPU | quote }}
+    requests.memory: {{ $q.requestsMemory | quote }}
+    requests.ephemeral-storage: {{ $q.requestsEphemeralStorage | quote }}
+{{- end }}
+{{- end }}

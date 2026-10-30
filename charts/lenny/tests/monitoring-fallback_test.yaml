@@ -1,0 +1,80 @@
+suite: §16.9 R8 Prometheus Operator CRD-absence fallback
+release:
+  name: lenny
+  namespace: lenny-system
+# No capabilities block: this suite renders against a cluster WITHOUT the
+# Prometheus Operator (monitoring.coreos.com/v1 absent), so it exercises
+# the §16.9 R8 automatic fallback. F-16.9.4 / F-16.9.6.
+tests:
+  # spec: §16.9 R8 / F-16.9.4 — monitoring.format=prometheusrule (the
+  # default) degrades to a ConfigMap rule file when the operator CRDs are
+  # absent, so `kubectl apply` does not fail on a missing PrometheusRule CRD.
+  - it: degrades the default prometheusrule format to a ConfigMap when the operator is absent
+    template: prometheusrule.yaml
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: lenny-alerting-rules
+
+  # spec: §16.9 R8 — format=both also degrades to the ConfigMap half only
+  # when the operator is absent (the PrometheusRule half would fail apply).
+  - it: degrades format=both to the ConfigMap only when the operator is absent
+    template: prometheusrule.yaml
+    set:
+      monitoring.format: both
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+
+  # spec: §16.9 R8 — explicit format=configmap is unaffected by operator
+  # presence; it always renders the ConfigMap.
+  - it: renders the ConfigMap for an explicit configmap format
+    template: prometheusrule.yaml
+    set:
+      monitoring.format: configmap
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+
+  # spec: §16.9 R8 / F-16.9.4 — the scrape monitors are not rendered at all
+  # when the operator CRDs are absent, even if monitoring.format selects
+  # them, so a stock install never emits a ServiceMonitor that fails apply.
+  - it: renders no ServiceMonitor when the operator is absent
+    template: servicemonitor.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders no PodMonitor when the operator is absent
+    template: podmonitor.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # spec: F-16.9.4 — even an explicit serviceMonitor.enabled=true cannot
+  # force a ServiceMonitor onto a cluster without the operator CRDs; the
+  # CRD-presence gate wins.
+  - it: the enabled flag does not override the operator-absence gate
+    template: servicemonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 0
+
+# §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
+# value with no default; a placeholder lets the gateway-deployment
+# annotation `required` guard render in this suite.
+set:
+  global.spiffeTrustDomain: cluster.local
+  # §13.2 (K8S-033): the dedicated CoreDNS Service ClusterIP, required when
+  # agentNamespaces is configured (the chart default). F-13.2.3.
+  coredns.clusterIP: 10.96.0.53

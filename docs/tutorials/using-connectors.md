@@ -112,7 +112,7 @@ Save the `session_id` and `uploadToken` from the response.
 SESSION_ID="sess_01..."
 
 curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/finalize" \
-  -H "X-Upload-Token: $UPLOAD_TOKEN" \
+  -H "X-Lenny-Upload-Token: $UPLOAD_TOKEN" \
   -H "Content-Type: application/json" -d '{}' | jq .
 
 curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/start" \

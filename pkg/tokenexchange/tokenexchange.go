@@ -74,6 +74,10 @@ type Token struct {
 	Scope           []string
 	Audience        []string
 	Typ             TokenType
+	// AuthorizedTools is the §13.3 narrowed operability-tool allowlist.
+	// An exchange may preserve or further narrow it; broadening (a
+	// requested tool not present on the subject) is rejected.
+	AuthorizedTools []string
 	Exp             time.Time
 }
 
@@ -95,7 +99,7 @@ type Request struct {
 	// Subject is the token being exchanged.
 	Subject Token
 
-	// Actor is the parent-session token in a delegation child-minting
+	// Actor is the delegating caller's token in a delegation child-minting
 	// exchange; nil for rotation and scope-narrowing exchanges.
 	Actor *Token
 
@@ -133,7 +137,44 @@ type Issued struct {
 	Scope           []string
 	Audience        []string
 	Typ             TokenType
+	// AuthorizedTools is the §13.3 operability-tool allowlist carried onto
+	// the issued token: the subject's list when the request narrows
+	// nothing, or the requested subset when it does. For a child-minting
+	// exchange (actor_token present) it is intersected with the issued
+	// scope per §13.3 enforcement rule (e).
+	AuthorizedTools []string
 	Exp             time.Time
+	// Act is the §13.3 RFC 8693 `act` claim of the issued token: the
+	// actor token's sub, tenant_id, session_id, and delegation_depth.
+	// Validate sets it when the request carries an actor_token, and only
+	// then; it is nil for rotation, scope narrowing, and lease issuance.
+	Act *Actor
+}
+
+// Actor is the identity of the delegating caller an a2a_delegation child
+// token names in its `act` claim. It mirrors the four fields the §13.3
+// "Lenny JWT claim structure" `act` row lists, copied from the actor
+// token rather than from the subject, so the child names the caller that
+// delegated even when the subject is a different principal.
+type Actor struct {
+	Subject         string
+	TenantID        string
+	SessionID       string
+	DelegationDepth int
+}
+
+// actorOf returns the §13.3 `act` identity of the actor token, or nil when
+// the exchange carries no actor_token.
+func actorOf(t *Token) *Actor {
+	if t == nil {
+		return nil
+	}
+	return &Actor{
+		Subject:         t.Subject,
+		TenantID:        t.TenantID,
+		SessionID:       t.SessionID,
+		DelegationDepth: t.DelegationDepth,
+	}
 }
 
 // SkewAllowance is the §13.3 ±1s server-side skew on expiry checks.
@@ -187,6 +228,25 @@ func Validate(r Request) (Issued, error) {
 	// already appear in the subject's audience list.
 	if !isSubset(r.Requested.Audience, r.Subject.Audience) {
 		return Issued{}, &ExchangeError{Code: "invalid_request", Reason: "audience_broadened"}
+	}
+
+	// §13.3 authorized_tools (table row + enforcement rule (e)):
+	// "preserving or narrowing ... broadening is rejected". A requested
+	// allowlist that names a tool the subject did not hold is a broadening
+	// attempt and is rejected; an empty requested allowlist preserves the
+	// subject's. For a child-minting exchange (actor_token present) the
+	// resulting allowlist is intersected with the issued scope, so a child
+	// whose scope dropped an operability tool cannot retain authorization
+	// for it.
+	if !isSubset(r.Requested.AuthorizedTools, r.Subject.AuthorizedTools) {
+		return Issued{}, &ExchangeError{Code: "invalid_request", Reason: "authorized_tools_broadened"}
+	}
+	authorizedTools := r.Subject.AuthorizedTools
+	if len(r.Requested.AuthorizedTools) > 0 {
+		authorizedTools = r.Requested.AuthorizedTools
+	}
+	if r.Actor != nil && len(authorizedTools) > 0 {
+		authorizedTools = intersect(authorizedTools, r.Requested.Scope)
 	}
 
 	// §13.3 caller_type: cannot elevate.
@@ -243,8 +303,12 @@ func Validate(r Request) (Issued, error) {
 		DelegationDepth: depth,
 		Scope:           r.Requested.Scope,
 		Audience:        r.Requested.Audience,
+		AuthorizedTools: authorizedTools,
 		Typ:             issuedTyp,
 		Exp:             exp,
+		// spec: §13.3 "Lenny JWT claim structure" — `act` is "Set when
+		// `actor_token` is present".
+		Act: actorOf(r.Actor),
 	}, nil
 }
 
@@ -273,6 +337,26 @@ func isSubset(candidate, universe []string) bool {
 		}
 	}
 	return true
+}
+
+// intersect returns the entries of a that also appear in b, preserving a's
+// order. It backs the §13.3 child-minting authorized_tools narrowing
+// (allowlist ∩ issued scope).
+func intersect(a, b []string) []string {
+	if len(a) == 0 || len(b) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(b))
+	for _, s := range b {
+		set[s] = struct{}{}
+	}
+	var out []string
+	for _, s := range a {
+		if _, ok := set[s]; ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func defaultString[T ~string](a, b T) T {

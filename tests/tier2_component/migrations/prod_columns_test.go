@@ -1,0 +1,1352 @@
+//go:build component
+
+// SPDX-License-Identifier: MIT
+
+package migrations_test
+
+import (
+	"context"
+	"errors"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/lennylabs/lenny/tests/testinfra/containers"
+)
+
+// prodMigrationSchema records the schema object each production
+// migration from 0003 onward introduces. The migration suite asserts
+// every migration's forward contract against a real Postgres and that
+// its .down.sql reverses exactly that object. Keyed by migration
+// number, the table also satisfies scripts/lint-migrations.sh, which
+// requires every migration to be referenced by number in a test.
+var prodMigrationSchema = []struct {
+	migration string
+	table     string
+	create    bool
+	columns   []string
+}{
+	{migration: "0003", table: "users", create: true},
+	{migration: "0004", table: "connectors", create: true},
+	{migration: "0005", table: "idempotency_keys", create: true},
+	{migration: "0006", table: "tenants", columns: []string{"max_concurrent_sessions"}},
+	{migration: "0007", table: "tenants", columns: []string{"storage_quota_bytes"}},
+	{migration: "0008", table: "sessions", columns: []string{"workspace_plan"}},
+	{migration: "0009", table: "users", columns: []string{"processing_restricted", "erasure_job_id"}},
+	{migration: "0010", table: "sessions", columns: []string{"legal_hold"}},
+	{migration: "0011", table: "sessions", columns: []string{"experiment_id", "experiment_variant_id", "experiment_inherited"}},
+	{migration: "0012", table: "tenants", columns: []string{"min_isolation_profile"}},
+	{migration: "0013", table: "runtime_definitions", columns: []string{"labels"}},
+	{migration: "0014", table: "sessions", columns: []string{"environment"}},
+	{migration: "0015", table: "runtime_definitions", columns: []string{"agent_interface"}},
+	{migration: "0016", table: "runtime_definitions", columns: []string{"published_metadata"}},
+	{migration: "0017", table: "runtime_definitions", columns: []string{"capability_inference_mode"}},
+	{migration: "0018", table: "runtime_definitions", columns: []string{"tool_capability_overrides"}},
+	{migration: "0019", table: "runtime_definitions", columns: []string{"setup_policy"}},
+	{migration: "0020", table: "runtime_definitions", columns: []string{"capabilities"}},
+	{migration: "0021", table: "runtime_definitions", columns: []string{"min_platform_version"}},
+	// 0022 introduces the runtime policy JSONB column as task_policy; the
+	// §5.2 mode collapse (migration 0167) renames it to session_policy, so
+	// the apply-all chain ends with session_policy and the 0167 down renames
+	// it back to task_policy before 0022's down drops it.
+	{migration: "0022", table: "runtime_definitions", columns: []string{"session_policy"}},
+	{migration: "0023", table: "runtime_definitions", columns: []string{"base_runtime"}},
+	{migration: "0024", table: "tenants", columns: []string{"elicitation_content_integrity", "billing_erasure_policy", "no_environment_policy"}},
+	{migration: "0025", table: "tenants", columns: []string{"experiment_targeting"}},
+	// 0039 adds the §4 / §12.9 KMS-envelope key_version column to the
+	// credentials table; the secret column's type change to BYTEA is
+	// covered by TestCredentialSecretEnvelopeColumn below.
+	{migration: "0039", table: "credentials", columns: []string{"secret_key_version"}},
+	// 0040 adds the §5.2 concurrent-execution-mode columns to the
+	// sandbox_warm_pools registry. concurrency_style is added here too, but the
+	// §5.2 mode collapse retires it: migration 0167 drops the column (coupled
+	// with the pkg/gateway/poolstore ConcurrencyStyle removal per the proposal),
+	// so it does not exist after the full prod chain. concurrency_style is
+	// intentionally absent from this list; the drop is asserted by the 0167
+	// entry below.
+	{migration: "0040", table: "sandbox_warm_pools", columns: []string{
+		"max_concurrent", "acknowledge_process_level_isolation",
+		"cleanup_timeout_seconds", "allow_cross_tenant_reuse",
+	}},
+	// 0042 creates the §12.8 GDPR erasure-job registry. The
+	// processing-restriction trigger it also installs is covered by
+	// TestProcessingRestrictionTrigger.
+	{migration: "0042", table: "erasure_jobs", create: true},
+	// 0043 adds the §11.2.1 billing-correction columns and the
+	// stream-dedup column to billing_events.
+	{migration: "0043", table: "billing_events", columns: []string{
+		"corrects_sequence", "correction_reason_code", "correction_detail",
+		"pod_minutes", "stream_entry_id",
+	}},
+	// 0044 adds the §9.4 pgvector embedding column to agent_memory,
+	// completing the "Postgres + pgvector" default memory backend.
+	{migration: "0044", table: "agent_memory", columns: []string{"embedding"}},
+	// 0045 creates the TESTING.md §12.2.1 EvictionStateStore registry. The
+	// table is tenant-scoped and carries the same RLS policy every
+	// tenant-scoped table uses (see TESTING.md §12.2.1).
+	{migration: "0045", table: "session_eviction_state", create: true},
+	// 0046 creates the §25.5 webhook subscription registry for the
+	// lenny-ops control plane. Platform-scoped (no RLS, no tenant
+	// column).
+	{migration: "0046", table: "ops_event_subscriptions", create: true},
+	// 0047 extends lenny_tenant_guard() with the §4.2 platform-admin
+	// __all__ cross-tenant bypass and the §12.3 tenant-id
+	// format validation. The trigger behavior is covered by the
+	// pgtenant.InAllTenants suite under
+	// tests/tier2_component/rls/all_tenants_test.go.
+	// 0048 creates the §9.3 connector_credentials table — the
+	// per-(tenant, connector, user) OAuth refresh-token store wrapped
+	// under the tenant KMS key.
+	{migration: "0048", table: "connector_credentials", create: true},
+	// 0049 creates the §12.5 artifact_store catalog table tracking
+	// every MinIO blob with its tenant, session, lifecycle state,
+	// SSE-KMS key alias, legal-hold flag, and tombstone deadline.
+	{migration: "0049", table: "artifact_store", create: true},
+	// 0050 adds the §4.2 session-record fields the spec lists: cwd,
+	// pod_assignment, recovery_generation, coordination_generation,
+	// and schema_version. spec: §4.2.
+	{migration: "0050", table: "sessions", columns: []string{
+		"cwd", "pod_assignment", "recovery_generation",
+		"coordination_generation", "schema_version",
+	}},
+	// 0051 rewrites every lenny_tenant_isolation policy in the
+	// hard-error current_setting(..., false) form per §4.2
+	// so an unset GUC raises rather than silently filtering rows out.
+	// The policy bodies are covered by the §12.3 RLS suite under
+	// tests/tier2_component/rls.
+	// 0052 introduces the §4.2 admin-mode trigger that
+	// rejects writes to runtime_tenant_access / pool_tenant_access
+	// when lenny.admin_mode = 'true' is not set. The trigger behavior
+	// is covered by tests/tier2_component/rls/admin_mode_test.go.
+	// 0053 tenant-scopes the connectors table per §4.2;
+	// covered by the §4.2 RLS suite.
+	// 0054 tenant-scopes the delegation_policies table per §4.2; covered by the §4.2 RLS suite.
+	// 0055 adds the §4.2 retry_count, policy enforcement
+	// state, and resume window the Session Manager tracks on each
+	// session row.
+	{migration: "0055", table: "sessions", columns: []string{
+		"retry_count", "policy_enforcement_state", "resume_eligible_until",
+	}},
+	// 0056 creates the §4.2 session_dlq_archive scaffold —
+	// the tenant-scoped table the future DLQ archive feature writes
+	// to. v1 has no consumer; the migration lands the table, the
+	// composite PK (tenant_id, session_id, message_id), the
+	// lenny_tenant_guard trigger, and the lenny_tenant_isolation
+	// policy.
+	{migration: "0056", table: "session_dlq_archive", create: true},
+	// 0057 extends lenny_tenant_guard() with the §4.2
+	// LENNY_POOLER_MODE guard: the __all__ sentinel is rejected
+	// unless lenny.allow_all_sentinel = 'true' is opted in via SET
+	// LOCAL by pgtenant.InAllTenants. The trigger and policy
+	// behavior are covered by
+	// tests/tier2_component/rls/all_tenants_test.go.
+	// 0060 extends session_eviction_state with the §4.4
+	// columns the eviction fallback writer must populate so the §7.2
+	// resume path can fence coordinator handoffs and surface
+	// workspaceLost / context truncation to the runtime.
+	{migration: "0060", table: "session_eviction_state", columns: []string{
+		"recovery_generation", "coordination_generation",
+		"conversation_cursor", "evicted_at",
+		"workspace_lost", "context_truncated",
+	}},
+	// 0061 adds the §4.4 freshness timestamp the
+	// `lenny_checkpoint_stale_sessions` gauge / `CheckpointStale`
+	// alert reads. The gateway updates it on every successful
+	// checkpoint regardless of trigger (periodic, eviction,
+	// pre-drain).
+	{migration: "0061", table: "sessions", columns: []string{
+		"last_successful_checkpoint_at",
+	}},
+	// 0062 created the §4.4 partial-checkpoint manifest
+	// table session_partial_checkpoint_manifest. Migration 0178 drops
+	// that table and creates checkpoint_manifest with the full §10.1
+	// column set in its place, so at head the 0062 table is absent; its
+	// forward and rollback contract is asserted through the 0175 entry
+	// below (whose .down.sql recreates the 0062 table). This comment
+	// keeps 0062 referenced by number for scripts/lint-migrations.sh.
+	// 0058 adds §4.3 / §13.3 per-dialect cap columns to issued_tokens:
+	// audiences TEXT[] and dialect_cap_applied_seconds INT.
+	{migration: "0058", table: "issued_tokens", columns: []string{
+		"audiences", "dialect_cap_applied_seconds",
+	}},
+	// 0059 widens the §4.3 credential scope to include environment on both
+	// credentials and connector_credentials.
+	{migration: "0059", table: "credentials", columns: []string{"environment"}},
+	{migration: "0059", table: "connector_credentials", columns: []string{"environment"}},
+	// 0063 adds the §4.4 artifact_type column to artifact_store.
+	{migration: "0063", table: "artifact_store", columns: []string{"artifact_type"}},
+	// 0064 adds the §4.4 soft-delete tombstone column to session_eviction_state.
+	{migration: "0064", table: "session_eviction_state", columns: []string{"deleted_at"}},
+	// 0065 installs the lenny_tenant_guard trigger on session_eviction_state.
+	// 0066 extends the artifact_store_artifact_type_check constraint to include
+	// the session_log artifact kind; no column added.
+	// 0067 creates the §4.4 session_checkpoints per-session checkpoint catalog.
+	{migration: "0067", table: "session_checkpoints", create: true},
+	// 0068 adds the §4.5 content-addressed workspace snapshot hash to sessions.
+	{migration: "0068", table: "sessions", columns: []string{"workspace_snapshot_hash"}},
+	// 0069 adds the §5.1 runtime registry fields allow_self_recursion,
+	// allowed_resource_classes, and supported_providers to runtime_definitions.
+	{migration: "0069", table: "runtime_definitions", columns: []string{
+		"allow_self_recursion", "allowed_resource_classes", "supported_providers",
+	}},
+	// 0070 adds the §4.9 cache_scope field to credential_pools.
+	{migration: "0070", table: "credential_pools", columns: []string{"cache_scope"}},
+	// 0071 adds the §4.9 proxy-mode delivery fields to credential_pools.
+	{migration: "0071", table: "credential_pools", columns: []string{
+		"delivery_mode", "proxy_dialect", "proxy_endpoint",
+	}},
+	// 0072 adds the §5.1 credential_capabilities block to runtime_definitions.
+	{migration: "0072", table: "runtime_definitions", columns: []string{"credential_capabilities"}},
+	// 0073 adds the §4.9 last_used_at timestamp to credentials.
+	{migration: "0073", table: "credentials", columns: []string{"last_used_at"}},
+	// 0074 adds the §5.1 limits, setup_command_policy, and default_pool_config
+	// blocks to runtime_definitions.
+	{migration: "0074", table: "runtime_definitions", columns: []string{
+		"limits", "setup_command_policy", "default_pool_config",
+	}},
+	// 0075 adds the §5.1 workspace_defaults, runtime_options_schema, and
+	// shared_assets blocks to runtime_definitions.
+	{migration: "0075", table: "runtime_definitions", columns: []string{
+		"workspace_defaults", "runtime_options_schema", "shared_assets",
+	}},
+	// 0076 adds the §5.1 sdk_warm_blocking_paths list to runtime_definitions.
+	{migration: "0076", table: "runtime_definitions", columns: []string{"sdk_warm_blocking_paths"}},
+	// 0077 adds the §4.9 credential_policy block to tenants.
+	{migration: "0077", table: "tenants", columns: []string{"credential_policy"}},
+	// 0078 adds the §4.9 cache_policy block to credential_pools.
+	{migration: "0078", table: "credential_pools", columns: []string{"cache_policy"}},
+	// 0079 adds the §13.2 egress_profile column to sandbox_warm_pools.
+	{migration: "0079", table: "sandbox_warm_pools", columns: []string{"egress_profile"}},
+	// 0080 adds a partial index on sessions(pod_assignment) for §5.2 slot-counter
+	// rehydration; no column added.
+	// 0081 adds the §5.2 / §12.9 workspace_tier column to runtime_definitions.
+	{migration: "0081", table: "runtime_definitions", columns: []string{"workspace_tier"}},
+	// 0082 replaces the single-column idempotency_keys index with a composite
+	// (tenant_id, stored_at) index for the §11.5 GC sweep; no column added.
+	// 0083 adds the §4.6.2 pool_config_generation counter to sandbox_warm_pools.
+	{migration: "0083", table: "sandbox_warm_pools", columns: []string{"pool_config_generation"}},
+	// 0084 persists the §7.1 execution_mode and scrub_policy on sessions.
+	{migration: "0084", table: "sessions", columns: []string{"execution_mode", "scrub_policy"}},
+	// 0085 adds the §5.2 task_policy JSONB column to sandbox_warm_pools; migration
+	// 0167 renames it to session_policy (asserted by the 0167 entry below), so
+	// task_policy is intentionally absent from this list.
+	// 0086 adds the §7.1 metadata JSONB column to sessions.
+	{migration: "0086", table: "sessions", columns: []string{"metadata"}},
+	// 0087 persists the §7.3 retry_policy and last_checkpoint_workspace_bytes on
+	// sessions.
+	{migration: "0087", table: "sessions", columns: []string{
+		"retry_policy", "last_checkpoint_workspace_bytes",
+	}},
+	// 0088 adds the §7.3 last_seq monotonic counter to sessions.
+	{migration: "0088", table: "sessions", columns: []string{"last_seq"}},
+	// 0089 persists the §7.3 workspace_root captured at first Bind on sessions.
+	{migration: "0089", table: "sessions", columns: []string{"workspace_root"}},
+	// 0090 persists the §8.2 tracing_context and §8.3 cascade_on_failure on
+	// sessions.
+	{migration: "0090", table: "sessions", columns: []string{"tracing_context", "cascade_on_failure"}},
+	// 0091 adds the §10.6 environment_id column to billing_events.
+	{migration: "0091", table: "billing_events", columns: []string{"environment_id"}},
+	// 0092 adds a composite index on sessions(tenant_id, user_id) for the §11.4
+	// full_revoke lookup; no column added.
+	// 0093 grants DELETE on billing_events to lenny_erasure for §12.8 Phase 4
+	// tenant teardown; no column added.
+	// 0094 persists the §8.5 tree_visibility delegation boundary on sessions.
+	{migration: "0094", table: "sessions", columns: []string{"tree_visibility"}},
+	// 0095 persists the §10.7 delegation_depth on sessions.
+	{migration: "0095", table: "sessions", columns: []string{"delegation_depth"}},
+	// 0097 adds the §10.6 tenant RBAC-config blob (identityProvider,
+	// tokenPolicy, capabilities taxonomy, mcpAnnotationMapping overrides)
+	// as the rbac_config jsonb column on tenants.
+	{migration: "0097", table: "tenants", columns: []string{"rbac_config"}},
+	// 0098 adds the §10.7 idempotency_key column to eval_results.
+	{migration: "0098", table: "eval_results", columns: []string{"idempotency_key"}},
+	// 0099 persists the §8.2 delegation_lease slice on sessions.
+	{migration: "0099", table: "sessions", columns: []string{"delegation_lease"}},
+	// 0101 adds the §11.2 token quota columns to tenants.
+	{migration: "0101", table: "tenants", columns: []string{
+		"token_quota_per_window", "quota_reset_period",
+	}},
+	// 0102 adds a partial index on sessions(tenant_id) for the §11.2 concurrent-
+	// session quota check; no column added.
+	// 0103 adds the §12.9 / §15.1 workspace_tier CHECK constraint to tenants; no
+	// column added.
+	// 0104 creates the §11.2.1 billing_correction_pending dual-control registry.
+	{migration: "0104", table: "billing_correction_pending", create: true},
+	// 0105 adds the §12.8 tenant deletion lifecycle state column to tenants.
+	{migration: "0105", table: "tenants", columns: []string{"state"}},
+	// 0106 adds the §12.5 gc_priority column to tenants.
+	{migration: "0106", table: "tenants", columns: []string{"gc_priority"}},
+	// 0107 creates the §12.3 SIEM outbox forwarder checkpoint table.
+	{migration: "0107", table: "siem_delivery_state", create: true},
+	// 0108 creates the §12.6 agent_pod_state_notify trigger function for
+	// LISTEN/NOTIFY-based pod-state watching; no column added.
+	// 0109 persists the §14 CreateSession request envelope fields on sessions.
+	{migration: "0109", table: "sessions", columns: []string{"env", "request_envelope"}},
+	// 0110 adds the §9.2 elicitation_policy block to sandbox_warm_pools.
+	{migration: "0110", table: "sandbox_warm_pools", columns: []string{"elicitation_policy"}},
+	// 0111 creates the §12.4 session_leases Postgres advisory-lock fallback table.
+	{migration: "0111", table: "session_leases", create: true},
+	// 0112 added the slot_id column to session_checkpoints for per-slot
+	// checkpoint retention. Migration 0180 drops it: every session is bound to
+	// a slot whose identifier is the session's own, so the column carried no
+	// information beyond session_id and the §12.5 "latest 2" cap is keyed on
+	// session_id alone. The column is absent after the full prod chain, so the
+	// entry keeps its number for the lint's every-migration-is-tested rule and
+	// names no column, the way 0040/concurrency_style and 0022/task_policy are
+	// handled above. spec: §10.1, §12.5.
+	{migration: "0112", table: "session_checkpoints"},
+	// 0113 adds the §11.2.1 event-type-specific ("for X events only")
+	// conditional fields to billing_events as a single nullable JSONB
+	// blob, completing the §11.2.1 event schema (F-11.2.12).
+	{migration: "0113", table: "billing_events", columns: []string{"conditional_fields"}},
+	// 0114 adds the §9.3 / §5.1 connector capability-inference
+	// metadata to connectors: the inference mode, the inferred capability
+	// union, the per-tool capability map, and the last-refresh timestamp
+	// (F-9.3.8).
+	{migration: "0114", table: "connectors", columns: []string{
+		"capability_inference_mode", "capabilities", "tool_capabilities", "capabilities_refreshed_at",
+	}},
+	// 0115 creates the §11.2 / §12.4 durable checkpoint
+	// of the §8.2 delegation tree budget counters (tree_size,
+	// token_budget_consumed, tree_memory_bytes) keyed by
+	// (tenant_id, root_session_id), so the Redis dlg:* counters are
+	// reconstructed via the MAX rule on Redis recovery (F-11.2.5 /
+	// F-12.4.8).
+	{migration: "0115", table: "delegation_tree_budget", create: true},
+	// 0116 creates the §25.4 ops_idempotency_keys registry for lenny-ops
+	// mutating endpoints.
+	{migration: "0116", table: "ops_idempotency_keys", create: true},
+	// 0117 creates the §25.10 bootstrap_seed_snapshot desired-state store.
+	{migration: "0117", table: "bootstrap_seed_snapshot", create: true},
+	// 0118 extends the §25.5 ops_event_subscriptions registry to the full
+	// webhook column set (secret hash + fingerprint, the tenant-isolation
+	// columns, the generation counter, the severity filter) and adds the
+	// ops_event_deliveries delivery-tracking table. Both platform-scoped.
+	{migration: "0118", table: "ops_event_subscriptions", columns: []string{
+		"severity", "secret_hash", "secret_fingerprint", "previous_secret_fingerprint",
+		"secret_rotated_at", "description", "created_by", "created_by_tenant_id",
+		"tenant_filter", "generation", "updated_at", "active",
+	}},
+	{migration: "0118", table: "ops_event_deliveries", create: true},
+	// 0119 creates the §11.2 token_usage_checkpoint durable Redis counter
+	// checkpoint table.
+	{migration: "0119", table: "token_usage_checkpoint", create: true},
+	// 0120 adds the §15.1 draining_since timestamp to
+	// sandbox_warm_pools so the pool-drain phase persists (F-15.1.8).
+	{migration: "0120", table: "sandbox_warm_pools", columns: []string{"draining_since"}},
+	// 0121-0125 add the remaining §25.4 / §25.8 / §25.9 / §25.11 ops_*
+	// platform-Postgres tables enumerated in §25.4
+	// (F-25.4.13). All platform-scoped (no RLS, no tenant column).
+	{migration: "0121", table: "ops_remediation_locks", create: true},
+	{migration: "0121", table: "ops_lock_epoch", create: true},
+	{migration: "0121", table: "ops_lock_conflicts", create: true},
+	{migration: "0122", table: "ops_escalations", create: true},
+	{migration: "0123", table: "ops_backups", create: true},
+	{migration: "0123", table: "ops_backup_schedule", create: true},
+	{migration: "0123", table: "ops_retention_policy", create: true},
+	{migration: "0123", table: "ops_restore_state", create: true},
+	{migration: "0124", table: "platform_upgrade_state", create: true},
+	{migration: "0124", table: "platform_upgrade_check_cache", create: true},
+	{migration: "0125", table: "audit_log_deferred_writes", create: true},
+	// 0126 creates the §25.11 ops_artifact_replication_state durable region
+	// replication state table.
+	{migration: "0126", table: "ops_artifact_replication_state", create: true},
+	// 0127 adds the §25.11 restore execution completion columns to
+	// ops_restore_state.
+	{migration: "0127", table: "ops_restore_state", columns: []string{
+		"job_id", "ledger_confirmed_at",
+		"ledger_confirmed_by", "ledger_confirmed_justification",
+	}},
+	// 0128 creates the §25.2 ops_operation_baselines historical p50/p90 table.
+	{migration: "0128", table: "ops_operation_baselines", create: true},
+	// 0130 adds the §8.6 lease-extension grant counters to
+	// delegation_tree_budget.
+	{migration: "0130", table: "delegation_tree_budget", columns: []string{
+		"ext_tokens", "ext_seconds", "ext_children",
+		"ext_parallel_children", "ext_tree_size",
+		"ext_file_export_files", "ext_file_export_bytes", "updated_at",
+	}},
+	// 0131 / 0132 add the §15.5 item 7 schema_version column to the
+	// session_messages MessageEnvelope rows (§15.4) and the
+	// session_checkpoints checkpoint-metadata catalog.
+	{migration: "0131", table: "session_messages", columns: []string{"schema_version"}},
+	{migration: "0132", table: "session_checkpoints", columns: []string{"schema_version"}},
+	// 0133 adds the §12.8 erasure_salt envelope-encrypted BYTEA column to
+	// tenants.
+	{migration: "0133", table: "tenants", columns: []string{"erasure_salt"}},
+	// 0134 creates the §24.13 / §10.5 schema_migration_phase tracking table.
+	{migration: "0134", table: "schema_migration_phase", create: true},
+	// 0135 creates the §25.8 platform_registry_config singleton table.
+	{migration: "0135", table: "platform_registry_config", create: true},
+	// 0136 creates the §25.11 ops_restore_test_results test-restore outcome
+	// table.
+	{migration: "0136", table: "ops_restore_test_results", create: true},
+	// 0137 adds the §17.8.2 bootstrap_min_warm cold-start override column to
+	// sandbox_warm_pools.
+	{migration: "0137", table: "sandbox_warm_pools", columns: []string{"bootstrap_min_warm"}},
+	// 0138 adds the §15.1 ETag optimistic-concurrency version counter to
+	// the first batch of admin resources to adopt the contract.
+	{migration: "0138", table: "custom_roles", columns: []string{"version"}},
+	{migration: "0138", table: "delegation_policies", columns: []string{"version"}},
+	{migration: "0138", table: "experiment_definitions", columns: []string{"version"}},
+	// 0139 extends the §15.1 ETag optimistic-concurrency version counter to
+	// the users and environments admin resources.
+	{migration: "0139", table: "users", columns: []string{"version"}},
+	{migration: "0139", table: "environments", columns: []string{"version"}},
+	// 0140 extends §15.1 ETag version to connectors and credential_pools.
+	{migration: "0140", table: "connectors", columns: []string{"version"}},
+	{migration: "0140", table: "credential_pools", columns: []string{"version"}},
+	// 0141 extends §15.1 ETag version to tenants.
+	{migration: "0141", table: "tenants", columns: []string{"version"}},
+	// 0142 extends §15.1 ETag version to runtime_definitions.
+	{migration: "0142", table: "runtime_definitions", columns: []string{"version"}},
+	// 0143 creates the §10.3 ca_rotation state-machine singleton table.
+	{migration: "0143", table: "ca_rotation", create: true},
+	// 0144 adds the §15.1 tenant suspension columns to tenants.
+	{migration: "0144", table: "tenants", columns: []string{
+		"suspended", "suspended_reason", "suspended_at", "suspended_by",
+	}},
+	// 0145 adds the §15.1 legal-hold provenance columns to sessions and
+	// artifact_store.
+	{migration: "0145", table: "sessions", columns: []string{
+		"legal_hold_set_by", "legal_hold_set_at", "legal_hold_note",
+	}},
+	{migration: "0145", table: "artifact_store", columns: []string{
+		"legal_hold_set_by", "legal_hold_set_at", "legal_hold_note",
+	}},
+	// 0146 adds the §15.1 role assignment provenance columns to users.
+	{migration: "0146", table: "users", columns: []string{
+		"role_assigned", "role_assigned_by", "role_assigned_at",
+	}},
+	// 0147 creates the §10.5 runtime_upgrade state-machine table.
+	{migration: "0147", table: "runtime_upgrade", create: true},
+	// 0148 creates the §10.1 session_checkpoint_meta barrier metadata table.
+	{migration: "0148", table: "session_checkpoint_meta", create: true},
+	// 0149 creates the §16.4 session_logs and stream_cursors range-partitioned
+	// EventStore tables.
+	{migration: "0149", table: "session_logs", create: true},
+	{migration: "0149", table: "stream_cursors", create: true},
+	// 0150 added the §10.1 at-most-one-active-partial-manifest partial
+	// unique index partial_manifest_active_uniq to
+	// session_partial_checkpoint_manifest; migration 0178 supersedes it
+	// with the same-named index on checkpoint_manifest scoped to the
+	// §10.1 key. No column added; this
+	// comment keeps 0150 referenced for scripts/lint-migrations.sh.
+	// 0151 adds the §4.6.2 reconciliation_resume_epoch counter to
+	// sandbox_warm_pools.
+	{migration: "0151", table: "sandbox_warm_pools", columns: []string{"reconciliation_resume_epoch"}},
+	// 0152 adds the §14 labels column to usage_events for label-scoped usage
+	// reports.
+	{migration: "0152", table: "usage_events", columns: []string{"labels"}},
+	// 0153 adds the §14 labels column to billing_events for label-scoped
+	// metering queries.
+	{migration: "0153", table: "billing_events", columns: []string{"labels"}},
+	// 0154 creates the §5.1 runtime_capability_overrides per-tenant override
+	// table.
+	{migration: "0154", table: "runtime_capability_overrides", create: true},
+	// 0155 adds the §6.1 sdk_warm_config circuit-breaker config to
+	// sandbox_warm_pools.
+	{migration: "0155", table: "sandbox_warm_pools", columns: []string{"sdk_warm_config"}},
+	// 0156 creates the §10.7 lenny_eval_aggregates materialized view, its
+	// SECURITY DEFINER refresh function, and the tenant-scoped read view;
+	// no column added.
+	// 0157 adds the §6.2 concurrent_max_pod_uptime_seconds retirement cap to
+	// sandbox_warm_pools.
+	{migration: "0157", table: "sandbox_warm_pools", columns: []string{"concurrent_max_pod_uptime_seconds"}},
+	// 0158 creates the §8.8 session_usage per-session token metering table.
+	{migration: "0158", table: "session_usage", create: true},
+	// 0159 adds the §6.2 / §11.3 last_agent_activity_at idle-clock column to
+	// sessions.
+	{migration: "0159", table: "sessions", columns: []string{"last_agent_activity_at"}},
+	// 0160 creates the §12.8 audit_redaction_receipts append-only receipt table.
+	{migration: "0160", table: "audit_redaction_receipts", create: true},
+	// 0161 creates the §4.8 / §8.3 interceptors platform-scoped registry.
+	{migration: "0161", table: "interceptors", create: true},
+	// 0162 adds the §12.8 force-delete hold override columns to tenants.
+	{migration: "0162", table: "tenants", columns: []string{
+		"force_delete_hold_override", "force_delete_justification",
+		"force_delete_by", "force_delete_at",
+	}},
+	// 0163 creates the §8.2 / §9.2 / §16.7 deployment_config_state singleton
+	// table.
+	{migration: "0163", table: "deployment_config_state", create: true},
+	// 0164 creates the §10.1 coordination_lease barrier-target mirror table.
+	{migration: "0164", table: "coordination_lease", create: true},
+	// 0165 grants column-level UPDATE on audit_log(payload,
+	// payload_canonical_json) to lenny_erasure for §12.8 in-place redaction;
+	// no column added.
+	// 0166 creates the §12.8 legal_hold_escrow_records Phase 3.5 force-delete
+	// escrow ledger.
+	{migration: "0166", table: "legal_hold_escrow_records", create: true},
+	// 0167 re-keys the §5.2 execution-mode CHECK on runtime_definitions to
+	// (session, service), adds the §12.6 gateway-written per-pod recycle
+	// counters to agent_pod_state (both nullable until the gateway first
+	// writes them), drops the retired sandbox_warm_pools.concurrency_style
+	// column, and renames the task_policy JSONB columns to session_policy on
+	// both registries. The pool session_policy column is asserted here; the
+	// runtime session_policy column is attributed to 0022 (its introducing
+	// migration) above. spec: §5.2, §12.6.
+	{migration: "0167", table: "agent_pod_state", columns: []string{
+		"sessions_served", "scrub_failure_count",
+	}},
+	{migration: "0167", table: "sandbox_warm_pools", columns: []string{"session_policy"}},
+	// 0168 relocates the §7.2 / §8.8 Terminated/Suspended session-condition
+	// facts off Sandbox.status onto the Postgres session row (the §5.2 mode
+	// collapse makes the WarmPoolController the sole writer of Sandbox.status)
+	// and persists the §7.1 conversationContinuity envelope half resolved at
+	// create time and frozen for the session lifetime. All columns are
+	// append-only ALTER TABLE additions on the sessions row. spec: §7.1, §7.2,
+	// §8.8.
+	{migration: "0168", table: "sessions", columns: []string{
+		"conversation_continuity", "terminated_at", "terminated_reason",
+		"suspended_at", "suspended_reason",
+	}},
+	// 0169 adds the §4.7 / §5.1 require_so_peercred runtime-registry mirror
+	// of the Runtime.spec.requireSoPeercred nonce-only activation field the
+	// gateway pool admission gate evaluates. spec: §4.7, §5.1.
+	{migration: "0169", table: "runtime_definitions", columns: []string{"require_so_peercred"}},
+	// 0170 adds the §4.7 / §5.3 acknowledge_nonce_only_auth pool-level
+	// opt-in flag, of the same class as allow_standard_isolation, that the
+	// gateway pool admission path requires before a pool may reference a
+	// nonce-only runtime. spec: §4.7, §5.3.
+	{migration: "0170", table: "sandbox_warm_pools", columns: []string{"acknowledge_nonce_only_auth"}},
+	// 0171 adds the §13.2 per-pool dns_policy opt-out column on
+	// sandbox_warm_pools, alongside egress_profile (migration 0079). Empty
+	// keeps the dedicated lenny-system CoreDNS; 'cluster-default' reverts a
+	// runc pool to the kube-system resolver. spec: §13.2.
+	{migration: "0171", table: "sandbox_warm_pools", columns: []string{"dns_policy"}},
+	// 0172 adds the §15.1 elicitation-content-integrity provenance columns
+	// to the tenants row, alongside the mode column (migration 0024). The
+	// PUT records mode, justification, changedAt, and changedBy; the GET
+	// returns justification, changedAt, and changedBy. spec: §15.1.
+	{migration: "0172", table: "tenants", columns: []string{
+		"elicitation_content_integrity_justification",
+		"elicitation_content_integrity_changed_at",
+		"elicitation_content_integrity_changed_by",
+	}},
+	// 0173 creates the §11.7-item-7 lenny_ddl CREATE-privileged role, the
+	// lenny_app USAGE default on the DDL role's runtime-created per-tenant
+	// billing_seq_/audit_seq_ sequences, and the fixed platform-chain audit
+	// sequence; it adds no column and creates no table (the per-tenant
+	// sequences are provisioned at tenant-create time, §15.1). The role,
+	// grants, and the platform sequence are asserted directly in
+	// migrations/0173_billing_audit_ddl_role_test.go. spec: §11.7, §15.1,
+	// §10.2.
+	//
+	// 0174 creates the fixed billing_seq_/audit_seq_ sequences for the
+	// built-in "default" tenant, the same category of fix 0173 applies to
+	// the "platform" pseudo-tenant chain: migrations 0053/0054 insert the
+	// "default" tenant row directly, bypassing the admin-API tenant-create
+	// path (§15.1) that would otherwise provision its sequences, so its
+	// first billing/audit write fails on nextval of a nonexistent relation
+	// absent this migration. It adds no column and creates no table. The
+	// sequences are asserted directly in
+	// migrations/0174_default_tenant_billing_audit_sequences_test.go.
+	// spec: §11.2.1, §11.7, §15.1, §10.2.
+	//
+	// 0178 drops session_partial_checkpoint_manifest (migration 0062) and
+	// its partial unique index (migration 0150) and creates
+	// checkpoint_manifest with the full §10.1 column set,
+	// its tenant-guard trigger, ENABLE/FORCE RLS + lenny_tenant_isolation
+	// policy, and lenny_app grants. Its .down.sql recreates the 0062
+	// table and the 0150 index. The RLS apparatus and column-set
+	// specifics are asserted directly in the rls suite and in
+	// migrations/0178_checkpoint_manifest_test.go. spec: §10.1, §12.3.
+	{migration: "0178", table: "checkpoint_manifest", create: true},
+	// 0175 adds the §4.9 expires_at projection column to credential_leases:
+	// migration 0129 moved the lease body to an AES-256-GCM envelope, so the
+	// deny-list sweep and the fail-closed lease-existence count cannot read
+	// the lease's expiry without a KMS unwrap. The column is projected out of
+	// the encrypted body and stays nullable (a pre-backfill row reads NULL, an
+	// unknown-expiry sentinel the existence guard counts as active). The
+	// nullability, the credential_leases_expires_at_idx index the sweep filters
+	// on, and the NULL sentinel are asserted directly in
+	// migrations/credential_leases_expires_at_test.go. spec: §4.9.
+	{migration: "0175", table: "credential_leases", columns: []string{"expires_at"}},
+	// 0176 persists the §8.3 credential_origin_session_id on sessions so a
+	// `credentialPropagation: inherit` hop forwards the same origin
+	// credential pool through contiguous inherit hops.
+	{migration: "0176", table: "sessions", columns: []string{"credential_origin_session_id"}},
+	// 0179 persists the §8.3 credential_deny marker on sessions so the
+	// finalize-time §4.9 engine fails a `credentialPropagation: deny` child
+	// closed at credential assignment. A deny child is self-origin, identical
+	// to an independent child, so credential_origin_session_id cannot express
+	// the deny bit; this BOOLEAN NOT NULL DEFAULT false column adds only it.
+	// spec: §8.3 (deny marker persistence).
+	{migration: "0179", table: "sessions", columns: []string{"credential_deny"}},
+	// 0180 drops session_checkpoints.slot_id and checkpoint_manifest.slot_id,
+	// re-keys the three checkpoint indexes on session_id, and rewrites
+	// sessions.workspace_root onto the per-slot path. It adds no column, so the
+	// entry names none; it is here so TestProdMigrationsRollBackPerStep steps
+	// through its .down.sql and the SQL surface is asserted directly in
+	// TestDropCheckpointSlotIDMigration_spec_10_1 and
+	// TestDropCheckpointSlotIDRewritesWorkspaceRoot_spec_7_3. spec: §6.4,
+	// §7.3, §10.1, §12.5.
+	{migration: "0180", table: "checkpoint_manifest"},
+	// 0181 baselines the §4.2 coordination generation: it moves
+	// sessions.coordination_generation and its coordination_lease mirror onto
+	// DEFAULT 1 and backfills the rows still carrying 0, so each
+	// coordinator handoff mints a value strictly above the one a replica
+	// already holds for the session. It adds no column, so the entry names none; it is
+	// here so TestProdMigrationsRollBackPerStep steps through its .down.sql,
+	// and the SQL surface is asserted directly in
+	// TestCoordinationGenerationBaselineMigration_spec_4_2. spec: §4.2, §10.1.
+	{migration: "0181", table: "sessions"},
+	// 0182 adds sessions.accumulated_session_age_seconds, the §6.2 active
+	// session age the session store accrues on every row write. Its CHECK
+	// and default are asserted directly in
+	// TestAccumulatedSessionAgeMigration_spec_6_2. spec: §6.2.
+	{migration: "0182", table: "sessions", columns: []string{"accumulated_session_age_seconds"}},
+	// 0183 adds the idx_sessions_podless_suspended partial index the
+	// gateway leader's §7.2 backlog re-check pages through. It adds no
+	// column; the index and its drop are asserted directly in
+	// TestPodlessSuspendedIndexMigration_spec_7_2. spec: §7.2.
+	{migration: "0183", table: "sessions"},
+	// 0184 adds the idx_interactions_pending_elicitation_origin partial index
+	// the §9.2 elicitation expiry deletes through. It adds no column; the
+	// index and its drop are asserted directly in
+	// TestPendingElicitationOriginIndexMigration_spec_9_2. spec: §9.2.
+	{migration: "0184", table: "interactions"},
+	// 0185 replaces idx_sessions_active_by_tenant with the
+	// idx_sessions_counted_by_tenant partial index whose predicate is the
+	// §11.1 concurrent-session count predicate. It adds no column; the
+	// index swap, its reversal, and the count plans are asserted directly
+	// in TestCountedSessionIndexMigration_spec_11_1. spec: §11.1.
+	{migration: "0185", table: "sessions"},
+	// 0186 adds erasure_jobs.detail, the §12.8 erasure-job fields no query
+	// filters on, and the idx_erasure_jobs_in_progress_per_user partial
+	// unique index that holds one in-progress erasure job per user. The
+	// index predicate, its uniqueness, and its drop are asserted directly
+	// in TestErasureJobInProgressIndexMigration_spec_12_8. spec: §12.8.
+	{migration: "0186", table: "erasure_jobs", columns: []string{"detail"}},
+	// 0187 creates the §12.8 session_reservations table, which records a
+	// session ID reserved for its owner before a creation path writes data
+	// keyed to it. Its isolation policy, tenant guard, primary key, owner
+	// index, and grant are asserted directly in
+	// TestSessionReservationsMigration_spec_12_8. spec: §12.8.
+	{migration: "0187", table: "session_reservations", create: true},
+	// 0189 adds the §5.1 restartable runtime-registry mirror of the flag
+	// the RuntimeReconciler derives from Runtime.spec.command,
+	// executionMode, and capabilities.preConnect, which gateway pool
+	// admission reads before admitting recycle.runtimeProcess: restart.
+	// spec: §5.1, §5.2.
+	{migration: "0189", table: "runtime_definitions", columns: []string{"restartable"}},
+	// 0190 adds sessions.last_write_id, the §12.3 per-write identifier the
+	// session store's Update stores and reads back from the primary after a
+	// lost commit acknowledgement. spec: §12.3.
+	{migration: "0190", table: "sessions", columns: []string{"last_write_id"}},
+	// 0191 adds sessions.pod_released_at, the §7.1 release marker that ends
+	// a terminal session's post-terminal window, and the
+	// idx_sessions_unreleased_terminal_by_pod index of the terminal arm of
+	// the pod-holder predicate. The index and its drop are asserted directly
+	// in TestPodReleasedAtMigration_spec_7_1. spec: §7.1.
+	{migration: "0191", table: "sessions", columns: []string{"pod_released_at"}},
+	// 0194 restores the §10.1 closed-enum CHECK on
+	// checkpoint_manifest.chunk_encoding that migration 0178 dropped. It
+	// adds no column, so the entry names none; it is here so
+	// TestProdMigrationsRollBackPerStep steps through its .down.sql, and
+	// the constraint is asserted directly in
+	// TestCheckpointManifestChunkEncodingCheckMigration_spec_10_1.
+	// spec: §10.1, §4.4.
+	{migration: "0194", table: "checkpoint_manifest"},
+	// 0195 adds sessions.state_entered_at, the §6.2 instant the session
+	// entered its current state, with the BEFORE UPDATE trigger that stamps
+	// a state change an older binary writes without naming the column, and
+	// sessions.input_wait_id, the §7.2 identity of the live
+	// lenny/request_input wait. The trigger and its drop are asserted
+	// directly in TestSessionStateEnteredAtMigration_spec_6_2.
+	// spec: §6.2, §7.2, §10.5.
+	{migration: "0195", table: "sessions", columns: []string{"state_entered_at", "input_wait_id"}},
+	// 0196 adds sessions.expiry_warned_cap_seconds, the §11.3 deadline the
+	// session_expiring_soon warning was claimed for by the watchdog's
+	// locked-row write.
+	// spec: §11.3, §10.1.1.
+	{migration: "0196", table: "sessions", columns: []string{"expiry_warned_cap_seconds"}},
+}
+
+// spec: 12.2, 18.5
+// diagnosis: a production migration's .up.sql did not create the table
+// or add the column it declares. Check the CREATE TABLE / ALTER TABLE
+// statement in the named migration under migrations/.
+func TestProdMigrationsApplyExpectedSchema(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	for _, m := range prodMigrationSchema {
+		if m.create {
+			mustHaveTable(t, ctx, pg, m.table)
+		}
+		for _, col := range m.columns {
+			mustHaveColumn(t, ctx, pg, m.table, col)
+		}
+	}
+}
+
+// spec: 12.2
+// diagnosis: a production migration's .down.sql did not reverse its
+// .up.sql. Rolling the migration back one step left the table or
+// column it added in place. Check the named migration's .down.sql.
+func TestProdMigrationsRollBackPerStep(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	// Roll back one migration at a time, highest first, so each step
+	// applies exactly one .down.sql. Reverse order keeps foreign-key
+	// dependencies satisfied.
+	for i := len(prodMigrationSchema) - 1; i >= 0; i-- {
+		m := prodMigrationSchema[i]
+		n, err := strconv.Atoi(m.migration)
+		if err != nil {
+			t.Fatalf("migration number %q: %v", m.migration, err)
+		}
+		pg.MigrateTo(t, dir, uint(n)-1)
+		if m.create {
+			mustNotHaveTable(t, ctx, pg, m.table)
+			continue
+		}
+		for _, col := range m.columns {
+			mustNotHaveColumn(t, ctx, pg, m.table, col)
+		}
+	}
+}
+
+// spec: 4, 12.9
+// diagnosis: migration 0039 did not convert credentials.secret to the
+// BYTEA ciphertext type, or its .down.sql did not convert it back to
+// TEXT. §4 / §12.9 require the credential secret column to hold
+// envelope-encrypted ciphertext (binary), not plaintext text.
+func TestCredentialSecretEnvelopeColumn(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	// Forward: the secret column is BYTEA after 0039 applies.
+	if got := columnType(t, ctx, pg, "credentials", "secret"); got != "bytea" {
+		t.Errorf("credentials.secret type after 0039: got %q, want bytea", got)
+	}
+	// Rolling 0039 back restores the pre-0039 TEXT type.
+	pg.MigrateTo(t, dir, 38)
+	if got := columnType(t, ctx, pg, "credentials", "secret"); got != "text" {
+		t.Errorf("credentials.secret type after 0039 rollback: got %q, want text", got)
+	}
+}
+
+// accumulatedAgePriorVersion is the schema version immediately below the
+// accumulated active-age migration.
+const accumulatedAgePriorVersion = 181
+
+// spec: 6.2 (maxSessionAge timer behavior across states)
+// diagnosis: migration 0182 did not add sessions.accumulated_session_age_seconds
+//
+//	as a double precision NOT NULL column defaulting to 0 with a CHECK that
+//	rejects a negative value, or its .down.sql did not drop it. Without the
+//	column the session store cannot persist the active age the maxSessionAge
+//	timer evaluates, so the watchdog has no active-time value to compare with
+//	the cap. Without the CHECK a corrupt write could carry a negative age and
+//	extend a session past its cap.
+func TestAccumulatedSessionAgeMigration_spec_6_2(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	if got := columnType(t, ctx, pg, "sessions", "accumulated_session_age_seconds"); got != "double precision" {
+		t.Errorf("accumulated_session_age_seconds type = %q, want double precision", got)
+	}
+	if got := columnDefault(t, ctx, pg, "sessions", "accumulated_session_age_seconds"); got != "0" {
+		t.Errorf("accumulated_session_age_seconds default = %q, want \"0\"", got)
+	}
+
+	if _, err := pg.Pool.Exec(ctx,
+		`INSERT INTO tenants (id, genesis_nonce) VALUES ('acme', '\x00')`); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	const (
+		defaulted = "11111111-1111-4111-8111-111111111111"
+		negative  = "22222222-2222-4222-8222-222222222222"
+		positive  = "33333333-3333-4333-8333-333333333333"
+	)
+	// A row that does not name the column, as an older binary's insert does
+	// not, reads back at the 0 default.
+	if err := execTenant(ctx, pg, "acme",
+		`INSERT INTO sessions (id, tenant_id, state, runtime_ref, root_session_id)
+			VALUES ($1, 'acme', 'running', 'echo', $1)`, defaulted); err != nil {
+		t.Fatalf("insert without the column: %v", err)
+	}
+	var age float64
+	if err := pg.Pool.QueryRow(ctx,
+		`SELECT accumulated_session_age_seconds FROM sessions WHERE id = $1::uuid`, defaulted).Scan(&age); err != nil {
+		t.Fatalf("read defaulted age: %v", err)
+	}
+	if age != 0 {
+		t.Errorf("defaulted accumulated_session_age_seconds = %v, want 0", age)
+	}
+
+	const insertAged = `INSERT INTO sessions (id, tenant_id, state, runtime_ref, root_session_id, accumulated_session_age_seconds)
+		VALUES ($1, 'acme', 'running', 'echo', $1, $2)`
+	err := execTenant(ctx, pg, "acme", insertAged, negative, -0.5)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+		t.Errorf("insert of a negative accumulated age: err = %v, want a check_violation (23514)", err)
+	}
+	if err := execTenant(ctx, pg, "acme", insertAged, positive, 12.25); err != nil {
+		t.Fatalf("insert of a positive fractional age: %v", err)
+	}
+	if err := execTenant(ctx, pg, "acme",
+		`UPDATE sessions SET accumulated_session_age_seconds = -1 WHERE id = $1::uuid`, positive); !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+		t.Errorf("update to a negative accumulated age: err = %v, want a check_violation (23514)", err)
+	}
+
+	pg.MigrateTo(t, dir, accumulatedAgePriorVersion)
+	mustNotHaveColumn(t, ctx, pg, "sessions", "accumulated_session_age_seconds")
+	pg.MigrateTo(t, dir, accumulatedAgePriorVersion+1)
+	mustHaveColumn(t, ctx, pg, "sessions", "accumulated_session_age_seconds")
+}
+
+// spec: 7.2 (Message delivery routing — seven paths, path 6)
+// diagnosis: migration 0183 did not create idx_sessions_podless_suspended as
+//
+//	a (tenant_id, id) index restricted to podless suspended rows, or its
+//	.down.sql did not drop it. Without it the gateway leader's backlog
+//	re-check reads every session row of every tenant on each pass.
+func TestPodlessSuspendedIndexMigration_spec_7_2(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+	def := indexDef(t, ctx, pg, "idx_sessions_podless_suspended")
+	for _, want := range []string{"(tenant_id, id)", "state = 'suspended'", "pod_assignment = ''"} {
+		if !strings.Contains(def, want) {
+			t.Errorf("idx_sessions_podless_suspended = %q, want it to contain %q", def, want)
+		}
+	}
+	pg.MigrateTo(t, dir, 182)
+	if got := indexDef(t, ctx, pg, "idx_sessions_podless_suspended"); got != "" {
+		t.Errorf("after rolling 0183 back the index still exists: %q", got)
+	}
+}
+
+// podReleasedAtPriorVersion is the schema version immediately below the
+// release-marker migration.
+const podReleasedAtPriorVersion = 190
+
+// spec: 7.1 (Post-terminal window), 5.2 (Post-recovery rehydration atomicity)
+// diagnosis: migration 0191 did not add sessions.pod_released_at or did not
+//
+//	create idx_sessions_unreleased_terminal_by_pod as a (terminated_at,
+//	pod_assignment) index restricted to unreleased terminal rows that name a
+//	pod, or its .down.sql did not drop both. Without the index the terminal
+//	arm of the §5.2 rehydration seed and the §12.4 capacity gate scans every
+//	terminal row the deployment keeps.
+func TestPodReleasedAtMigration_spec_7_1(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	if got := columnType(t, ctx, pg, "sessions", "pod_released_at"); got != "timestamp with time zone" {
+		t.Errorf("sessions.pod_released_at type = %q, want timestamp with time zone", got)
+	}
+	def := indexDef(t, ctx, pg, "idx_sessions_unreleased_terminal_by_pod")
+	for _, want := range []string{
+		"(terminated_at, pod_assignment)", "pod_assignment <> ''", "pod_released_at IS NULL",
+		"'completed'", "'failed'", "'cancelled'", "'expired'",
+	} {
+		if !strings.Contains(def, want) {
+			t.Errorf("idx_sessions_unreleased_terminal_by_pod = %q, want it to contain %q", def, want)
+		}
+	}
+	if got := indexDef(t, ctx, pg, "idx_sessions_active_by_pod"); got == "" {
+		t.Errorf("idx_sessions_active_by_pod is gone after 0191; the non-terminal arm needs it")
+	}
+
+	pg.MigrateTo(t, dir, podReleasedAtPriorVersion)
+	if got := indexDef(t, ctx, pg, "idx_sessions_unreleased_terminal_by_pod"); got != "" {
+		t.Errorf("after rolling 0191 back the index still exists: %q", got)
+	}
+	mustNotHaveColumn(t, ctx, pg, "sessions", "pod_released_at")
+}
+
+// stateEnteredAtPriorVersion is the schema version immediately below the
+// state-entry migration.
+const stateEnteredAtPriorVersion = 194
+
+// spec: §6.2 (Pod State Machine), §7.2 (Interactive Session Model), §10.5 (Upgrade and Rollback Strategy)
+// diagnosis: migration 0195 did not add sessions.state_entered_at as a
+//
+//	timestamptz NOT NULL column with a default, did not add the nullable
+//	sessions.input_wait_id, or its sessions_stamp_state_entry trigger did not
+//	stamp a state change written without the column to the written
+//	updated_at, or it moved the instant on a same-state write or overwrote a
+//	value the writer named, or the .down.sql left the trigger, its function,
+//	or either column behind. Without the trigger an older replica's state
+//	write during the rolling window leaves the previous state's entry
+//	instant, so every per-state deadline the watchdog measures from it fires
+//	early.
+func TestSessionStateEnteredAtMigration_spec_6_2(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	assertStateEntryColumns(t, ctx, pg)
+	if _, err := pg.Pool.Exec(ctx,
+		`INSERT INTO tenants (id, genesis_nonce) VALUES ('acme', '\x00')`); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	const id = "44444444-4444-4444-8444-444444444444"
+	// An insert that does not name either column, as an older binary's
+	// insert does not, succeeds and takes the default instant.
+	if err := execTenant(ctx, pg, "acme",
+		`INSERT INTO sessions (id, tenant_id, state, runtime_ref, root_session_id)
+			VALUES ($1, 'acme', 'running', 'echo', $1)`, id); err != nil {
+		t.Fatalf("insert without state_entered_at: %v", err)
+	}
+	inserted := readStateEntry(t, ctx, pg, id)
+	if inserted.IsZero() {
+		t.Fatalf("defaulted state_entered_at is zero")
+	}
+
+	base := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	// A state change that does not name the column takes the written
+	// updated_at.
+	changedAt := base.Add(time.Minute)
+	if err := execTenant(ctx, pg, "acme",
+		`UPDATE sessions SET state = 'suspended', updated_at = $2 WHERE id = $1::uuid`, id, changedAt); err != nil {
+		t.Fatalf("state-changing update: %v", err)
+	}
+	if got := readStateEntry(t, ctx, pg, id); !got.Equal(changedAt) {
+		t.Errorf("after a state change without the column, state_entered_at = %v, want the written updated_at %v", got, changedAt)
+	}
+	// A same-state write leaves the instant where it was.
+	if err := execTenant(ctx, pg, "acme",
+		`UPDATE sessions SET state = 'suspended', updated_at = $2 WHERE id = $1::uuid`, id, base.Add(2*time.Minute)); err != nil {
+		t.Fatalf("same-state update: %v", err)
+	}
+	if got := readStateEntry(t, ctx, pg, id); !got.Equal(changedAt) {
+		t.Errorf("after a same-state update, state_entered_at = %v, want it unchanged at %v", got, changedAt)
+	}
+	// A state change that names a new value, as the session store's own
+	// write does, keeps the value it names.
+	named := base.Add(3 * time.Minute)
+	if err := execTenant(ctx, pg, "acme",
+		`UPDATE sessions SET state = 'running', updated_at = $2, state_entered_at = $3 WHERE id = $1::uuid`,
+		id, base.Add(4*time.Minute), named); err != nil {
+		t.Fatalf("state-changing update naming the column: %v", err)
+	}
+	if got := readStateEntry(t, ctx, pg, id); !got.Equal(named) {
+		t.Errorf("after a state change naming state_entered_at, it = %v, want the named %v", got, named)
+	}
+
+	pg.MigrateTo(t, dir, stateEnteredAtPriorVersion)
+	mustNotHaveColumn(t, ctx, pg, "sessions", "state_entered_at")
+	mustNotHaveColumn(t, ctx, pg, "sessions", "input_wait_id")
+	if n := catalogCount(t, ctx, pg,
+		`SELECT count(*) FROM pg_trigger WHERE tgname = 'sessions_stamp_state_entry'`); n != 0 {
+		t.Errorf("after rolling 0195 back, %d sessions_stamp_state_entry triggers remain", n)
+	}
+	if n := catalogCount(t, ctx, pg,
+		`SELECT count(*) FROM pg_proc WHERE proname = 'sessions_stamp_state_entry'`); n != 0 {
+		t.Errorf("after rolling 0195 back, %d sessions_stamp_state_entry functions remain", n)
+	}
+}
+
+// assertStateEntryColumns checks the forward schema of migration 0195: the
+// NOT NULL defaulted state_entered_at, the nullable input_wait_id, and the
+// BEFORE UPDATE trigger.
+func assertStateEntryColumns(t *testing.T, ctx context.Context, pg *containers.Postgres) {
+	t.Helper()
+	if got := columnType(t, ctx, pg, "sessions", "state_entered_at"); got != "timestamp with time zone" {
+		t.Errorf("sessions.state_entered_at type = %q, want timestamp with time zone", got)
+	}
+	if got := columnNullable(t, ctx, pg, "sessions", "state_entered_at"); got != "NO" {
+		t.Errorf("sessions.state_entered_at is_nullable = %q, want NO", got)
+	}
+	if got := columnDefault(t, ctx, pg, "sessions", "state_entered_at"); got == "" {
+		t.Errorf("sessions.state_entered_at has no default")
+	}
+	if got := columnType(t, ctx, pg, "sessions", "input_wait_id"); got != "text" {
+		t.Errorf("sessions.input_wait_id type = %q, want text", got)
+	}
+	if got := columnNullable(t, ctx, pg, "sessions", "input_wait_id"); got != "YES" {
+		t.Errorf("sessions.input_wait_id is_nullable = %q, want YES", got)
+	}
+	if n := catalogCount(t, ctx, pg,
+		`SELECT count(*) FROM pg_trigger WHERE tgname = 'sessions_stamp_state_entry'
+			AND tgrelid = 'sessions'::regclass AND NOT tgisinternal`); n != 1 {
+		t.Errorf("sessions_stamp_state_entry triggers on sessions = %d, want 1", n)
+	}
+}
+
+// readStateEntry reads one session's persisted state_entered_at.
+func readStateEntry(t *testing.T, ctx context.Context, pg *containers.Postgres, id string) time.Time {
+	t.Helper()
+	var at time.Time
+	if err := pg.Pool.QueryRow(ctx,
+		`SELECT state_entered_at FROM sessions WHERE id = $1::uuid`, id).Scan(&at); err != nil {
+		t.Fatalf("read state_entered_at of %s: %v", id, err)
+	}
+	return at.UTC()
+}
+
+// columnNullable reads information_schema's is_nullable for one column.
+func columnNullable(t *testing.T, ctx context.Context, pg *containers.Postgres, table, col string) string {
+	t.Helper()
+	var nullable string
+	if err := pg.Pool.QueryRow(ctx, `
+		SELECT is_nullable FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`,
+		table, col).Scan(&nullable); err != nil {
+		t.Fatalf("read is_nullable of %s.%s: %v", table, col, err)
+	}
+	return nullable
+}
+
+// catalogCount runs a count(*) query against the system catalogs.
+func catalogCount(t *testing.T, ctx context.Context, pg *containers.Postgres, query string) int {
+	t.Helper()
+	var n int
+	if err := pg.Pool.QueryRow(ctx, query).Scan(&n); err != nil {
+		t.Fatalf("catalog query %q: %v", query, err)
+	}
+	return n
+}
+
+// spec: 9.2 (Elicitation Chain)
+// diagnosis: migration 0184 did not create
+//
+//	idx_interactions_pending_elicitation_origin as a (tenant_id,
+//	detail->>'originPod') index restricted to pending elicitations, or its
+//	.down.sql did not drop it. Without it the elicitation expiry at a pod
+//	release scans every interaction the tenant keeps.
+func TestPendingElicitationOriginIndexMigration_spec_9_2(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+	def := indexDef(t, ctx, pg, "idx_interactions_pending_elicitation_origin")
+	for _, want := range []string{"tenant_id", "originPod", "kind = 'elicitation'", "phase = 'pending'"} {
+		if !strings.Contains(def, want) {
+			t.Errorf("idx_interactions_pending_elicitation_origin = %q, want it to contain %q", def, want)
+		}
+	}
+	pg.MigrateTo(t, dir, 183)
+	if got := indexDef(t, ctx, pg, "idx_interactions_pending_elicitation_origin"); got != "" {
+		t.Errorf("after rolling 0184 back the index still exists: %q", got)
+	}
+}
+
+// spec: 11.1 (Concurrent-session count)
+// diagnosis: migration 0185 did not replace idx_sessions_active_by_tenant
+//
+//	with idx_sessions_counted_by_tenant, a (tenant_id, user_id) index whose
+//	predicate excludes the terminal states and suspended, or its .down.sql
+//	did not restore the 0102 index, or the planner no longer reads the new
+//	index for the tenant and per-user counts. Without it every admission
+//	count reads a heap tuple for each suspended row of the tenant.
+func TestCountedSessionIndexMigration_spec_11_1(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	def := indexDef(t, ctx, pg, "idx_sessions_counted_by_tenant")
+	for _, want := range []string{"(tenant_id, user_id)", "'suspended'", "'completed'", "'failed'", "'cancelled'", "'expired'"} {
+		if !strings.Contains(def, want) {
+			t.Errorf("idx_sessions_counted_by_tenant = %q, want it to contain %q", def, want)
+		}
+	}
+	if got := indexDef(t, ctx, pg, "idx_sessions_active_by_tenant"); got != "" {
+		t.Errorf("idx_sessions_active_by_tenant still exists after 0185: %q", got)
+	}
+
+	seedCountedSessionPopulation(t, ctx, pg)
+	for name, query := range map[string]string{
+		"tenant": `SELECT count(*) FROM sessions WHERE tenant_id = 'acme'
+			AND state NOT IN ('completed', 'failed', 'cancelled', 'expired', 'suspended')`,
+		"user": `SELECT count(*) FROM sessions WHERE tenant_id = 'acme' AND user_id = 'alice'
+			AND state NOT IN ('completed', 'failed', 'cancelled', 'expired', 'suspended')`,
+	} {
+		if plan := explainPlan(t, ctx, pg, query); !strings.Contains(plan, "idx_sessions_counted_by_tenant") {
+			t.Errorf("%s count plan does not read idx_sessions_counted_by_tenant:\n%s", name, plan)
+		}
+	}
+
+	pg.MigrateTo(t, dir, 184)
+	if got := indexDef(t, ctx, pg, "idx_sessions_counted_by_tenant"); got != "" {
+		t.Errorf("after rolling 0185 back the index still exists: %q", got)
+	}
+	restored := indexDef(t, ctx, pg, "idx_sessions_active_by_tenant")
+	if !strings.Contains(restored, "(tenant_id)") || strings.Contains(restored, "'suspended'") {
+		t.Errorf("after rolling 0185 back idx_sessions_active_by_tenant = %q, want the 0102 definition", restored)
+	}
+}
+
+// erasureDetailPriorVersion is the schema version immediately below the
+// erasure-job detail and in-progress index migration.
+const erasureDetailPriorVersion = 185
+
+// spec: 12.8 (Compliance Interfaces)
+// diagnosis: migration 0186 did not add erasure_jobs.detail as a jsonb
+//
+//	NOT NULL column defaulting to an empty object, or did not create
+//	idx_erasure_jobs_in_progress_per_user as a unique (tenant_id, user_id)
+//	index over exactly the in-progress phases, or its .down.sql did not
+//	drop both. Without the index two replicas can each start an erasure
+//	job for the same user, and the erasure-job store's ON CONFLICT start
+//	has no arbiter. A predicate that covers a terminal phase blocks a
+//	retry or a new job beside a completed or failed one.
+func TestErasureJobInProgressIndexMigration_spec_12_8(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	if got := columnType(t, ctx, pg, "erasure_jobs", "detail"); got != "jsonb" {
+		t.Errorf("erasure_jobs.detail type = %q, want jsonb", got)
+	}
+	def := indexDef(t, ctx, pg, "idx_erasure_jobs_in_progress_per_user")
+	for _, want := range []string{"UNIQUE", "(tenant_id, user_id)", "'initiated'", "'store_deleting'", "'pseudonymizing'", "'verifying'"} {
+		if !strings.Contains(def, want) {
+			t.Errorf("idx_erasure_jobs_in_progress_per_user = %q, want it to contain %q", def, want)
+		}
+	}
+	for _, terminal := range []string{"'completed'", "'failed'"} {
+		if strings.Contains(def, terminal) {
+			t.Errorf("idx_erasure_jobs_in_progress_per_user = %q, covers terminal phase %s", def, terminal)
+		}
+	}
+
+	seedErasureTenants(t, ctx, pg)
+	assertErasureDetailDefault(t, ctx, pg)
+	assertOneInProgressErasureJob(t, ctx, pg)
+
+	pg.MigrateTo(t, dir, erasureDetailPriorVersion)
+	if got := indexDef(t, ctx, pg, "idx_erasure_jobs_in_progress_per_user"); got != "" {
+		t.Errorf("after rolling 0186 back the index still exists: %q", got)
+	}
+	mustNotHaveColumn(t, ctx, pg, "erasure_jobs", "detail")
+	// With the index gone the schema admits a second in-progress row, so
+	// the refusal asserted above came from 0186.
+	if err := insertErasureJob(ctx, pg, "acme", "job-after-down", "alice", "verifying"); err != nil {
+		t.Errorf("second in-progress job after rolling 0186 back: %v, want it admitted", err)
+	}
+}
+
+// seedErasureTenants creates the tenants the erasure-job cases write under.
+func seedErasureTenants(t *testing.T, ctx context.Context, pg *containers.Postgres) {
+	t.Helper()
+	for _, id := range []string{"acme", "globex"} {
+		if _, err := pg.Pool.Exec(ctx,
+			`INSERT INTO tenants (id, genesis_nonce) VALUES ($1, '\x00')`, id); err != nil {
+			t.Fatalf("seed tenant %s: %v", id, err)
+		}
+	}
+}
+
+// insertErasureJob writes one erasure_jobs row under the tenant context.
+func insertErasureJob(ctx context.Context, pg *containers.Postgres, tenant, id, user, status string) error {
+	return execTenant(ctx, pg, tenant,
+		`INSERT INTO erasure_jobs (id, tenant_id, user_id, status) VALUES ($1, $2, $3, $4)`,
+		id, tenant, user, status)
+}
+
+// assertErasureDetailDefault checks that a row inserted without naming
+// detail, as a binary predating the column does, reads back an empty object.
+func assertErasureDetailDefault(t *testing.T, ctx context.Context, pg *containers.Postgres) {
+	t.Helper()
+	if err := insertErasureJob(ctx, pg, "acme", "job-detail-default", "dave", "completed"); err != nil {
+		t.Fatalf("insert without detail: %v", err)
+	}
+	var detail string
+	if err := pg.Pool.QueryRow(ctx,
+		`SELECT detail::text FROM erasure_jobs WHERE id = 'job-detail-default'`).Scan(&detail); err != nil {
+		t.Fatalf("read defaulted detail: %v", err)
+	}
+	if detail != "{}" {
+		t.Errorf("defaulted erasure_jobs.detail = %q, want {}", detail)
+	}
+}
+
+// assertOneInProgressErasureJob drives the partial unique index: every
+// in-progress phase conflicts with an existing in-progress job for the
+// same (tenant_id, user_id), terminal jobs and other users or tenants
+// do not, a terminal job cannot be moved back into progress beside a
+// running one, and the index arbitrates the store's ON CONFLICT start.
+func assertOneInProgressErasureJob(t *testing.T, ctx context.Context, pg *containers.Postgres) {
+	t.Helper()
+	if err := insertErasureJob(ctx, pg, "acme", "job-running", "alice", "initiated"); err != nil {
+		t.Fatalf("insert first in-progress job: %v", err)
+	}
+	for _, phase := range []string{"initiated", "store_deleting", "pseudonymizing", "verifying"} {
+		err := insertErasureJob(ctx, pg, "acme", "job-second-"+phase, "alice", phase)
+		if !isUniqueViolation(err) {
+			t.Errorf("second in-progress job in phase %s: err = %v, want unique_violation (23505)", phase, err)
+		}
+	}
+	admitted := []struct{ tenant, id, user, status string }{
+		{"acme", "job-completed", "alice", "completed"},
+		{"acme", "job-failed", "alice", "failed"},
+		{"acme", "job-failed-2", "alice", "failed"},
+		{"acme", "job-bob", "bob", "store_deleting"},
+		{"globex", "job-globex-alice", "alice", "initiated"},
+	}
+	for _, j := range admitted {
+		if err := insertErasureJob(ctx, pg, j.tenant, j.id, j.user, j.status); err != nil {
+			t.Errorf("insert %s (%s/%s, %s): %v, want it admitted", j.id, j.tenant, j.user, j.status, err)
+		}
+	}
+	// A retry moves a failed job back to initiated; while another job for
+	// the user is in progress the move must fail.
+	err := execTenant(ctx, pg, "acme",
+		`UPDATE erasure_jobs SET status = 'initiated' WHERE id = 'job-failed'`)
+	if !isUniqueViolation(err) {
+		t.Errorf("retry of a failed job beside an in-progress one: err = %v, want unique_violation (23505)", err)
+	}
+	assertErasureStartArbiter(t, ctx, pg)
+}
+
+// assertErasureStartArbiter checks that an INSERT ... ON CONFLICT naming
+// the index predicate resolves against the index: a duplicate start
+// inserts nothing, and the start succeeds once the running job completes.
+func assertErasureStartArbiter(t *testing.T, ctx context.Context, pg *containers.Postgres) {
+	t.Helper()
+	const start = `INSERT INTO erasure_jobs (id, tenant_id, user_id, status)
+		VALUES ($1, 'acme', 'alice', 'initiated')
+		ON CONFLICT (tenant_id, user_id)
+		WHERE status IN ('initiated', 'store_deleting', 'pseudonymizing', 'verifying')
+		DO NOTHING`
+	if err := execTenant(ctx, pg, "acme", start, "job-dup-start"); err != nil {
+		t.Fatalf("ON CONFLICT start beside a running job: %v", err)
+	}
+	if n := erasureJobCount(t, ctx, pg, "job-dup-start"); n != 0 {
+		t.Errorf("ON CONFLICT start beside a running job inserted %d rows, want 0", n)
+	}
+	if err := execTenant(ctx, pg, "acme",
+		`UPDATE erasure_jobs SET status = 'completed' WHERE id = 'job-running'`); err != nil {
+		t.Fatalf("complete the running job: %v", err)
+	}
+	if err := execTenant(ctx, pg, "acme", start, "job-next-start"); err != nil {
+		t.Fatalf("ON CONFLICT start after completion: %v", err)
+	}
+	if n := erasureJobCount(t, ctx, pg, "job-next-start"); n != 1 {
+		t.Errorf("ON CONFLICT start after completion inserted %d rows, want 1", n)
+	}
+}
+
+// erasureJobCount returns how many erasure_jobs rows carry id.
+func erasureJobCount(t *testing.T, ctx context.Context, pg *containers.Postgres, id string) int {
+	t.Helper()
+	var n int
+	if err := pg.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM erasure_jobs WHERE id = $1`, id).Scan(&n); err != nil {
+		t.Fatalf("count erasure job %s: %v", id, err)
+	}
+	return n
+}
+
+// isUniqueViolation reports whether err is a Postgres unique_violation.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+// seedCountedSessionPopulation fills tenant acme with many terminal and
+// suspended rows and a few counted ones, then analyzes the table, so the
+// planner's choice reflects a tenant with a long history.
+func seedCountedSessionPopulation(t *testing.T, ctx context.Context, pg *containers.Postgres) {
+	t.Helper()
+	if _, err := pg.Pool.Exec(ctx,
+		`INSERT INTO tenants (id, genesis_nonce) VALUES ('acme', '\x00')`); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	const seed = `INSERT INTO sessions (id, tenant_id, user_id, state, runtime_ref, root_session_id)
+		SELECT md5(g::text)::uuid, 'acme',
+		       CASE WHEN g % 2 = 0 THEN 'alice' ELSE 'bob' END,
+		       CASE WHEN g <= 20 THEN 'running'
+		            WHEN g % 3 = 0 THEN 'suspended'
+		            WHEN g % 3 = 1 THEN 'completed'
+		            ELSE 'expired' END,
+		       'echo', md5(g::text)::uuid
+		FROM generate_series(1, 6000) AS g`
+	if err := execTenant(ctx, pg, "acme", seed); err != nil {
+		t.Fatalf("seed sessions: %v", err)
+	}
+	if _, err := pg.Pool.Exec(ctx, `ANALYZE sessions`); err != nil {
+		t.Fatalf("analyze sessions: %v", err)
+	}
+}
+
+// explainPlan returns the text plan Postgres chooses for query.
+func explainPlan(t *testing.T, ctx context.Context, pg *containers.Postgres, query string) string {
+	t.Helper()
+	rows, err := pg.Pool.Query(ctx, "EXPLAIN "+query)
+	if err != nil {
+		t.Fatalf("explain %q: %v", query, err)
+	}
+	defer rows.Close()
+	var b strings.Builder
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			t.Fatalf("scan plan line: %v", err)
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read plan: %v", err)
+	}
+	return b.String()
+}
+
+// --- helpers -------------------------------------------------------------
+
+func columnType(t *testing.T, ctx context.Context, pg *containers.Postgres, table, col string) string {
+	t.Helper()
+	var dataType string
+	err := pg.Pool.QueryRow(ctx, `
+		SELECT data_type FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`,
+		table, col).Scan(&dataType)
+	if err != nil {
+		t.Fatalf("read type of %s.%s: %v", table, col, err)
+	}
+	return dataType
+}
+
+func mustHaveColumn(t *testing.T, ctx context.Context, pg *containers.Postgres, table, col string) {
+	t.Helper()
+	if !columnExists(t, ctx, pg, table, col) {
+		t.Errorf("expected column %s.%s to exist", table, col)
+	}
+}
+
+func mustNotHaveColumn(t *testing.T, ctx context.Context, pg *containers.Postgres, table, col string) {
+	t.Helper()
+	if columnExists(t, ctx, pg, table, col) {
+		t.Errorf("expected column %s.%s to be absent", table, col)
+	}
+}
+
+func columnExists(t *testing.T, ctx context.Context, pg *containers.Postgres, table, col string) bool {
+	t.Helper()
+	var exists bool
+	err := pg.Pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2
+		)`, table, col).Scan(&exists)
+	if err != nil {
+		t.Fatalf("check column %s.%s: %v", table, col, err)
+	}
+	return exists
+}

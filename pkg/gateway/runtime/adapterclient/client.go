@@ -1,0 +1,1083 @@
+// SPDX-License-Identifier: MIT
+
+// Package adapterclient is the gateway-side client for a pod's §4.7
+// runtime adapter. It wraps the generated adapterv1 gRPC client with
+// connection lifecycle management and a session-oriented surface, so
+// the gateway's session path drives a claimed pod without handling raw
+// protobuf requests.
+package adapterclient
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"github.com/lennylabs/lenny/pkg/credential"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+)
+
+// ErrSlotBindAttemptSuperseded is returned when the adapter refused a
+// bind-sequence RPC because the pod's slot registry entry for the session
+// carries a non-empty bind attempt token different from this attempt's.
+// Another attempt owns the entry and everything under it.
+//
+// spec: §4.7.1 (role and gateway RPC contract)
+var ErrSlotBindAttemptSuperseded = errors.New("adapterclient: slot bind attempt superseded")
+
+// ErrSlotBindAlreadyStarted is returned when the adapter refused a
+// bind-sequence RPC because the resolved entry's session has already started
+// on the pod and the request is not a §7.4 mid-session upload.
+//
+// spec: §4.7.1 (role and gateway RPC contract)
+var ErrSlotBindAlreadyStarted = errors.New("adapterclient: slot bind already started")
+
+// IsSlotBindRefusal reports whether err carries either §4.7.1 slot-bind
+// refusal. errors.Is reads through every wrapper the bind paths add, so a
+// refusal wrapped by the gateway's bind-failure types still matches. It is
+// the one statement of the two-sentinel predicate: a third refusal sentinel
+// is added here and every consumer (the client error envelope, the reclaim
+// closures, and the compensation label) follows.
+//
+// spec: §4.7.1 (role and gateway RPC contract)
+func IsSlotBindRefusal(err error) bool {
+	return errors.Is(err, ErrSlotBindAttemptSuperseded) ||
+		errors.Is(err, ErrSlotBindAlreadyStarted)
+}
+
+// translateSlotBindRefusal recovers the two §4.7.1 slot-bind refusals from the
+// gRPC status detail and returns them as sentinels the gateway can match with
+// errors.Is. The wrap carries both the sentinel and the original error with
+// %w, so errors.Is matches the sentinel while status.Code still walks to the
+// original status (Aborted for the superseded refusal, FailedPrecondition for
+// the already-started one) and a code-keyed arm fires on the same value. Any
+// other error is returned unchanged. It follows the form of RunSetup's
+// partial-output reader: status.FromError, then a type switch over
+// st.Details().
+//
+// Only the bind-sequence RPCs run it. The Shutdown family does not, because
+// the adapter answers a refusal there as a reclaim outcome rather than as an
+// error.
+//
+// spec: §4.7.1 (role and gateway RPC contract); §15.4 (runtime adapter
+// specification)
+func translateSlotBindRefusal(err error) error {
+	if err == nil {
+		return nil
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		return err
+	}
+	for _, d := range st.Details() {
+		e, isErr := d.(*adapterv1.Error)
+		if !isErr {
+			continue
+		}
+		switch e.GetCode() {
+		case adapterv1.Error_ERROR_CODE_SLOT_BIND_ATTEMPT_SUPERSEDED:
+			return fmt.Errorf("%w: %w", ErrSlotBindAttemptSuperseded, err)
+		case adapterv1.Error_ERROR_CODE_SLOT_BIND_ALREADY_STARTED:
+			return fmt.Errorf("%w: %w", ErrSlotBindAlreadyStarted, err)
+		}
+	}
+	return err
+}
+
+// Client is a gateway-side connection to one pod's adapter.
+type Client struct {
+	conn *grpc.ClientConn
+	rpc  adapterv1.AdapterClient
+}
+
+// New wraps an established gRPC connection. The caller dials with the
+// transport credentials appropriate to the deployment: mTLS against a
+// pod's adapter in a cluster (§4.7), or insecure credentials for an
+// in-process test.
+func New(conn *grpc.ClientConn) *Client {
+	return &Client{conn: conn, rpc: adapterv1.NewAdapterClient(conn)}
+}
+
+// Dial opens a gRPC connection to the adapter at target and wraps it.
+// The caller supplies the transport-credential dial option.
+//
+// spec: §16.3 ("Gateway → Pod (gRPC metadata)") — the OTel client
+// stats handler injects the current trace context into outgoing gRPC
+// metadata so the pod adapter's spans become children of the gateway span
+// that issued the call. F-16.3.3.
+func Dial(target string, opts ...grpc.DialOption) (*Client, error) {
+	opts = append([]grpc.DialOption{grpc.WithStatsHandler(otelgrpc.NewClientHandler())}, opts...)
+	conn, err := grpc.NewClient(target, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("adapterclient: dial %s: %w", target, err)
+	}
+	return New(conn), nil
+}
+
+// Close releases the underlying gRPC connection.
+func (c *Client) Close() error {
+	return c.conn.Close()
+}
+
+// Alive reports whether the underlying gRPC channel to the pod's adapter is
+// not in a terminal or failed connectivity state. It is a cheap, non-blocking
+// read of the channel state: a channel in TransientFailure or Shutdown can no
+// longer reach the pod. The coordination sweep probes a bound session's held
+// channel before renewing its lease, so a dead held connection surfaces the
+// session's coordination lease for re-adoption instead of pinning it to a
+// replica that can no longer reach the pod. An Idle or Connecting channel (a
+// freshly published binding whose Attach content stream stays lazy until first
+// use) reports alive, so a healthy fresh binding is never evicted.
+//
+// spec: §10.1 (hold state on connection loss; the coordinating replica holds
+// the live connection), §4.6.1 (coordinating replica holds the lease).
+func (c *Client) Alive() bool {
+	switch c.conn.GetState() {
+	case connectivity.Shutdown, connectivity.TransientFailure:
+		return false
+	default:
+		return true
+	}
+}
+
+// NegotiateVersion performs the §4.7 / §15.5 handshake, advertising the
+// protocol versions the gateway accepts.
+func (c *Client) NegotiateVersion(ctx context.Context, acceptedVersions []string) (*adapterv1.NegotiateVersionResponse, error) {
+	return c.rpc.NegotiateVersion(ctx, &adapterv1.NegotiateVersionRequest{
+		AcceptedProtocolVersions: acceptedVersions,
+	})
+}
+
+// GetObservedIntegrationLevel asks the adapter for the §5.1 / §15.4.3
+// integration level it observed the runtime implement, waiting up to
+// waitMs for the runtime's first §4.7 lifecycle handshake. The gateway
+// compares the returned level ("basic", "standard", or "full") against
+// the runtime's declared integrationLevel on the first session assignment.
+// An adapter on an older protocol returns codes.Unimplemented, which the
+// caller treats as "not reported" and skips the check.
+func (c *Client) GetObservedIntegrationLevel(ctx context.Context, waitMs int32) (string, error) {
+	resp, err := c.rpc.GetObservedIntegrationLevel(ctx, &adapterv1.GetObservedIntegrationLevelRequest{
+		WaitMs: waitMs,
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.GetObservedLevel(), nil
+}
+
+// StartSessionParams carries the inputs the gateway delivers to a pod's
+// runtime at session start. SessionID and Runtime are required; the rest
+// may be zero. AgentInterface and MinPlatformVersion populate the §4.7
+// manifest fields, and the experiment and tracing context reach the
+// runtime in the session's session_start frame on CH-MSGSOCK (§28.5.3).
+type StartSessionParams struct {
+	SessionID string
+	Runtime   string
+	// ExperimentContext is the session's §8.3 / §10.7 experiment enrollment
+	// (nil for an unenrolled session).
+	ExperimentContext *adapterv1.ExperimentContext
+	// TracingContext is the §8.3 opaque tracing identifiers (nil when none
+	// is set).
+	TracingContext map[string]string
+	// AgentInterface is the runtime's §5.1 agentInterface descriptor as
+	// JSON (nil when undeclared; the manifest field is then null).
+	AgentInterface []byte
+	// MinPlatformVersion is the runtime's §5.1 minPlatformVersion (empty
+	// when none is specified).
+	MinPlatformVersion string
+}
+
+// StartSession starts the runtime on a pod whose workspace is already
+// materialized by FinalizeWorkspace and whose setup commands are already
+// run by RunSetup (§4.7, the final session-assignment RPC). AgentInterface
+// and MinPlatformVersion populate the §15.4 pod-scoped adapter manifest.
+// The session identifier and the experiment and tracing context reach the
+// runtime in the session's session_start frame on CH-MSGSOCK (§28.5.3).
+func (c *Client) StartSession(ctx context.Context, p StartSessionParams) error {
+	req := &adapterv1.StartSessionRequest{
+		SessionId:          &adapterv1.SessionId{Value: p.SessionID},
+		Runtime:            p.Runtime,
+		ExperimentContext:  p.ExperimentContext,
+		TracingContext:     p.TracingContext,
+		AgentInterface:     p.AgentInterface,
+		MinPlatformVersion: p.MinPlatformVersion,
+	}
+	_, err := c.rpc.StartSession(ctx, req)
+	return translateSlotBindRefusal(err)
+}
+
+// ConfigureWorkspace is the §6.1 SDK-warm counterpart of StartSession: on
+// a preConnect pod it points the already-connected SDK at the finalized
+// workspace cwd rather than starting the runtime from cold (§4.7
+// ConfigureWorkspace RPC). It is idempotent. A pod-warm adapter returns
+// Unimplemented, which the binder treats as a signal to fall back to
+// StartSession.
+func (c *Client) ConfigureWorkspace(ctx context.Context, sessionID, cwd string, experiment *adapterv1.ExperimentContext, tracing map[string]string) error {
+	_, err := c.rpc.ConfigureWorkspace(ctx, &adapterv1.ConfigureWorkspaceRequest{
+		SessionId:         &adapterv1.SessionId{Value: sessionID},
+		Cwd:               cwd,
+		ExperimentContext: experiment,
+		TracingContext:    tracing,
+	})
+	return translateSlotBindRefusal(err)
+}
+
+// DemoteSDK tears down a preConnect pod's pre-connected SDK so the pod
+// falls back to pod-warm before the workspace is materialized (§6.1 / §4.7 DemoteSDK RPC). reason rides the request for the adapter's
+// observability. A pod-warm adapter returns Unimplemented; per §6.1 the binder surfaces that as SDK_DEMOTION_NOT_SUPPORTED rather than
+// silently proceeding with stale SDK state.
+func (c *Client) DemoteSDK(ctx context.Context, reason string) error {
+	_, err := c.rpc.DemoteSDK(ctx, &adapterv1.DemoteSDKRequest{Reason: reason})
+	return err
+}
+
+// AssignCredentials pushes the session's per-provider §4.9 credential
+// leases to the pod's adapter ahead of StartSession (§4.7, the fourth
+// session-assignment RPC). leases is keyed by provider; the adapter
+// materializes them into the pod's credential file. The call replaces
+// any previously assigned set. A nil or empty map assigns no
+// credentials.
+//
+// The request carries credential material; per §4.7 item 6 the call
+// site must keep it out of access logs and telemetry.
+//
+// bindAttempt is the calling bind attempt's token, which the adapter compares
+// against the token its slot registry entry carries; the Client sets it as
+// given. spec: §4.7.1 (role and gateway RPC contract).
+func (c *Client) AssignCredentials(ctx context.Context, sessionID string, leases map[string]*adapterv1.CredentialLease, bindAttempt string) error {
+	_, err := c.rpc.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
+		SessionId:   &adapterv1.SessionId{Value: sessionID},
+		Leases:      leases,
+		BindAttempt: bindAttempt,
+	})
+	return translateSlotBindRefusal(err)
+}
+
+// RotateCredentials replaces a session's previously assigned §4.9
+// credential leases with rotated leases and pushes them to the pod's
+// adapter (§4.7 `RotateCredentials` RPC). leases is keyed by provider;
+// the adapter rewrites only the named providers' entries in the pod's
+// credential file and retains the rest, then runs the §4.7
+// `credentials_rotated` / `credentials_acknowledged` lifecycle
+// handshake with the runtime so a Full-level runtime rebinds the
+// rotated credential in place without a restart.
+//
+// It is the gateway-side driver for every §4.9 rotation path: the
+// Fallback Flow steps 5–7, Emergency Credential Revocation step 5
+// (direct-delivery mode), and the Proactive Lease Renewal loop's
+// replacement-lease push. The §4.9 rotationTrigger that distinguishes
+// those causes rides the request so the adapter applies the §4.7
+// in-flight gate ceiling for fault-driven rotations and the unbounded
+// wait for proactive_renewal. An empty trigger is treated by the adapter
+// as a fault trigger (ceiling applies) for fail-closed safety.
+//
+// The request carries credential material; per §4.7 item 6 the call
+// site must keep it out of access logs and telemetry. A nil or empty
+// map rotates nothing.
+// spec: §4.9 / §4.7. F-13.3.10.
+func (c *Client) RotateCredentials(ctx context.Context, sessionID string, leases map[string]*adapterv1.CredentialLease, trigger credential.RotationTrigger) error {
+	_, err := c.rpc.RotateCredentials(ctx, &adapterv1.RotateCredentialsRequest{
+		SessionId:       &adapterv1.SessionId{Value: sessionID},
+		Leases:          leases,
+		RotationTrigger: string(trigger),
+	})
+	return err
+}
+
+// ExtendCredentialLease re-arms the direct-mode credential-expiry timer
+// for a still-valid lease to a later deadline, without delivering
+// credential material and without running the §4.7 rebind handshake. It
+// is the gateway-side driver for the §4.9 Token Service unavailability
+// guard: when the Token Service breaker is open and the lease has not yet
+// expired, the renewal worker advances the enforced deadline instead of
+// re-minting against the down Token Service. The adapter re-arms the
+// provider's expiry timer to newExpiresAt so the enforced deadline moves
+// in lockstep with the gateway's tracked deadline.
+// spec: §4.9 / §4.7.
+func (c *Client) ExtendCredentialLease(ctx context.Context, sessionID, provider, leaseID string, newExpiresAt time.Time) error {
+	_, err := c.rpc.ExtendCredentialLease(ctx, &adapterv1.ExtendCredentialLeaseRequest{
+		SessionId:       &adapterv1.SessionId{Value: sessionID},
+		Provider:        provider,
+		LeaseId:         leaseID,
+		ExpiresAtUnixMs: newExpiresAt.UnixMilli(),
+	})
+	return err
+}
+
+// prepareWorkspaceChunkSize bounds each PrepareWorkspace upload frame.
+const prepareWorkspaceChunkSize = 64 * 1024
+
+// PrepareWorkspace streams uploaded workspace files into the session's
+// staging tree (§4.7, the first session-assignment RPC). uploads maps
+// each §14 WorkspaceSource upload_ref to its content; each upload is
+// sent in frames bounded by prepareWorkspaceChunkSize. The response
+// reports the staged byte and file totals the adapter persisted.
+//
+// bindAttempt and midSession are the §4.7.1 carriage pair: a bind-sequence
+// caller passes its attempt's token and false, and the §7.4 mid-session
+// upload passes the empty string and true. The Client sets both on every
+// frame as given and derives neither from the other; the adapter decides the
+// call's admission on the first frame (§4.7.1 rule 9, the first-frame rule).
+func (c *Client) PrepareWorkspace(ctx context.Context, sessionID string, uploads map[string][]byte, bindAttempt string, midSession bool) (*adapterv1.PrepareWorkspaceResponse, error) {
+	stream, err := c.rpc.PrepareWorkspace(ctx)
+	if err != nil {
+		return nil, translateSlotBindRefusal(err)
+	}
+	hdr := uploadFrameHeader{
+		sid:         &adapterv1.SessionId{Value: sessionID},
+		bindAttempt: bindAttempt,
+		midSession:  midSession,
+	}
+	for ref, content := range uploads {
+		if err := sendUpload(stream, hdr, ref, content); err != nil {
+			// io.EOF means the adapter closed the stream early with an
+			// error; CloseAndRecv surfaces the real status. Any other
+			// send error is a transport failure to return directly.
+			if err == io.EOF {
+				break
+			}
+			return nil, translateSlotBindRefusal(err)
+		}
+	}
+	resp, err := stream.CloseAndRecv()
+	if err != nil {
+		return nil, translateSlotBindRefusal(err)
+	}
+	return resp, nil
+}
+
+// uploadFrameHeader is the per-call addressing every PrepareWorkspace frame
+// repeats: the session, and the §4.7.1 bind attempt and mid-session marker.
+type uploadFrameHeader struct {
+	sid         *adapterv1.SessionId
+	bindAttempt string
+	midSession  bool
+}
+
+// sendUpload streams one upload as PrepareWorkspace frames. It always
+// sends at least one frame so an empty upload still stages a file.
+func sendUpload(stream adapterv1.Adapter_PrepareWorkspaceClient, hdr uploadFrameHeader, ref string, content []byte) error {
+	for off := 0; ; off += prepareWorkspaceChunkSize {
+		end := off + prepareWorkspaceChunkSize
+		if end > len(content) {
+			end = len(content)
+		}
+		if err := stream.Send(&adapterv1.PrepareWorkspaceRequest{
+			SessionId:   hdr.sid,
+			UploadRef:   ref,
+			Chunk:       content[off:end],
+			BindAttempt: hdr.bindAttempt,
+			MidSession:  hdr.midSession,
+		}); err != nil {
+			return err
+		}
+		if end >= len(content) {
+			return nil
+		}
+	}
+}
+
+// FinalizeWorkspace materializes the §14 WorkspacePlan into the pod's
+// workspace root (§4.7, the second session-assignment RPC). For a plan
+// with uploadFile or uploadArchive sources, PrepareWorkspace must have
+// staged their content first.
+//
+// archive is the §13.4 per-Runtime archive-extraction opt-in surface
+// (AllowSymlinks toggle, workspace root for symlink-target validation).
+// Nil delivers the platform defaults (symlinks rejected) on the wire.
+// spec: §7.4; §13.4 — F-7.4.4.
+//
+// The returned []*WorkspacePlanWarning carries any §14 non-fatal
+// advisories the adapter raised during materialization (per §7.4). The slice is nil when
+// the materialization had nothing to report. F-7.4.15.
+//
+// midSession marks a §7.4 mid-session upload: the adapter overlays
+// the plan's sources onto the running session's existing workspace root
+// and signals the runtime once promotion completes, rather than replacing
+// the whole tree. The §4.7 assignment-sequence callers pass false. F-7.4.6.
+//
+// restore carries the presigned GET capabilities for a derived or replayed
+// session's starting snapshot, in ascending index order, which the adapter
+// extracts into the build tree before the plan's sources. A nil or empty
+// slice means no restore, which every caller other than the first bind of
+// a derived or replayed session passes. The capabilities are bearer URLs,
+// so the Client never logs them.
+// spec: §4.7.1 (pairing rule); §7.1 (Derive restore semantics).
+//
+// bindAttempt pairs with midSession under §4.7.1: a bind-sequence caller
+// passes its attempt's token with false, and the §7.4 mid-session upload
+// passes the empty string with true. The Client sets both as given.
+func (c *Client) FinalizeWorkspace(ctx context.Context, sessionID string, plan *adapterv1.WorkspacePlan, archive *adapterv1.ArchivePolicy, restore []ChunkGrant, bindAttempt string, midSession bool) ([]*adapterv1.WorkspacePlanWarning, error) {
+	resp, err := c.rpc.FinalizeWorkspace(ctx, &adapterv1.FinalizeWorkspaceRequest{
+		SessionId:     &adapterv1.SessionId{Value: sessionID},
+		WorkspacePlan: plan,
+		ArchivePolicy: archive,
+		MidSession:    midSession,
+		BindAttempt:   bindAttempt,
+		RestoreChunks: chunkGrantsToProto(restore),
+	})
+	if err != nil {
+		return nil, translateSlotBindRefusal(err)
+	}
+	return resp.GetWorkspacePlanWarnings(), nil
+}
+
+// RunSetup executes the §14 WorkspacePlan setup commands in the pod's
+// workspace (§4.7, the third session-assignment RPC). setupPolicy
+// bounds the aggregate setup phase per §5.1; a nil policy applies no
+// aggregate cap. The returned outputs carry the §7.5 captured
+// stdout / stderr / exit code for each executed command in submission
+// order; on a hard failure the adapter may attach partial outputs in
+// the gRPC status details — the caller can extract them with
+// `status.FromError(err).Details()`. F-7.5.4.
+//
+// bindAttempt is the calling bind attempt's §4.7.1 token, set as given.
+func (c *Client) RunSetup(ctx context.Context, sessionID string, setupCommands []*adapterv1.SetupCommand, setupPolicy *adapterv1.SetupPolicy, bindAttempt string) ([]*adapterv1.SetupCommandOutput, error) {
+	resp, err := c.rpc.RunSetup(ctx, &adapterv1.RunSetupRequest{
+		SessionId:     &adapterv1.SessionId{Value: sessionID},
+		SetupCommands: setupCommands,
+		SetupPolicy:   setupPolicy,
+		BindAttempt:   bindAttempt,
+	})
+	if err != nil {
+		// Try to recover partial outputs from the gRPC status details.
+		if st, ok := status.FromError(err); ok {
+			for _, d := range st.Details() {
+				if r, isResp := d.(*adapterv1.RunSetupResponse); isResp {
+					return r.GetOutputs(), translateSlotBindRefusal(err)
+				}
+			}
+		}
+		return nil, translateSlotBindRefusal(err)
+	}
+	return resp.GetOutputs(), nil
+}
+
+// SendMessage forwards a pre-encoded §28.5.3 message envelope to the
+// session's runtime. The session identifier is the request's sole
+// address: it names the session and, under §5.2, the slot that session
+// holds on the pod. spec: §7.2; §28.5.3.
+func (c *Client) SendMessage(ctx context.Context, sessionID string, envelope []byte) error {
+	_, err := c.rpc.SendMessage(ctx, &adapterv1.SendMessageRequest{
+		SessionId:    &adapterv1.SessionId{Value: sessionID},
+		EnvelopeJson: envelope,
+	})
+	return err
+}
+
+// InterruptStatus mirrors the §4.7 InterruptResponse.Status the adapter
+// returns from the Interrupt RPC: STATUS_ACKNOWLEDGED when the runtime
+// reached a safe stop point, STATUS_INTERRUPT_TIMEOUT when the deadline
+// elapsed without an acknowledgement (§7.2: the gateway moves
+// the session to suspended anyway), STATUS_BUSY when the adapter's per-
+// session operation lock rejected the call so the gateway can retry, and
+// STATUS_UNSPECIFIED for the zero value.
+//
+// spec: §4.7 InterruptResponse.Status.
+type InterruptStatus int32
+
+const (
+	InterruptStatusUnspecified  InterruptStatus = 0
+	InterruptStatusAcknowledged InterruptStatus = 1
+	InterruptStatusTimeout      InterruptStatus = 2
+	InterruptStatusBusy         InterruptStatus = 3
+)
+
+// Interrupt asks the pod's runtime to pause (§4.7). A clean interrupt
+// grants the runtime deadline to pause and checkpoint at a safe stop
+// point; a hard interrupt stops the session at once. The returned status carries the
+// §4.7 InterruptResponse.Status disposition so the caller can branch on
+// ACKNOWLEDGED, INTERRUPT_TIMEOUT (still transitions to suspended per
+// §7.2), or BUSY (retry).
+func (c *Client) Interrupt(ctx context.Context, sessionID string, hard bool, deadline time.Duration) (InterruptStatus, error) {
+	mode := adapterv1.InterruptRequest_MODE_CLEAN
+	if hard {
+		mode = adapterv1.InterruptRequest_MODE_HARD
+	}
+	resp, err := c.rpc.Interrupt(ctx, &adapterv1.InterruptRequest{
+		SessionId:  &adapterv1.SessionId{Value: sessionID},
+		Mode:       mode,
+		DeadlineMs: int32(deadline.Milliseconds()),
+	})
+	if err != nil {
+		return InterruptStatusUnspecified, err
+	}
+	return InterruptStatus(resp.GetStatus()), nil
+}
+
+// SignalDeadline delivers the §11.3 pre-expiry warning to the
+// pod's runtime over the CH-RUNTIMEOPS. remainingMs is the wall-clock
+// left before the session's deadline; trigger names which deadline is
+// approaching ("session_age" or "budget"). The returned bool
+// reports whether the adapter forwarded the warning (false when the
+// runtime has no CH-RUNTIMEOPS — Basic/Standard integration level,
+// §15). The call is one-way; the adapter does not wait for a
+// runtime acknowledgement.
+func (c *Client) SignalDeadline(ctx context.Context, sessionID string, remainingMs int32, trigger string) (bool, error) {
+	resp, err := c.rpc.SignalDeadline(ctx, &adapterv1.SignalDeadlineRequest{
+		SessionId:   &adapterv1.SessionId{Value: sessionID},
+		RemainingMs: remainingMs,
+		Trigger:     trigger,
+	})
+	if err != nil {
+		return false, err
+	}
+	return resp.GetDelivered(), nil
+}
+
+// CheckpointStream is the gateway-driven bidirectional Checkpoint
+// exchange (§4.7 RPC table, §10.1): the gateway sends CheckpointStart /
+// CheckpointGrant / CheckpointAbort and receives CheckpointProbe /
+// ChunkReady / ChunkCommitted / CheckpointSummary / CheckpointFailed. The
+// gateway-side grant/confirm driver in pkg/gateway/checkpoint consumes
+// it.
+type CheckpointStream = adapterv1.Adapter_CheckpointClient
+
+// Checkpoint opens the §4.7 / §10.1 bidirectional Checkpoint stream to
+// the pod's adapter. The gateway is the gRPC client and drives the
+// grant/confirm loop over the returned stream: it mints the
+// `checkpoint_id`, signs per-chunk PUT capabilities, and confirms each
+// committed chunk while the adapter streams the workspace archive
+// directly to object storage. This is the single upload path for every
+// checkpoint trigger; the adapter no longer mints a checkpoint id.
+//
+// spec: §10.1.7 — the gateway mints the checkpoint_id.
+func (c *Client) Checkpoint(ctx context.Context) (CheckpointStream, error) {
+	stream, err := c.rpc.Checkpoint(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("adapterclient: open checkpoint stream: %w", err)
+	}
+	return stream, nil
+}
+
+// CheckpointBarrierResult mirrors the §10.1 CheckpointBarrierAck the
+// pod's adapter emits in response to a graceful-drain barrier: the
+// echoed barrier id, the checkpoint ref (the gateway-minted
+// `checkpoint_id` the adapter received in the barrier-window Checkpoint
+// stream; empty when the gateway drove no stream), and the
+// time-to-quiescence measured inside the ack window.
+type CheckpointBarrierResult struct {
+	BarrierID     string
+	CheckpointRef string
+	QuiescedMs    int64
+}
+
+// CheckpointBarrier dispatches the §10.1 graceful-drain
+// barrier to the pod's adapter. The adapter validates generation
+// against its last fenced value (rejecting with FailedPrecondition
+// when stale), quiesces tool-call dispatch, and holds the quiesced state
+// open while the gateway drives the Checkpoint stream against the held
+// pod. The adapter acknowledges only after that gateway-driven stream
+// terminates; the ack echoes the gateway-minted checkpoint id. The
+// synchronous return mirrors the CheckpointBarrierAck the adapter also
+// emits on the AdapterEvents control stream.
+//
+// spec: §10.1.
+func (c *Client) CheckpointBarrier(ctx context.Context, sessionID string, coordinationGeneration int64, barrierID string) (CheckpointBarrierResult, error) {
+	resp, err := c.rpc.CheckpointBarrier(ctx, &adapterv1.CheckpointBarrierRequest{
+		SessionId:              &adapterv1.SessionId{Value: sessionID},
+		CoordinationGeneration: coordinationGeneration,
+		BarrierId:              barrierID,
+	})
+	if err != nil {
+		return CheckpointBarrierResult{}, err
+	}
+	return CheckpointBarrierResult{
+		BarrierID:     resp.GetBarrierId(),
+		CheckpointRef: resp.GetCheckpointRef(),
+		QuiescedMs:    resp.GetQuiescedMs(),
+	}, nil
+}
+
+// SealSession runs the §4.7.1 SealSession RPC: the adapter seals sessionID
+// against `message` delivery when it observed no activity for the session in
+// the last idleSeconds (§4.7.1 **Session seal.**). sealed reports whether the
+// session is sealed; when it is not, idleAge is the time since the session's
+// last activity, zero while a platform or connector call is in flight. The
+// request carries the caller's coordination generation, which the adapter
+// compares against the generation it last fenced for the session.
+//
+// spec: §4.7.1 (Role and Gateway RPC Contract), §28.5.1 (CH-ATTACH)
+func (c *Client) SealSession(ctx context.Context, sessionID string, generation int64, idleSeconds int) (sealed bool, idleAge time.Duration, err error) {
+	resp, err := c.rpc.SealSession(ctx, &adapterv1.SealSessionRequest{
+		SessionId:              &adapterv1.SessionId{Value: sessionID},
+		CoordinationGeneration: generation,
+		IdleSeconds:            int64(idleSeconds),
+	})
+	if err != nil {
+		return false, 0, err
+	}
+	return resp.GetSealed(), time.Duration(resp.GetIdleAgeSeconds()) * time.Second, nil
+}
+
+// UnsealSession runs the §4.7.1 UnsealSession RPC, lifting sessionID's seal
+// (§4.7.1 **Session seal.**). The request carries the caller's coordination
+// generation, which the adapter compares as it does for SealSession.
+//
+// spec: §4.7.1 (Role and Gateway RPC Contract), §28.5.1 (CH-ATTACH)
+func (c *Client) UnsealSession(ctx context.Context, sessionID string, generation int64) error {
+	_, err := c.rpc.UnsealSession(ctx, &adapterv1.UnsealSessionRequest{
+		SessionId:              &adapterv1.SessionId{Value: sessionID},
+		CoordinationGeneration: generation,
+	})
+	return err
+}
+
+// ExportSpec is one §8.7 fileExport entry passed to the adapter's
+// ExportPaths RPC: a source glob resolved inside the parent session's
+// /workspace/slots/{sessionId}/current and the relative destPrefix the matched files are
+// rebased under in the child workspace.
+type ExportSpec struct {
+	Source     string
+	DestPrefix string
+}
+
+// ExportedFile is one rebased file the parent pod's adapter packaged
+// for a delegation export (§4.7 / §8.7). Path is the
+// child-workspace-relative destination after the §8.7 rebasing rule.
+type ExportedFile struct {
+	Path    string
+	Content []byte
+	SHA256  string
+	Size    int64
+}
+
+// ExportPaths runs the §4.7 / §8.7 ExportPaths RPC against the parent
+// session's pod adapter, asking it to resolve the export specs inside
+// that session's /workspace/slots/{sessionId}/current, reject symlink-escaping matches, strip each
+// glob's base path, and re-root the matched files under each spec's
+// destPrefix. The gateway applies the lease fileExportLimits and the
+// optional content scan to the returned set before persisting it for
+// the child (§8.2 steps 3, 4).
+func (c *Client) ExportPaths(ctx context.Context, sessionID string, specs []ExportSpec) ([]ExportedFile, error) {
+	pb := make([]*adapterv1.ExportSpec, 0, len(specs))
+	for _, s := range specs {
+		pb = append(pb, &adapterv1.ExportSpec{Source: s.Source, DestPrefix: s.DestPrefix})
+	}
+	resp, err := c.rpc.ExportPaths(ctx, &adapterv1.ExportPathsRequest{
+		SessionId: &adapterv1.SessionId{Value: sessionID},
+		Exports:   pb,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ExportedFile, 0, len(resp.GetFiles()))
+	for _, f := range resp.GetFiles() {
+		out = append(out, ExportedFile{
+			Path:    f.GetPath(),
+			Content: f.GetContent(),
+			SHA256:  f.GetSha256(),
+			Size:    f.GetSizeBytes(),
+		})
+	}
+	return out, nil
+}
+
+// ResumeParams carries the inputs to restore a session onto a replacement
+// pod. SessionID, Runtime, and CheckpointID are required; the rest
+// re-deliver the §15.4 adapter-manifest fields so the restored runtime
+// reads the same manifest as before the resume.
+type ResumeParams struct {
+	SessionID          string
+	Runtime            string
+	CheckpointID       string
+	ExperimentContext  *adapterv1.ExperimentContext
+	TracingContext     map[string]string
+	AgentInterface     []byte
+	MinPlatformVersion string
+	// RecoveryGeneration is the session's §4.2 / §7.3 pod-recovery
+	// counter at issue time. Re-delivered to the adapter so per-pod
+	// telemetry and any partial-manifest the adapter writes carry the
+	// (coordination, recovery) tuple that authored the replay.
+	// F-7.3.22.
+	RecoveryGeneration int64
+	// ExpectedWorkspaceBytes is the session's
+	// last_checkpoint_workspace_bytes — the size the adapter is
+	// expected to extract. Zero leaves the adapter without a hint and
+	// the kubelet emptyDir guard is the only backstop. F-7.3.26.
+	ExpectedWorkspaceBytes int64
+	// WorkspaceSizeLimitBytes is the §4.4 hard workspace size cap
+	// resolved from the SandboxTemplate. Zero disables the
+	// gateway-supplied limit. F-7.3.26.
+	WorkspaceSizeLimitBytes int64
+	// ExpectedWorkspaceRoot is the §7.3 the original session ran against. The gateway passes it so
+	// the adapter can refuse a Resume whose replacement pod was
+	// provisioned with a different mount path — the §7.3 step (d)
+	// contractual guard against runtime template drift. Empty leaves
+	// the adapter without a hint (the §7.3 invariant is then
+	// upheld by construction only). F-7.3.15.
+	ExpectedWorkspaceRoot string
+	// Chunks carries one presigned GET capability per chunk of the
+	// checkpoint being restored, in ascending index order. The gateway
+	// resolves the chunk set from the manifest row it owns and mints one
+	// capability per index in [0, chunk_count); the adapter fetches each
+	// chunk directly from object storage and concatenates them into the
+	// single tar (or tar.gz) byte stream. Empty for the conversation-only
+	// and coordinator-handoff resume paths that restore no workspace.
+	//
+	// spec: §10.1.7 — reassembly on resume.
+	Chunks []ChunkGrant
+	// BindAttempt is the resume attempt's bind attempt token. A Resume is
+	// the first and only entry-touching RPC of its attempt and creates the
+	// slot registry entry through its own claim, so it carries the token the
+	// adapter stamps on that entry and the attempt's compensation later
+	// names. The Client sets it as given.
+	//
+	// spec: §4.7.1 (role and gateway RPC contract)
+	BindAttempt string
+}
+
+// ChunkGrant is one presigned GET capability for a single checkpoint
+// chunk on the Resume path. It is the gateway's only means of handing the
+// adapter a chunk's bytes: the gateway has no byte channel to the adapter
+// on resume, so it signs a per-key capability the adapter fetches
+// directly from object storage.
+type ChunkGrant struct {
+	// Index is the chunk's zero-based position in the reassembly order.
+	Index uint32
+	// Length is the chunk's byte count.
+	Length int64
+	// URL is the presigned GET capability. Bearer-sensitive.
+	URL string
+	// Headers carries any header the gateway signed into the capability,
+	// replayed verbatim by the adapter on the GET. Normally empty on the
+	// read path because a GET capability signs no SSE-KMS headers.
+	Headers map[string]string
+	// ExpiresAt is the capability's expiry; a fetch that outlives it is
+	// re-driven by re-calling Resume, which re-mints.
+	ExpiresAt time.Time
+}
+
+// ResumeResult is the adapter's response to a Resume call. The §4.4 /
+// §7.2 mode and the echoed recovery_generation surface back to the
+// gateway so the `session.resumed` event payload carries the resume
+// mode that actually executed on the pod. F-7.3.22.
+type ResumeResult struct {
+	RestoredBytes      int64
+	Mode               string
+	RecoveryGeneration int64
+}
+
+// Resume asks the pod's adapter to restore the session workspace from the
+// named §4.4 checkpoint and start the runtime (§4.7, §7.1) — the
+// replacement-pod counterpart of StartSession. The params re-deliver the
+// §15.4 manifest fields to the restored runtime. It returns the
+// adapter's ResumeResult, including the §4.4 / §7.2 mode label and the
+// echoed §4.2 recovery_generation. F-7.3.22, F-7.3.26.
+func (c *Client) Resume(ctx context.Context, p ResumeParams) (ResumeResult, error) {
+	resp, err := c.rpc.Resume(ctx, &adapterv1.ResumeRequest{
+		SessionId:               &adapterv1.SessionId{Value: p.SessionID},
+		Runtime:                 p.Runtime,
+		CheckpointId:            p.CheckpointID,
+		ExperimentContext:       p.ExperimentContext,
+		TracingContext:          p.TracingContext,
+		AgentInterface:          p.AgentInterface,
+		MinPlatformVersion:      p.MinPlatformVersion,
+		RecoveryGeneration:      p.RecoveryGeneration,
+		ExpectedWorkspaceBytes:  p.ExpectedWorkspaceBytes,
+		WorkspaceSizeLimitBytes: p.WorkspaceSizeLimitBytes,
+		ExpectedWorkspaceRoot:   p.ExpectedWorkspaceRoot,
+		Chunks:                  chunkGrantsToProto(p.Chunks),
+		BindAttempt:             p.BindAttempt,
+	})
+	if err != nil {
+		return ResumeResult{}, translateSlotBindRefusal(err)
+	}
+	return ResumeResult{
+		RestoredBytes:      resp.GetRestoredBytes(),
+		Mode:               resp.GetMode(),
+		RecoveryGeneration: resp.GetRecoveryGeneration(),
+	}, nil
+}
+
+// chunkGrantsToProto maps the caller's presigned GET capabilities onto
+// the wire ChunkGrant set the adapter fetches on resume or on a derived or
+// replayed session's first-bind restore, preserving the caller's ascending
+// index order. It returns nil for an empty set so a conversation-only or
+// coordinator-handoff Resume, and every FinalizeWorkspace that restores
+// nothing, carries no chunks.
+func chunkGrantsToProto(chunks []ChunkGrant) []*adapterv1.ChunkGrant {
+	if len(chunks) == 0 {
+		return nil
+	}
+	out := make([]*adapterv1.ChunkGrant, len(chunks))
+	for i, c := range chunks {
+		g := &adapterv1.ChunkGrant{
+			Index:   c.Index,
+			Length:  c.Length,
+			Url:     c.URL,
+			Headers: c.Headers,
+		}
+		if !c.ExpiresAt.IsZero() {
+			g.ExpiresAt = timestamppb.New(c.ExpiresAt)
+		}
+		out[i] = g
+	}
+	return out
+}
+
+// UsageReport is the §4.7 token and wall-clock accounting a pod's
+// adapter returned for a session.
+type UsageReport struct {
+	// InputTokens is the prompt-token count.
+	InputTokens int64
+	// OutputTokens is the completion-token count.
+	OutputTokens int64
+	// WallClockMS is the elapsed runtime wall-clock time in
+	// milliseconds.
+	WallClockMS int64
+}
+
+// ReportUsage pulls the session's token and time accounting from the
+// pod's adapter (§4.7). When cumulative is false the accounting is
+// incremental — each call returns usage accumulated since the previous
+// one — so the gateway sums it for §11.2 budget enforcement and billing;
+// the steady-state direct-mode poll uses this path. When cumulative is
+// true the adapter returns the session's running cumulative total
+// instead, which a reconnected gateway replica pulls to seed its
+// restored counter for the §11.2 crash-recovery MAX rule
+// (MAX(postgres_checkpoint, pod-reported cumulative total)). The adapter
+// advances its last-read watermark on either read, so a cumulative
+// recovery read followed by a steady-state delta read reports zero
+// rather than re-adding the already-recovered tokens.
+//
+// spec: §4.7 (ReportUsageRequest.cumulative), §11.2 (pod-reported
+// cumulative-usage re-report on reconnection).
+//
+// spec: §4.9 — for sessions in proxy
+// mode the gateway is the sole counter of record (the §4.9 LLM proxy
+// extracts authoritative counts from the upstream response). The
+// caller must filter proxy-mode sessions before reaching this RPC; the
+// pod-reported counts are not accepted for them. ErrUsageReportProxyMode
+// surfaces a misrouted proxy-mode call so a regression is observable
+// rather than silently double-counting.
+func (c *Client) ReportUsage(ctx context.Context, sessionID string, cumulative bool) (UsageReport, error) {
+	resp, err := c.rpc.ReportUsage(ctx, &adapterv1.ReportUsageRequest{
+		SessionId:  &adapterv1.SessionId{Value: sessionID},
+		Cumulative: cumulative,
+	})
+	if err != nil {
+		return UsageReport{}, err
+	}
+	return UsageReport{
+		InputTokens:  resp.GetInputTokens(),
+		OutputTokens: resp.GetOutputTokens(),
+		WallClockMS:  resp.GetWallClockMs(),
+	}, nil
+}
+
+// ErrUsageReportProxyMode reports that ReportUsage was called for a
+// session whose credential lease is proxy-mode. spec: §4.9.
+var ErrUsageReportProxyMode = errors.New("adapterclient: ReportUsage is not accepted for proxy-mode sessions (§4.9)")
+
+// ReportUsageForLease is the proxy-mode-safe wrapper around ReportUsage.
+// It returns ErrUsageReportProxyMode when lease is the §4.9 proxy-mode
+// lease for the session, so the caller does not double-count
+// (proxy-extracted counts are already recorded by the §4.9 LLM proxy).
+// A direct-mode lease, or an empty lease (the session has no §4.9
+// credential pool), falls through to the underlying RPC.
+//
+// cumulative selects the read: the steady-state direct-mode poll passes
+// false for the incremental delta, and the §11.2 crash-recovery path
+// passes true for the session's running cumulative total. The proxy-mode
+// filter runs first for both reads, so a proxy lease is never
+// double-counted regardless of which read a caller requests.
+//
+// spec: §4.7 (ReportUsageRequest.cumulative), §11.2 (direct-mode usage,
+// crash-recovery MAX rule); §4.9.
+func (c *Client) ReportUsageForLease(ctx context.Context, sessionID string, deliveryMode credential.DeliveryMode, cumulative bool) (UsageReport, error) {
+	if deliveryMode == credential.DeliveryProxy {
+		return UsageReport{}, ErrUsageReportProxyMode
+	}
+	return c.ReportUsage(ctx, sessionID, cumulative)
+}
+
+// AttachStream is a live §4.7 bidirectional content stream to a pod's
+// adapter. Send forwards a client-to-agent envelope; Recv returns the
+// next agent-to-gateway envelope. The stream is addressed by the session
+// identifier, which under §5.2 also names the slot that session holds on
+// the pod.
+type AttachStream struct {
+	stream    grpc.BidiStreamingClient[adapterv1.AttachRequest, adapterv1.AttachResponse]
+	sessionID string
+}
+
+// Attach opens the §4.7 content stream for sessionID and binds it with
+// an envelope-free first message, so the returned stream is ready to
+// carry content. The stream lives as long as ctx: the caller ends it by
+// cancelling ctx. The gateway's pod executor opens it on a session-scoped
+// context detached from the delivering request, holds it until the
+// session's binding is released, and cancels that context when it evicts
+// the stream. spec: §28.5.1 (CH-ATTACH Timing.); §7.2; §28.5.3.
+func (c *Client) Attach(ctx context.Context, sessionID string) (*AttachStream, error) {
+	stream, err := c.rpc.Attach(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("adapterclient: open attach stream: %w", err)
+	}
+	req := &adapterv1.AttachRequest{
+		SessionId: &adapterv1.SessionId{Value: sessionID},
+	}
+	if err := stream.Send(req); err != nil {
+		return nil, fmt.Errorf("adapterclient: bind attach stream: %w", err)
+	}
+	return &AttachStream{stream: stream, sessionID: sessionID}, nil
+}
+
+// Send forwards a §28.5.3 client-to-agent envelope to the agent.
+func (a *AttachStream) Send(envelope []byte) error {
+	return a.stream.Send(&adapterv1.AttachRequest{
+		SessionId:    &adapterv1.SessionId{Value: a.sessionID},
+		EnvelopeJson: envelope,
+	})
+}
+
+// Recv returns the next §28.5.3 agent-to-gateway envelope. It returns
+// io.EOF once the runtime's output stream ends.
+func (a *AttachStream) Recv() ([]byte, error) {
+	msg, err := a.stream.Recv()
+	if err != nil {
+		return nil, err
+	}
+	return msg.GetEnvelopeJson(), nil
+}
+
+// CloseSend signals that the gateway will send no further client
+// envelopes; the adapter keeps streaming runtime output until it ends.
+func (a *AttachStream) CloseSend() error {
+	return a.stream.CloseSend()
+}
+
+// Shutdown tears the named session down: the adapter ends the session's
+// use of the pod's runtime process, which outlives the session on a keep pod
+// and, on a restart pod, ends in the next whole-pod scrub or when the pod
+// retires, removes its per-slot tree, and releases the slot it held. reason is an
+// opaque cause string surfaced to the adapter, and deadline bounds the
+// graceful phase.
+// A zero deadline lets the adapter apply its default grace period. The
+// returned bool reports whether the session's close and slot teardown
+// completed cleanly.
+//
+// The request is addressed by the session identifier alone, which under
+// §5.2 also names the slot that session holds, and the handler is
+// idempotent: a request naming a session the adapter has already released
+// is a no-op that answers absent. That answer reports a clean exit except
+// while another Shutdown's teardown of the session is in flight, or after
+// the last Shutdown that removed the session's entry reported an unclean
+// exit; in both cases the session's runtime may still run, so the answer
+// reports an unclean exit (§4.7.1 rule 11).
+//
+// spec: §4.7 (Shutdown row); §4.7.10 (runtime process lifetime); §5.2;
+// §11.4.
+func (c *Client) Shutdown(ctx context.Context, sessionID, reason string, deadline time.Duration) (bool, error) {
+	return c.shutdown(ctx, sessionID, reason, deadline, nil)
+}
+
+// shutdown is the single builder behind the Shutdown RPC's two unfenced
+// exported forms, Shutdown and ShutdownRecycle, populating the fields each
+// caller supplies.
+//
+// It sets unconditional_teardown on every request it builds, so every
+// non-compensating teardown caller (the session-end and recycle releases,
+// the exclusive-path teardown, the §11.4 full-revoke fan-out, and any caller
+// added later) sends the unconditional form without naming the field at its
+// call site. The adapter refuses a Shutdown that sets neither that field nor
+// bind_attempt, so setting it here rather than per caller is what keeps a new
+// caller from forgetting it. The fenced form names a bind attempt instead and
+// is built by ShutdownReclaim, never here, because a request carries exactly
+// one of the two fields.
+//
+// spec: §4.7.1 (role and gateway RPC contract); §4.7 (Shutdown); §11.4
+func (c *Client) shutdown(ctx context.Context, sessionID, reason string, deadline time.Duration, recycle *adapterv1.RecycleScrub) (bool, error) {
+	resp, err := c.rpc.Shutdown(ctx, &adapterv1.ShutdownRequest{
+		SessionId:             &adapterv1.SessionId{Value: sessionID},
+		Reason:                reason,
+		DeadlineMs:            int32(deadline.Milliseconds()),
+		Recycle:               recycle,
+		UnconditionalTeardown: true,
+	})
+	if err != nil {
+		return false, err
+	}
+	return resp.GetExitedCleanly(), nil
+}
+
+// ShutdownReclaim sends the fenced form of §4.7's Shutdown, naming the bind
+// attempt whose slot registry entry it is reclaiming. It is the only sender
+// of the fenced form; every other teardown goes through Shutdown or
+// ShutdownRecycle. It builds its own request rather than routing through
+// the shutdown builder, so the request carries bind_attempt and leaves
+// unconditional_teardown false: the two fields are the fenced and the
+// unconditional forms of the teardown, and a request carries exactly one.
+//
+// The returns are the §4.7.1 reclaim outcome the adapter reports, whether
+// the runtime exited cleanly, and the RPC error. The adapter answers an
+// attempt mismatch as the superseded outcome rather than as an error, so
+// this method does not translate refusals. bindAttempt is the token the
+// compensating attempt already holds, so the client latches nothing off a
+// response and keeps no per-connection state.
+//
+// spec: §4.7.1 (role and gateway RPC contract); §7.1 (normal flow)
+func (c *Client) ShutdownReclaim(
+	ctx context.Context, sessionID, reason string,
+	deadline time.Duration, bindAttempt string,
+) (adapterv1.SlotReclaimOutcome, bool, error) {
+	resp, err := c.rpc.Shutdown(ctx, &adapterv1.ShutdownRequest{
+		SessionId:   &adapterv1.SessionId{Value: sessionID},
+		Reason:      reason,
+		DeadlineMs:  int32(deadline.Milliseconds()),
+		BindAttempt: bindAttempt,
+	})
+	if err != nil {
+		return adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_UNSPECIFIED, false, err
+	}
+	return resp.GetSlotReclaim(), resp.GetExitedCleanly(), nil
+}
+
+// RecycleScrub carries the pod identity and the §5.2 whole-pod scrub
+// parameters the gateway delivers on the occupancy-zero recycle-boundary
+// Shutdown. The gateway resolves these from the pod's SandboxName and the
+// resolved pool's sessionPolicy.recycle block, captured once at bind time.
+type RecycleScrub struct {
+	// PodID is the agent_pod_state row key (the Sandbox name) the gateway
+	// keys the missing-report timeout on and the adapter echoes back in
+	// ReportPodScrub so the report matches the armed timer.
+	// spec: §4.7 Shutdown recycle disposition.
+	PodID string
+	// CleanupCommands are the deployer-defined cleanupCommands the scrub runs
+	// after the credential purge and before the standard scrub steps. Empty
+	// runs no cleanup commands. spec: §5.2 whole-pod scrub trigger.
+	CleanupCommands []string
+	// CleanupTimeoutSeconds is the aggregate cap on the cleanup commands; the
+	// gateway-side missing-report timeout is this value plus a grace period.
+	// spec: §5.2 whole-pod scrub trigger.
+	CleanupTimeoutSeconds int32
+}
+
+// ShutdownRecycle is the §4.7 recycle-disposition variant of the proto
+// Shutdown RPC (the row the §4.7 table names Shutdown). It marks the
+// occupancy-zero recycle boundary: the adapter closes the ending session's
+// runtime, keeps the pod process alive across the boundary, runs the §5.2
+// whole-pod scrub with the carried parameters, and reports its binary
+// outcome for rc.PodID asynchronously via ReportPodScrub. The gateway does
+// not block the response on the scrub; the missing-report timeout it armed
+// before this call bounds it. The returned bool reports whether the ending
+// session's runtime exited cleanly.
+//
+// The plain Shutdown helper leaves the recycle sub-message nil, and the
+// claim effect of that release is the one §4.6.3 assigns.
+//
+// spec: §4.7 Shutdown recycle disposition; §5.2 whole-pod scrub trigger.
+func (c *Client) ShutdownRecycle(ctx context.Context, sessionID string, rc RecycleScrub) (bool, error) {
+	return c.shutdown(ctx, sessionID, "", 0, &adapterv1.RecycleScrub{
+		PodId:                 rc.PodID,
+		CleanupCommands:       rc.CleanupCommands,
+		CleanupTimeoutSeconds: rc.CleanupTimeoutSeconds,
+	})
+}

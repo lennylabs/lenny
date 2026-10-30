@@ -3,98 +3,36 @@ layout: default
 title: Home
 nav_order: 0
 permalink: /
-description: Lenny is a Kubernetes-native, runtime-agnostic platform for running interactive AI agent sessions in isolated sandboxes. Self-hosted; no managed service.
+description: Lenny is a self-hosted platform for long-running, interactive AI agent sessions on Kubernetes.
 ---
 
 # Lenny
 
-**Run interactive AI agents in isolated sandboxes on your own Kubernetes cluster.**
-
-Lenny is a platform for running interactive AI agent sessions in isolated sandboxes on your own Kubernetes cluster.
-
-The platform is runtime-agnostic. Any agent harness that implements a basic JSON-over-stdin/stdout protocol can run under it, and a catalog of ready-to-use runtimes ships out of the box — Claude Code, Gemini CLI, Codex, LangGraph, CrewAI, and others. You can fork any of them or register your own alongside.
-
-Agents run in one of three modes, chosen to fit the isolation–throughput trade-off. The default, `session` mode, gives each session its own locked-down pod with a fresh workspace, leased credentials, and a tight network perimeter. When throughput matters more than per-session isolation, `task` mode reuses a pod across sequential tasks with a workspace scrub between them, and `concurrent` mode handles several tasks at once inside a single pod.
-
-In Lenny, agents can delegate work to other agents, recursively. Lenny tracks the delegation tree and enforces budget, scope, and isolation at every hop, so multi-agent systems don't depend on any runtime to police itself.
-
-Pods run non-root with dropped Linux capabilities, a read-only root filesystem, and default-deny network policies; no standing credentials are mounted — agents receive short-lived leases scoped to the session — and every state change is written to a hash-chained audit log. Beyond those defaults, operators can route LLM calls through the gateway so provider API keys never reach the pod, configure the pool's sandbox runtime (runc, gVisor, or Kata Containers), and plug guardrail and content-policy interceptors into the gateway's request path.
-
-Clients can interact with Lenny agents over different protocols: REST, MCP, the OpenAI Chat Completions API, and Open Responses API. Any of them can start
-sessions, stream messages, upload files, trigger delegation, and tear sessions down.
-
-Underneath, Lenny is built on standard Kubernetes building blocks: custom resources, controllers, network policies, autoscalers, and sandboxing  
-runtimes. There's no custom scheduler, no external control plane, and no outbound telemetry to a vendor — data stays inside the cluster you operate.
+Lenny is a self-hosted platform for long-running, interactive AI agent sessions on Kubernetes.
 
 {: .note }
+> Lenny is at an early, pre-release stage. [Implementation Status](/lenny/about/status) lists which parts of the platform run today.
 
-> **Status: design phase.** The specification is complete and drives implementation under a spec- and test-driven workflow. These docs describe the platform as specified; see [Implementation Status](about/status) for what's wired up today. Design feedback is welcome right now — open an [issue](https://github.com/lennylabs/lenny/issues) or a [discussion](https://github.com/lennylabs/lenny/discussions).
->
-> **Lenny is unusually ambitious for its stage.** The surface area is broader than a traditional early-stage OSS project would attempt. That's deliberate: with AI assistance, it's feasible to write a detailed spec and documentation up front and drive the implementation from them — an approach that wasn't realistic before. The project is still early stage; expect changes as feedback arrives.
-
----
-
-## What's included
-
-**Run it on your laptop in one command.** `lenny up` is a single binary that starts an embedded Kubernetes cluster, the gateway, the management plane, and a catalog of ready-to-use agent runtimes. First boot takes about a minute; subsequent starts are seconds. It runs the same gateway, controller, and management-plane binaries as a production cluster.
-
-**Reference runtime catalog.** Every install includes nine pre-registered runtimes: `claude-code`, `gemini-cli`, `codex`, `cursor-cli`, `chat`, `langgraph`, `mastra`, `openai-assistants`, and `crewai`. You can use them as-is, fork them, or register your own alongside.
-
-**Bring your own agent in ~50 lines.** The minimum integration is a program that reads JSON from stdin and writes JSON to stdout. If you want more -- tool access, delegation, memory, clean interrupts, zero-downtime credential rotation -- there are higher integration levels that add them incrementally. Official SDKs for Go, Python, and TypeScript take care of the wire format.
-
-**Scaffolding and publishing built in.** `lenny runtime init my-agent --language go --template coding` emits a working repo. `lenny runtime publish` pushes the image and registers it against a gateway in one step.
-
-**One gateway, four protocols.** Your clients can use whichever they already have code for:
-
-| Protocol                          | Use it for                                                                        |
-| :-------------------------------- | :-------------------------------------------------------------------------------- |
-| REST                              | CI/CD, automation, admin dashboards, any HTTP client                              |
-| MCP (Streamable HTTP)             | Interactive streaming, multi-agent delegation, MCP hosts (Claude Desktop, Cursor) |
-| OpenAI Chat Completions           | Existing OpenAI SDK code -- change the base URL, keep the rest                    |
-| Open Responses / OpenAI Responses | Any Responses-API client                                                          |
-
-**LLM provider routing in the gateway.** The gateway routes requests to Anthropic, AWS Bedrock, Google Vertex AI, and Azure OpenAI directly, with no additional proxy process to run. For pools configured with `deliveryMode: proxy` (the default), agents receive short-lived lease tokens and raw API keys stay in the gateway's memory; for pools that opt into `deliveryMode: direct`, the gateway materializes a short-lived, lease-scoped credential onto the pod instead. For providers outside the built-in set, route through an external LLM proxy such as LiteLLM or Portkey alongside the built-in routing.
-
-**Pick your isolation level per pool.** You can run first-party code under plain containers (`runc`) when you trust it, sandbox untrusted code under gVisor (the default), or put high-risk workloads in a microVM with Kata Containers. All three are selected as Kubernetes `RuntimeClass` on the pool.
-
-**Agents can delegate to other agents.** A parent agent can spawn a child agent, pass work, enforce a token budget, narrow permissions, and collect the result. The gateway tracks the tree, blocks cycles, and ensures a child cannot become less isolated than its parent.
-
-**Installable with a wizard.** `lenny-ctl install` inspects your cluster, asks about ten targeted questions, composes a Helm values file, previews the diff, runs the install, and smoke-tests it. The answer file is reusable -- you can replay installs in CI.
-
-**Management plane included.** A dedicated management plane (`lenny-ops`) ships with every install. It exposes structured diagnostic endpoints, runbooks, backup and restore APIs, and drift detection, so an on-call engineer (or an on-call AI agent) can investigate without scraping `kubectl` output. `lenny-ctl doctor --fix` applies idempotent remediations for common misconfigurations.
-
-**Monitoring is wired up.** Bundled Prometheus alerting rules and OpenSLO definitions drop into any standard observability stack. There's a Grafana dashboard for core health signals.
-
-**A browser-based playground.** Every install serves a web UI at `/playground` that drives sessions through the same public API any client SDK uses. Demo a runtime without writing code. Turn it off in production with one Helm flag.
-
-**Multi-tenancy.** Postgres row-level security partitions every query by tenant. A tamper-evident audit log records every state change. Per-tenant quotas, role-based access control, and signed JWT-based authentication are configurable.
-
-**Compliance controls.** GDPR-style erasure that returns a cryptographic receipt. Legal holds. Configurable retention windows compatible with SOC 2, HIPAA, and FedRAMP control sets. Data residency policy that pins sessions to specific regions.
-
-Every capability on this page is specified in [`spec/`](https://github.com/lennylabs/lenny/tree/main/spec) and covered by the integration test suite.
-
----
-
-## Pick your entry point
+## Reading paths
 
 <div class="grid-cards" markdown="1">
 
 <div class="card" markdown="1">
 
-### Evaluate Lenny
+### Evaluation
 
-Decide if it fits. Start with `lenny up` and the comparison guide.
+The comparisons page sets Lenny against other agent sandbox and orchestration platforms, and the architecture page describes its components and trust boundaries.
 
-[Quickstart](/lenny/getting-started/){: .btn .btn-purple }
-[About](/lenny/about/){: .btn .btn-purple }
+[Comparisons](/lenny/about/comparisons){: .btn .btn-purple }
+[Architecture](/lenny/getting-started/architecture){: .btn .btn-purple }
 
 </div>
 
 <div class="card" markdown="1">
 
-### Build a client application
+### Client integration
 
-You call Lenny from an app, a script, or an MCP host.
+The Client Guide covers driving sessions from an application, a script, or an MCP host through the `lenny session` CLI, the client SDKs, and the gateway's REST, MCP, and OpenAI-compatible APIs.
 
 [Client Guide](/lenny/client-guide/){: .btn .btn-purple }
 
@@ -102,9 +40,9 @@ You call Lenny from an app, a script, or an MCP host.
 
 <div class="card" markdown="1">
 
-### Build a runtime
+### Runtime authoring
 
-You are bringing your own agent binary or adapter.
+The Runtime Author Guide covers putting an agent process under Lenny at the Basic, Standard, or Full integration level, along with the runtime SDKs, scaffolding, testing, and publishing.
 
 [Runtime Author Guide](/lenny/runtime-author-guide/){: .btn .btn-purple }
 
@@ -112,9 +50,9 @@ You are bringing your own agent binary or adapter.
 
 <div class="card" markdown="1">
 
-### Operate Lenny on a cluster
+### Cluster operation
 
-You install, configure, and scale the platform.
+The Operator Guide covers installing Lenny with the Helm chart or the `lenny-ctl install` wizard, and configuring, securing, scaling, observing, and upgrading a deployment.
 
 [Operator Guide](/lenny/operator-guide/){: .btn .btn-purple }
 
@@ -122,21 +60,34 @@ You install, configure, and scale the platform.
 
 <div class="card" markdown="1">
 
-### Keep Lenny running
+### On-call operation
 
-You are on-call. `lenny-ops`, doctor, runbooks, alerts.
+Agent Operability describes the `lenny-ops` management plane that human and AI on-call engineers share, and the runbooks map each bundled alert to diagnosis and remediation steps.
 
 [Agent Operability](/lenny/operator-guide/agent-operability){: .btn .btn-purple }
+[Runbooks](/lenny/runbooks/){: .btn .btn-purple }
 
 </div>
 
 <div class="card" markdown="1">
 
-### Review security and compliance
+### Security review
 
-You assess Lenny for isolation, audit, and regulatory fit.
+Security Principles states the isolation, network, credential, and audit design and maps Lenny's controls to compliance frameworks, and the architecture page describes the trust boundaries between clients, the gateway, and pods.
 
 [Security Principles](/lenny/operator-guide/security-principles){: .btn .btn-purple }
+[Security boundaries](/lenny/getting-started/architecture#security-boundaries){: .btn .btn-purple }
+
+</div>
+
+<div class="card" markdown="1">
+
+### Contribution
+
+The contributing page describes how to report issues, propose design changes, and submit code, and the technical specification defines the behavior that the code implements.
+
+[Contributing](/lenny/about/contributing){: .btn .btn-purple }
+[Specification](https://github.com/lennylabs/lenny/tree/main/spec){: .btn .btn-purple }
 
 </div>
 
@@ -144,28 +95,301 @@ You assess Lenny for isolation, audit, and regulatory fit.
 
 ---
 
-## Quick links
+---
 
-- [Quickstart -- `lenny up` in 5 minutes](/lenny/getting-started/){: .btn .btn-outline }
-- [Core Concepts](/lenny/getting-started/concepts){: .btn .btn-outline }
-- [Reference Runtime Catalog](/lenny/reference/){: .btn .btn-outline }
-- [API Reference](/lenny/api/){: .btn .btn-outline }
-- [GitHub](https://github.com/lennylabs/lenny){: .btn .btn-outline }
+## Overview
+
+Lenny is an open source system for running AI agent workloads on Kubernetes. It keeps pools of pre-warmed, sandboxed pods for registered runtimes, where a runtime is any containerized process that runs behind Lenny's runtime adapter to serve stateful agent sessions, stateless requests, or MCP tools. Each pool carries its own isolation, network egress, credential, and scaling policy, including how many sessions a pod serves before it is terminated. A gateway in front of the pools carries all client traffic, file transfers, and credential delivery, and it applies tenant and budget policy to each request.
+
+## Workload fit
+
+Lenny suits the following workloads:
+
+- Long-running interactive sessions with streaming output, interrupts, follow-up prompts, and tool use.
+- Agents that execute untrusted or LLM-generated code and need kernel-level sandboxing.
+- Platforms that serve several teams or customers from one deployment, with per-tenant credentials, quotas, and audit.
+- Multi-agent systems in which an agent starts child agents under budgets and permissions that the platform enforces.
+
+Lenny does not suit GPU workloads, because it does not schedule GPUs, or computer-use and browser-automation agents that need a desktop or VNC session.
+
+[Comparisons](/lenny/about/comparisons) sets Lenny against E2B, Daytona, Fly.io Sprites, Temporal, Modal, LangGraph and LangSmith, Google Scion, NVIDIA OpenShell, and Alibaba OpenSandbox.
+
+## Architecture
+
+![Request path in a Lenny cluster. Clients connect to the gateway over REST, MCP, OpenAI Chat Completions, or Open Responses. The gateway connects to the Token Service, Postgres and Redis, and object storage, and connects over mTLS gRPC to agent pods, each of which holds an adapter container and an agent container. Controllers manage the pods through Sandbox resources. A boundary marks the agent namespace and its default-deny network policy, and the only arrows entering the pods start at the gateway.](assets/diagrams/request-path.svg)
+
+<!--
+ASCII fallback for the diagram above (request-path):
+
+                 +--------------------------------+
+                 | Clients: SDKs, CLI, MCP hosts  |
+                 +--------------------------------+
+                                 |
+          REST, MCP, OpenAI Chat Completions, Open Responses
+                                 v
++ Kubernetes cluster ...........................................+
+:  +------------------------------------+     +---------------+ :
+:  | Gateway                            | ==> | Token Service | :
+:  | auth, policy, session routing,     | ==> | Postgres,     | :
+:  | credential leasing, audit          |     | Redis         | :
+:  +------------------------------------+ ==> | Object storage| :
+:            |  mTLS gRPC  |                  +---------------+ :
+:            v             v                                    :
+:  + Agent namespace (default-deny; ingress only from gateway) + :
+:  : +-------------+  +-------------+                          : :
+:  : | Agent pod   |  | Agent pod   |  <== Controllers         : :
+:  : |  Adapter    |  |  Adapter    |      (Warm Pool          : :
+:  : |  Agent      |  |  Agent      |      Controller,         : :
+:  : +-------------+  +-------------+      PoolScalingController): :
+:  +.........................................................+ :
++...............................................................+
+-->
+
+Clients reach agent pods only through the gateway, which holds session state, credentials, and policy.
+
+| Component | Runs as | Responsibility |
+|:--|:--|:--|
+| Gateway | Stateless replicas behind a load balancer | Authenticates clients (OIDC or OAuth 2.1), terminates the client protocols, routes sessions, runs the policy and interceptor chain, mediates file delivery, and hosts the delegation interface. |
+| Token Service | Separate Deployment with its own service account and KMS access | Holds durable credential material and issues short-lived leases. |
+| Warm Pool Controller | Leader-elected controller | Creates and retires agent pods through the `kubernetes-sigs/agent-sandbox` CRDs, and keeps each pool at its warm count. |
+| PoolScalingController | Controller | Reconciles pool configuration from Postgres into CRDs and adjusts warm counts. |
+| Runtime adapter | Sidecar container in each agent pod, or a process in the agent container in the embedded deployment model | Speaks mTLS gRPC to the gateway, and JSON Lines and local MCP to the agent process. |
+| Agent runtime | Container in each agent pod | Runs the agent code that serves the session. |
+
+[Architecture](/lenny/getting-started/architecture) describes each component and the trust boundaries between them.
+
+## Runtime pools
+
+A runtime is registered either as a standalone image or as a derivation of a base runtime that adds its own workspace defaults, setup commands, and policies. A pool is a warmable deployment target for one runtime and one operational profile. Each pool sets the following independently:
+
+- The isolation profile (gVisor, Kata Containers, or runc) and the resource class.
+- The network egress profile and the credential pool with its delivery mode.
+- The execution mode and session policy, which control whether pods are reused or shared.
+- The warm-pod range (`minWarm` and `maxWarm`), the maximum session age, and the checkpoint cadence.
+- The behavior when no warm pod is free (`onPoolExhausted: reject` or `queue`).
+- The workspace template that each warm pod materializes before a session claims it.
+
+The PoolScalingController keeps each pool within its warm range, so a session starts on a pod that is already scheduled, running, and health-checked. A hot pool keeps `minWarm` above zero for immediate availability, and a cold pool sets `minWarm: 0` and creates pods on demand.
+
+**SDK warm pools.** A runtime that declares `capabilities.preConnect: true` starts its agent process during warm-up, and the process waits connected for its first prompt. Every pod in that runtime's pools warms to this state, which removes the agent SDK's start-up time from session creation. When a session's workspace contains files that the agent reads at start-up (by default `CLAUDE.md` and `.claude/*`, configurable through `sdkWarmBlockingPaths`), the adapter restarts the agent process after the files arrive. The PoolScalingController reports a high restart rate and turns SDK warming off for a pool whose restart rate passes a safety threshold.
+
+**Workspace templates.** A pool can declare a workspace template: repositories, archives, and files from the Artifact Store that every session on the pool starts from. The adapter materializes the template into a pod-level cache while the pod warms, so a repository clone or a large archive extraction completes before any session claims the pod. When a session is assigned, the adapter derives that session's writable workspace from the cache and then applies the session's own workspace plan on top. Sessions cannot write to the cache, so changes made by one session do not reach a later session on the same pod. Template sources resolve without a session, so a template cannot reference session uploads or use a credential lease. When a session's `gitClone` pins a commit that the cache does not hold, the session receives the same workspace that a cold clone produces.
+
+**Execution modes.** By default a pod serves one session and terminates when the session ends. Two `sessionPolicy` settings raise the number of sessions a pod serves before it is terminated: `maxConcurrentSessions` sets how many sessions the pod hosts at once, and `recycle.maxSessionsPerPod` sets how many it serves over its lifetime when pod reuse is enabled. Each setting trades isolation for density and requires an explicit acknowledgment in the pool definition.
+
+| Pod usage | Configuration | Required acknowledgment | Isolation between sessions |
+|:--|:--|:--|:--|
+| One session per pod | `executionMode: session` (default) | None | Separate pod for each session. |
+| Pod reuse | `sessionPolicy.recycle.enabled: true` with `recycle.maxSessionsPerPod` | `recycle.acknowledgeBestEffortScrub` | Sequential sessions of one tenant, separated by a best-effort scrub that is not a security boundary. |
+| Concurrent slots | `sessionPolicy.maxConcurrentSessions` greater than 1 | `acknowledgeProcessLevelIsolation` | Process-level only, and each slot can read the other slots' credential files. |
+| Service | `executionMode: service` | None | Replicas serve successive requests with no scrub between them, no workspace, and no conversation continuity. |
+
+The session creation response reports the resulting posture in `sessionIsolationLevel`, including `podReuse` and `residualStateWarning`, so a client can reject a session whose isolation does not meet its requirements.
+
+## Security model
+
+Lenny treats every agent pod as untrusted. The controls below apply to every pool, and the pool's isolation profile sets the kernel boundary.
+
+**Pod hardening.** Each pod runs as a non-root user with all capabilities dropped and a read-only root filesystem. Its writable paths are limited to `/tmp`, the workspace, and the session and artifact directories. Admission webhooks reject host namespaces, unsigned images, images outside the trusted registries, and images that are not pinned by digest.
+
+**Isolation profiles.** Each pool selects a profile, which maps to a Kubernetes RuntimeClass.
+
+| Profile | RuntimeClass | Intended use | Notes |
+|:--|:--|:--|:--|
+| `sandboxed` | gVisor | Default for all workloads | Minimum recommended isolation for any workload that runs LLM-generated code. |
+| `microvm` | Kata Containers | Higher-risk, semi-trusted, or multi-tenant workloads | Runs in a separate namespace on a dedicated node pool. |
+| `standard` | runc | Recommended for development and testing | A pool opts in with `allowStandardIsolation: true`. runc gives no protection against kernel exploits. |
+
+**Network isolation.** A default-deny NetworkPolicy in every agent namespace admits ingress only from the gateway. The default `restricted` egress profile allows only the gateway and a dedicated DNS service, and the `provider-direct` and `internet` profiles widen egress for pools that need it.
+
+**Data movement.** Pods have no shared volumes and no pod-to-pod network path, which keeps one session's data out of another session's reach. Agents receive and exchange data through channels the platform controls. A runtime's `sharedAssets` (artifacts such as model files or packed repositories, and inline files) are populated into every warm pod before the pod is claimed, under a read-only `/workspace/shared/` mount. A pool's workspace template is materialized into a pod-level cache at the same stage, and each session's writable workspace is derived from that cache when the session is assigned. Each session's workspace plan is applied after the pod is claimed: runtime `workspaceDefaults`, client uploads that the gateway validates, `gitClone` sources pinned to a commit for the session, and file exports from a parent session. The memory store keeps data across sessions. Checkpoints move to object storage only through single-use presigned URLs that the gateway issues, so the pod holds no object-store credential.
+
+**Identity.** Clients authenticate with OIDC or OAuth 2.1, and token exchange can only narrow a token's scope. The gateway and each pod's adapter authenticate each other with mTLS, and each agent pod holds a short-lived certificate with a SPIFFE identity. The agent process never takes part in mTLS.
+
+### Credential delivery
+
+![Credential flow between the Token Service, the gateway, an agent pod, and an LLM provider. In proxy mode the pod sends an LLM request carrying a lease token, and the gateway's LLM proxy replaces the token with the provider key and forwards the request to the provider. A dashed path shows direct mode, in which the gateway writes a lease with provider credentials into the pod's credentials file and the pod calls the provider itself. Connector OAuth tokens stay in the Token Service and never reach the pod.](assets/diagrams/credential-delivery.svg)
+
+<!--
+ASCII fallback for the diagram above (credential-delivery):
+
+                    +------------------------------+
+                    | Token Service                |   Connector OAuth tokens
+                    |  credential pools (KMS)      |   never reach the pod
+                    |  connector OAuth tokens      |
+                    +------------------------------+
+                                   |  provider credentials
+                                   v
++------------------+   proxy mode:     +-----------------+  request with   +--------------+
+| Agent pod        | ===============>  | Gateway         | ==============> | LLM provider |
+|                  | request with      |  LLM Proxy      |  provider key   |              |
+| credentials.json | leaseToken        |                 |                 |              |
++------------------+ <. . . . . . . .  +-----------------+                 +--------------+
+        :            direct mode: lease with provider credentials                 ^
+        :. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . :
+                 direct mode: request with provider credentials, sent from the pod
+-->
+
+Pods hold no standing credentials. Operators register LLM provider credentials in tenant-scoped credential pools, encrypted with a cloud KMS, and the gateway assigns each session its own short-lived lease. The gateway checks an emergency revocation list before every upstream call. Each pool sets `deliveryMode`:
+
+- `proxy`, the default for multi-tenant deployments, gives the pod a lease token and a proxy URL. The gateway's LLM proxy substitutes the provider key, translates the request for Anthropic, AWS Bedrock, Google Vertex AI, or Azure OpenAI, and counts tokens. The provider key never leaves the gateway process.
+- `direct`, the default for single-tenant deployments, writes the provider credentials into the pod for the lease's lifetime. It suits deployments in which the agent pod is trusted.
+
+OAuth tokens for external connectors such as GitHub or Jira stay with the Token Service and the gateway, and the pod receives neither client tokens nor connector tokens.
+
+**Audit.** Every session, task, and delegation produces append-only audit records covering the requester, the runtime, pool, and isolation profile, the delegation lineage, token usage, tool access, and policy denials. The records are linked by a SHA-256 hash chain and can be forwarded to a SIEM in OCSF format.
+
+[Security principles](/lenny/operator-guide/security-principles) describes the full model and maps the controls to compliance frameworks.
+
+## Multi-tenancy
+
+One Lenny deployment serves many tenants, and every layer carries the tenant boundary.
+
+- **Data.** Every record carries a `tenant_id`, and Postgres row-level security scopes every query to the caller's tenant. Credential pools are tenant-scoped in the same way.
+- **Pods.** A pod that is reused or shared between sessions stays pinned to one tenant for its lifetime, and a fail-closed admission webhook prevents the tenant label from changing. Cross-tenant pod reuse is off by default and requires the `microvm` profile.
+- **Deployment mode.** Setting `tenancy.mode: multi` turns on hard rejections for unsafe combinations, including direct credential delivery on runc pools and proxy lease tokens without SPIFFE binding.
+- **Quotas and budgets.** Rate limits, concurrency limits, and token budgets apply per user, per tenant, per runtime, per pool, and per delegation tree. Usage and metering APIs and an append-only billing event stream report consumption per tenant.
+- **Access control.** Environments select runtimes by label, and role-based access control governs which callers can use each environment.
+- **Data residency and lifecycle.** `dataResidencyRegion` restricts a tenant's pods and storage to one region, including the pods of delegated child sessions. Erasure jobs delete a user's or a tenant's data from every store and record a receipt in the audit trail, and legal holds suspend deletion. `complianceProfile` (`soc2`, `fedramp`, or `hipaa`) tightens retention and integrity checks.
+
+Tenants share the agent namespaces, and the separation between tenants is enforced by the database, the gateway, admission policy, and the isolation profile. Workloads that require dedicated nodes run on pools bound to dedicated node pools.
+
+## Delegation controls
+
+![Delegation tree with a root session, two child sessions, and one grandchild. Each edge carries the token budget and the isolation profile of the child, showing that budgets decrease and isolation stays equal or becomes stricter down the tree. One rejected edge, drawn in coral, shows an attempt to delegate to a weaker isolation profile.](assets/diagrams/delegation-controls.svg)
+
+<!--
+ASCII fallback for the diagram above (delegation-controls):
+
+                  +-------------------------------+
+                  | Root session                  |
+                  | 500,000 tokens, sandboxed     |
+                  +-------------------------------+
+                     |                         |
+   200,000 tokens    |                         |   150,000 tokens
+   sandboxed (equal) v                         v   microvm (stricter)
+              +-----------+              +-----------+
+              | Child A   |              | Child B   |
+              +-----------+              +-----------+
+                     |                         :
+   80,000 tokens     |                         :   sandboxed (weaker than microvm)
+   microvm (stricter)v                         v
+              +-----------+              +----------------------------------+
+              | Grandchild|              | Delegation rejected              |
+              +-----------+              | ISOLATION_MONOTONICITY_VIOLATED  |
+                                         +----------------------------------+
+
+Isolation order: standard < sandboxed < microvm. The gateway carves each child's
+token budget from the parent's remaining budget and rejects a child profile weaker
+than the parent's.
+-->
+
+An agent starts a child session by calling the `lenny/delegate_task` tool. The child can run a different runtime in a different pool. The gateway and the Token Service enforce the following controls at every hop, so a misbehaving agent cannot bypass them:
+
+- **Depth and fan-out.** The delegation lease caps tree depth (`maxDepth`), total and parallel children (`maxChildrenTotal` and `maxParallelChildren`), and tree size (`maxTreeSize`).
+- **Token budget.** A child's budget is carved from the parent's remaining budget.
+- **Permission scope.** A child's scope is a subset of its parent's scope.
+- **Isolation monotonicity.** A child runs at its parent's isolation profile or a stricter one, in the order `standard`, `sandboxed`, `microvm`.
+- **Content policy.** A child inherits its parent's `contentPolicy`, and inheritance can only tighten it.
+- **Cycle detection.** The gateway rejects a delegation whose runtime and pool already appear in the session's lineage, unless the platform, the runtime, and the policy all allow self-recursion.
+- **Child interface.** The parent sees each child through a virtual MCP interface hosted by the gateway, which carries status, results, elicitation, and cancellation, and never exposes pod addresses or credentials.
+
+## Runtime integration
+
+A runtime of `type: agent` talks to the adapter in its pod, and the platform features a runtime can use depend on which of the adapter's interfaces it implements. The interfaces are additive, and each tier is called an integration level.
+
+| Integration level | Interface the runtime implements | Platform features available |
+|:--|:--|:--|
+| Basic | JSON Lines messages on stdin and stdout | Session lifecycle, streaming text input and output, and recovery by restart. A pod failure loses in-flight context. |
+| Standard | The Basic interface, plus an MCP client connection to the adapter's local socket | Delegation, elicitation, structured output parts, memory tools, connectors, and best-effort checkpoints. |
+| Full | The Standard interface, plus the adapter's lifecycle socket | Consistent checkpoints, clean interrupts, in-place credential rotation, and deadline warnings. |
+
+At the Basic and Standard levels, a credential rotation checkpoints the session, restarts it on a new pod with a new lease, and resumes it, which the client observes as a reconnect. Existing harnesses run at the Basic level without an SDK and move up a level when they need the features it adds.
+
+A runtime of `type: mcp` wraps an existing MCP server without code changes. Lenny serves it at `/mcp/runtimes/{name}` with the same isolation, credentials, egress control, and audit.
+
+Runtime author SDKs for Go, Python, and TypeScript implement the wire format, and `lenny runtime init`, `lenny runtime validate`, and `lenny runtime publish` scaffold, test, and register a runtime. The reference runtime catalog defines runtimes for `claude-code`, `gemini-cli`, `codex`, `cursor-cli`, `chat`, `langgraph`, `mastra`, `openai-assistants`, and `crewai`, and the `echo` runtime is the conformance example. The [runtime author guide](/lenny/runtime-author-guide/) covers the contract.
+
+## Client protocols
+
+| Protocol | Endpoint | Suited to |
+|:--|:--|:--|
+| MCP (Streamable HTTP) | `/mcp` | Interactive sessions with streaming, MCP Tasks, and elicitation. This is the recommended session path. |
+| REST | `/v1/...` | Callers that cannot use MCP, and administrative and operator flows. Carries full message fidelity. |
+| OpenAI Chat Completions | `/v1/chat/completions` | Existing OpenAI clients. Each HTTP call runs a single-shot session on a fresh pod. |
+| Open Responses | `/v1/responses` | Open Responses and OpenAI Responses clients. Each call runs a single-shot session, and `previous_response_id` replays prior context into a new pod. |
+
+All protocols pass through the same gateway authentication, policy, quota, and audit path. The OpenAI-compatible adapters drop or flatten some message fields, so callers that need full fidelity use REST or MCP. Client SDKs for Go and TypeScript wrap session management and streaming. The [client guide](/lenny/client-guide/) documents each protocol.
+
+## Operations
+
+A production deployment requires the following components, which the operator runs and secures:
+
+- Kubernetes 1.27 or later, with a CNI that enforces NetworkPolicy egress rules and the gVisor RuntimeClass (and Kata Containers for `microvm` pools).
+- Postgres 14 or later with high availability, Redis with TLS and authentication, and S3-compatible object storage such as MinIO, S3, GCS, or Azure Blob Storage.
+- cert-manager 1.12.0 or later, a cloud KMS (AWS KMS, Google Cloud KMS, or Azure Key Vault), an OIDC identity provider, and OPA Gatekeeper or Kyverno for admission policy.
+
+The Helm chart installs Lenny, and a `lenny-preflight` job validates the dependencies first. The `lenny-ctl install` wizard detects the cluster, asks for the deployment choices, previews the Helm values, installs, and runs a smoke test, and it saves its answers for non-interactive installs in CI.
+
+The `lenny-ops` management plane runs in every deployment and serves diagnostics, runbooks, drift detection, backup and restore, and an MCP management server, so a human operator or an AI operations agent can inspect and repair the platform through structured APIs. `lenny-ctl doctor --fix` applies idempotent remediations. The chart ships a Prometheus alerting rule catalog with tunable thresholds and, under `monitoring.openslo.enabled`, OpenSLO documents.
+
+The [operator guide](/lenny/operator-guide/) covers installation, sizing, and upgrades.
+
+## Extension points
+
+Lenny defines interfaces for AI-specific concerns and leaves the logic to external systems. Each interface has a default implementation, stays off until an operator turns it on, and accepts a replacement.
+
+- **Request interceptors** run at gateway phases such as `PreDelegation`, `PreLLMRequest`, and `PostAgentOutput`, and call external classifiers such as AWS Bedrock Guardrails, Azure Content Safety, or Lakera Guard over gRPC.
+- **Memory store** defaults to Postgres with pgvector and accepts other backends such as Mem0 or Zep.
+- **Credential routing and semantic caching** select credentials by cost, latency, or intent, and cache LLM responses.
+- **Experiments** route sessions to variant pools by deterministic bucketing or through an OpenFeature provider such as LaunchDarkly, Statsig, or Unleash, and deliver the chosen variant to the runtime at session start. Lenny leaves targeting, statistics, and winner selection to the experimentation platform.
+- **Evaluation** stores scores against sessions through `POST /v1/sessions/{id}/eval`, and `tracingContext` lets external platforms such as LangSmith or Braintrust stitch traces across a delegation tree.
+
+Lenny ships no evaluation runner, judge model, guardrail classifier, or memory extraction.
+
+## Trade-offs
+
+- Warm pods consume cluster resources while idle. Scale-to-zero schedules reduce the cost outside peak hours.
+- Gateway-mediated file delivery adds workspace materialization to every session start in exchange for isolation and a complete audit record. A pool workspace template moves the content common to every session on the pool to warm time.
+- Credential pools, leases, and rotation take more setup than mounting provider keys into pods.
+- Clean interrupts, consistent checkpoints, and in-place credential rotation require a runtime to implement the Full integration level.
+- Evaluation pipelines, memory extraction, and experiment lifecycle management come from external tools that the operator chooses and runs.
+
+## Local trial
+
+You can try Lenny locally by starting a single-host stack with embedded k3s, running a session against the credential-free `echo` runtime, and tearing the stack down:
+
+```bash
+lenny up
+lenny session new --runtime=echo --attach "hello"
+lenny down
+```
+
+On macOS and Windows, `lenny up` requires Docker Desktop. The local stack runs every isolation profile as runc, does not enforce NetworkPolicy, keeps Postgres, Redis, and object storage in memory so their contents are lost on `lenny down`, and listens only on localhost. Reference runtimes other than `echo` need a runnable image and a warm pool before they accept sessions.
+
+Contributors working on the platform run the gateway as a native process with SQLite, local-filesystem artifacts, and the `echo` runtime, without Kubernetes or Docker:
+
+```bash
+make run    # gateway on localhost:8080
+```
+
+The [quickstart](/lenny/getting-started/quickstart) walks through both paths.
 
 ---
 
-## Design invariants
+## Documentation sections
 
-The following properties are enforced by the code and the integration test suite:
-
-1. **Every external request goes through the gateway.** Pods are never addressable from outside the cluster. The gateway is the single place authentication, rate limits, quotas, delegation budgets, and audit are enforced.
-2. **Pod disks are scratch space.** The durable state of a session -- transcript, artifacts, checkpoints -- lives in Postgres, Redis, and object storage. If a pod dies, the platform resumes the session on a new pod from its last checkpoint.
-3. **No standing credentials inside the pod.** Credentials are leased per session, scoped to what that session needs, and can rotate without restarting the agent. Workspaces have no shared mounts; files arrive through the gateway.
-4. **Pods are kept warm.** The warm pool controller keeps idle pods ready so a new session does not wait for container boot. The hot path materializes the workspace and starts the agent, typically in a few seconds.
-5. **Lenny does not implement AI behavior.** It does not score evaluations, extract memories, or classify content. It exposes interfaces where those tools can be plugged in.
-6. **Every operator-visible state is available as an API.** Human on-call and AI on-call use the same endpoints; neither has to parse `kubectl` output.
-
----
+| Section | Contents |
+|:--|:--|
+| [Getting Started](/lenny/getting-started/) | The Quickstart, the core concepts (sessions, runtimes, pools, the gateway, delegation, workspaces, tenants, and credentials), and the architecture overview. |
+| [Tutorials](/lenny/tutorials/) | Step-by-step walkthroughs grouped by role and by difficulty. |
+| [Operator Guide](/lenny/operator-guide/) | Installation, configuration, scaling, security hardening, observability, backup and restore, upgrades, multi-tenancy, and the `lenny-ctl` CLI. |
+| [Runtime Author Guide](/lenny/runtime-author-guide/) | The adapter protocol, the integration levels, the runtime SDKs, local development, testing, and publishing. |
+| [Client Guide](/lenny/client-guide/) | Client protocol selection, authentication, session lifecycle, streaming, delegation and tasks, webhooks, error handling, and the wire format. |
+| [Runbooks](/lenny/runbooks/) | Trigger, diagnosis, and remediation procedures for each bundled alert and health API component, and the escalation tree. |
+| [API Reference](/lenny/api/) | The REST, MCP, OpenAI Chat Completions, Open Responses, admin, and internal gRPC APIs, with authentication, versioning, pagination, rate limiting, and the error format. |
+| [Reference](/lenny/reference/) | The error catalog, metrics, state machines, configuration, CloudEvents catalog, `WorkspacePlan` schema, adapter contract, execution modes, and glossary. |
+| [About](/lenny/about/) | Comparisons with other platforms, implementation status, contributing, governance, and the architecture decision records. |
 
 <style>
 .grid-cards {

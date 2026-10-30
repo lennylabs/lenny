@@ -183,7 +183,7 @@ Invoked as the affected user, or as `platform-admin` impersonating the user. Rec
 
 #### Step U2 — Revoke the user credential
 
-<!-- access: api method=POST path=/v1/credentials/{credential_ref}/revoke -->
+<!-- access: api method=POST path=/v1/credentials/{credentialRef}/revoke -->
 ```
 POST /v1/credentials/<credential_ref>/revoke
 Body: {"reason": "<r>", "note": "<optional note>"}
@@ -193,7 +193,7 @@ Effect: the Token Service marks the credential as `revoked`, adds a user-shaped 
 
 Unlike pool revocation, `POST .../revoke` on a user credential retains the record in `revoked` state for audit. Running sessions with active leases are cut off as soon as the deny list propagates (Redis pub/sub with Postgres `LISTEN/NOTIFY` fallback).
 
-If the revocation should be non-disruptive (no mid-session cutoff), use `DELETE /v1/credentials/{credential_ref}` instead — active leases continue using the previously materialized credential until natural TTL expiry.
+If the revocation should be non-disruptive (no mid-session cutoff), use `DELETE /v1/credentials/{credentialRef}` instead — active leases continue using the previously materialized credential until natural TTL expiry.
 
 #### Step U3 — Revoke at the provider
 
@@ -219,7 +219,7 @@ GET /v1/admin/audit-events?event_type=credential.user_revoked&since=1h
 GET /v1/admin/audit-events?event_type=credential.registered&since=1h
 ```
 
-These events record `tenant_id`, `user_id`, `provider`, `credential_ref`, `reason`, and `active_leases_terminated` — the compliance record for the user-scoped rotation. The `lenny_user_credential_revoked_with_active_leases` gauge (labeled by `tenant_id`, `provider`) feeds the `CredentialCompromised` alert (Spec §16.5) alongside its pool-scoped counterpart.
+These events record `tenant_id`, `user_id`, `provider`, `credential_ref`, `reason`, and `active_leases_terminated` — the compliance record for the user-scoped rotation. The `lenny_user_credential_revoked_with_active_leases` gauge (labeled by `tenant_id`, `provider`) counts revoked user-scoped credentials whose active leases are not shadowed by a deny-list entry, and feeds the `CredentialCompromised` alert (Spec §16.5) alongside its pool-scoped counterpart. A lease correctly on the deny list is not counted, so the gauge stays at zero after a successful proxy-mode revocation.
 
 ## Escalation
 

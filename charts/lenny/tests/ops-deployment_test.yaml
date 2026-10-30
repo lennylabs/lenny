@@ -1,0 +1,1542 @@
+suite: lenny-ops deployment
+templates:
+  - ops-deployment.yaml
+tests:
+  - it: renders the service account, leader-election role, binding, deployment, and service
+    asserts:
+      - hasDocuments:
+          count: 5
+
+  - it: renders a Deployment named lenny-ops
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lenny-ops
+
+  - it: carries the app lenny-ops pod label per the §13.2 selector exception
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.selector.matchLabels.app
+          value: lenny-ops
+      - equal:
+          path: spec.template.metadata.labels.app
+          value: lenny-ops
+
+  # spec: §25.16 — "Deployment: lenny-ops (1 replica, leader-elected)".
+  - it: defaults to one replica per §25.16
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 1
+
+  - it: runs under the lenny-ops-sa service account
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: lenny-ops-sa
+
+  - it: defaults the image tag to the chart appVersion
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/lennylabs/lenny-ops:0.1.0
+
+  - it: configures leader election against the release namespace
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --leader-election-namespace=NAMESPACE
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --addr=:8090
+
+  # spec: §25.4 / §25.13 / F-25.4.17 — the
+  # leader-only bundleRules reconciler re-stamps the bundled-rules gauges
+  # from monitoring.format and the alertOverrides count.
+  - it: renders the §25.4 bundleRules reconciler args (default prometheusrule, 0 overrides)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --alerting-bundle-formats=prometheusrule
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --alerting-override-count=0
+
+  - it: expands monitoring.format=both into both bundle formats and counts overrides
+    set:
+      monitoring.format: both
+      monitoring.alertOverrides:
+        GatewayQueueDepthHigh: { enabled: false }
+        PoolExhaustion: { enabled: false }
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --alerting-bundle-formats=prometheusrule,configmap
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --alerting-override-count=2
+
+  - it: renders the §25.8 registry and upgrade-watchdog args (defaults)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --registry-url=ghcr.io/lennylabs
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --registry-require-digest=false
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --ops-roll-timeout-seconds=600
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-roll-timeout-seconds=1200
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --controller-roll-timeout-seconds=600
+
+  - it: renders the §25.8 Helm release name for the Helm-chart-version source
+    release:
+      name: my-lenny-release
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --helm-release-name=my-lenny-release
+
+  - it: passes a runtime registry override and pull secret to §25.8 lenny-ops
+    set:
+      platform.registry.url: mirror.internal/lenny
+      platform.registry.pullSecretName: lenny-mirror-pull
+      platform.registry.requireDigest: true
+      platform.registry.overrides:
+        gateway: mirror.internal/lenny-gateway
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --registry-url=mirror.internal/lenny
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --registry-pull-secret=lenny-mirror-pull
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --registry-require-digest=true
+
+  - it: wires the §25.8 upgrade-check consumer to the default release channel
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --release-channel-url=https://releases.lenny.dev/v1/latest
+      # No verifying public key by default, so no public-key flags render.
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --release-channel-public-key-file=
+
+  - it: wires the §25.8 upgrade-check verifier key when publicKeyPath is set
+    set:
+      platform.releaseChannel.url: https://mirror.internal/v1/latest
+      platform.releaseChannel.publicKeyPath: /etc/lenny/release-channel-pub/key.pem
+      platform.releaseChannel.publicKeyID: mirror-key-1
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --release-channel-url=https://mirror.internal/v1/latest
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --release-channel-public-key-file=/etc/lenny/release-channel-pub/key.pem
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --release-channel-public-key-id=mirror-key-1
+
+  - it: fails render when the verifier keyID is omitted with a publicKeyPath
+    set:
+      platform.releaseChannel.publicKeyPath: /etc/lenny/release-channel-pub/key.pem
+      platform.releaseChannel.publicKeyID: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: platform.releaseChannel.publicKeyID is required when publicKeyPath is set (§25.8 consumer looks the trusted key up by keyId)
+
+  - it: omits the §25.8 upgrade-check consumer args when the channel is disabled
+    set:
+      platform.releaseChannel.url: ""
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --release-channel-url=
+
+  - it: grants Lease RBAC for §25.4 leader election
+    documentSelector:
+      path: kind
+      value: Role
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lenny-ops-leader-election
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["coordination.k8s.io"]
+            resources: ["leases"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - it: applies the restricted pod security posture
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.securityContext.seccompProfile.type
+          value: RuntimeDefault
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - contains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop
+          content: ALL
+
+  - it: probes the §25.4 health and readiness endpoints
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.path
+          value: /healthz
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.port
+          value: http
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /healthz
+
+  # spec: §25.4 — every probe in the non-production render sets
+  # timeoutSeconds 3, above the 2s dependency probe bound, and no probe
+  # uses the strict diagnostic check.
+  - it: sets a 3s timeout and no strict path on every probe outside production
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.timeoutSeconds
+          value: 3
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.path
+          pattern: strict=true
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.timeoutSeconds
+          value: 3
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.path
+          pattern: strict=true
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.timeoutSeconds
+          value: 3
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          pattern: strict=true
+
+  # spec: §25.4 — F-25.4.10. The startup probe uses the
+  # permissive /healthz with a 30×2s budget covering Postgres connection.
+  - it: renders the §25.4 startup probe on the permissive /healthz
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.path
+          value: /healthz
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.failureThreshold
+          value: 30
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.periodSeconds
+          value: 2
+
+  # spec: §25.4, §17.9.1 "Production mode" — in production mode
+  # (environment: prod) the readiness probe uses the permissive /healthz,
+  # which passes when Postgres or the Kubernetes API is reachable, so a
+  # Postgres outage keeps replicas in the Service. Every probe sets
+  # timeoutSeconds 3 and none uses the strict diagnostic check.
+  # spec: §25.4 "Probes" — F-25.4.37. §25.4 gives the readiness probe
+  # path /healthz unconditionally, so every environment, including the
+  # non-production values and the off-spelling PROD, renders /healthz and
+  # none renders the /readyz report.
+  - it: uses the permissive /healthz readiness check when environment is local
+    set:
+      environment: local
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /healthz
+
+  - it: uses the permissive /healthz readiness check when environment is dev
+    set:
+      environment: dev
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /healthz
+
+  - it: uses the permissive /healthz readiness check when environment is staging
+    set:
+      environment: staging
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /healthz
+
+  - it: uses the permissive /healthz readiness check when environment is PROD
+    set:
+      environment: PROD
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /healthz
+
+  - it: uses the either-dependency /healthz readiness check when environment is prod
+    set:
+      environment: prod
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /healthz
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.failureThreshold
+          value: 3
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.timeoutSeconds
+          value: 3
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.path
+          pattern: strict=true
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.timeoutSeconds
+          value: 3
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.path
+          pattern: strict=true
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.timeoutSeconds
+          value: 3
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          pattern: strict=true
+
+  # spec: §25.4 — F-25.4.10. A writable /tmp emptyDir backs the
+  # read-only root filesystem posture.
+  - it: mounts a writable /tmp emptyDir under the read-only root
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: tmp
+            mountPath: /tmp
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: tmp
+            emptyDir: {}
+
+  # spec: §25.4 — F-25.4.10. topologySpreadConstraints render
+  # only when lenny-ops scales past one replica.
+  - it: omits topologySpreadConstraints at the default single replica
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notExists:
+          path: spec.template.spec.topologySpreadConstraints
+
+  - it: spreads replicas across nodes when ops.replicas >= 2 per §25.4
+    set:
+      ops:
+        replicas: 2
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.topologySpreadConstraints[0].topologyKey
+          value: kubernetes.io/hostname
+      - equal:
+          path: spec.template.spec.topologySpreadConstraints[0].maxSkew
+          value: 1
+      - equal:
+          path: spec.template.spec.topologySpreadConstraints[0].labelSelector.matchLabels.app
+          value: lenny-ops
+
+  - it: renders the lenny-ops Service keyed on the app label with HTTP and metrics ports
+    documentSelector:
+      path: kind
+      value: Service
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lenny-ops
+      - equal:
+          path: spec.selector.app
+          value: lenny-ops
+      - contains:
+          path: spec.ports
+          content:
+            name: http
+            port: 8090
+            targetPort: http
+      - contains:
+          path: spec.ports
+          content:
+            name: metrics
+            port: 9090
+            targetPort: http
+
+  # spec: §16.9 — F-16.9.10. The lenny-ops PodMonitor selects
+  # by container port name `metrics`; the deployment must expose the
+  # named port even though /metrics lives on the same HTTP listener.
+  - it: exposes a named metrics containerPort on the lenny-ops pod
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: metrics
+            containerPort: 8090
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: http
+            containerPort: 8090
+
+  # spec: §25.4 — F-25.16.3. The lenny-ops Service MUST
+  # pin SSE clients to the replica that buffered their events; the
+  # session-affinity timeout matches the §25.16 Production block.
+  - it: pins SSE clients with sessionAffinity ClientIP per §25.4
+    documentSelector:
+      path: kind
+      value: Service
+    asserts:
+      - equal:
+          path: spec.sessionAffinity
+          value: ClientIP
+      - equal:
+          path: spec.sessionAffinityConfig.clientIP.timeoutSeconds
+          value: 10800
+
+  # spec: §25.4 — F-25.16.3. Operators can tune the affinity
+  # timeout via ops.service.sessionAffinityTimeoutSeconds.
+  - it: honors ops.service.sessionAffinityTimeoutSeconds override per §25.4
+    set:
+      ops:
+        service:
+          sessionAffinityTimeoutSeconds: 7200
+    documentSelector:
+      path: kind
+      value: Service
+    asserts:
+      - equal:
+          path: spec.sessionAffinityConfig.clientIP.timeoutSeconds
+          value: 7200
+
+  # spec: §25.16 — F-25.16.4. When ops.prometheus.url is
+  # empty (the §25.16 Minimal default) lenny-ops runs without a BYO
+  # Prometheus URL and falls back to per-replica fan-out.
+  - it: omits --prometheus-url when ops.prometheus.url is empty per §25.16
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --prometheus-url=
+
+  # spec: §25.16 — F-25.16.4. Production Tier 2/3 sets
+  # ops.prometheus.url to the deployment's BYO Prometheus HTTP API.
+  - it: plumbs --prometheus-url when ops.prometheus.url is set per §25.16
+    set:
+      ops:
+        prometheus:
+          url: http://prometheus.monitoring.svc:9090
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --prometheus-url=http://prometheus.monitoring.svc:9090
+
+  # spec: §25.10 — F-25.10.9. ops.drift.snapshotStaleWarningDays
+  # renders as --drift-snapshot-stale-warning-days. Default 7 days.
+  - it: renders --drift-snapshot-stale-warning-days with the spec default per §25.10
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --drift-snapshot-stale-warning-days=7
+
+  # spec: §25.10 — F-25.10.9. Operators can override per
+  # deployment; the rendered flag reflects the override.
+  - it: honors ops.drift.snapshotStaleWarningDays override per §25.10
+    set:
+      ops:
+        drift:
+          snapshotStaleWarningDays: 14
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --drift-snapshot-stale-warning-days=14
+
+  # spec: §25.10 — F-25.10.7. ops.drift.runningStateCacheTTLSeconds
+  # renders as --drift-running-state-cache-ttl-seconds. Default 60s.
+  - it: renders --drift-running-state-cache-ttl-seconds with the spec default per §25.10
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --drift-running-state-cache-ttl-seconds=60
+
+  # spec: §25.10 — F-25.10.7. A 0 override disables the cache
+  # entirely (every report reads fresh from the gateway).
+  - it: honors ops.drift.runningStateCacheTTLSeconds=0 disable per §25.10
+    set:
+      ops:
+        drift:
+          runningStateCacheTTLSeconds: 0
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --drift-running-state-cache-ttl-seconds=0
+
+  # spec: §17.8.5 — F-17.8.12. The chart MUST reject any
+  # attempt to disable lenny-ops via Helm values: the operability
+  # surface is mandatory in every Lenny installation regardless of tier.
+  - it: rejects ops.enabled=false at chart validation per §17.8.5
+    set:
+      ops:
+        enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: "§17.8.5: lenny-ops is mandatory in every Lenny installation; ops.enabled: false is rejected. Remove the override or omit the ops.enabled key."
+
+  # spec: §17.8.5 — F-17.8.12. ops.enabled is not a supported
+  # Helm value; even an explicit true is rejected so the chart stays
+  # the single source of truth on the §17.8.5 mandatoriness.
+  - it: rejects ops.enabled=true at chart validation per §17.8.5
+    set:
+      ops:
+        enabled: true
+    asserts:
+      - failedTemplate:
+          errorMessage: "§17.8.5: ops.enabled is not a supported Helm value (lenny-ops is mandatory); remove the ops.enabled key from your values."
+
+  # spec: §25.4 — F-25.4.26. The in-memory (Tier-3) lock
+  # policy renders as --locks-memory-tier; the default is
+  # single-replica-only, and --ops-service-name names the Service whose
+  # Endpoints the policy reads to count ready replicas.
+  - it: renders the §25.4 lock memoryTier args with the spec default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --locks-memory-tier=single-replica-only
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --ops-service-name=lenny-ops
+
+  # spec: §25.4 — F-25.4.26. The operator can select the most
+  # conservative "never" mode, disabling the Tier-3 store entirely.
+  - it: honors ops.locks.memoryTier=never per §25.4
+    set:
+      ops:
+        locks:
+          memoryTier: never
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --locks-memory-tier=never
+
+  # spec: §25.4 — F-25.4.26. The single-replica-only policy
+  # reads the lenny-ops Service Endpoints in the pod's own namespace, so
+  # POD_NAMESPACE is injected via the downward API.
+  - it: injects POD_NAMESPACE from the downward API for replica detection
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+
+  # spec: §25.5 cold-start — with redis.url empty (the §17.4 in-memory dev
+  # posture) the read side runs on lenny-ops's own per-replica buffer, so
+  # the Deployment wires no Redis env and only the two downward-API vars
+  # render. With postgres.dsn unset no Postgres env renders either.
+  - it: wires no Redis or Postgres env when redis.url is empty (§25.5 cold-start)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POSTGRES_DSN
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_URL
+      - equal:
+          path: spec.template.spec.containers[0].env
+          value:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+
+  # spec: §25.5 — the read side consumes the platform-scoped
+  # ops:events:stream from the same redis.provider=external / redis.url the
+  # gateway and controller use. The connection URL comes from the
+  # lenny-datastore-conn Secret so no secret material lands in the pod spec.
+  - it: wires LENNY_REDIS_URL from the datastore Secret for the external topology
+    set:
+      postgres.dsn: "postgres://lenny:lenny@db.svc:5432/lenny?sslmode=disable"
+      redis.provider: external
+      redis.url: "rediss://:pw@redis-master:6379"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_URL
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: redis-url
+
+  # spec: §12.4 / §25.5 — the Cluster topology is one of the
+  # §17.3 permitted self-managed backends, so lenny-ops must reach the §25.5
+  # ops:events:stream on it too. Without the cluster env lenny-ops wires no
+  # Redis at all and serves polling and SSE from this replica's in-memory
+  # buffer, losing the cross-replica view with no degradation envelope saying
+  # so. The seed addresses are not secret and render as plain env, matching
+  # the gateway Deployment.
+  - it: wires the Redis Cluster seed nodes when redis.provider=cluster
+    set:
+      redis.provider: cluster
+      redis.cluster.addrs: "r0:6379,r1:6379,r2:6379"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_CLUSTER_ADDRS
+            value: "r0:6379,r1:6379,r2:6379"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_URL
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_SENTINEL_ADDRS
+
+  # spec: §12.4 (Redis HA and Failure Modes) "Security" (AUTH and TLS are
+  # required on every Redis instance), §17.9.3 — the Cluster topology
+  # requests TLS and reads the AUTH password from the datastore Secret, so
+  # the binary passes the §12.4 startup invariant outside dev mode. F-12.4.37.
+  - it: requests TLS and reads the AUTH password on the cluster topology
+    set:
+      redis.provider: cluster
+      redis.cluster.addrs: "c-0:6379,c-1:6379"
+      redis.password: cluster-pw
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_TLS
+            value: "true"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: redis-password
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_SENTINEL_ADDRS
+          any: true
+
+  # spec: §12.4 (Redis HA and Failure Modes) "Security" — with no password
+  # the Cluster topology still requests TLS and reads no Secret key, so the
+  # binary refuses to start with the §12.4 AUTH error rather than a missing
+  # Secret key. F-12.4.37.
+  - it: requests TLS and reads no password key on the cluster topology without a password
+    set:
+      redis.provider: cluster
+      redis.cluster.addrs: "c-0:6379,c-1:6379"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_TLS
+            value: "true"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_PASSWORD
+          any: true
+
+  # spec: §12.4 (Redis HA and Failure Modes) "Security" — the external
+  # topology carries AUTH and TLS in the rediss:// URL, so a stray password
+  # renders neither env entry. F-12.4.37.
+  - it: renders no Redis password or TLS env on the external topology
+    set:
+      redis.provider: external
+      redis.url: "rediss://:pw@r.svc:6380/0"
+      redis.password: stray
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_PASSWORD
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_TLS
+          any: true
+
+  # spec: §17.9.3 / §12.4 — the Sentinel topology wires the
+  # discovery env (addresses and master are plain env) plus the data AUTH
+  # password from the datastore Secret, and requests TLS so §12.4 AUTH+TLS
+  # holds. The external LENNY_REDIS_URL is absent on this path.
+  - it: wires the Redis Sentinel env when redis.provider=sentinel
+    set:
+      redis.provider: sentinel
+      redis.sentinels: ["s0:26379", "s1:26379"]
+      redis.sentinelMaster: lenny-master
+      redis.password: sentinel-data-pw
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_URL
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_SENTINEL_ADDRS
+            value: "s0:26379,s1:26379"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_SENTINEL_MASTER
+            value: "lenny-master"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_TLS
+            value: "true"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: redis-password
+
+  # spec: §12.4 — Redis AUTH and TLS are mandatory, so the lenny-ops
+  # startup invariant rejects a plaintext no-password Redis. A dev install
+  # acknowledges its insecure dev Redis with --redis-allow-insecure; a
+  # stock (non-dev) render must not emit the flag.
+  - it: emits --redis-allow-insecure only under global.devMode
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      global.devMode: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --redis-allow-insecure
+
+  - it: omits --redis-allow-insecure when global.devMode is false
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      global.devMode: false
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --redis-allow-insecure
+
+  # spec: §25.4 / §25.5 / §17.8.4 — F-17.8.1. The base
+  # values render the Tier 1 self-monitor cadence (10s) and the Tier 1
+  # ops:events:stream MAXLEN (10,000) as lenny-ops flags.
+  - it: renders the self-health and events-stream-max-len flags (base defaults)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --self-health-interval=10s
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --events-stream-max-len=10000
+
+  # spec: §17.8.4 — operator overrides flow through to the rendered flags.
+  - it: renders operator-overridden self-health and events-stream-max-len
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      ops.selfHealth.checkIntervalSeconds: 30
+      ops.events.streamMaxLen: 100000
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --self-health-interval=30s
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --events-stream-max-len=100000
+
+  # spec: §25.5 — the webhook delivery-tracking mode and
+  # retention windows render as flags. F-25.5.15.
+  - it: renders the webhook delivery tracking and retention flags (base defaults)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-tracking-mode=full
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-delivery-retention-days=7
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-failures-retention-days=0
+
+  - it: renders operator-overridden webhook tracking and retention
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      ops.webhooks.deliveryTrackingMode: failures-only
+      ops.webhooks.deliveryRetentionDays: 30
+      ops.webhooks.failuresOnlyRetentionDays: 90
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-tracking-mode=failures-only
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-delivery-retention-days=30
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-failures-retention-days=90
+
+  # spec: §25.4 — the escalation durability knobs render
+  # as flags. F-25.4.7.
+  - it: renders the escalation durability flags (base defaults)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --escalation-require-durable=false
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --escalation-reconciliation-writes-per-second=20
+
+  - it: renders operator-overridden escalation durability flags
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      ops.escalation.requireDurable: true
+      ops.escalation.reconciliationWritesPerSecond: 5
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --escalation-require-durable=true
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --escalation-reconciliation-writes-per-second=5
+
+  # spec: §25.4 NET-070 — F-25.4.19. The admin-API link defaults to TLS
+  # on the gateway internal-TLS port, with --gateway-internal-tls=true.
+  - it: routes the gateway admin-API link over TLS by default per §25.4 NET-070
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-url=https://lenny-gateway.NAMESPACE.svc:8443
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-internal-tls=true
+
+  # spec: §25.4 NET-070 — F-25.4.19. The acknowledged plaintext path
+  # selects the plaintext internalPort and disables internal TLS.
+  - it: routes the gateway admin-API link plaintext under acknowledged opt-out
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      ops.tls.internalEnabled: false
+      ops.acknowledgePlaintextAdminAPI: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-url=http://lenny-gateway.NAMESPACE.svc:8080
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-internal-tls=false
+
+  # spec: §25.4 — F-25.4.8. The GatewayClient fan-out and
+  # token-lifecycle flags render from the ops.gateway / security.oidc
+  # values, and the projected SA token volume mounts at the token path.
+  - it: renders the GatewayClient fan-out and token-lifecycle flags per §25.4
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-headless-service=lenny-gateway-pods
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-fanout-breaker-failure-threshold=3
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-token-refresh-before-expiry=300s
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-sa-token-file=/var/run/secrets/lenny/gateway/token
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: gateway-sa-token
+            projected:
+              sources:
+                - serviceAccountToken:
+                    path: token
+                    audience: lenny-gateway
+                    expirationSeconds: 3600
+
+  # spec: §25.4 — F-25.4.19. Setting ops.tls.caBundleConfigMap
+  # mounts the operator CA and passes --gateway-ca-bundle-file.
+  - it: mounts the operator CA bundle when ops.tls.caBundleConfigMap is set
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      ops.tls.caBundleConfigMap: gateway-admin-ca
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-ca-bundle-file=/etc/lenny/gateway-ca/ca.crt
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: gateway-ca-bundle
+            configMap:
+              name: gateway-admin-ca
+              items:
+                - key: ca.crt
+                  path: ca.crt
+
+  # spec: §25.4 ops.locks.{minTTLSeconds,defaultTTLSeconds,maxTTLSeconds} —
+  # F-25.4.9. The deployment-wide remediation-lock TTL policy renders the
+  # three bound flags from the spec defaults (0/300/3600).
+  - it: renders the §25.4 lock TTL policy args with the spec defaults
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --locks-min-ttl-seconds=0
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --locks-default-ttl-seconds=300
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --locks-max-ttl-seconds=3600
+
+  - it: honors ops.locks TTL overrides per §25.4
+    set:
+      ops:
+        locks:
+          minTTLSeconds: 30
+          defaultTTLSeconds: 600
+          maxTTLSeconds: 7200
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --locks-min-ttl-seconds=30
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --locks-default-ttl-seconds=600
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --locks-max-ttl-seconds=7200
+
+  # spec: §25.4 ops.idempotency.{keyTTLSeconds,longRunningKeyTTLSeconds} —
+  # F-25.4.9. The standard (24h) and long-running (7d) record lifetimes.
+  - it: renders the §25.4 idempotency TTL args with the spec defaults
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --idempotency-key-ttl-seconds=86400
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --idempotency-long-running-key-ttl-seconds=604800
+
+  # spec: §25.4 ops.leaderElection.{leaseDurationSeconds,renewDeadlineSeconds,
+  # retryPeriodSeconds} — F-25.4.9. The client-go lease timings (15/10/2).
+  - it: renders the §25.4 leader-election timing args with the spec defaults
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --leader-lease-duration-seconds=15
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --leader-renew-deadline-seconds=10
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --leader-retry-period-seconds=2
+
+  # spec: §25.9 ops.audit.diagnosticsRatePerMinute — F-25.4.9. The
+  # per-service-account diagnostic-audit rate cap (default 60).
+  - it: renders the §25.9 diagnostics-audit-rate arg with the spec default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --diagnostics-audit-rate-per-minute=60
+
+  # spec: §25.5 ops.webhooks SSRF policy — F-25.4.9. allowHTTP renders
+  # always; blockedCIDRs and domainAllowlist render only when non-empty.
+  - it: renders the §25.5 webhook SSRF allowHTTP arg and omits the empty list flags
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-allow-http=false
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-blocked-cidrs=
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-domain-allowlist=
+
+  - it: renders the §25.5 webhook SSRF list flags joined when configured
+    set:
+      ops:
+        webhooks:
+          allowHTTP: true
+          blockedCIDRs:
+            - 10.0.0.0/8
+            - 172.16.0.0/12
+          domainAllowlist:
+            - hooks.acme.com
+            - "*.acme.com"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-allow-http=true
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-blocked-cidrs=10.0.0.0/8,172.16.0.0/12
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --webhook-domain-allowlist=hooks.acme.com,*.acme.com
+
+  # spec: §25.4 (The lenny-ops Service: Authentication) — lenny-ops reads
+  # its revocation set from Postgres every 30 s, so postgres.dsn renders
+  # LENNY_POSTGRES_DSN from the datastore Secret, as the gateway does.
+  - it: renders LENNY_POSTGRES_DSN from the datastore Secret when postgres.dsn is set
+    set:
+      postgres.dsn: "postgres://lenny:lenny@db.svc:5432/lenny?sslmode=disable"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POSTGRES_DSN
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: postgres-dsn
+
+  - it: renders no LENNY_POSTGRES_DSN when postgres.dsn is unset
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POSTGRES_DSN
+          any: true
+
+  # spec: §25.4 (The lenny-ops Service: Authentication), §12.4 — lenny-ops
+  # subscribes to token.revoked on the Cache/Pub-Sub concern the gateway
+  # publishes on, so a split concern URL reaches lenny-ops too.
+  - it: renders LENNY_REDIS_CACHE_PUBSUB_URL when redis.concerns.cachePubSubUrl is set
+    set:
+      redis.provider: external
+      redis.url: "rediss://:pw@redis-master:6379"
+      redis.concerns.cachePubSubUrl: "rediss://:pw@redis-cache:6379"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_CACHE_PUBSUB_URL
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: redis-cache-pubsub-url
+
+  - it: renders no LENNY_REDIS_CACHE_PUBSUB_URL when redis.concerns.cachePubSubUrl is unset
+    set:
+      redis.provider: external
+      redis.url: "rediss://:pw@redis-master:6379"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_CACHE_PUBSUB_URL
+          any: true
+
+  # spec: §17.4 (Dev mode guard rails), §25.4, §17.9.1 "Production mode" —
+  # lenny-ops in production mode refuses the dev embedded-OIDC trust hook,
+  # so environment: prod renders neither the flag nor its key volume and
+  # mount even under global.devMode, and probes /healthz for readiness.
+  - it: omits the dev trust hook flag, volume, and mount when environment is prod
+    set:
+      global.devMode: true
+      environment: prod
+      security.oidc.bearerTrustKeySecret: oidc-trust
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /healthz
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --bearer-trust-hmac-key-file=/etc/lenny/oidc/key
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: oidc-bearer-trust-key
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: oidc-bearer-trust-key
+          any: true
+
+  - it: renders the dev trust hook flag, volume, and mount under global.devMode when environment is dev
+    set:
+      global.devMode: true
+      environment: dev
+      security.oidc.bearerTrustKeySecret: oidc-trust
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /healthz
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --bearer-trust-hmac-key-file=/etc/lenny/oidc/key
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: oidc-bearer-trust-key
+          any: true
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: oidc-bearer-trust-key
+          any: true
+
+  # spec: §17.4 (Dev mode guard rails) item 3 — LENNY_DEV_MODE is the
+  # single gate for every lenny-ops dev-mode relaxation. Without
+  # global.devMode the trust hook does not render on lenny-ops even when
+  # the secret is set and environment is not prod, because lenny-ops
+  # refuses it without --dev-mode. F-17.4.35.
+  - it: omits the dev trust hook flag, volume, and mount without global.devMode
+    set:
+      global.devMode: false
+      environment: dev
+      security.oidc.bearerTrustKeySecret: oidc-trust
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --bearer-trust-hmac-key-file=/etc/lenny/oidc/key
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: oidc-bearer-trust-key
+          any: true
+
+  # spec: §17.4 (Dev mode guard rails), §25.4 — a default render renders
+  # no --dev-mode, so lenny-ops authenticates every request and ignores the
+  # X-Lenny-* identity headers. It renders no --production flag, and the
+  # §25.4 tier defaults to tier1. F-17.4.35.
+  - it: renders no --dev-mode on lenny-ops by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --dev-mode
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --production=false
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --platform-tier=tier1
+
+  # spec: §16.1.1 (Attribute Naming), §25.4 (The lenny-ops Service)
+  # Idempotency-Key — global.deploymentTier renders --platform-tier, and a
+  # value outside tier1, tier2, and tier3 is refused at schema validation
+  # rather than rendered, so a typo cannot drop the Tier 2/3 required
+  # Idempotency-Key. F-25.4.38.
+  - it: renders --platform-tier from each closed-set global.deploymentTier
+    set:
+      global.deploymentTier: tier3
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --platform-tier=tier3
+
+  - it: refuses an off-set global.deploymentTier TIER2 at schema validation
+    set:
+      global.deploymentTier: TIER2
+    asserts:
+      - failedTemplate:
+          errorPattern: "deploymentTier.: value must be one of 'tier1', 'tier2', 'tier3'"
+
+  - it: refuses an off-set global.deploymentTier tier4 at schema validation
+    set:
+      global.deploymentTier: tier4
+    asserts:
+      - failedTemplate:
+          errorPattern: "deploymentTier.: value must be one of 'tier1', 'tier2', 'tier3'"
+
+  # spec: §17.4 (Dev mode guard rails) — lenny-ops reads the same
+  # global.devMode value the gateway's --dev-mode does. F-17.4.35.
+  - it: renders --dev-mode on lenny-ops under global.devMode
+    set:
+      global.devMode: true
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --dev-mode
+
+  # spec: §17.4 (Dev mode guard rails) — production mode does not stand in
+  # for dev mode: an environment: prod render without global.devMode
+  # renders no --dev-mode. F-17.4.35.
+  - it: renders no --dev-mode on lenny-ops when environment is prod without global.devMode
+    set:
+      environment: prod
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --dev-mode
+
+  # spec: §17.4, §10.2 "Signing key and algorithm" — under kms.provider=local
+  # lenny-ops mounts the shared master key Secret (never optional) and
+  # passes --kms-master-key-file, so it derives the same signing key as the
+  # Token Service and lenny-ops.
+  - it: mounts the generated master key Secret and passes --kms-master-key-file under local
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-master-key-file=/etc/lenny/kms/master-key
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: kms-master-key
+            secret:
+              secretName: lenny-kms-master-key
+              items:
+                - key: master-key
+                  path: master-key
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: kms-master-key
+            mountPath: /etc/lenny/kms
+            readOnly: true
+
+  - it: mounts the Secret kms.masterKeySecret names
+    set:
+      kms.masterKeySecret: acme-kms-master-key
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: kms-master-key
+            secret:
+              secretName: acme-kms-master-key
+              items:
+                - key: master-key
+                  path: master-key
+
+  - it: renders no master key mount or flag under a cloud provider
+    set:
+      kms.provider: aws
+      kms.signQuotaPerSecond: 50
+      kms.aliases: "platform:jwt-signing=arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-master-key-file=/etc/lenny/kms/master-key
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: kms-master-key
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: kms-master-key
+          any: true
+
+  # spec: §10.2 "Verifier key set and rotation" — lenny-ops loads its key set
+  # from the same KMS provider flags the Token Service receives.
+  - it: renders the aws KMS flags the Token Service receives
+    set:
+      kms.provider: aws
+      kms.awsRegion: us-east-1
+      kms.signQuotaPerSecond: 50
+      kms.aliases: "platform:jwt-signing=arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+      environment: prod
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-provider=aws
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-aws-region=us-east-1
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-alias=platform:jwt-signing=arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --environment=prod
+      # §17.9.1 "Production mode": --environment is the one carrier; the
+      # chart sets no environment variable that names production mode.
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_ENV
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_PRODUCTION
+          any: true
+
+  - it: renders the azure vault URL flag
+    set:
+      kms.provider: azure
+      kms.azureVaultURL: https://acme.vault.azure.net
+      kms.signQuotaPerSecond: 50
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-azure-vault-url=https://acme.vault.azure.net
+
+  # spec: §10.2 "Signing topology" — the ServiceAccount binds to the provider
+  # identity holding the KMS GetPublicKey permission.
+  - it: renders ops.serviceAccount.annotations on lenny-ops-sa
+    set:
+      ops.serviceAccount.annotations:
+        eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/lenny-ops
+    documentSelector:
+      path: kind
+      value: ServiceAccount
+    asserts:
+      - equal:
+          path: metadata.annotations["eks.amazonaws.com/role-arn"]
+          value: arn:aws:iam::111122223333:role/lenny-ops
+
+  - it: renders no annotations on lenny-ops-sa by default
+    documentSelector:
+      path: kind
+      value: ServiceAccount
+    asserts:
+      - notExists:
+          path: metadata.annotations

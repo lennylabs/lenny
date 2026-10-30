@@ -1,0 +1,1 @@
+// spec: spec/40_whole-file-parent.md lines 7-11

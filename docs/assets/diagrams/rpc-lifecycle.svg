@@ -35,6 +35,6 @@
   <path class="ln" d="M 582 84 L 626 84" marker-end="url(#ar)"/>
   <path class="ln" d="M 782 84 L 826 84" marker-end="url(#ar)"/>
 
-  <path class="ln" d="M 505 110 L 505 150 L 905 150 L 905 112" marker-end="url(#ar)"/>
-  <text class="sub" x="705" y="175" text-anchor="middle">session ends normally</text>
+  <path class="ln" d="M 505 110 L 505 150 L 305 150 L 305 114" marker-end="url(#ar)"/>
+  <text class="sub" x="405" y="175" text-anchor="middle">session ends; the pod is recycled</text>
 </svg>

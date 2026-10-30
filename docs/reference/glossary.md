@@ -48,6 +48,21 @@ A session state entered when automatic retry attempts are exhausted or `maxResum
 
 ## C
 
+### CH-ADAPTEREVENTS
+{: #ch-adapterevents }
+
+The gRPC bidirectional stream over which a pod's runtime adapter surfaces operational events to the gateway. The adapter emits `RATE_LIMITED`, `AUTH_EXPIRED`, `PROVIDER_UNAVAILABLE`, `LEASE_REJECTED`, `AdapterTerminating`, `FINAL_USAGE_REPORT`, and `CheckpointBarrierAck` on it. The gateway opens the stream and the adapter originates the messages. See [Internal API](../api/internal).
+
+### CH-RUNTIMEOPS
+{: #ch-runtimeops }
+
+The bidirectional JSON Lines stream over an abstract Unix socket between a pod's runtime adapter and a Full-level runtime. It carries the checkpoint, interrupt, credential-rotation, and deadline-approaching frames. The runtime connects as a client and the adapter listens. The socket is separate from the stdin/stdout message channel the agent binary reads. See [Adapter Contract](adapter-contract).
+
+### Channel Identifiers
+{: #lifecycle-channel }
+
+The canonical names of the communication channels between the gateway, the adapter, and the runtime. The adapter-to-gateway gRPC event stream is [CH-ADAPTEREVENTS](#ch-adapterevents) and the intra-pod operations socket is [CH-RUNTIMEOPS](#ch-runtimeops).
+
 ### Compliance Profile
 {: #compliance-profile }
 
@@ -66,12 +81,12 @@ The operational target that no active session's last checkpoint age exceeds `per
 ### Circuit Breaker
 {: #circuit-breaker }
 
-An automatic or operator-managed mechanism that stops traffic to a failing component. Lenny uses two kinds: (1) per-subsystem automatic circuit breakers within the gateway binary (per-replica, in-memory), and (2) operator-managed global circuit breakers backed by Redis that propagate across all replicas. See [Operator Guide](../operator-guide/).
+An automatic or operator-managed mechanism that stops traffic to a failing component. Lenny uses two kinds: (1) automatic circuit breakers, each held in memory by every replica of the component that makes the protected calls, such as the gateway's per-subsystem breakers and the KMS signing breakers of the gateway and the Token Service, and (2) operator-managed global circuit breakers backed by Redis that propagate across all replicas. See [Operator Guide](../operator-guide/).
 
 ### Claim (Pod Claim)
 {: #claim }
 
-The process by which the gateway acquires an idle warm pod for a new session. Claims use a `SandboxClaim` CRD with optimistic locking. A `lenny-sandboxclaim-guard` admission webhook prevents double-claims. See [State Machines](state-machines).
+The process by which the gateway acquires an idle warm pod for an occupancy episode. The claim is a per-pod `SandboxClaim` CRD with the deterministic name `claim-<podName>`; the CREATE race resolves pod acquisition between gateway replicas. A `lenny-sandboxclaim-guard` admission webhook intercepts CREATE only and rejects a second non-terminal claim for the same pod. Binding-state transitions are `SandboxClaim.status` patches serialized by resourceVersion preconditions. The session-to-pod binding is recorded on the Postgres session row's `pod_assignment` column. See [State Machines](state-machines).
 
 ### Connector
 {: #connector }
@@ -81,7 +96,7 @@ An external MCP server (e.g., GitHub, Jira) registered as a top-level admin API 
 ### Credential Lease
 {: #credential-lease }
 
-A time-bounded assignment of a credential from a credential pool to a specific session. Leases are managed by the Token Service and include the materialized provider configuration. Leases are per-session in session mode, per-task in task mode, and per-slot in concurrent mode. See [Configuration Reference](configuration).
+A time-bounded assignment of a credential from a credential pool to a specific session. Leases are managed by the Token Service and include the materialized provider configuration. A fresh lease is assigned per session on every pod, including each session served by a recycling pod, and it is materialized at that session's own `/run/lenny/slots/{sessionId}/credentials.json`. See [Configuration Reference](configuration).
 
 ### Credential Pool
 {: #credential-pool }
@@ -128,7 +143,7 @@ A score record stored via `POST /v1/sessions/{id}/eval`, with multi-dimensional 
 ### Experiment
 {: #experiment }
 
-A variant-pool configuration for runtime version rollouts, with variant pools and deterministic sticky routing. Lenny provides the infrastructure primitives (pools, routing, manifest delivery) and a basic built-in variant assigner; for anything beyond simple rollouts, integrate an external experimentation platform via OpenFeature (LaunchDarkly, Statsig, Unleash). Managed via the Admin API.
+A variant-pool configuration for runtime version rollouts, with variant pools and deterministic sticky routing. Lenny provides the infrastructure primitives (pools, routing, and variant delivery in each session's `session_start` frame) and a basic built-in variant assigner; for anything beyond simple rollouts, integrate an external experimentation platform via OpenFeature (LaunchDarkly, Statsig, Unleash). Managed via the Admin API.
 
 ### Elicitation
 {: #elicitation }
@@ -144,6 +159,11 @@ The path an elicitation request takes from its originating session up through th
 {: #event-store }
 
 A Postgres-backed store for session events, audit records, and stream cursors. Events are partitioned by time with configurable retention. The Event Store supports replay for client reconnection within the replay window. See [Configuration Reference](configuration).
+
+### Execution Mode
+{: #execution-mode }
+
+A runtime configuration that determines how pods are used. `session` binds a managed session to a claimed pod and is parameterized by the `sessionPolicy` block (pod recycling across sessions, concurrent session slots). `service` routes each message to any ready replica with no claim and no conversation continuity. The pool scaling factors derive from the `sessionPolicy` properties. See [Execution Modes and Pod Lifecycle](execution-modes) and [Configuration Reference](configuration).
 
 ### Protocol Adapter Registry
 {: #protocol-adapter-registry }
@@ -198,11 +218,6 @@ A container runtime that uses lightweight virtual machines for strong isolation.
 
 See [Credential Lease](#credential-lease).
 
-### Lifecycle Channel
-{: #lifecycle-channel }
-
-The gRPC bidirectional stream between the gateway and a pod's runtime adapter. Used for control-plane signals: session start/stop, interrupt, checkpoint requests, credential rotation, and workspace notifications. Distinct from the data-plane stdin/stdout pipe.
-
 ### LLM Proxy
 {: #llm-proxy }
 
@@ -230,12 +245,17 @@ A gateway subsystem responsible for delegation orchestration, virtual child MCP 
 
 The default S3-compatible object storage used for artifact, checkpoint, and workspace snapshot storage. Deployments can substitute any S3-compatible service, GCS, or Azure Blob. See [Configuration Reference](configuration).
 
+### MessagePart
+{: #messagepart }
+
+The unit of content delivery in Lenny sessions. MessageParts support multiple types (text, code, image, tool-use, binary blob) and can be delivered inline or via external blob reference. Each part has a 50 MB size limit. Third-party types should use the `x-<vendor>/` namespace prefix. See [API Reference](../api/).
+
 ## O
 
-### OutputPart
-{: #outputpart }
+### Occupancy Episode
+{: #occupancy-episode }
 
-The unit of content delivery in Lenny sessions. OutputParts support multiple types (text, code, image, tool-use, binary blob) and can be delivered inline or via external blob reference. Each part has a 50 MB size limit. Third-party types should use the `x-<vendor>/` namespace prefix. See [API Reference](../api/).
+The interval during which a pod holds at least one bound session under a single `SandboxClaim`, plus the reserved hold that extends it across idle gaps. Claim CREATE and DELETE traffic scales with occupancy episodes rather than with sessions: one claim spans many sessions on a recycling pod, and the per-pod claim is deleted only when the reserved hold expires or the pod terminates, when an acquisition ends the hold on a pod the pool's current configuration no longer admits for reuse, or when a release ends the occupancy without reuse ([Recycle lifecycle](execution-modes#recycle-lifecycle)). See [State Machines](state-machines).
 
 ## P
 
@@ -276,6 +296,11 @@ Kubernetes-defined security profiles (Privileged, Baseline, Restricted). Lenny u
 
 ## R
 
+### Recycle
+{: #recycle }
+
+A `sessionPolicy.recycle` configuration in session mode that reuses a pod across sequential sessions. When occupancy reaches zero, unless the release ends the occupancy without reuse ([Recycle lifecycle](execution-modes#recycle-lifecycle)), the gateway runs a whole-pod scrub (credential purge, `cleanupCommands`, workspace and `/tmp` cleanup) and, on a successful scrub, holds the pod for its pinned tenant through the claim's `reserved` state. Recycling requires no CH-RUNTIMEOPS exchange and works at every integration level, and reuse requires a runtime that serves sequential sessions. `recycle.runtimeProcess` selects whether a reused pod keeps its runtime process across sessions (`keep`) or ends it in each scrub and launches a new one for the next session (`restart`). See [Execution Modes and Pod Lifecycle](execution-modes) and [State Machines](state-machines).
+
 ### RLS (Row-Level Security)
 {: #rls }
 
@@ -290,6 +315,11 @@ The standard OCI container runtime. Used as the `standard` isolation profile. Pr
 {: #runtime }
 
 A named, versioned agent binary configuration registered in the platform. Defines the container image, execution mode, capabilities, supported providers, SDK-warm settings, and delegation policy. Runtimes are the primary extension point for the platform. See [Runtime Author Guide](../runtime-author-guide/).
+
+### Runtime supervisor
+{: #runtime-supervisor }
+
+The first process of the runtime container on every sidecar pod of a `type: agent` runtime. A platform binary from its own digest-pinned image, it launches the runtime's configured `command` and ends the runtime process when the adapter asks it to, and on a `restart` pod it ends and sweeps the runtime container at each whole-pod scrub. See [Pod Lifecycle](../runtime-author-guide/lifecycle.md#runtime-supervisor).
 
 ### RuntimeClass
 {: #runtimeclass }
@@ -326,7 +356,7 @@ An optional warm pod state where the agent process IS pre-connected and waiting 
 ### Session
 {: #session }
 
-The primary user-facing resource in Lenny. A session represents a single interactive agent execution with its own workspace, credential lease, event stream, and lifecycle. Sessions are identified by a unique `session_id` and managed through the REST API. See [Getting Started](../getting-started/).
+The primary user-facing resource in Lenny and the only client-facing unit of execution; each session has exactly one execution. A session has its own workspace, credential lease, event stream, and lifecycle. Sessions are identified by a unique `session_id` and managed through the REST API. The session is the unit external protocols name a Task. See [Getting Started](../getting-started/).
 
 ### Session Manager
 {: #session-manager }
@@ -337,6 +367,15 @@ The gateway component that manages session state in Postgres and Redis. Handles 
 {: #setup-command }
 
 A command executed in the pod after workspace materialization but before the agent session starts. Used for dependency installation, compilation, or other workspace-specific preparation. Setup commands are bounded and logged.
+
+### Slot
+{: #slot }
+
+A unit of per-pod capacity. The term carries one sense in each execution mode.
+
+In `session` mode, a slot is the unit of per-pod session capacity. It owns a workspace subtree, a credential lease, and a lifecycle, and it is identified by the identifier of the session bound to it: the gateway mints one identifier at claim time, and that single value is both the session's identifier and its slot's identifier. Every session is bound to a slot on every pod, whatever the pool's concurrency. A pod holds between zero and `sessionPolicy.maxConcurrentSessions` slots, and a warm pod serving no session holds none. A slot is a pod-side resource rather than a synonym for a session: leaked and failed slots are retained until the pod terminates and still count against pod occupancy. See [Execution Modes](execution-modes).
+
+In `service` mode, a slot is unnamed per-pod request capacity counted against the pool's `maxConcurrent`: an in-flight request with no identifier, no session binding, no workspace subtree, no credential lease, and no tracked lifecycle.
 
 ### Streamable HTTP
 {: #streamable-http }
@@ -353,7 +392,7 @@ A gateway subsystem responsible for MCP streaming, session attachment, event rel
 ### Task
 {: #task }
 
-The protocol-level abstraction for a unit of work in a delegation tree. Tasks have their own state machine (submitted, running, completed, failed, cancelled, expired, input_required) that maps to external protocol states (MCP Tasks, A2A). See [State Machines](state-machines).
+The name external protocols and the delegation API give to a session. An MCP Task and an A2A Task are the protocol surface of a session; the mapping is 1:1, and `lenny/delegate_task` creates a child session. The canonical task state machine is the session state machine under its external-protocol name (submitted, running, completed, failed, cancelled, expired, input_required). See [State Machines](state-machines).
 
 ### Task Tree
 {: #task-tree }
@@ -402,9 +441,9 @@ A Kubernetes controller (2+ replicas, leader election) that manages agent pod li
 ### Workspace
 {: #workspace }
 
-The pod-local filesystem (`/workspace/current`) containing the session's working files. Workspaces are materialized from client uploads during session creation, periodically checkpointed to durable storage, and sealed on session completion. Workspaces are never shared across sessions or pods.
+The pod-local filesystem (`/workspace/slots/{sessionId}/current`) containing the session's working files. Workspaces are materialized from client uploads during session creation, periodically checkpointed to durable storage, and sealed on session completion. Workspaces are never shared across sessions or pods.
 
 ### Workspace Plan
 {: #workspace-plan }
 
-A structured schema defining how a session's workspace should be materialized. Includes file sources (client uploads, derived session snapshots, runtime defaults), directory structure, and environment variable configuration. Defined in Section 14 of the spec with a versioned `schemaVersion` field.
+A structured schema defining how a session's workspace should be materialized. It holds a `sources` array of inline files, uploaded files and archives, directories, and Git clones to materialize, and a `setupCommands` array. Defined in Section 14 of the spec with a versioned `schemaVersion` field.

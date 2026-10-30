@@ -1,0 +1,282 @@
+{{- /*
+The lenny-controller Deployment (§4.6.1). Runs the control-plane
+controller binary with leader election so a multi-replica Deployment
+keeps exactly one active reconciler. The pod follows the §13.1
+Restricted-PSS posture: non-root, all capabilities dropped, read-only
+root filesystem, RuntimeDefault seccomp.
+
+The controller mirrors §4.6.1 agent_pod_state into Postgres when a DSN
+is configured. Postgres stays a bring-your-own external service
+(§17.9): the chart wires LENNY_POSTGRES_DSN from the
+lenny-datastore-conn Secret only when postgres.dsn is set, and a stock
+render leaves it unset so the controller keeps the mirror in memory.
+*/ -}}
+{{- $pg := .Values.postgres -}}
+{{- $hasPg := and $pg $pg.dsn (ne $pg.dsn "") -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lenny-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: controller
+spec:
+  replicas: {{ .Values.controller.replicas }}
+  # spec: §10.5 / §17.1. The
+  # strategy block is declared explicitly so the rolling posture is
+  # auditable and survives chart customization rather than relying on
+  # the Kubernetes 25% default. The controller is leader-elected, so a
+  # rollout that drains one replica at a time keeps a standby ready to
+  # take the lease while the replacement comes up.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: {{ .Values.controller.rollingUpdate.maxUnavailable }}
+      maxSurge: {{ .Values.controller.rollingUpdate.maxSurge }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      lenny.dev/component: controller
+  template:
+    metadata:
+      labels:
+        {{- include "lenny.labels" . | nindent 8 }}
+        lenny.dev/component: controller
+    spec:
+      serviceAccountName: lenny-controller
+      {{- include "lenny.imagePullSecrets" . | nindent 6 }}
+      {{- /* spec: §17.8.2 controller-tuning table — "Controller pod
+             anti-affinity": the WarmPoolController and PoolScalingController
+             leaders must not share a node (required at Tier 2/3). The mode
+             is the shared controller.antiAffinity knob so both controller
+             Deployments agree. F-17.8.6. */}}
+      {{- include "lenny.controllerAntiAffinity" (dict "root" . "peer" "pool-scaling-controller") | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: controller
+          image: {{ include "lenny.componentImage" (dict "root" $ "name" "lenny-controller" "image" .Values.controller.image) | quote }}
+          imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
+          args:
+            - --leader-elect
+            - --leader-election-namespace={{ .Release.Namespace }}
+            {{- /* spec: §16.9 — the controller is one of the canonical
+                   Prometheus scrape targets. Bind the metrics listener to
+                   controller.metricsPort so the binary flag, the metrics
+                   containerPort, the allow-controller-metrics-scrape
+                   NetworkPolicy, and the lenny-controller Service all
+                   agree on one port. F-16.9.2. */}}
+            - --metrics-bind-address=:{{ .Values.controller.metricsPort }}
+            - --health-probe-bind-address=:8081
+            # §4.6.1 claimOrphanTimeout. The gateway's --slot-reaper-terminal-age
+            # renders the same value (§5.2 Slot assignment atomicity).
+            - --claim-orphan-timeout={{ .Values.controller.claimOrphanTimeoutSeconds | default 900 }}s
+            {{- if .Values.controller.adapterImage }}
+            - --adapter-image={{ .Values.controller.adapterImage }}
+            {{- end }}
+            {{- /* spec: §4.7.10 (Runtime supervisor) — the image the
+                   lenny-supervisor-stage init container of every supervised
+                   agent pod runs. */}}
+            {{- if .Values.controller.supervisorImage }}
+            - --supervisor-image={{ .Values.controller.supervisorImage }}
+            {{- end }}
+            {{- if .Values.minio.tls.caBundle }}
+            {{- /* spec: §13.2 (NET-071) — name the per-agent-namespace
+                   object-store CA ConfigMap (agent-objectstore-ca.yaml) so
+                   the controller projects it into each agent pod and points
+                   the adapter's --objectstore-ca-bundle at the mounted ca.crt,
+                   letting the adapter trust a self-managed object store's
+                   non-public CA during checkpoint chunk PUT/GET. Rendered only
+                   when minio.tls.caBundle carries a PEM, the same condition
+                   under which the ConfigMap renders. */}}
+            - --objectstore-ca-configmap=lenny-objectstore-ca
+            {{- end }}
+            {{- /* spec: §9.1 — point each agent pod's adapter at
+                   the gateway's GatewayControl listener so a type:agent
+                   runtime's platform tool calls (lenny/delegate_task, ...)
+                   forwarded over the intra-pod platform MCP socket reach the
+                   gateway platform tool surface. The gateway always serves
+                   GatewayControl on gateway.grpcPort. F-9.1.1. */}}
+            - --gateway-grpc-addr=lenny-gateway.{{ .Release.Namespace }}.svc:{{ .Values.gateway.grpcPort }}
+            {{- /* spec: §4.6.1 — the leader-elected orphaned-SandboxClaim
+                   GarbageCollect loop and the agent_pod_state mirror
+                   reconciler list the agent namespaces, and the binary
+                   registers both only when --agent-namespaces names at least
+                   one namespace and LENNY_POSTGRES_DSN is set. §13.2 — the
+                   NET-022 cluster-CIDR drift detector audits the agent
+                   namespaces' egress NetworkPolicies from the same list.
+                   Without this flag no chart install ran the GC (F-4.6.30).
+                   The flag is omitted when agentNamespaces is empty, because
+                   there is then no agent namespace to sweep. */}}
+            {{- with (include "lenny.agentNamespaceNames" .) }}
+            - --agent-namespaces={{ . }}
+            {{- end }}
+            {{- if .Values.controller.egressCaptureImage }}
+            - --egress-capture-image={{ .Values.controller.egressCaptureImage }}
+            {{- end }}
+            {{- if .Values.global.devMode }}
+            {{- /* §5.3: dev mode defaults pods missing an
+                   isolation profile to runc so a gVisor-less cluster works. */}}
+            - --dev-mode
+            {{- end }}
+            {{- with .Values.global.saTokenAudience }}
+            # §10.3 (NET-064): when set, each warm pod mounts
+            # a §6.1 audience-bound, 900s-TTL projected SA token rather
+            # than a cluster-default-audience token. F-10.3.5.
+            - --sa-token-audience={{ . }}
+            {{- end }}
+            {{- if and .Values.coredns.deploy .Values.coredns.clusterIP }}
+            # §13.2 (K8S-033): point every agent pod's resolver at the
+            # dedicated lenny-system CoreDNS Service ClusterIP. The
+            # controller stamps dnsPolicy:None + dnsConfig unless the pool
+            # opts out via dnsPolicy:cluster-default. F-13.2.4.
+            - --dedicated-dns-cluster-ip={{ .Values.coredns.clusterIP }}
+            {{- end }}
+            {{- /* spec: §17.5 — per-profile RuntimeClass name
+                   overrides. Clusters that ship gVisor as `runsc` or
+                   Kata as `kata-qemu`/`kata-fc` set these so the
+                   controller maps §5.3 profiles to the cluster's
+                   actual RuntimeClass names without renaming the
+                   in-cluster objects. F-17.5.7. */}}
+            {{- $rcNames := (.Values.isolation | default dict).runtimeClassNames | default dict -}}
+            {{- with $rcNames.standard }}
+            - --standard-runtime-class={{ . }}
+            {{- end }}
+            {{- with $rcNames.sandboxed }}
+            - --sandboxed-runtime-class={{ . }}
+            {{- end }}
+            {{- with $rcNames.microvm }}
+            - --microvm-runtime-class={{ . }}
+            {{- end }}
+            {{- /* spec: §13.1 — the operator-tunable non-root pod
+                   UIDs. The lenny-webhook Deployments are wired from the
+                   SAME security.podUIDs values so a controller-built pod
+                   passes the lenny-pod-security / cred-guard UID checks.
+                   F-13.1.16. */}}
+            {{- $podUIDs := (.Values.security | default dict).podUIDs | default dict }}
+            - --adapter-uid={{ $podUIDs.adapter | default 65532 }}
+            - --agent-uid={{ $podUIDs.agent | default 65533 }}
+            - --cred-readers-gid={{ $podUIDs.credReadersGID | default 65534 }}
+            {{- /* spec: §5.2 / §6.4 — operator overrides
+                   for the small/medium/large resource classes. The binary
+                   ships defaults that account for the tmpfs reservation, so
+                   the chart renders a --resource-class flag only for a class
+                   the operator retunes. Each entry's memory limit must clear
+                   the 576Mi tmpfs reservation or the controller fails at
+                   startup. F-6.1.3. */}}
+            {{- range $name, $r := (.Values.controller.resourceClasses | default dict) }}
+            - --resource-class={{ $name }}=requests.cpu:{{ $r.requests.cpu }},requests.memory:{{ $r.requests.memory }},limits.cpu:{{ $r.limits.cpu }},limits.memory:{{ $r.limits.memory }}
+            {{- end }}
+            {{- /* spec: §17.8.2 controller-tuning table — per-tier limiter,
+                   concurrency, queue, dedup, and grace knobs. The binary
+                   carries defaults for each, so the chart renders a flag
+                   only when the operator (or a tier preset) sets the value,
+                   keeping a stock render unchanged. F-17.8.6. */}}
+            {{- with .Values.controller.tuning }}
+            {{- with .podCreateQPS }}
+            - --create-qps={{ . }}
+            {{- end }}
+            {{- with .podCreateBurst }}
+            - --create-burst={{ . }}
+            {{- end }}
+            {{- with .statusUpdateQPS }}
+            - --status-qps={{ . }}
+            {{- end }}
+            {{- with .statusUpdateBurst }}
+            - --status-burst={{ . }}
+            {{- end }}
+            {{- with .maxConcurrentReconciles }}
+            - --max-concurrent-reconciles={{ . }}
+            {{- end }}
+            {{- with .workqueueMaxDepth }}
+            - --workqueue-max-depth={{ . }}
+            {{- end }}
+            {{- with .statusUpdateDedupWindow }}
+            - --status-update-dedup-window={{ . }}
+            {{- end }}
+            {{- with .initialFillGracePeriod }}
+            - --initial-fill-grace-period={{ . }}
+            {{- end }}
+            {{- /* spec: §28.5.3 (CH-SUPERVISE, Timing); §17.8.1 — the
+                   runtime supervisor timing bounds, rendered only when set
+                   so a stock render keeps the controller defaults. */}}
+            {{- with .supervisePingInterval }}
+            - --supervise-ping-interval={{ . }}
+            {{- end }}
+            {{- with .supervisePingTimeout }}
+            - --supervise-ping-timeout={{ . }}
+            {{- end }}
+            {{- with .superviseWaitTimeout }}
+            - --supervise-wait-timeout={{ . }}
+            {{- end }}
+            {{- with .warmUpTimeout }}
+            - --warm-up-timeout={{ . }}
+            {{- end }}
+            {{- end }}
+          {{- if $hasPg }}
+          env:
+            - name: LENNY_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: postgres-dsn
+          {{- end }}
+          ports:
+            # spec: §16.9 — named metrics containerPort on
+            # controller.metricsPort so the lenny-controller Service and
+            # the ServiceMonitor `port: metrics` selector resolve to the
+            # controller's metrics listener. F-16.9.2.
+            - name: metrics
+              containerPort: {{ .Values.controller.metricsPort }}
+            - name: probes
+              containerPort: 8081
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: probes
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: probes
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- toYaml .Values.controller.resources | nindent 12 }}
+---
+# The lenny-controller metrics Service. §16.9 names the controller as one
+# of the canonical scrape targets, served by a single ServiceMonitor for
+# the gateway, controller, and Token Service. The Prometheus Operator can
+# only translate the ServiceMonitor's controller selector entry into a
+# scrape target when a Service carrying the lenny.dev/component: controller
+# label exposes the named metrics port; without it the controller's
+# metrics endpoint is never discovered through the operator path. The
+# controller serves no client traffic, so this Service carries only the
+# metrics port and targets the dedicated metrics listener bound by
+# --metrics-bind-address. F-16.9.1.
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: controller
+spec:
+  selector:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    lenny.dev/component: controller
+  ports:
+    - name: metrics
+      port: {{ .Values.controller.metricsPort }}
+      targetPort: metrics

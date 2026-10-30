@@ -25,11 +25,17 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 
-// defaultImage is the Postgres image used by tests. Pinned by major; tests
-// that need a different minor inject a PostgresOptions{Image: …}.
-const defaultImage = "postgres:16-alpine"
+// defaultImage is the Postgres image used by tests. It is the official
+// pgvector image (a postgres:16 base with the pgvector `vector`
+// extension preinstalled) so the §9.4 agent_memory.embedding column and
+// its ivfflat index, added by migration 0044, apply against the same
+// container every other store test uses. Pinned by major; tests that
+// need a different image inject a PostgresOptions{Image: …}.
+const defaultImage = "pgvector/pgvector:pg16"
 
 // PostgresOptions configures StartPostgres. Zero value is sensible.
 type PostgresOptions struct {
@@ -60,11 +66,38 @@ type Postgres struct {
 	container testcontainers.Container
 }
 
+// Router wraps the container's pool in the §12.3 R-03 single-shard
+// StoreRouter in Postgres-only mode (no Redis). Billing and audit store
+// component and integration tests construct their stores through it so
+// the test path matches production: billing/audit writes route through
+// StoreRouter rather than holding a raw pool. spec: §12.3 R-03.
+func (p *Postgres) Router(t testing.TB) *storerouter.SingleShardRouter {
+	t.Helper()
+	r, err := storerouter.NewSingleShardRouter(storerouter.Config{Postgres: p.Pool})
+	if err != nil {
+		t.Fatalf("containers: store router: %v", err)
+	}
+	return r
+}
+
 // StartPostgres provisions a Postgres container, optionally applies
 // migrations, and returns a Postgres handle. The cleanup hook stops the
 // container at test end.
 func StartPostgres(t testing.TB, opts PostgresOptions) *Postgres {
 	t.Helper()
+	opts = opts.withDefaults()
+	ctx, cancel := context.WithTimeout(context.Background(), opts.StartupTimeout)
+	defer cancel()
+
+	container, err := runPostgres(ctx, opts)
+	if err != nil {
+		t.Fatalf("StartPostgres: %v", err)
+	}
+	return finishPostgres(t, ctx, container, opts)
+}
+
+// withDefaults fills the zero fields of opts with their defaults.
+func (opts PostgresOptions) withDefaults() PostgresOptions {
 	if opts.Image == "" {
 		opts.Image = defaultImage
 	}
@@ -80,13 +113,14 @@ func StartPostgres(t testing.TB, opts PostgresOptions) *Postgres {
 	if opts.StartupTimeout == 0 {
 		opts.StartupTimeout = 30 * time.Second
 	}
+	return opts
+}
 
-	ctx, cancel := context.WithTimeout(context.Background(), opts.StartupTimeout)
-	defer cancel()
-
-	container, err := tcpostgres.Run(
-		ctx,
-		opts.Image,
+// runPostgres starts a Postgres container configured by opts, with extra
+// customizers applied after the defaults, and waits until it accepts
+// connections.
+func runPostgres(ctx context.Context, opts PostgresOptions, extra ...testcontainers.ContainerCustomizer) (*tcpostgres.PostgresContainer, error) {
+	customizers := append([]testcontainers.ContainerCustomizer{
 		tcpostgres.WithDatabase(opts.Database),
 		tcpostgres.WithUsername(opts.User),
 		tcpostgres.WithPassword(opts.Password),
@@ -95,11 +129,18 @@ func StartPostgres(t testing.TB, opts PostgresOptions) *Postgres {
 				WithOccurrence(2).
 				WithStartupTimeout(opts.StartupTimeout),
 		),
-	)
+	}, extra...)
+	c, err := tcpostgres.Run(ctx, opts.Image, customizers...)
 	if err != nil {
-		t.Fatalf("StartPostgres: %v", err)
+		return nil, fmt.Errorf("run postgres container: %w", err)
 	}
+	return c, nil
+}
 
+// finishPostgres registers the container's termination with t, applies
+// opts.MigrationsDir, and opens the handle's pool.
+func finishPostgres(t testing.TB, ctx context.Context, container *tcpostgres.PostgresContainer, opts PostgresOptions) *Postgres {
+	t.Helper()
 	t.Cleanup(func() {
 		stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer stopCancel()
@@ -130,6 +171,24 @@ func StartPostgres(t testing.TB, opts PostgresOptions) *Postgres {
 	}
 }
 
+// Stop terminates the Postgres container mid-test so a caller can inject a
+// genuine Postgres outage: subsequent pool operations fail to reach the
+// backend rather than returning stale success. It is the testcontainers
+// analogue of the tier-8 "scale the Postgres Deployment to zero" injection,
+// used by the §25.11 backup-degradation failure tests. The t.Cleanup
+// registered by StartPostgres tolerates a double Terminate.
+func (p *Postgres) Stop(t testing.TB) {
+	t.Helper()
+	if p.container == nil {
+		t.Fatal("Postgres.Stop: the database lives on a SharedPostgres container, which one test may not stop; use StartPostgres for an outage")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := p.container.Terminate(ctx); err != nil {
+		t.Fatalf("Postgres.Stop: terminate: %v", err)
+	}
+}
+
 // applyMigrations applies every numbered .up.sql under dir using
 // golang-migrate. dir may be absolute or repo-relative.
 func applyMigrations(dsn, dir string) error {
@@ -153,6 +212,10 @@ func applyMigrations(dsn, dir string) error {
 	if err != nil {
 		return fmt.Errorf("migrate new: %w", err)
 	}
+	// The driver holds one connection checked out of db, which db.Close
+	// does not close; m.Close returns it, so the database has no session
+	// left once the migration returns (SharedPostgres clones it next).
+	defer func() { _, _ = m.Close() }()
 	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("migrate up: %w", err)
 	}

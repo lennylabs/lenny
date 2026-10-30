@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# scripts/check-action-pins.sh — §20.16 enforces SHA-pinning on
+# scripts/check-action-pins.sh — TESTING.md §20.16 enforces SHA-pinning on
 # every external `uses:` reference under .github/workflows/ and
 # .github/actions/.
 #

@@ -1,0 +1,431 @@
+// SPDX-License-Identifier: MIT
+
+package executor_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/test/bufconn"
+
+	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+)
+
+// respondingRuntime is an adapter.RuntimeProcess that replies to every
+// written envelope with a §28.5.3 response frame on its output stream.
+type respondingRuntime struct {
+	out chan []byte
+}
+
+func (r *respondingRuntime) Start(context.Context, string) error { return nil }
+func (r *respondingRuntime) WriteEnvelope(string, []byte) error {
+	r.out <- []byte(`{"type":"response","text":"ack"}`)
+	return nil
+}
+
+func (r *respondingRuntime) Output(context.Context, string) (<-chan []byte, error) {
+	return r.out, nil
+}
+func (r *respondingRuntime) Interrupt(context.Context, string, bool) error { return nil }
+func (r *respondingRuntime) Close(context.Context, string) error           { return nil }
+
+// dialPodAdapter serves an adapter backed by rt over bufconn, starts a
+// session on it, and returns a connected adapterclient.Client.
+func dialPodAdapter(t *testing.T, rt adapter.RuntimeProcess) *adapterclient.Client {
+	t.Helper()
+	srv := adapter.New("podexec-test")
+	srv.WorkspaceBase = t.TempDir()
+	srv.Runtime = rt
+	lis := bufconn.Listen(1 << 20)
+	gs := adapter.NewGRPCServer(srv)
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(gs.Stop)
+
+	cl, err := adapterclient.Dial("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial adapter: %v", err)
+	}
+	t.Cleanup(func() { _ = cl.Close() })
+	if err := cl.StartSession(context.Background(), adapterclient.StartSessionParams{
+		SessionID: "sess-pod", Runtime: "echo",
+	}); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	return cl
+}
+
+func TestPodExecutorSendStreamsResponse(t *testing.T) {
+	cl := dialPodAdapter(t, &respondingRuntime{out: make(chan []byte, 8)})
+	reg := podsession.NewRegistry()
+	reg.Put(&podsession.BindResult{SessionID: "sess-pod", SandboxName: "sbx-1", Adapter: cl})
+
+	pe := executor.NewPodExecutor(reg, nil)
+	out, err := pe.Send(context.Background(), "sess-pod", []executor.Message{
+		{Role: "user", Content: "hello"},
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if len(out.Parts) != 1 || out.Parts[0].Type != "text" || out.Parts[0].Text != "ack" {
+		t.Errorf("Send output = %+v, want one text part \"ack\"", out)
+	}
+}
+
+func TestPodExecutorSendReusesTheStreamAcrossMessages(t *testing.T) {
+	cl := dialPodAdapter(t, &respondingRuntime{out: make(chan []byte, 8)})
+	reg := podsession.NewRegistry()
+	reg.Put(&podsession.BindResult{SessionID: "sess-pod", Adapter: cl})
+
+	pe := executor.NewPodExecutor(reg, nil)
+	for i := 0; i < 3; i++ {
+		out, err := pe.Send(context.Background(), "sess-pod", []executor.Message{
+			{Role: "user", Content: "msg"},
+		})
+		if err != nil {
+			t.Fatalf("Send %d: %v", i, err)
+		}
+		if len(out.Parts) != 1 || out.Parts[0].Text != "ack" {
+			t.Errorf("Send %d output = %+v, want one \"ack\" part", i, out)
+		}
+	}
+}
+
+func TestPodExecutorSendUnboundSession(t *testing.T) {
+	pe := executor.NewPodExecutor(podsession.NewRegistry(), nil)
+	if _, err := pe.Send(context.Background(), "sess-absent", []executor.Message{{Content: "x"}}); err == nil {
+		t.Error("Send for an unbound session succeeded, want a failure")
+	}
+}
+
+// spec: 7.2 (fail-closed dispatch), 5.2 (every session is bound to a slot
+// on every pod, addressed by its session identifier)
+// diagnosis: the executor opened, or served a cached, Attach stream for an
+// empty session address. The adapter cannot attribute such a stream to a
+// slot, so dispatch must be refused with ErrSessionIDRequired before any
+// registry or cache lookup.
+func TestPodExecutorRefusesAnEmptySessionAddress_spec_7_2(t *testing.T) {
+	reg := podsession.NewRegistry()
+	// A binding published under the empty address must not make the
+	// dispatch reachable: the guard precedes the lookup.
+	reg.Put(&podsession.BindResult{SessionID: "", TenantID: "acme"})
+	pe := executor.NewPodExecutor(reg, nil)
+	_, err := pe.Send(context.Background(), "", []executor.Message{{Content: "x"}})
+	if !errors.Is(err, executor.ErrSessionIDRequired) {
+		t.Errorf("Send with no session address = %v, want ErrSessionIDRequired", err)
+	}
+}
+
+func TestPodExecutorCloseUnboundSession(t *testing.T) {
+	pe := executor.NewPodExecutor(podsession.NewRegistry(), nil)
+	if err := pe.Close(context.Background(), "sess-absent"); err != nil {
+		t.Errorf("Close of an unbound session = %v, want nil", err)
+	}
+}
+
+// TestPodExecutorEvictStreamReopensOverAFreshBinding pins the co-located
+// coordination seam: after EvictStream drops a session's cached Attach stream,
+// the next Send must Attach over the currently published binding rather than
+// keep serving over the evicted stream. This is what lets a same-replica
+// re-adopt (which republishes a fresh BindResult after a dead-connection
+// eviction) actually reach the pod: streamFor consults e.streams before the
+// registry, so a stale cached stream would otherwise shadow the re-adopt. The
+// test would fail against code whose EvictStream did not delete the cached
+// stream, because the second Send would reuse the first adapter's stream and
+// the second adapter would never receive the envelope.
+// spec: 4.7 (single content consumer per session / Attach content stream), 4.6.1 (coordinating replica holds the lease)
+func TestPodExecutorEvictStreamReopensOverAFreshBinding(t *testing.T) {
+	first := newSlotCapturingAdapter()
+	firstCl := dialSlotCapturingAdapter(t, first)
+	reg := podsession.NewRegistry()
+	reg.Put(&podsession.BindResult{SessionID: "sess-pod", Adapter: firstCl})
+
+	pe := executor.NewPodExecutor(reg, nil)
+	if _, err := pe.Send(context.Background(), "sess-pod", []executor.Message{
+		{Role: "user", Content: "hello"},
+	}); err != nil {
+		t.Fatalf("first Send: %v", err)
+	}
+	if _, _, gotEnvelope := first.snapshot(); !gotEnvelope {
+		t.Fatal("first adapter never received the initial envelope")
+	}
+
+	// Evict the cached stream and republish the binding over a second adapter,
+	// mirroring a dead-connection eviction followed by a same-replica re-adopt.
+	pe.EvictStream("sess-pod")
+	second := newSlotCapturingAdapter()
+	secondCl := dialSlotCapturingAdapter(t, second)
+	reg.Put(&podsession.BindResult{SessionID: "sess-pod", Adapter: secondCl})
+
+	if _, err := pe.Send(context.Background(), "sess-pod", []executor.Message{
+		{Role: "user", Content: "again"},
+	}); err != nil {
+		t.Fatalf("Send after eviction: %v", err)
+	}
+	if _, _, gotEnvelope := second.snapshot(); !gotEnvelope {
+		t.Error("re-adopt binding never received an envelope; the evicted stream shadowed the fresh binding")
+	}
+}
+
+// TestPodExecutorEvictStreamOnAnUnstreamedSession confirms EvictStream is a
+// safe no-op for a session that never opened an Attach stream, matching the
+// teardown Release performs on an unbound session, so a sweep that evicts a
+// binding whose stream was never opened does not panic or error.
+// spec: 4.7 (single content consumer per session / Attach content stream), 4.6.1 (coordinating replica holds the lease)
+func TestPodExecutorEvictStreamOnAnUnstreamedSession(t *testing.T) {
+	pe := executor.NewPodExecutor(podsession.NewRegistry(), nil)
+	// No panic and no state to drop: the session was never streamed.
+	pe.EvictStream("sess-never-streamed")
+}
+
+// slotCapturingAdapter is a minimal AdapterServer that records the
+// address the gateway's PodExecutor stamped on the Attach binding frame
+// and the sessionId it stamped on the message envelope it forwarded over
+// the stream, so a test can assert both carry the addressed session on a
+// binding of either concurrency. The envelope decode reads the wire key
+// off a struct tag, so a producer-side rename this fake does not follow
+// yields the empty string rather than a build failure.
+type slotCapturingAdapter struct {
+	adapterv1.UnimplementedAdapterServer
+
+	mu                sync.Mutex
+	attachBindSession string
+	envelopeSession   string
+	gotEnvelope       bool
+}
+
+func newSlotCapturingAdapter() *slotCapturingAdapter {
+	return &slotCapturingAdapter{}
+}
+
+func (a *slotCapturingAdapter) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest, adapterv1.AttachResponse]) error {
+	first, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	a.attachBindSession = first.GetSessionId().GetValue()
+	a.mu.Unlock()
+	for {
+		req, err := stream.Recv()
+		if err != nil {
+			return nil //nolint:nilerr // EOF/cancel ends the capture cleanly.
+		}
+		if env := req.GetEnvelopeJson(); len(env) > 0 {
+			var decoded struct {
+				SessionID string `json:"sessionId"`
+			}
+			_ = json.Unmarshal(env, &decoded)
+			a.mu.Lock()
+			a.envelopeSession = decoded.SessionID
+			a.gotEnvelope = true
+			a.mu.Unlock()
+			// Reply so the executor's Send completes.
+			_ = stream.Send(&adapterv1.AttachResponse{
+				EnvelopeJson: []byte(`{"type":"response","text":"ack"}`),
+			})
+		}
+	}
+}
+
+func (a *slotCapturingAdapter) snapshot() (bindSession, envelopeSession string, gotEnvelope bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.attachBindSession, a.envelopeSession, a.gotEnvelope
+}
+
+// dialSlotCapturingAdapter serves rec over bufconn and returns a connected
+// adapterclient.Client.
+func dialSlotCapturingAdapter(t *testing.T, rec *slotCapturingAdapter) *adapterclient.Client {
+	t.Helper()
+	lis := bufconn.Listen(1 << 20)
+	gs := grpc.NewServer()
+	adapterv1.RegisterAdapterServer(gs, rec)
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(gs.Stop)
+
+	cl, err := adapterclient.Dial("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial adapter: %v", err)
+	}
+	t.Cleanup(func() { _ = cl.Close() })
+	return cl
+}
+
+// TestPodExecutorSendAddressesTheAttachStreamBySession pins that the
+// executor addresses the Attach stream and the outbound envelope by the
+// session identifier, which under §5.2 names the slot that session holds
+// on the pod, on a binding of either concurrency. Before this both carried
+// a separate slot address that a bind on a pool of one left empty, so the
+// envelope's omitempty tag dropped the key outright on exactly the pool
+// §28.5.3 exists to normalize.
+// spec: 7.2 (per-session routing), 5.2, 28.5.3 (population on every pod)
+func TestPodExecutorSendAddressesTheAttachStreamBySession(t *testing.T) {
+	for _, slotID := range []string{"slot_02", ""} {
+		rec := newSlotCapturingAdapter()
+		cl := dialSlotCapturingAdapter(t, rec)
+		reg := podsession.NewRegistry()
+		reg.Put(&podsession.BindResult{SessionID: "sess-pod", Adapter: cl, SlotID: slotID})
+
+		pe := executor.NewPodExecutor(reg, nil)
+		if _, err := pe.Send(context.Background(), "sess-pod", []executor.Message{
+			{Role: "user", Content: "hello"},
+		}); err != nil {
+			t.Fatalf("Send with recorded slot %q: %v", slotID, err)
+		}
+		bindSession, envelopeSession, gotEnvelope := rec.snapshot()
+		if !gotEnvelope {
+			t.Fatal("adapter never received the forwarded envelope")
+		}
+		if bindSession != "sess-pod" {
+			t.Errorf("Attach binding address = %q, want sess-pod", bindSession)
+		}
+		if envelopeSession != "sess-pod" {
+			t.Errorf("outbound envelope sessionId = %q with recorded slot %q, want sess-pod", envelopeSession, slotID)
+		}
+	}
+}
+
+// countingRuntime answers every message with a response and counts the
+// messages that reached the runtime.
+type countingRuntime struct {
+	out      chan []byte
+	messages atomic.Int32
+}
+
+func (r *countingRuntime) TapOutput(func([]byte)) {}
+
+func (r *countingRuntime) Start(context.Context, string) error { return nil }
+
+func (r *countingRuntime) WriteEnvelope(_ string, envelope []byte) error {
+	if jsonHasType(envelope, "message") {
+		r.messages.Add(1)
+		r.out <- []byte(`{"type":"response","text":"ack"}`)
+	}
+	return nil
+}
+
+func (r *countingRuntime) Output(context.Context, string) (<-chan []byte, error) { return r.out, nil }
+func (r *countingRuntime) Interrupt(context.Context, string, bool) error         { return nil }
+func (r *countingRuntime) Close(context.Context, string) error                   { return nil }
+
+// assertClosingRefusal fails unless err is the closing refusal: a
+// *SealedError that delivered nothing, which errors.Is reports as
+// ErrSessionSealed.
+func assertClosingRefusal(t *testing.T, err error) {
+	t.Helper()
+	var sealed *executor.SealedError
+	if !errors.As(err, &sealed) {
+		t.Fatalf("Send on a closing binding = %v, want *SealedError", err)
+	}
+	if sealed.Delivered != 0 || len(sealed.Response.Parts) != 0 {
+		t.Fatalf("closing refusal = %+v, want nothing delivered", sealed)
+	}
+	if !errors.Is(err, executor.ErrSessionSealed) {
+		t.Fatalf("closing refusal %v does not unwrap to ErrSessionSealed", err)
+	}
+}
+
+// TestPodExecutorRefusesAClosingBindingOnACacheMiss_spec_7_1 pins the
+// closing gate on a session with no cached stream: once the terminal seal
+// marks the binding closing, Send opens no stream, writes nothing, and
+// returns a *SealedError with Delivered zero, so every caller takes its
+// sealed-reroute branch. Before the gate, Send opened a stream and started
+// a turn while the export read the workspace.
+// spec: 7.1 (Normal Flow), 28.5.1 (Gateway-to-pod)
+func TestPodExecutorRefusesAClosingBindingOnACacheMiss_spec_7_1(t *testing.T) {
+	rt := &countingRuntime{out: make(chan []byte, 8)}
+	cl := dialPodAdapter(t, rt)
+	reg := podsession.NewRegistry()
+	bind := &podsession.BindResult{SessionID: "sess-pod", Adapter: cl}
+	reg.Put(bind)
+	bind.MarkClosing()
+
+	pe := executor.NewPodExecutor(reg, nil)
+	_, err := pe.Send(context.Background(), "sess-pod", []executor.Message{{Role: "user", Content: "hello"}})
+	assertClosingRefusal(t, err)
+	if n := rt.messages.Load(); n != 0 {
+		t.Fatalf("runtime received %d message(s), want none on a closing binding", n)
+	}
+}
+
+// TestPodExecutorRefusesAClosingBindingOnACacheHit_spec_7_1 pins the
+// closing gate on a session whose stream is cached from an earlier turn:
+// the mark is read from the registry on the cache hit, so the cached stream
+// carries no further turn. Before the gate, the cached stream delivered the
+// message.
+// spec: 7.1 (Normal Flow), 28.5.1 (Gateway-to-pod)
+func TestPodExecutorRefusesAClosingBindingOnACacheHit_spec_7_1(t *testing.T) {
+	rt := &countingRuntime{out: make(chan []byte, 8)}
+	cl := dialPodAdapter(t, rt)
+	reg := podsession.NewRegistry()
+	bind := &podsession.BindResult{SessionID: "sess-pod", Adapter: cl}
+	reg.Put(bind)
+
+	pe := executor.NewPodExecutor(reg, nil)
+	if _, err := pe.Send(context.Background(), "sess-pod", []executor.Message{{Role: "user", Content: "first"}}); err != nil {
+		t.Fatalf("first Send: %v", err)
+	}
+	bind.MarkClosing()
+	_, err := pe.Send(context.Background(), "sess-pod", []executor.Message{{Role: "user", Content: "second"}})
+	assertClosingRefusal(t, err)
+	if n := rt.messages.Load(); n != 1 {
+		t.Fatalf("runtime received %d message(s), want only the turn before the mark", n)
+	}
+}
+
+// TestPodExecutorInFlightSendEndsAtTheSealEviction_spec_7_1 pins the
+// eviction half of the closing gate: a Send that obtained its stream before
+// the seal ends with an error when the seal start evicts the stream, and no
+// turn starts after the mark.
+// spec: 7.1 (Normal Flow), 28.5.1 (Gateway-to-pod)
+func TestPodExecutorInFlightSendEndsAtTheSealEviction_spec_7_1(t *testing.T) {
+	rt := &silentRuntime{out: make(chan []byte, 1), received: make(chan struct{})}
+	cl := dialPodAdapter(t, rt)
+	reg := podsession.NewRegistry()
+	bind := &podsession.BindResult{SessionID: "sess-pod", Adapter: cl}
+	reg.Put(bind)
+	pe := executor.NewPodExecutor(reg, nil)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := pe.Send(context.Background(), "sess-pod", []executor.Message{{Role: "user", Content: "in flight"}})
+		done <- err
+	}()
+	select {
+	case <-rt.received:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the runtime never received the in-flight message")
+	}
+	bind.MarkClosing()
+	pe.EvictStream("sess-pod")
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("the in-flight Send succeeded though the seal evicted its stream")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the in-flight Send did not end when the seal evicted its stream")
+	}
+	_, err := pe.Send(context.Background(), "sess-pod", []executor.Message{{Role: "user", Content: "after"}})
+	assertClosingRefusal(t, err)
+}

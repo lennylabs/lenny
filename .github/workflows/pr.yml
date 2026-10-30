@@ -28,7 +28,9 @@ jobs:
   pr-fast:
     name: pr-fast (changed-only)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # The group opens with the static tier, so a cold tool install runs
+    # before any test does.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
@@ -37,6 +39,27 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # Restore-only: the static job is the sole writer of this key. A
+      # job that installs a partial tool set must never save under it,
+      # or a later static job takes an exact hit on a ~/go/bin missing
+      # gofumpt and golangci-lint and skips its own install.
+      - name: Restore tool cache (~/go/bin)
+        id: tools-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+        with:
+          path: ~/go/bin
+          key: lenny-go-bin-v3-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            lenny-go-bin-v3-${{ runner.os }}-
+      - name: Install proto producer tools
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        run: |
+          go install github.com/bufbuild/buf/cmd/buf@v1.69.0
+          go install golang.org/x/tools/cmd/goimports@v0.45.0
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
+      - name: Add tool bin to PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Build lenny-test
         run: go build -o bin/lenny-test ./cmd/lenny-test
       - name: Run pr-fast group
@@ -53,21 +76,25 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # Read-write: this job installs the whole tool set, so it is the
+      # only job that saves the shared key.
       - name: Restore tool cache (~/go/bin)
         id: tools-cache
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
         with:
           path: ~/go/bin
-          key: lenny-go-bin-v1-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          key: lenny-go-bin-v3-${{ runner.os }}-${{ hashFiles('go.sum') }}
           restore-keys: |
-            lenny-go-bin-v1-${{ runner.os }}-
+            lenny-go-bin-v3-${{ runner.os }}-
       - name: Install static-tier tools
         if: steps.tools-cache.outputs.cache-hit != 'true'
         run: |
           go install mvdan.cc/gofumpt@v0.10.0
           go install golang.org/x/tools/cmd/goimports@v0.45.0
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
           go install github.com/bufbuild/buf/cmd/buf@v1.69.0
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
       - name: Add tool bin to PATH
         run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Build lenny-test
@@ -86,6 +113,22 @@ jobs:
           path: tests/results/latest.json
           retention-days: 30
 
+  # §4.7.10 runtime supervisor image: the release workflow builds, pushes,
+  # signs, and attests it; the PR gate builds it from Dockerfile.supervisor
+  # without pushing, so a change that breaks the FROM scratch build fails
+  # before release.
+  supervisor-image:
+    name: runtime supervisor image build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [pr-fast]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Build the lenny-supervisor image
+        run: docker build -f Dockerfile.supervisor -t ghcr.io/lennylabs/lenny-supervisor:ci .
+      - name: Run the property self-test in the built image
+        run: docker run --rm --user 1001 ghcr.io/lennylabs/lenny-supervisor:ci selftest
+
   unit:
     name: tier 1 — unit
     runs-on: ubuntu-latest
@@ -103,7 +146,7 @@ jobs:
         run: ./bin/lenny-test --tier unit --output github-annotations
       - name: Fetch base branch for diff coverage
         run: git fetch --no-tags --depth=2000 origin main || true
-      - name: Coverage report (§22.1 80% floor on changed code)
+      - name: Coverage report (TESTING.md §22.1 80% floor on changed code)
         run: |
           ./bin/lenny-test coverage --go | tee -a "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -200,6 +243,14 @@ jobs:
     runs-on: ubuntu-latest   # promoted to self-hosted once Tier 5 is wired
     timeout-minutes: 30
     needs: [integration]
+    # Community-PR matrix (§18.3): fork PRs run tiers 0-4 and docs by
+    # default; the Kind tier runs for same-repo PRs and feature-branch
+    # pushes, and for a fork PR only after a maintainer applies the
+    # 'ok-to-test' label as explicit reviewer approval.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository ||
+      contains(github.event.pull_request.labels.*.name, 'ok-to-test')
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c  # v6.4.0
@@ -253,6 +304,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           node-version: '20'
+      - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b  # v5.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
       - name: Install markdown-link-check
         run: npm install -g markdown-link-check@3.12.2
       - name: Check links in docs and spec
@@ -263,6 +318,14 @@ jobs:
             markdown-link-check "$f" -q --config .markdown-link-check.json 2>/dev/null || fail=1
           done
           exit $fail
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      # spec: §23.2 — "CI includes a TTHW smoke test that
+      # validates both paths on every merge." The docs tier runs
+      # tests/tier11_docs/..., which includes the time-to-hello-world
+      # gate (time_to_hello_world_test.go). F-23.2.2.
+      - name: TTHW + documentation gate (tier 11)
+        run: ./bin/lenny-test --tier docs --output github-annotations
 
   pr-summary:
     name: PR roll-up comment

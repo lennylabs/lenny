@@ -1,0 +1,341 @@
+// SPDX-License-Identifier: MIT
+
+package main
+
+import (
+	"context"
+	"errors"
+	"log"
+	"time"
+
+	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/clockinject"
+	"github.com/lennylabs/lenny/pkg/gateway/billing/billingcheckpoint"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationbudget"
+	delegationbudgetpg "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationbudget/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/deadlock"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/orphancleanup"
+	"github.com/lennylabs/lenny/pkg/gateway/operability/recommendations"
+	"github.com/lennylabs/lenny/pkg/gateway/quota/quotacheckpoint"
+	"github.com/lennylabs/lenny/pkg/gateway/quota/quotafailopen"
+	"github.com/lennylabs/lenny/pkg/gateway/session/orphansession"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/podlifecycle"
+	"github.com/lennylabs/lenny/pkg/quota"
+	"github.com/lennylabs/lenny/pkg/storerouter"
+)
+
+// startReconcilerWorkers launches the §8.10 orphan-cleanup job, the §10.1
+// orphan-session reconciler, the §8.8 subtree deadlock detector, the §10.1
+// dual-store monitor, the §25.3 recommendation sampler, the §12.4 storage-
+// quota recovery reconciler, and the §11.2 delegation-tree-budget and
+// token-usage checkpoint loops. It is an extracted per-group step of the
+// §4.1 background-worker stage.
+//
+// spec: §4.1 gateway background subsystems; §8.10 / §10.1 / §11.2 sweeps.
+func (w *gatewayWiring) startReconcilerWorkers() {
+	f := w.f
+	agentNamespace := f.agentNamespace
+	billingTokenCheckpointIntervalSeconds := f.billingTokenCheckpointIntervalSeconds
+	delegationCascadeTimeoutSeconds := f.delegationCascadeTimeoutSeconds
+	delegationNodeMemoryFootprintBytes := f.delegationNodeMemoryFootprintBytes
+	maxDeadlockWaitSeconds := f.maxDeadlockWaitSeconds
+	quotaSyncIntervalSeconds := f.quotaSyncIntervalSeconds
+	// ----- §8.10 orphan-cleanup job -----
+	orphanSweeper := orphancleanup.New(w.sessions, tenantsLister{w.tenants}, orphancleanup.Options{
+		Archive: w.treeArchive,
+		Clock:   clockinject.Now,
+		// spec: §8.10 — operator-tunable cascade timeout. The
+		// per-deploy cap is the Sweeper's wall-clock window an orphan may
+		// persist past its root's terminal state. F-8.10.9.
+		CascadeTimeout: time.Duration(*delegationCascadeTimeoutSeconds) * time.Second,
+		// F-5.2.26: same terminal pipeline as the watchdog so an orphan
+		// terminated by background sweep also releases its slot/pod.
+		Terminal: w.sessionSrv,
+		// spec: §8.10; §16.1 —
+		// publish the cleanup-runs counter, the cumulative terminated
+		// counter, the fleet-wide active gauge, and the per-tenant active
+		// gauge so the §16.5 OrphanTasksPerTenantHigh alert evaluates.
+		// F-8.10.7.
+		Metrics: w.gwMetrics,
+	})
+	go orphanSweeper.Run(w.watchdogCtx, func(terminated int, err error) {
+		if err != nil {
+			// spec: §10.1.1 (Primary:) — the pass continued past the
+			// error, so its counts below are still reported.
+			log.Printf("lenny-gateway: orphan-cleanup sweep error: %v", err)
+		}
+		if terminated > 0 {
+			log.Printf("lenny-gateway: orphan-cleanup terminated %d sessions past the §8.10 cascade timeout",
+				terminated)
+		}
+	})
+
+	// ----- §10.1 orphan-session reconciler -----
+	// Cross-references the §4.6.1 agent_pod_state mirror every 60s: a
+	// non-terminal session whose bound pod reached the §6.2 `terminated`
+	// phase (without writing a terminal event, because the coordinating
+	// replica was lost) is forced to `failed`/orphan_pod_terminated so it
+	// stops holding quota. When a pool's mirror is stale (lag > 60s) or
+	// carries no row for the bound pod, the reconciler falls back to a
+	// direct Sandbox read. Active only when the Postgres mirror is wired.
+	// §10.1.4 runs the reconciler on the gateway leader only, so it is
+	// built here and stored on the wiring; startLeaderElectedSweeps
+	// registers it on the §12.5 gateway-leader gate, which starts it on
+	// lease acquisition and stops it on lease loss.
+	// spec: §10.1.4, §12.5. F-10.1.5.
+	if w.pgPool != nil {
+		orphanSessionOpts := orphansession.Options{
+			Terminal: w.sessionSrv,
+			Metrics:  w.gwMetrics,
+			Clock:    clockinject.Now,
+		}
+		if w.clusterClient != nil && *agentNamespace != "" {
+			orphanSessionOpts.Fallback = sandboxPhaseReader{
+				mgr: &podlifecycle.AgentSandboxPodLifecycleManager{
+					AgentSandboxPoolReader: podlifecycle.AgentSandboxPoolReader{
+						Client:    w.clusterClient,
+						Namespace: *agentNamespace,
+					},
+				},
+				ns: *agentNamespace,
+			}
+		}
+		w.orphanSessionReconciler = orphansession.New(w.sessions, tenantsLister{w.tenants},
+			agentPodStateMirror{store: agentpodstatepg.New(w.pgPool)}, orphanSessionOpts)
+		log.Printf("lenny-gateway: §10.1 orphan-session reconciler built for the gateway leader (fallback=%t)",
+			orphanSessionOpts.Fallback != nil)
+	}
+
+	// ----- §8.8 subtree deadlock detector -----
+	// Periodically sweeps the live await edges (which session awaits which
+	// children) and the request_input registry; when every non-terminal
+	// task in a subtree is blocked, the root receives a deadlock_detected
+	// event on its lenny/await_children poll, and if the deadlock is not
+	// resolved within maxDeadlockWaitSeconds the detector fails the deepest
+	// blocked tasks with DEADLOCK_TIMEOUT through deadlockFail. Disabled
+	// when the timeout is zero. spec: §8.8. F-8.8.6.
+	if w.deadlockManager != nil {
+		deadlockDetector := deadlock.NewDetector(w.deadlockManager, w.deadlockTracker, w.inputWaits,
+			deadlockNodeLookup(w.sessions), w.deadlockFail)
+		go deadlockDetector.Run(w.watchdogCtx, 10*time.Second)
+		log.Printf("lenny-gateway: §8.8 subtree deadlock detector enabled (maxDeadlockWaitSeconds=%d)",
+			*maxDeadlockWaitSeconds)
+	}
+
+	// ----- §10.1 dual-store degraded-mode monitor -----
+	// Probes Postgres + Redis on a short cadence; on detecting both
+	// unreachable it pins lenny_dual_store_unavailable=1, broadcasts
+	// PLATFORM_DEGRADED to active SSE streams, and gates session.create
+	// (via DualStore on the session-server). Active only when both stores
+	// are wired. F-10.1.3.
+	if w.dsMonitor != nil {
+		go w.dsMonitor.Run(w.watchdogCtx)
+	}
+
+	// ----- §25.3 capacity-recommendation metric sampler -----
+	// Reads the recommendation source metrics out of the gateway's
+	// in-process Prometheus registry into the WindowStore the rules engine
+	// evaluates against, so /v1/admin/recommendations serves real
+	// per-replica data instead of a permanently-empty result. Metrics that
+	// originate in another process (warm-pool exhaustion from the
+	// controller, kubelet OOM kills) are absent from the gateway registry
+	// and are served by lenny-ops through its Prometheus reader — the
+	// §25.3 per-replica-scope note. F-25.3.20.
+	go recommendations.NewSampler(w.gwMetrics.Gatherer(), w.recommendationStore).Run(w.watchdogCtx)
+
+	// ----- §12.4 storage-quota recovery reconciler -----
+	// Probes Redis reachability; on a recovery edge it writes each
+	// tenant's storage_bytes_used counter back to Redis from the
+	// authoritative SUM(artifact_size_bytes) in Postgres so the Lua fast
+	// path resumes enforcing against the correct value rather than a
+	// stale-zero counter left by a Redis restart. Active only when both
+	// Redis and the Postgres artifact catalog are wired. F-12.4.11.
+	if w.storageRecoveryReconciler != nil {
+		go w.storageRecoveryReconciler.Run(w.watchdogCtx)
+	}
+
+	// ----- §12.4 slot-set recovery probe -----
+	// Probes Redis on the recovery interval; when an outage ends it runs
+	// the add-only rebuild of the per-pod slot sets, so a replica with no
+	// slot traffic still restores them before fast-path enforcement
+	// resumes. Active only when the slot counter is wired.
+	if w.slotCounter != nil {
+		go w.slotCounter.RunRecovery(w.watchdogCtx)
+	}
+
+	// ----- §11.2 delegation tree budget checkpoint + reconstruction -----
+	// On the quotaSyncIntervalSeconds cadence the reconciler persists each
+	// active tree's Redis dlg:* counters to the delegation_tree_budget
+	// table (§11.2); on a Redis-recovery edge it reconstructs each
+	// checkpointed tree's counters to max(postgres_checkpoint, live) per
+	// axis before new delegations resume (§11.2 / §12.4),
+	// moving a tree whose checkpoint is stale and whose live state cannot
+	// be enumerated to awaiting_client_action. Active only when the
+	// delegation Redis counters, the Postgres pool, and the SessionStore
+	// are all wired. F-11.2.5 / F-12.4.8.
+	if w.treeBudgetConcrete != nil && w.pgPool != nil && w.sessions != nil {
+		w.delegationBudgetReconciler = &delegationbudget.Reconciler{
+			// §12.4: the dlg:* counters live on the Delegation concern's
+			// instance, so its outage and recovery edges are read there.
+			// F-12.4.30.
+			Probe:           concernRedisProbe(w.concernRedis, storerouter.RedisConcernDelegation),
+			Counters:        delegationbudget.CounterAdapter{Reserver: w.treeBudgetConcrete},
+			Trees:           delegationbudget.SessionTreeLister{Sessions: w.sessions, Tenants: (tenantsLister{w.tenants}).ListTenants},
+			Store:           delegationbudgetpg.New(w.pgPool),
+			Live:            delegationbudget.SessionEnumerator{Sessions: w.sessions},
+			Marker:          delegationbudget.SessionUnrecoverableMarker{Sessions: w.sessions},
+			Metrics:         w.gwMetrics,
+			Interval:        time.Duration(quota.ClampSyncIntervalSeconds(*quotaSyncIntervalSeconds)) * time.Second,
+			NodeMemoryBytes: *delegationNodeMemoryFootprintBytes,
+			Now:             clockinject.Now,
+			Logf:            log.Printf,
+		}
+		log.Printf("lenny-gateway: §11.2 delegation tree budget checkpoint cadence %s (node footprint %d bytes)",
+			time.Duration(quota.ClampSyncIntervalSeconds(*quotaSyncIntervalSeconds))*time.Second, *delegationNodeMemoryFootprintBytes)
+		go w.delegationBudgetReconciler.Run(w.watchdogCtx)
+	}
+
+	// ----- §11.2 token-usage checkpoint + reconcile loop -----
+	// On the quotaSyncIntervalSeconds cadence the reconciler persists each
+	// active window total to token_usage_checkpoint (§11.2); on a
+	// Redis-recovery edge it restores every still-current counter to
+	// MAX(redis_current, postgres_checkpoint) before the next checkpoint
+	// (§11.2). The same Service backs the §24.6 operator reconcile
+	// and the session-completion final write wired above. F-11.2.4.
+	if w.quotaCheckpointSvc != nil {
+		quotaCheckpointReconciler := &quotacheckpoint.Reconciler{
+			// §12.4: the token-usage counters live on the Quota concern's
+			// instance. F-12.4.30.
+			Probe:    concernRedisProbe(w.concernRedis, storerouter.RedisConcernQuota),
+			Service:  w.quotaCheckpointSvc,
+			Interval: time.Duration(quota.ClampSyncIntervalSeconds(*quotaSyncIntervalSeconds)) * time.Second,
+		}
+		log.Printf("lenny-gateway: §11.2 token-usage checkpoint cadence %s",
+			time.Duration(quota.ClampSyncIntervalSeconds(*quotaSyncIntervalSeconds))*time.Second)
+		go quotaCheckpointReconciler.Run(w.watchdogCtx)
+	}
+
+	// spec: §11.2.1 token_usage.checkpoint — periodically snapshot each
+	// active session's proxy-recorded token delta into the per-tenant
+	// billing stream so in-flight cost attribution is visible before
+	// session end. Runs only when billing, the session store, and the
+	// per-session usage accumulator are all wired. F-11.2.1.
+	if billingTokenCP := billingcheckpoint.New(
+		w.billingEmitter,
+		billingSessionLister{sessions: w.sessions, tenants: (tenantsLister{w.tenants}).ListTenants},
+		w.sessionUsage,
+	); billingTokenCP != nil && *billingTokenCheckpointIntervalSeconds > 0 {
+		interval := time.Duration(*billingTokenCheckpointIntervalSeconds) * time.Second
+		log.Printf("lenny-gateway: §11.2.1 token_usage.checkpoint cadence %s", interval)
+		go billingTokenCP.Run(w.watchdogCtx, interval)
+	}
+
+	// §12.4 source (2): bound the in-memory fail-open accumulator by dropping
+	// entries whose window has rolled. Reads already ignore stale windows;
+	// this reclaims their memory on a low cadence. F-12.4.20.
+	if w.quotaFailOpenAccum != nil {
+		go func(acc *quotafailopen.Accumulator) {
+			tick := time.NewTicker(1 * time.Minute)
+			defer tick.Stop()
+			for {
+				select {
+				case <-w.watchdogCtx.Done():
+					return
+				case now := <-tick.C:
+					acc.Sweep(now.UTC())
+				}
+			}
+		}(w.quotaFailOpenAccum)
+	}
+
+	// spec: §12.4 — in the in_memory_reconciled mode, drive the
+	// per-replica budget-slice reconcile loop ("reconciles with Postgres
+	// periodically (default: every 30s)") and the final flush on shutdown.
+	// The Redis checkpoint Reconciler above does not run in this mode
+	// (quotaCounter is nil), so the budget tracker owns the tenant rollup
+	// checkpoint rows.
+	if w.quotaBudgetTracker != nil {
+		go w.quotaBudgetTracker.Run(w.watchdogCtx)
+	}
+}
+
+// deadlockFail is the §8.8 DEADLOCK_TIMEOUT writer the subtree deadlock
+// detector calls for each deepest blocked task of a timed-out subtree. It
+// reports whether the write applied, so the detector records the §16.1
+// `timeout` resolution only after an applied write.
+//
+// The mutator re-checks, under the row lock, the live input-wait registry
+// the detector's snapshot read: a task whose wait was answered or
+// cancelled after the snapshot is no longer blocked, so the write is
+// refused with ErrSuperseded. The check reads the registry rather than the
+// row state, because a wait served on the gateway-edge MCP endpoint leaves
+// the row running, and a state check would never fail such a task. A wait
+// resolved after the check and before the write commits is still failed;
+// that window is the mutator's duration.
+//
+// spec: §8.8 (Subtree deadlock detection), §16.1; §7.2 (terminal writes
+// run through the claim and the locked-row write)
+func (w *gatewayWiring) deadlockFail(ctx context.Context, tenantID, sessionID string) bool {
+	// spec: §7.2 — a funnel terminal writer: the claim opens before the
+	// write, the write applies only over a non-terminal locked row and
+	// records the Terminated fact, and the terminal pipeline runs exactly
+	// when it applied.
+	end := w.sessionSrv.BeginTerminal(sessionID)
+	defer end()
+	var fromState session.State
+	now := time.Now()
+	updated, err := w.sessions.Update(ctx, tenantID, sessionID, func(s *sessionstore.Session) error {
+		if session.IsTerminal(s.State) || !w.waitStillPending(sessionID) {
+			return sessionstore.ErrSuperseded
+		}
+		fromState = s.State
+		s.State = session.StateFailed
+		s.FailureClass = session.FailureClassRuntime
+		s.FailureReason = string(session.FailureDeadlockTimeout)
+		sessionstore.MarkTerminated(s, fromState, now)
+		return nil
+	})
+	if errors.Is(err, sessionstore.ErrSuperseded) {
+		return false
+	}
+	if err != nil {
+		log.Printf("lenny-gateway: §8.8 deadlock-timeout fail %s: %v", sessionID, err)
+		return false
+	}
+	// spec: §4.6 — a deadlock-timeout fails a blocked running session, so
+	// fromState routes its teardown through the §6.2 executor recycle path
+	// rather than the pre-running reclaim.
+	w.sessionSrv.OnSessionTerminal(ctx, fromState, updated)
+	return true
+}
+
+// waitStillPending reports whether sessionID still holds a pending
+// request_input wait in this replica's live registry. With no registry
+// wired no wait can be pending, so the deadlock write fails closed to no
+// write.
+//
+// spec: §8.8 (Subtree deadlock detection)
+func (w *gatewayWiring) waitStillPending(sessionID string) bool {
+	if w.inputWaits == nil {
+		return false
+	}
+	return len(w.inputWaits.PendingDetailsForSession(sessionID)) > 0
+}
+
+// deadlockNodeLookup reads the §8.8 detector's view of a session from its
+// row: the state, and the pool the row bound to (PoolRef), which labels the
+// deadlock metrics by the deadlocked root's pool. A missing row reports
+// ok=false, which the detector treats as settled.
+//
+// spec: §8.8 (Subtree deadlock detection), §16.1 (Metrics)
+func deadlockNodeLookup(sessions sessionstore.Store) deadlock.NodeLookup {
+	return func(ctx context.Context, tenantID, sessionID string) (deadlock.NodeInfo, bool) {
+		row, err := sessions.Get(ctx, tenantID, sessionID)
+		if err != nil {
+			return deadlock.NodeInfo{}, false
+		}
+		return deadlock.NodeInfo{State: row.State, Pool: row.PoolRef}, true
+	}
+}

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -31,7 +33,7 @@ func validateGroupsYAML(path string) checkResult {
 	var doc struct {
 		Version int `yaml:"version"`
 		Groups  map[string]struct {
-			Description string `yaml:"description"`
+			Description string    `yaml:"description"`
 			Selectors   yaml.Node `yaml:"selectors"`
 		} `yaml:"groups"`
 	}
@@ -104,7 +106,7 @@ func validateGroupsSubsetsYAML(path string) checkResult {
 	}
 	// Subsets carry their contents through one of several slots:
 	//   tests:        []string of paths, or the scalar `all`
-	//   scenarios:    same shape as tests, for tier 7 load
+	//   scenarios:    same shape as tests, for tier 7a / 7b load
 	//   scenarios_ref: name of another subset (delegation)
 	//   runtimes:     []string of runtime ids (tier 10 conformance)
 	//   run:          Go regexp matched against test names (tier 4)
@@ -142,7 +144,7 @@ func validateGroupsSubsetsYAML(path string) checkResult {
 			problems = append(problems, fmt.Sprintf("%s: unknown tier %q", name, s.Tier))
 		}
 		// A subset declares its contents through one of three slots:
-		// tests (most tiers), scenarios (tier 7 load), or scenarios_ref
+		// tests (most tiers), scenarios (tier 7a / 7b load), or scenarios_ref
 		// (delegates to another subset). Each may carry a sequence of
 		// paths or the scalar sentinel `all`.
 		hasTests := s.Tests.Kind == yaml.SequenceNode && len(s.Tests.Content) > 0
@@ -160,7 +162,24 @@ func validateGroupsSubsetsYAML(path string) checkResult {
 		fmt.Sprintf("%d subset(s); every entry has a tier and at least one content slot", len(doc.Subsets)))
 }
 
-func validateSpecMapExceptionsYAML(path string) checkResult {
+// exceptionReasonPendingImplementation exempts a spec heading that
+// exists with no implementation key yet. The exemption is temporary by
+// construction, so an entry under it names the open item whose closure
+// retires it and the date it was written, in the same vocabulary the
+// shared register contract uses for the same two facts.
+const exceptionReasonPendingImplementation = "pending-implementation"
+
+// validateSpecMapExceptionsYAML holds tests/spec-map-exceptions.yaml to
+// its entry schema and to the tracking rules that keep a temporary
+// exemption temporary. The pending-implementation class is the route by
+// which a spec heading with no implementation key lands green, so an
+// entry that passed with an empty blocker or an unparseable date would
+// exempt that heading permanently. The blocker and opened_at fields are
+// named and validated as the shared register contract names and
+// validates them, so one vocabulary covers both registers, and the two
+// rules apply to any entry carrying either field regardless of its
+// reason class.
+func validateSpecMapExceptionsYAML(path string, rules registerRules) checkResult {
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return newResult("spec-map-exceptions.yaml", false, fmt.Sprintf("could not read: %v", err))
@@ -171,6 +190,12 @@ func validateSpecMapExceptionsYAML(path string) checkResult {
 			Section       string `yaml:"section"`
 			Reason        string `yaml:"reason"`
 			Justification string `yaml:"justification"`
+			// Blocker names the open item whose closure retires the
+			// entry, and OpenedAt is the date the entry was written,
+			// in YYYY-MM-DD. Both are required under
+			// pending-implementation and validated wherever they appear.
+			Blocker  string `yaml:"blocker"`
+			OpenedAt string `yaml:"opened_at"`
 		} `yaml:"exceptions"`
 	}
 	if err := yaml.Unmarshal(body, &doc); err != nil {
@@ -183,13 +208,14 @@ func validateSpecMapExceptionsYAML(path string) checkResult {
 		return newResult("spec-map-exceptions.yaml", true, "no exceptions defined")
 	}
 	allowedReasons := map[string]bool{
-		"non-normative":     true,
-		"indirect-coverage": true,
-		"meta":              true,
-		"deferred":          true,
-		"empty":             true,
-		"post-v1":           true,
-		"anti-feature":      true,
+		"non-normative":                      true,
+		"indirect-coverage":                  true,
+		"meta":                               true,
+		"deferred":                           true,
+		"empty":                              true,
+		"post-v1":                            true,
+		"anti-feature":                       true,
+		exceptionReasonPendingImplementation: true,
 	}
 	var problems []string
 	seen := map[string]int{}
@@ -210,6 +236,7 @@ func validateSpecMapExceptionsYAML(path string) checkResult {
 		if strings.TrimSpace(e.Justification) == "" {
 			problems = append(problems, fmt.Sprintf("exceptions[%d] (%q): missing justification", i, e.Section))
 		}
+		problems = append(problems, exceptionTrackingProblems(i, e.Section, e.Reason, e.OpenedAt, e.Blocker, rules)...)
 	}
 	if len(problems) > 0 {
 		return newResult("spec-map-exceptions.yaml", false, summarizeProblems(problems))
@@ -218,7 +245,68 @@ func validateSpecMapExceptionsYAML(path string) checkResult {
 		fmt.Sprintf("%d exception(s); every entry has a reason and a justification", len(doc.Exceptions)))
 }
 
-// validateFlakeBudgetYAML enforces TESTING.md §21.4 on
+// exceptionTrackingProblems applies the blocker and opened_at rules to
+// one exception entry. An entry under pending-implementation carries
+// both fields, because the class exempts a heading only until the
+// implementation lands and an entry with neither field would exempt it
+// forever. An entry under any other class carries neither field, and
+// carrying one holds it to the same rules: a blocker that names no open
+// item, or a date that does not parse, is as unmeasurable under one
+// class as under another. The rules fail closed, so an entry whose
+// blocker cannot be resolved is a violation rather than an exemption.
+func exceptionTrackingProblems(i int, section, reason, openedAt, blocker string, rules registerRules) []string {
+	openedAt = strings.TrimSpace(openedAt)
+	blocker = strings.TrimSpace(blocker)
+	pending := strings.TrimSpace(reason) == exceptionReasonPendingImplementation
+	var problems []string
+	switch {
+	case openedAt != "":
+		if _, err := time.Parse("2006-01-02", openedAt); err != nil {
+			problems = append(problems, fmt.Sprintf("exceptions[%d] (%q): opened_at %q not YYYY-MM-DD", i, section, openedAt))
+		}
+	case pending:
+		problems = append(problems, fmt.Sprintf("exceptions[%d] (%q): reason %s requires opened_at",
+			i, section, exceptionReasonPendingImplementation))
+	}
+	switch {
+	case blocker != "":
+		if !rules.resolvesBlocker(blocker) {
+			problems = append(problems, fmt.Sprintf("exceptions[%d] (%q): blocker %q does not resolve to an open item", i, section, blocker))
+		}
+	case pending:
+		problems = append(problems, fmt.Sprintf("exceptions[%d] (%q): reason %s requires blocker",
+			i, section, exceptionReasonPendingImplementation))
+	}
+	return problems
+}
+
+// readExceptionSections returns the set of spec sections listed in
+// tests/spec-map-exceptions.yaml. A missing or unparseable file
+// yields an empty set; validateSpecMapExceptionsYAML reports the
+// parse error separately.
+func readExceptionSections(path string) map[string]bool {
+	out := map[string]bool{}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return out
+	}
+	var doc struct {
+		Exceptions []struct {
+			Section string `yaml:"section"`
+		} `yaml:"exceptions"`
+	}
+	if err := yaml.Unmarshal(body, &doc); err != nil {
+		return out
+	}
+	for _, e := range doc.Exceptions {
+		if e.Section != "" {
+			out[e.Section] = true
+		}
+	}
+	return out
+}
+
+// validateFlakeBudgetYAML enforces the flake budget policy on
 // tests/flake-budget.yaml. Every quarantined entry must carry a
 // non-empty test name, an https issue link, and an eta in
 // YYYY-MM-DD that has not yet passed.
@@ -276,7 +364,496 @@ func validateFlakeBudgetYAML(path string) checkResult {
 		fmt.Sprintf("%d quarantined test(s); every entry valid", len(doc.Quarantined)))
 }
 
-// validateParityMatrixYAML enforces TESTING.md §12.6 on
+// ---- the shared register contract ---------------------------------
+
+// An exception register is a YAML file under tests/registers/
+// declaring kind: exception-register and recording the violations one
+// gate accepts for now, so that gate can fail everything else. The
+// pattern is generalized from the two in-tree pending lists and from
+// validateFlakeBudgetYAML, which already dates and owns each quarantine
+// entry. Every exception register shares one entry schema, carrying a
+// subject, a verdict, an owner, an opened_at date, an expiry, a
+// blocker, and a reason, and one set of ratchet rules:
+//
+//   - a violation with no entry fails, so an exemption is written down
+//     before a gate lets it through;
+//   - an entry whose expiry has passed fails, so an exemption ends;
+//   - an entry whose blocker resolves to no open item fails, so an
+//     exemption names outstanding work.
+//
+// tests/registers/ also holds files that deliberately do not use this
+// schema, and the declared kind is what separates them. The shared
+// contract owns exactly the files that declare kind:
+// exception-register. Every other file in the directory is validated
+// by the gate that reads it, against its own schema, and the shared
+// contract asserts nothing about it and imposes no key on it:
+//
+//   - a residual register carries a member, a class, an in-class or
+//     excluded disposition, and a reason. An exclusion is permanent,
+//     and an in-class entry is retired by the event that takes its
+//     member out of its class, so neither carries a date on which it
+//     becomes wrong nor an open item a blocker could name, and the
+//     expiry and blocker rules would fail every such entry;
+//   - a baseline is keyed for the rewrite it drives and is rewritten
+//     downward as that rewrite proceeds. The per-file line-citation
+//     counts, the per-citation resolution baseline, the change-graph
+//     coverage baseline keyed by path prefix, and the skip-reason
+//     baseline keyed by file and call site are all baselines, and a
+//     path with no glob key or a host-capability skip has no pending
+//     item a blocker could name;
+//   - a sense map is keyed by file and occurrence and records which
+//     identifier a rewrite writes at each site, so it records a
+//     decision rather than an exemption.
+type registerEntry struct {
+	// Subject is the violation the entry exempts, in whatever
+	// vocabulary the gate that reads the register measures.
+	Subject string `yaml:"subject"`
+	// Verdict is the disposition of the exemption, which is one of
+	// intentional, tracked, or deferred. It classifies the entry rather
+	// than restating the gate's own outcome: an intentional entry is a
+	// deliberate carve-out, a tracked entry is work in progress, and a
+	// deferred entry is work not yet started.
+	Verdict string `yaml:"verdict"`
+	// Owner is the person accountable for closing the entry.
+	Owner string `yaml:"owner"`
+	// OpenedAt is the date the entry was written, in YYYY-MM-DD.
+	OpenedAt string `yaml:"opened_at"`
+	// Expiry is the date the entry stops holding, in YYYY-MM-DD.
+	Expiry string `yaml:"expiry"`
+	// Blocker names the open item whose closure retires the entry.
+	Blocker string `yaml:"blocker"`
+	// Reason states why the violation is accepted for now.
+	Reason string `yaml:"reason"`
+}
+
+// registerKindException is the kind an exception register declares.
+// Membership of the shared contract is a declaration inside the file
+// rather than a filename convention, so a register carrying the shared
+// entry schema is held to it under any name and a file carrying its own
+// schema is left to the gate that reads it.
+const registerKindException = "exception-register"
+
+// registerFile is one parsed exception register.
+type registerFile struct {
+	Kind    string          `yaml:"kind"`
+	Version int             `yaml:"version"`
+	Entries []registerEntry `yaml:"entries"`
+}
+
+// registerRules carries the two dependencies the ratchet rules need.
+// Both are injected so a case can pin an expiry boundary and an
+// open-item domain without reaching for the wall clock or the tracked
+// audit records.
+type registerRules struct {
+	// now is the instant the expiry rule compares against.
+	now time.Time
+	// openItem reports whether a blocker names an item that is still
+	// open. The domain the harness runs with is openItemIDs, which is
+	// the open findings of the tracked audit records together with the
+	// remediation steps the tracked plan documents declare. A nil
+	// resolver resolves nothing, so the blocker rule fails closed
+	// rather than certifying every entry.
+	openItem func(blocker string) bool
+}
+
+// resolvesBlocker reports whether blocker names an open item.
+func (r registerRules) resolvesBlocker(blocker string) bool {
+	if r.openItem == nil {
+		return false
+	}
+	return r.openItem(blocker)
+}
+
+// loadRegisterFile reads and parses one register. A missing or
+// unparseable file is an error: a register that cannot be read exempts
+// nothing, and a gate that treated it as empty would certify a tree it
+// never measured.
+func loadRegisterFile(path string) (*registerFile, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read register %s: %w", path, err)
+	}
+	var doc registerFile
+	if err := yaml.Unmarshal(body, &doc); err != nil {
+		return nil, fmt.Errorf("parse register %s: %w", path, err)
+	}
+	if doc.Version != 1 {
+		return nil, fmt.Errorf("register %s: expected version 1, got %d", path, doc.Version)
+	}
+	if strings.TrimSpace(doc.Kind) != registerKindException {
+		return nil, fmt.Errorf("register %s: expected kind %q, got %q", path, registerKindException, doc.Kind)
+	}
+	return &doc, nil
+}
+
+// declaresSharedContract reports whether one file under
+// tests/registers/ declares the shared entry schema. A document that is
+// a sequence, or a mapping declaring another kind, carries a schema of
+// its own, so the shared contract does not range over it. Three inputs
+// are errors rather than files of another kind, because each is a route
+// by which a register leaves the contract without anyone deciding that
+// it should: a file that cannot be read or parsed, a file carrying no
+// document at all, and a mapping that carries entries of the shared
+// schema but declares no kind. The sweep reports each instead of
+// passing over it.
+func declaresSharedContract(path string) (bool, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return false, fmt.Errorf("read register %s: %w", path, err)
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(body, &doc); err != nil {
+		return false, fmt.Errorf("parse register %s: %w", path, err)
+	}
+	root := &doc
+	if root.Kind == yaml.DocumentNode {
+		if len(root.Content) == 0 {
+			root = nil
+		} else {
+			root = root.Content[0]
+		}
+	}
+	if root == nil || root.Kind == 0 || (root.Kind == yaml.MappingNode && len(root.Content) == 0) {
+		return false, fmt.Errorf("register %s: carries no document; a file that declares nothing exempts nothing", path)
+	}
+	kind := strings.TrimSpace(mappingValue(root, "kind"))
+	if kind == registerKindException {
+		return true, nil
+	}
+	if kind == "" && carriesSharedEntryKeys(root) {
+		return false, fmt.Errorf("register %s: entries carry the shared entry schema but the file declares no kind; add kind: %s",
+			path, registerKindException)
+	}
+	return false, nil
+}
+
+// carriesSharedEntryKeys reports whether a document's entries are
+// written in the shared entry schema. The subject key paired with a
+// blocker or an expiry is what no other schema in the directory uses: a
+// residual register keys by member and class, and a baseline and a
+// sense map key for the rewrite they drive. A file whose kind
+// declaration is dropped in an edit would otherwise leave the contract
+// silently, and the gate that reads it would go green over a register
+// nobody validated.
+func carriesSharedEntryKeys(root *yaml.Node) bool {
+	entries := mappingNode(root, "entries")
+	if entries == nil || entries.Kind != yaml.SequenceNode {
+		return false
+	}
+	for _, e := range entries.Content {
+		if e.Kind != yaml.MappingNode {
+			continue
+		}
+		if mappingHasKey(e, "subject") && (mappingHasKey(e, "blocker") || mappingHasKey(e, "expiry")) {
+			return true
+		}
+	}
+	return false
+}
+
+// The dispositions a register entry may record. The set classifies why
+// a violation is exempt, which is what tells a reader a carve-out apart
+// from work still queued. It is deliberately not the harness verdict
+// vocabulary: a register entry states the standing of the exemption,
+// while the gate reports its own outcome when the entry stops holding.
+const (
+	// registerVerdictIntentional marks a deliberate, permanent-for-now
+	// carve-out.
+	registerVerdictIntentional = "intentional"
+	// registerVerdictTracked marks a violation whose remediation is
+	// under way.
+	registerVerdictTracked = "tracked"
+	// registerVerdictDeferred marks a violation whose remediation is
+	// accepted but not yet started.
+	registerVerdictDeferred = "deferred"
+)
+
+// registerVerdicts returns the dispositions in the order the failure
+// message names them.
+func registerVerdicts() []string {
+	return []string{registerVerdictIntentional, registerVerdictTracked, registerVerdictDeferred}
+}
+
+// isRegisterVerdict reports whether v is one of the dispositions.
+func isRegisterVerdict(v string) bool {
+	for _, allowed := range registerVerdicts() {
+		if v == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+// registerEntryProblems applies the entry schema and the expiry and
+// blocker ratchet rules to every entry, and returns one message per
+// violation.
+// A register read with no clock fails the way a register read with no
+// open-item resolver does: a zero clock would place every expiry in the
+// future and turn the expiry ratchet into a no-op that certifies stale
+// entries forever.
+func registerEntryProblems(doc *registerFile, rules registerRules) []string {
+	var problems []string
+	if rules.now.IsZero() {
+		return []string{"register rules carry no clock; the expiry rule cannot run"}
+	}
+	today := rules.now.UTC().Truncate(24 * time.Hour)
+	seen := map[string]int{}
+	for i, e := range doc.Entries {
+		subject := strings.TrimSpace(e.Subject)
+		if subject == "" {
+			problems = append(problems, fmt.Sprintf("entry[%d]: missing subject", i))
+			continue
+		}
+		if prev, dup := seen[subject]; dup {
+			problems = append(problems, fmt.Sprintf("entry[%d] (%q): subject already declared at entry[%d]", i, subject, prev))
+		}
+		seen[subject] = i
+		if !isRegisterVerdict(strings.TrimSpace(e.Verdict)) {
+			problems = append(problems, fmt.Sprintf("entry[%d] (%q): verdict must be one of %s; got %q",
+				i, subject, strings.Join(registerVerdicts(), ", "), e.Verdict))
+		}
+		if strings.TrimSpace(e.Owner) == "" {
+			problems = append(problems, fmt.Sprintf("entry[%d] (%q): missing owner", i, subject))
+		}
+		if strings.TrimSpace(e.Reason) == "" {
+			problems = append(problems, fmt.Sprintf("entry[%d] (%q): missing reason", i, subject))
+		}
+		problems = append(problems, registerDateProblems(i, subject, e, today)...)
+		switch blocker := strings.TrimSpace(e.Blocker); {
+		case blocker == "":
+			problems = append(problems, fmt.Sprintf("entry[%d] (%q): missing blocker", i, subject))
+		case !rules.resolvesBlocker(blocker):
+			problems = append(problems, fmt.Sprintf("entry[%d] (%q): blocker %q does not resolve to an open item", i, subject, blocker))
+		}
+	}
+	return problems
+}
+
+// registerDateProblems checks the opened_at and expiry dates of one
+// entry, and applies the ratchet rule that a passed expiry fails.
+func registerDateProblems(i int, subject string, e registerEntry, today time.Time) []string {
+	var problems []string
+	if strings.TrimSpace(e.OpenedAt) == "" {
+		problems = append(problems, fmt.Sprintf("entry[%d] (%q): missing opened_at", i, subject))
+	} else if _, err := time.Parse("2006-01-02", e.OpenedAt); err != nil {
+		problems = append(problems, fmt.Sprintf("entry[%d] (%q): opened_at %q not YYYY-MM-DD", i, subject, e.OpenedAt))
+	}
+	expiry := strings.TrimSpace(e.Expiry)
+	if expiry == "" {
+		problems = append(problems, fmt.Sprintf("entry[%d] (%q): missing expiry", i, subject))
+		return problems
+	}
+	t, err := time.Parse("2006-01-02", expiry)
+	if err != nil {
+		problems = append(problems, fmt.Sprintf("entry[%d] (%q): expiry %q not YYYY-MM-DD", i, subject, expiry))
+		return problems
+	}
+	if t.Before(today) {
+		problems = append(problems, fmt.Sprintf("entry[%d] (%q): expiry %s has passed; close the entry or reopen it against a current blocker", i, subject, expiry))
+	}
+	return problems
+}
+
+// checkRegister runs the shared contract over one register and the
+// violations the calling gate measured against the tree. Every gate
+// that exempts anything routes through this function, so the three
+// ratchet rules cannot drift between gates. Passing a nil violation
+// slice validates the register alone.
+func checkRegister(name, path string, violations []string, rules registerRules) checkResult {
+	doc, err := loadRegisterFile(path)
+	if err != nil {
+		return newResult(name, false, err.Error())
+	}
+	problems := registerEntryProblems(doc, rules)
+	registered := map[string]bool{}
+	for _, e := range doc.Entries {
+		if s := strings.TrimSpace(e.Subject); s != "" {
+			registered[s] = true
+		}
+	}
+	for _, v := range violations {
+		if !registered[v] {
+			problems = append(problems, fmt.Sprintf("unregistered violation %q: add an entry or fix it", v))
+		}
+	}
+	if len(problems) > 0 {
+		return newResult(name, false, summarizeProblems(problems))
+	}
+	return newResult(name, true,
+		fmt.Sprintf("%d entr(ies); every entry is owned, dated, and blocked on an open item", len(doc.Entries)))
+}
+
+// validateRegistersDir validates every exception register under
+// tests/registers/ against the shared contract. Gates supply their own
+// violation sets when they run; this check confirms the registers
+// themselves hold, so an entry that has outlived its expiry or its
+// blocker fails the tier even before the gate that reads it runs. A
+// residual register, a baseline, and a sense map carry schemas of their
+// own, so the sweep selects the files declaring kind:
+// exception-register and leaves every other file to the gate that reads
+// it, without imposing a key of its own on those schemas. The sweep
+// reads both YAML filename extensions, so a register written as .yml is
+// held to the contract rather than left unread.
+func validateRegistersDir(dir string, rules registerRules) checkResult {
+	const name = "tests/registers"
+	if _, err := os.Stat(dir); err != nil {
+		return newResult(name, false, fmt.Sprintf("could not read directory: %v", err))
+	}
+	var files []string
+	for _, ext := range []string{"*.yaml", "*.yml"} {
+		matched, err := filepath.Glob(filepath.Join(dir, ext))
+		if err != nil {
+			return newResult(name, false, fmt.Sprintf("could not list: %v", err))
+		}
+		files = append(files, matched...)
+	}
+	sort.Strings(files)
+	var problems []string
+	held := 0
+	for _, f := range files {
+		base := filepath.Base(f)
+		shared, err := declaresSharedContract(f)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("%s: %v", base, err))
+			continue
+		}
+		if !shared {
+			// The gate that reads this file validates it against its own
+			// schema; the shared contract does not range over it.
+			continue
+		}
+		held++
+		if r := checkRegister(name, f, nil, rules); !r.ok {
+			problems = append(problems, fmt.Sprintf("%s: %s", base, r.detail))
+		}
+	}
+	if len(problems) > 0 {
+		return newResult(name, false, summarizeProblems(problems))
+	}
+	return newResult(name, true, fmt.Sprintf("%d register(s) hold the shared contract", held))
+}
+
+// repoRegisterRules builds the register rules the harness runs with:
+// the wall clock, and the tracked open items as the domain a blocker
+// resolves against.
+func repoRegisterRules(root string) registerRules {
+	open := openItemIDs(root)
+	return registerRules{
+		now: time.Now().UTC(),
+		openItem: func(blocker string) bool {
+			return open[strings.TrimSpace(blocker)]
+		},
+	}
+}
+
+// openItemIDs returns every identifier a register blocker may name.
+// Two namespaces are open items: a finding still marked OPEN in a
+// tracked audit record, and a remediation step declared by a tracked
+// plan document. The step identifiers are part of the domain because a
+// gate lands green by seeding its register with an entry blocked on the
+// remediation step that retires the entry, and because the audit
+// records state findings as they were written rather than the work
+// still outstanding. A step leaves the domain when its plan document
+// stops declaring it, which is what retires every entry blocked on it.
+func openItemIDs(root string) map[string]bool {
+	out := openFindingIDs(root)
+	for id := range remediationStepIDs(root) {
+		out[id] = true
+	}
+	return out
+}
+
+// remediationStepID is the identifier a tracked plan gives a step. A
+// plan spells a step as an uppercase letter prefix followed by a number
+// (R11), and a sub-step as that identifier with a lowercase letter
+// suffix (R11a). A sub-step is as open as the step it sits under, so
+// the sub-step spelling is in the domain and an entry blocked on one
+// resolves. A heading identifier that separates a prefix from its
+// number with a hyphen declares no plan step: no tracked plan spells a
+// step that way, and a document that is not a tracked plan declares no
+// open item at all.
+const remediationStepID = `[A-Z]+[0-9]+[a-z]?`
+
+// remediationStepHeadings are the heading spellings that declare a plan
+// step. All three are in use in the plans this harness reads, and an
+// identifier declared in any of them names outstanding work. Prose that
+// merely names a step, and a section heading that carries no
+// identifier, declare nothing.
+var remediationStepHeadings = []*regexp.Regexp{
+	// The identifier opens the heading text: "### R3. Title".
+	regexp.MustCompile(`^#{2,6} (` + remediationStepID + `)\. `),
+	// The identifier follows a section number and precedes a colon:
+	// "### 3.6 R1a: register, prose, and Go symbols".
+	regexp.MustCompile(`^#{2,6} [0-9]+(?:\.[0-9]+)* (` + remediationStepID + `):`),
+	// The identifier closes the heading in parentheses:
+	// "## 3. Step 1: channel identification and naming (R1)".
+	regexp.MustCompile(`^#{2,6} .*\((` + remediationStepID + `)\)[ \t]*$`),
+}
+
+// remediationStepHeadingID returns the plan step identifier a heading
+// line declares, and reports whether the line declares one at all.
+func remediationStepHeadingID(line string) (string, bool) {
+	for _, re := range remediationStepHeadings {
+		if m := re.FindStringSubmatch(line); m != nil {
+			return m[1], true
+		}
+	}
+	return "", false
+}
+
+// remediationStepIDs returns the step identifiers the root-level
+// remediation plans declare. A step leaves the domain when its plan
+// stops declaring it, which is what the plan's own closure step
+// performs.
+func remediationStepIDs(root string) map[string]bool {
+	out := map[string]bool{}
+	docs, _ := filepath.Glob(filepath.Join(root, "*-remediation.md"))
+	for _, doc := range docs {
+		body, err := os.ReadFile(doc)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(body), "\n") {
+			if id, ok := remediationStepHeadingID(line); ok {
+				out[id] = true
+			}
+		}
+	}
+	return out
+}
+
+// openFindingIDs returns the identifiers of the findings still marked
+// OPEN in the tracked audit records. Each finding heading is a
+// checklist line whose identifier follows the checkbox and whose status
+// marker closes the line, per the format both records state.
+func openFindingIDs(root string) map[string]bool {
+	out := map[string]bool{}
+	for _, rec := range []string{"BUILD-GAPS.md", "TEST-GAPS.md"} {
+		body, err := os.ReadFile(filepath.Join(root, rec))
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(body), "\n") {
+			if !strings.HasPrefix(line, "#") || !strings.HasSuffix(strings.TrimSpace(line), "— OPEN") {
+				continue
+			}
+			_, after, found := strings.Cut(line, "- [ ] ")
+			if !found {
+				continue
+			}
+			id, _, found := strings.Cut(after, " —")
+			if !found {
+				continue
+			}
+			if id = strings.TrimSpace(id); id != "" {
+				out[id] = true
+			}
+		}
+	}
+	return out
+}
+
+// validateParityMatrixYAML enforces the parity matrix policy on
 // tests/tier6_e2e_cloud/parity-matrix.yaml. Every capability has
 // at least one `validated` provider, every provider in a row is
 // listed under the top-level providers block, and every `skip`
@@ -385,7 +962,8 @@ func countCells(caps []struct {
 	Name        string               `yaml:"name"`
 	SpecSection string               `yaml:"spec_section"`
 	Status      map[string]yaml.Node `yaml:"status"`
-}) int {
+},
+) int {
 	n := 0
 	for _, c := range caps {
 		n += len(c.Status)
@@ -406,6 +984,26 @@ func mappingValue(node *yaml.Node, key string) string {
 		}
 	}
 	return ""
+}
+
+// mappingNode returns the value node a mapping holds under key, or nil
+// when the node is not a mapping or carries no such key.
+func mappingNode(node *yaml.Node, key string) *yaml.Node {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return node.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// mappingHasKey reports whether a mapping carries key, regardless of
+// the value it holds there.
+func mappingHasKey(node *yaml.Node, key string) bool {
+	return mappingNode(node, key) != nil
 }
 
 func summarizeProblems(problems []string) string {

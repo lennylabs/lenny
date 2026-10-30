@@ -1,0 +1,1 @@
+// spec: 25.8 line 3508 (self-advance the roll on startup)

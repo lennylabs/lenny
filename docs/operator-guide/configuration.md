@@ -46,7 +46,7 @@ gateway:
   replicas: 2                    # Starting replica count (HPA adjusts dynamically)
   maxSessionsPerReplica: 50      # Capacity ceiling per replica (must be calibrated)
   
-  grpcPort: 50051                # Pod-to-gateway gRPC control channel
+  grpcPort: 50051                # Pod-to-gateway gRPC LNK-GWCONTROL
   llmProxyPort: 8443             # LLM proxy port (proxy-mode pools only)
   
   periodicCheckpointIntervalSeconds: 600   # Checkpoint interval (default: 10 min)
@@ -163,7 +163,7 @@ runtimes:
         supported: true
         modes: [immediate, queued]
       preConnect: false                  # SDK-warm mode (default: false)
-    executionMode: session               # session | task | concurrent
+    executionMode: session               # session | service
     isolationProfile: sandboxed          # standard | sandboxed | microvm
     allowedResourceClasses: [small, medium, large]
     supportedProviders:
@@ -229,7 +229,7 @@ Fields that **can** be independently configured:
 - `workspaceDefaults` (appended to base)
 - `setupCommands` (appended after base commands)
 - `setupPolicy.timeoutSeconds` (gateway uses the maximum of base and derived)
-- `agentInterface`, `delegationPolicyRef`, `labels`, `taskPolicy`
+- `agentInterface`, `delegationPolicyRef`, `labels`, `sessionPolicy`
 - `allowSelfRecursion` (restrict-only override: a derived runtime may set `false` when the base is `true`; widening `false → true` is rejected with `INVALID_DERIVED_RUNTIME`)
 
 ### Runtime Types
@@ -274,7 +274,7 @@ pools:
     runtime: claude-worker
     isolationProfile: sandboxed          # standard | sandboxed | microvm
     resourceClass: small                 # small | medium | large
-    executionMode: session               # session | task | concurrent
+    executionMode: session               # session | service
     minWarm: 5                           # Minimum warm pods
     maxWarm: 20                          # Maximum warm pods
     egressProfile: restricted            # restricted | internet
@@ -287,39 +287,62 @@ pools:
 
 ### Execution Modes
 
-**`session`** -- One session per pod. Pod is exclusive to the session for its lifetime. Default mode.
+Two execution modes are available: `session` and `service`. Session mode is parameterized by the `sessionPolicy` block; the acknowledgments, tenant pinning, and scaling factors derive from `sessionPolicy` properties rather than from mode names.
 
-**`task`** -- Pod reuses across sequential tasks with workspace scrub between tasks:
+**`session`** -- A managed session is bound to a claimed pod for the session's lifetime. Default mode. In the default `sessionPolicy` (`maxConcurrentSessions: 1`, `recycle.enabled: false`) each pod is exclusive to one session and terminates when the session ends.
+
+The full `sessionPolicy` block:
 
 ```yaml
 pools:
-  - name: task-pool
+  - name: claude-worker-pool
     runtime: claude-worker
-    executionMode: task
-    taskPolicy:
-      acknowledgeBestEffortScrub: true   # Required acknowledgment
-      allowCrossTenantReuse: false
+    executionMode: session
+    sessionPolicy:
+      maxConcurrentSessions: 1           # simultaneous sessions per pod; > 1 requires acknowledgeProcessLevelIsolation
+      acknowledgeProcessLevelIsolation: false  # required when maxConcurrentSessions > 1, and when recycling
+                                               # with maxSessionsPerPod > 1, a scrubProfile other than
+                                               # vm-restart, and runtimeProcess: keep, because a later
+                                               # session can run in the process that served an earlier
+                                               # one; admission refuses the pool without it
+      recycle:
+        enabled: false                   # true requires acknowledgeBestEffortScrub
+        acknowledgeBestEffortScrub: false
+        maxSessionsPerPod: 50            # required when recycle.enabled; counts every session served
+        maxPodUptimeSeconds: 86400       # optional
+        maxScrubFailures: 3
+        onScrubFailure: warn             # warn | fail
+        scrubProfile: standard           # standard | vm-restart | in-place
+        # runtimeProcess: keep           # keep | restart; required, with no default, when recycle.enabled is true, maxSessionsPerPod > 1, and scrubProfile is not vm-restart; rejected on every other pool
+        acknowledgeMicrovmResidualState: false  # required when scrubProfile: in-place
+        allowCrossTenantReuse: false     # requires isolationProfile: microvm; never permitted when maxConcurrentSessions > 1
       cleanupCommands:
         - rm -rf /tmp/sandbox-*
-      cleanupTimeoutSeconds: 30
-      onCleanupFailure: warn             # warn | fail
-      maxScrubFailures: 3
-      maxTasksPerPod: 50                 # Required -- no default
-      maxPodUptimeSeconds: 86400
+      cleanupTimeoutSeconds: 60
+      maxSessionAgeSeconds: 7200         # active-time session age cap; paused in suspended and the recovery states
+      maxClientIdleSeconds: 900          # inactivity bound before idle suspension or expiry (default 900)
+      slotRetries: 1
+      onPoolExhausted: reject            # reject | queue
+      maxQueueWaitSeconds: 30            # queue wait bound when onPoolExhausted: queue
 ```
 
-**`concurrent`** -- Multiple tasks on a single pod simultaneously:
+The configurations the `sessionPolicy` settings express:
+
+| Configuration | `maxConcurrentSessions` | `recycle.enabled` | Behavior |
+|---|---|---|---|
+| One session per pod | 1 | `false` | Each pod is exclusive to one session and terminates when the session ends (default). |
+| Pod reuse | 1 | `true` | The pod is recycled across sequential sessions of the same tenant with a whole-pod scrub at the occupancy-zero boundary. |
+| Concurrent | N | `true` | The pod serves up to N simultaneous sessions and recycles when occupancy reaches zero, unless the last release ends the occupancy without reuse ([Recycle lifecycle](../reference/execution-modes#recycle-lifecycle)). |
+| Bounded cohort | N | `false` | The pod serves N concurrent sessions, then terminates after the cohort drains. |
+
+**`service`** -- The gateway routes each message to any ready tenant-pinned replica, creating no claim and materializing no workspace. The pool keeps a per-pod [slot](../reference/glossary#slot) bound through `maxConcurrent`. Service mode provides no cross-message conversation continuity, and `sessionPolicy` does not apply:
 
 ```yaml
 pools:
-  - name: concurrent-pool
-    runtime: claude-worker
-    executionMode: concurrent
-    concurrencyStyle: workspace          # stateless | workspace
-    concurrentWorkspacePolicy:
-      acknowledgeProcessLevelIsolation: true  # Required acknowledgment
-      maxConcurrent: 8
-      cleanupTimeoutSeconds: 60
+  - name: service-pool
+    runtime: tool-server
+    executionMode: service
+    maxConcurrent: 8                     # per-pod slot bound; readiness-driven routing
 ```
 
 ### Pool Taxonomy Strategy
@@ -373,7 +396,7 @@ credentialPools:
 | Mode | Security | How It Works |
 |---|---|---|
 | `proxy` | **Recommended** -- key never enters pod | Pod sends requests to gateway LLM Proxy; gateway injects real API key |
-| `direct` | Key delivered to pod in `/run/lenny/credentials.json` | Pod contacts LLM provider directly; suitable for single-tenant/dev only |
+| `direct` | Key delivered to the session's credential file at `/run/lenny/slots/{sessionId}/credentials.json` on the pod | Pod contacts LLM provider directly; suitable for single-tenant/dev only |
 
 ### Credential Health and Rotation
 
@@ -480,6 +503,25 @@ redis:
   connectionString: "rediss://:password@redis:6380"
   # TLS + AUTH required in all environments
 ```
+
+### Stale slot reaper
+
+```yaml
+controller:
+  claimOrphanTimeoutSeconds: 900   # Default: 900. Also the stale slot reaper's age.
+gateway:
+  slotReaper:
+    intervalSeconds: 60            # Default: 60. Wait between passes.
+    ratePerSecond: 50              # Default: 50. Must be positive.
+```
+
+On a pool with `maxConcurrentSessions` above 1, the gateway counts each pod's occupied slots in a Redis slot set. A session's release frees its slot. When the release does not free the slot, such as when it fails during a Redis outage, the slot stays counted and the pod admits one session fewer. The gateway leader runs a stale slot reaper that releases such a slot once the session that held it ended at least `claimOrphanTimeoutSeconds` ago. The reaper asks the pod's runtime adapter to stop that session and frees the slot only when the adapter confirms a clean stop. A slot whose adapter does not answer, or reports that the session's runtime may still be running, stays counted, and the reaper retries it at a later pass. The reaper never frees a leaked slot, which is a slot whose cleanup the adapter did not report as clean. The reaper also keeps a slot that is the pod's last remaining slot, and it does not visit a pod that no session holds, where a session that has ended holds its pod until the gateway releases it. Such a slot stays counted until the pod's last active session ends, after which the controller drains the pod once the orphaned-claim timeout (`claimOrphanTimeoutSeconds`) elapses. A pass starts `intervalSeconds` after the previous pass ends, and `ratePerSecond` bounds the number of slots the reaper releases per second.
+
+On a pod that still runs other sessions, a slot whose release failed is freed `claimOrphanTimeoutSeconds` after its session ended, plus up to one pass interval, plus the time the reaper takes to reach it at `ratePerSecond`. At the defaults, the roughly 12,000 slots that a 60-second Redis outage can leave on a Scale-size deployment drain in about 4 minutes, so the reaper frees each such slot within about 20 minutes of its session's end while the pod's other sessions keep running. On a pod whose slot set the gateway rebuilt after a Redis outage, the reaper reaches the slot at the first pass after the pod's next slot reservation or release.
+
+`claimOrphanTimeoutSeconds` also sets the controller's orphaned-claim timeout. The chart renders the one value into the controller's `--claim-orphan-timeout` flag and the gateway's `--slot-reaper-terminal-age` flag, so the two stay equal; a deployment outside the chart sets both flags to the same value. The value must be at least one second longer than the longest of the session finalize timeout (the gateway's `--max-finalizing-state-timeout-seconds`, default 600 seconds), the session resume timeout (the gateway's `--max-resuming-seconds`, default 300 seconds), and the sum of `gateway.workspaceSealMaxDurationSeconds` (300 seconds when set to 0) and the gateway's release allowance (`--stream-failure-report-timeout`, default 30 seconds). This margin ensures that no session launch, restore, workspace seal, or post-seal release still uses a slot when the reaper stops it. The chart refuses to render with a shorter value or with a `gateway.slotReaper.ratePerSecond` that is not positive, and the gateway refuses to start with a `--slot-reaper-terminal-age` shorter than the values it has in effect allow.
+
+Change these values across a rolling gateway update in a fixed order, because a gateway replica that still runs the old configuration can hold the leader role while a replica with the new configuration runs a launch, restore, or seal. To raise one of these timeouts, raise `claimOrphanTimeoutSeconds` first in its own rollout, and raise the timeout in a later rollout. To lower `claimOrphanTimeoutSeconds`, lower the timeout first in its own rollout, and lower `claimOrphanTimeoutSeconds` in a later rollout.
 
 ### MinIO / Object Storage
 
@@ -697,7 +739,7 @@ connectors:
 
 ## Experiment Configuration
 
-Experiments are managed via the admin API or `lenny-ctl admin experiments`. They configure variant pools and deterministic routing for runtime version rollouts. Lenny provides the infrastructure primitives (variant pools, routing, manifest delivery) and a basic built-in assigner; most teams plug in an external experimentation platform (LaunchDarkly, Statsig, Unleash) via OpenFeature for assignment decisions.
+Experiments are managed via the admin API or `lenny-ctl admin experiments`. They configure variant pools and deterministic routing for runtime version rollouts. Lenny provides the infrastructure primitives (variant pools, routing, and variant delivery in each session's [`session_start` frame](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin)) and a basic built-in assigner; most teams plug in an external experimentation platform (LaunchDarkly, Statsig, Unleash) via OpenFeature for assignment decisions.
 
 ### Experiment Lifecycle
 

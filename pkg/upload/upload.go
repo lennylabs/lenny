@@ -102,11 +102,11 @@ type Archive struct {
 
 // RuntimeAllow captures the per-runtime opt-ins from §13.4: the
 // AllowSymlinks flag plus the workspace-root the post-promotion
-// symlink target check uses (`/workspace/current` in the default
-// shape; concurrent-workspace pools use slot-scoped paths).
+// symlink target check uses. Every session is bound to a slot, so the
+// root is always that session's `/workspace/slots/{sessionId}/current`.
 type RuntimeAllow struct {
 	AllowSymlinks bool
-	WorkspaceRoot string // typically "/workspace/current"
+	WorkspaceRoot string // the session's slot current tree
 }
 
 // Reason is the §13.4 sub-code the validator surfaces to clients as
@@ -116,8 +116,12 @@ type RuntimeAllow struct {
 type Reason string
 
 const (
-	ReasonZipBomb               Reason = "zip_bomb"
-	ReasonSizeLimit             Reason = "size_limit"
+	ReasonZipBomb   Reason = "zip_bomb"
+	ReasonSizeLimit Reason = "size_limit"
+	// ReasonPathTraversal is a §16.1 metric label retained for source
+	// compatibility only. The client-visible §15.1 sub-code
+	// for a `..`/absolute/zip-slip rejection is ReasonPathEscapesRoot;
+	// ValidateEntry returns that. F-13.4.9.
 	ReasonPathTraversal         Reason = "path_traversal"
 	ReasonSymlink               Reason = "symlink"
 	ReasonFormatError           Reason = "format_error"
@@ -163,16 +167,21 @@ func ValidateEntry(e Entry, allow RuntimeAllow) error {
 		return &ValidationError{Reason: ReasonMaxPathLength, Path: e.Path, Detail: fmt.Sprintf("path length %d exceeds maximum %d bytes", len(e.Path), MaxPathLength)}
 	}
 
+	// spec: §7.4 zip-slip — "Paths containing `..` components or absolute
+	// paths are rejected ... details.reason = path_escapes_root"; §15.1 lists path_escapes_root (not path_traversal) as the
+	// client-visible UPLOAD_ARCHIVE_LIMIT_EXCEEDED sub-code for these.
+	// path_traversal survives only as a §16.1 metric label retained for
+	// source compatibility. F-13.4.9.
 	if path.IsAbs(e.Path) {
-		return &ValidationError{Reason: ReasonPathTraversal, Path: e.Path, Detail: "absolute paths are forbidden"}
+		return &ValidationError{Reason: ReasonPathEscapesRoot, Path: e.Path, Detail: "absolute paths are forbidden"}
 	}
 
 	// Reject any `..` segment outright, even one that path.Clean
 	// would absorb (e.g., "a/b/../../etc" cleans to "etc" but is
 	// still attempting to escape upward through the archive's
 	// implicit root).
-	if containsParentSegment(e.Path) {
-		return &ValidationError{Reason: ReasonPathTraversal, Path: e.Path, Detail: "path contains `..` segment"}
+	if ContainsParentSegment(e.Path) {
+		return &ValidationError{Reason: ReasonPathEscapesRoot, Path: e.Path, Detail: "path contains `..` segment"}
 	}
 	cleaned := path.Clean(e.Path)
 
@@ -208,6 +217,14 @@ func ValidateEntry(e Entry, allow RuntimeAllow) error {
 func ValidateSymlinkTarget(linkPath, target, workspaceRoot string) error {
 	if target == "" {
 		return &ValidationError{Reason: ReasonSymlink, Path: linkPath, Detail: "symlink target is empty"}
+	}
+	// The workspace root and every archive target are slash-separated
+	// POSIX paths (Lenny agent pods are Linux-only, §13.4). Reject a root
+	// that is not already a clean absolute slash path so the slash-based
+	// containment test below cannot silently misbehave on a relative root
+	// or an OS-native root such as `C:\workspace`. spec: §13.4.
+	if !isCleanAbsSlashPath(workspaceRoot) {
+		return &ValidationError{Reason: ReasonPathEscapesRoot, Path: linkPath, Detail: fmt.Sprintf("workspace root %q is not a clean absolute path", workspaceRoot)}
 	}
 	// Resolve the target relative to the workspace root for relative
 	// targets, or as-is for absolute targets.
@@ -247,11 +264,13 @@ func ValidateArchive(a Archive) error {
 	if a.DecompressedBytes > MaxDecompressedSize {
 		return &ValidationError{Reason: ReasonMaxDecompressedSize, Detail: fmt.Sprintf("decompressed bytes %d exceeds maximum %d", a.DecompressedBytes, MaxDecompressedSize)}
 	}
-	if a.CompressedBytes > 0 {
-		ratio := a.DecompressedBytes / a.CompressedBytes
-		if ratio > MaxDecompressionRatio {
-			return &ValidationError{Reason: ReasonMaxDecompressionRatio, Detail: fmt.Sprintf("decompression ratio %d:1 exceeds maximum %d:1", ratio, MaxDecompressionRatio)}
-		}
+	// Cross-multiply rather than dividing: integer division truncates the
+	// remainder, so a true ratio just above the boundary (for example
+	// 100.5:1) would round down to 100 and be admitted. Both operands are
+	// bounded by the size ceilings rejected above, so the product cannot
+	// overflow int64. spec: §13.4.
+	if a.CompressedBytes > 0 && a.DecompressedBytes > MaxDecompressionRatio*a.CompressedBytes {
+		return &ValidationError{Reason: ReasonMaxDecompressionRatio, Detail: fmt.Sprintf("decompression ratio exceeds maximum %d:1", MaxDecompressionRatio)}
 	}
 	return nil
 }
@@ -265,13 +284,32 @@ func pathDepth(p string) int {
 	return strings.Count(p, "/") + 1
 }
 
-// containsParentSegment reports whether p contains a `..` component
+// isCleanAbsSlashPath reports whether p is a non-empty, absolute,
+// already-cleaned, slash-separated path: it starts with "/", contains no
+// backslash (an OS-native Windows separator), and equals its own path.Clean
+// form (no ".", "..", duplicate, or trailing slashes). The §13.4 symlink-
+// containment check joins and prefix-matches against this root using the
+// slash-based path package, so a root not in this form would make the
+// containment test silently wrong. spec: §13.4.
+func isCleanAbsSlashPath(p string) bool {
+	if p == "" || !strings.HasPrefix(p, "/") {
+		return false
+	}
+	if strings.ContainsRune(p, '\\') {
+		return false
+	}
+	return path.Clean(p) == p
+}
+
+// ContainsParentSegment reports whether p contains a `..` component
 // anywhere — at the start, in the middle, or at the end. Used to
 // reject traversal attempts that path.Clean would otherwise absorb
 // into an apparently-clean result (e.g., "a/b/../../etc" → "etc").
 // The check operates on `/`-separated segments, not on substring
 // occurrences, so "foo..bar" (legitimate filename) is admitted.
-func containsParentSegment(p string) bool {
+// Exported so the §8.7 delegation file-export validators can apply the
+// same traversal rule to destPrefix without duplicating it.
+func ContainsParentSegment(p string) bool {
 	for _, seg := range strings.Split(p, "/") {
 		if seg == ".." {
 			return true

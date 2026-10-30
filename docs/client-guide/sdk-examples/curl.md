@@ -87,7 +87,7 @@ ROTATED=$(curl -s -X POST "$LENNY_URL/v1/oauth/token" \
 TOKEN=$ROTATED
 ```
 
-For delegation child-token minting, additionally supply `actor_token=$PARENT_SESSION_TOKEN` and a narrowed `scope` string. See [Authentication](../authentication.md#token-rotation-and-exchange-v1oauthtoken).
+For `a2a_delegation` child-token minting, additionally supply `actor_token=$DELEGATING_CALLER_TOKEN`, set to the delegating caller's token, and a narrowed `scope` string. See [Authentication](../authentication.md#token-rotation-and-exchange-v1oauthtoken).
 
 ---
 
@@ -110,45 +110,53 @@ curl -s -X POST "$LENNY_URL/v1/sessions" \
     }
   }' | jq .
 
-# Save session ID and upload token
-SESSION_ID=$(curl -s -X POST "$LENNY_URL/v1/sessions" \
+# Save session ID and upload token from one create response
+CREATE_RESP=$(curl -s -X POST "$LENNY_URL/v1/sessions" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"runtime": "claude-worker"}' \
-  | jq -r '.sessionId')
-
-UPLOAD_TOKEN=$(curl -s -X POST "$LENNY_URL/v1/sessions" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"runtime": "claude-worker"}' \
-  | jq -r '.uploadToken')
+  -d '{"runtime": "claude-worker"}')
+SESSION_ID=$(echo "$CREATE_RESP" | jq -r '.sessionId')
+UPLOAD_TOKEN=$(echo "$CREATE_RESP" | jq -r '.uploadToken')
 ```
 
 ### Upload Files
 
-```bash
-# Upload individual files
-curl -s -X POST "$LENNY_URL/v1/sessions/$SESSION_ID/upload" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "X-Upload-Token: $UPLOAD_TOKEN" \
-  -F "files=@main.py" \
-  -F "files=@config.yaml" \
-  | jq .
+Each upload sends one file or archive as the raw request body and returns an `uploadRef`. An upload reaches the workspace only when a source of the plan bound at finalize names its `uploadRef`.
 
-# Upload a tar.gz archive (auto-extracted)
-curl -s -X POST "$LENNY_URL/v1/sessions/$SESSION_ID/upload" \
+```bash
+# Upload a single file; keep its uploadRef
+MAIN_REF=$(curl -s -X POST "$LENNY_URL/v1/sessions/$SESSION_ID/upload" \
   -H "Authorization: Bearer $TOKEN" \
-  -H "X-Upload-Token: $UPLOAD_TOKEN" \
-  -F "files=@project.tar.gz" \
-  | jq .
+  -H "X-Lenny-Upload-Token: $UPLOAD_TOKEN" \
+  --data-binary @main.py \
+  | jq -r '.uploadRef')
+
+# Upload a tar, tar.gz, or zip archive; the gateway extracts it at finalize
+ARCHIVE_REF=$(curl -s -X POST "$LENNY_URL/v1/sessions/$SESSION_ID/upload-archive" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Lenny-Upload-Token: $UPLOAD_TOKEN" \
+  --data-binary @project.tar.gz \
+  | jq -r '.uploadRef')
 ```
 
 ### Finalize Workspace
 
+The finalize body binds a workspace plan whose sources name the uploads by their `uploadRef`. Omit the body when the session was created with a plan.
+
 ```bash
 curl -s -X POST "$LENNY_URL/v1/sessions/$SESSION_ID/finalize" \
   -H "Authorization: Bearer $TOKEN" \
-  -H "X-Upload-Token: $UPLOAD_TOKEN" \
+  -H "X-Lenny-Upload-Token: $UPLOAD_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -n --arg main "$MAIN_REF" --arg archive "$ARCHIVE_REF" '{
+    workspacePlan: {
+      schemaVersion: 1,
+      sources: [
+        {type: "uploadFile", path: "main.py", uploadRef: $main},
+        {type: "uploadArchive", pathPrefix: ".", uploadRef: $archive, format: "tar.gz"}
+      ]
+    }
+  }')" \
   | jq .
 ```
 
@@ -181,7 +189,7 @@ curl -s -X POST "$LENNY_URL/v1/sessions/$SESSION_ID/interrupt" \
   | jq .
 ```
 
-### Resume (After Retry Exhaustion)
+### Resume
 
 ```bash
 curl -s -X POST "$LENNY_URL/v1/sessions/$SESSION_ID/resume" \
@@ -497,18 +505,22 @@ echo "   Session: $SESSION_ID"
 # 2. Upload files
 echo -e "\n2. Uploading files..."
 echo 'def greet(name): return f"Hello, {name}!"' > /tmp/lenny_example.py
-curl -s -X POST "$LENNY/v1/sessions/$SESSION_ID/upload" \
+CODE_REF=$(curl -s -X POST "$LENNY/v1/sessions/$SESSION_ID/upload" \
   "${AUTH[@]}" \
-  -H "X-Upload-Token: $UPLOAD_TOKEN" \
-  -F "files=@/tmp/lenny_example.py;filename=code.py" \
-  | jq '.uploaded[].path'
+  -H "X-Lenny-Upload-Token: $UPLOAD_TOKEN" \
+  --data-binary @/tmp/lenny_example.py \
+  | jq -r '.uploadRef')
 rm /tmp/lenny_example.py
+echo "   uploadRef: $CODE_REF"
 
-# 3. Finalize workspace
+# 3. Finalize workspace, binding a plan that places the upload at code.py
 echo -e "\n3. Finalizing..."
 curl -s -X POST "$LENNY/v1/sessions/$SESSION_ID/finalize" \
   "${AUTH[@]}" \
-  -H "X-Upload-Token: $UPLOAD_TOKEN" \
+  -H "X-Lenny-Upload-Token: $UPLOAD_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -n --arg ref "$CODE_REF" \
+    '{workspacePlan: {schemaVersion: 1, sources: [{type: "uploadFile", path: "code.py", uploadRef: $ref}]}}')" \
   | jq '.state'
 
 # 4. Start session

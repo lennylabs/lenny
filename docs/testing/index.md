@@ -24,7 +24,7 @@ Lenny's test surface follows a strict tier model. Tier 0 (static) runs first; ea
 | 7 | Load: k6 scenarios against the cluster with SLO baselines | per-phase |
 | 8 | Chaos: fault injection via toxiproxy or chaos-mesh | nightly subset |
 | 9 | Security: tenant isolation, TLS enforcement, admission policies, OWASP ZAP fuzz, kube-bench, cosign + SBOM | per release |
-| 10 | Conformance: runtime adapter validation against the published contracts (`lenny-compliance`) | per release |
+| 10 | Conformance: runtime adapter validation against the published contracts (`lenny runtime validate`) | per release |
 | 11 | Documentation: link-check, code-block parse, runbook structure, ADR continuity | < 60s |
 
 ## Writing your first test
@@ -53,7 +53,7 @@ Lenny's test surface follows a strict tier model. Tier 0 (static) runs first; ea
 
 ### Update a baseline
 
-Load-tier baselines under `tests/tier7_load/baselines/<scenario>.json` are pinned. When intentional change happens (a new scenario, an SLO loosening), regenerate:
+Load-tier baselines under `tests/tier7b_load_kind/baselines/<scenario>.json` are pinned. When intentional change happens (a new scenario, an SLO loosening), regenerate:
 
 ```bash
 LENNY_UPDATE_BASELINE=1 ./bin/lenny-test --tier load
@@ -76,7 +76,7 @@ Re-run a selector on every file change under `pkg/`, `cmd/`, `tests/`, `schemas/
 
 ### Stress-test a flaky test
 
-Per §17.10 every test must pass 50 consecutive runs. Investigate via:
+Per TESTING.md §17.10 every test must pass 50 consecutive runs. Investigate via:
 
 ```bash
 ./bin/lenny-test stress --test TestSandboxClaimSkipLocked --runs 50
@@ -100,7 +100,7 @@ Per §17.10 every test must pass 50 consecutive runs. Investigate via:
 | 4 | `tests/tier4_integration/` | `integration` |
 | 5 | `tests/tier5_e2e_kind/` | `e2e_kind` |
 | 6 | `tests/tier6_e2e_cloud/` | `e2e_cloud` |
-| 7 | `tests/tier7_load/scenarios/<name>/` | `load` |
+| 7 | `tests/tier7b_load_kind/scenarios/<name>/` | `load` |
 | 8 | `tests/tier8_chaos/` | `chaos` |
 | 9 | `tests/tier9_security/` | `security` |
 | 10 | `tests/tier10_conformance/` | `conformance` |
@@ -115,7 +115,7 @@ The `tests/testinfra/` packages are shared building blocks:
 - `ports` — fresh OS-assigned ports
 - `goleak` — goroutine-leak detection
 - `fixtures` — reference-data identifiers (acme, alice, …)
-- `fixtures/generators` — rapid-driven WorkspacePlan / TaskRecord / OutputPart generators
+- `fixtures/generators` — rapid-driven WorkspacePlan / TaskRecord / MessagePart generators
 - `fixtures/seed` — Postgres + Redis seed statements for the compose stack
 - `golden` — golden-file comparison with `--update-golden`
 - `stubs/oidc` — in-process OIDC stub
@@ -139,7 +139,7 @@ The `tests/testinfra/` packages are shared building blocks:
 - [Determinism](determinism.html) — `timectl`, `randctl`, `wait`, `goleak`, `ports`
 - [Domain suites](domain-suites.html) — RLS, workspace plan, credentials, delegation, MCP elicitation, operability, multi-protocol, interceptor chain, pool lifecycle, compliance/erasure, T4 controls, web playground, SDKs
 - [Testing `lenny-ctl`](lenny-ctl.html) — operability tests across the 14 command categories
-- [Flakiness](flakiness.html) — §17.10 stress sweep, quarantine workflow, root-cause categories
+- [Flakiness](flakiness.html) — TESTING.md §17.10 stress sweep, quarantine workflow, root-cause categories
 - [Documentation tests](documentation-tests.html) — tier-11 markdown / code-block / runbook / ADR checks
 - [Forward compatibility](forward-compatibility.html) — §23 v2 surfaces
 - [TESTING.md](../../TESTING.md) — the authoritative design

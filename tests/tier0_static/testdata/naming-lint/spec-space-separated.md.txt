@@ -1,0 +1,4 @@
+## 4.7 Adapter manifest
+
+The gateway opens the lifecycle channel to the agent pod before the first turn is
+dispatched, and closes it when the session ends.

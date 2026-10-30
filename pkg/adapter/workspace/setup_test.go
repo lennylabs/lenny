@@ -1,0 +1,405 @@
+// SPDX-License-Identifier: MIT
+
+package workspace_test
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/lennylabs/lenny/pkg/adapter/workspace"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+)
+
+func cmd(c string, timeout int32) *adapterv1.SetupCommand {
+	return &adapterv1.SetupCommand{Cmd: c, TimeoutSeconds: timeout}
+}
+
+func TestRunSetupExecutesCommandsInOrder(t *testing.T) {
+	dir := t.TempDir()
+	_, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+		cmd("echo first > a.txt", 30),
+		cmd("echo second > b.txt", 30),
+	}, workspace.SetupOptions{Shell: true})
+	if err != nil {
+		t.Fatalf("RunSetup: %v", err)
+	}
+	for _, name := range []string{"a.txt", "b.txt"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("setup command did not produce %s: %v", name, err)
+		}
+	}
+}
+
+func TestRunSetupRunsInWorkdir(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+		cmd("touch in-workdir.marker", 30),
+	}, workspace.SetupOptions{Shell: true}); err != nil {
+		t.Fatalf("RunSetup: %v", err)
+	}
+	// A relative path resolves against the command's working directory;
+	// finding the marker under dir confirms the command ran there.
+	if _, err := os.Stat(filepath.Join(dir, "in-workdir.marker")); err != nil {
+		t.Errorf("setup command did not run in the workspace directory: %v", err)
+	}
+}
+
+func TestRunSetupStopsAtFirstFailure(t *testing.T) {
+	dir := t.TempDir()
+	_, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+		cmd("exit 3", 30),
+		cmd("echo unreached > reached.txt", 30),
+	}, workspace.SetupOptions{Shell: true})
+	if err == nil {
+		t.Fatal("RunSetup should return an error when a command exits non-zero")
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "reached.txt")); statErr == nil {
+		t.Error("a command after the failing one was executed")
+	}
+}
+
+func TestRunSetupEnforcesTimeout(t *testing.T) {
+	dir := t.TempDir()
+	_, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+		cmd("sleep 30", 1),
+	}, workspace.SetupOptions{Shell: true})
+	if err == nil {
+		t.Fatal("RunSetup should return an error when a command exceeds its timeout")
+	}
+}
+
+func TestRunSetupRejectsEmptyCommand(t *testing.T) {
+	if _, err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
+		cmd("", 30),
+	}, workspace.SetupOptions{Shell: true}); err == nil {
+		t.Fatal("RunSetup should reject an empty command")
+	}
+}
+
+func TestRunSetupAcceptsNoCommands(t *testing.T) {
+	if _, err := workspace.RunSetup(context.Background(), t.TempDir(), nil, workspace.SetupOptions{Shell: true}); err != nil {
+		t.Errorf("RunSetup with no commands should succeed, got %v", err)
+	}
+}
+
+func TestRunSetupWithinAggregateTimeout(t *testing.T) {
+	// Fast commands complete well within a generous aggregate cap.
+	dir := t.TempDir()
+	_, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+		cmd("echo a > a.txt", 30),
+		cmd("echo b > b.txt", 30),
+	}, workspace.SetupOptions{Shell: true, AggregateTimeout: 30 * time.Second, FailOnAggregateTimeout: true})
+	if err != nil {
+		t.Fatalf("RunSetup within the aggregate cap: %v", err)
+	}
+}
+
+func TestRunSetupAggregateTimeoutFails(t *testing.T) {
+	// §5.1 onTimeout `fail`: exceeding the aggregate cap aborts.
+	_, err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
+		cmd("sleep 30", 60),
+	}, workspace.SetupOptions{Shell: true, AggregateTimeout: 50 * time.Millisecond, FailOnAggregateTimeout: true})
+	if err == nil {
+		t.Fatal("RunSetup should fail when the setup phase exceeds the aggregate cap under `fail`")
+	}
+}
+
+// spec: §5.1 — onTimeout `warn`: exceeding the aggregate cap
+// proceeds to runtime start. RunSetup signals the warn case by returning
+// ErrSetupAggregateTimeoutWarn (wrapped) so the caller can emit a
+// structured warning before treating the RPC as success. F-7.5.13.
+func TestRunSetupAggregateTimeoutWarnProceeds(t *testing.T) {
+	_, err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
+		cmd("sleep 30", 60),
+	}, workspace.SetupOptions{Shell: true, AggregateTimeout: 50 * time.Millisecond, FailOnAggregateTimeout: false})
+	if !errors.Is(err, workspace.ErrSetupAggregateTimeoutWarn) {
+		t.Fatalf("RunSetup under `warn` should signal warn via ErrSetupAggregateTimeoutWarn, got %v", err)
+	}
+}
+
+func TestRunSetupAggregateTimeoutStopsLaterCommands(t *testing.T) {
+	dir := t.TempDir()
+	_, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+		cmd("sleep 30", 60),
+		cmd("touch reached.marker", 60),
+	}, workspace.SetupOptions{Shell: true, AggregateTimeout: 50 * time.Millisecond, FailOnAggregateTimeout: false})
+	if !errors.Is(err, workspace.ErrSetupAggregateTimeoutWarn) {
+		t.Fatalf("RunSetup under `warn`: want ErrSetupAggregateTimeoutWarn, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "reached.marker")); statErr == nil {
+		t.Error("a command after the aggregate cap was reached should not have run")
+	}
+}
+
+// spec: §14 — an omitted per-command timeoutSeconds carries no
+// independent time limit; only the aggregate cap (or parent ctx) can
+// terminate the command. F-7.5.6.
+func TestRunSetupOmittedPerCommandTimeoutBoundsByAggregate(t *testing.T) {
+	// With an aggregate cap of 100ms and no per-command timeout, the
+	// long sleep is terminated by the aggregate, not by a (removed) 5m
+	// per-command default.
+	start := time.Now()
+	_, err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
+		cmd("sleep 30", 0),
+	}, workspace.SetupOptions{Shell: true, AggregateTimeout: 100 * time.Millisecond, FailOnAggregateTimeout: true})
+	if err == nil {
+		t.Fatal("RunSetup should fail when the setup phase exceeds the aggregate cap")
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("aggregate cap did not bound the command: took %s", d)
+	}
+}
+
+// spec: §14 — an omitted per-command timeout under no aggregate
+// cap inherits only the parent ctx; cancelling ctx kills the command.
+func TestRunSetupOmittedPerCommandTimeoutCancelsOnContext(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := workspace.RunSetup(ctx, t.TempDir(), []*adapterv1.SetupCommand{
+		cmd("sleep 30", 0),
+	}, workspace.SetupOptions{Shell: true})
+	if err == nil {
+		t.Fatal("RunSetup should fail when the parent ctx is cancelled")
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("parent ctx did not bound the command: took %s", d)
+	}
+}
+
+// spec: §7.5 — a per-command timeout (or aggregate-cap kill)
+// must reach descendants, not just the shell. F-7.5.7.
+func TestRunSetupTimeoutKillsDescendants(t *testing.T) {
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "child.pid")
+	// The shell backgrounds a long sleep and records its pid, then
+	// itself sleeps long enough to exceed the per-command timeout. With
+	// process-group kill the backgrounded sleep is also terminated;
+	// without it, the sleep keeps running for the full 30s.
+	start := time.Now()
+	_, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+		cmd("sh -c 'sleep 30 & echo $! > "+pidFile+"; sleep 30'", 1),
+	}, workspace.SetupOptions{Shell: true})
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("per-command timeout did not return promptly: took %s", d)
+	}
+	// Give the kill a moment to land before reading the pid file.
+	time.Sleep(200 * time.Millisecond)
+	raw, readErr := os.ReadFile(pidFile)
+	if readErr != nil {
+		t.Skipf("setup never recorded a child pid (%v); skipping descendant-kill check", readErr)
+	}
+	pidStr := strings.TrimSpace(string(raw))
+	if pidStr == "" {
+		t.Skip("child pid file empty; skipping descendant-kill check")
+	}
+	pid, _ := strconv.Atoi(pidStr)
+	if pid <= 0 {
+		t.Skipf("could not parse child pid %q", pidStr)
+	}
+	// Probe the child pid; a zero-signal Kill on a still-running
+	// process succeeds, on a dead one returns ESRCH or "process already
+	// finished".
+	if proc, err := os.FindProcess(pid); err == nil {
+		if err := proc.Signal(syscall.Signal(0)); err == nil {
+			// Some kernels also report success for a defunct (zombie)
+			// child; treat that case as killed too.
+			t.Errorf("descendant pid %d still alive after process-group kill", pid)
+			_ = proc.Kill()
+		}
+	}
+}
+
+// spec: §7.5 — setup commands must not inherit arbitrary
+// adapter-process state. With opts.Env set, the command sees only the
+// configured environment. F-7.5.8.
+func TestRunSetupAppliesEnvWhitelist(t *testing.T) {
+	dir := t.TempDir()
+	// Seed a sentinel in the parent process the setup command must NOT
+	// see when opts.Env is set.
+	t.Setenv("LENNY_SECRET_SENTINEL", "leaked")
+	env := append(workspace.DefaultSetupEnv(dir), "EXTRA=ok")
+	_, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+		cmd("env > env.txt", 30),
+	}, workspace.SetupOptions{Shell: true, Env: env})
+	if err != nil {
+		t.Fatalf("RunSetup: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "env.txt"))
+	if err != nil {
+		t.Fatalf("read env.txt: %v", err)
+	}
+	got := string(raw)
+	if strings.Contains(got, "LENNY_SECRET_SENTINEL") {
+		t.Errorf("env whitelist leaked LENNY_SECRET_SENTINEL: %s", got)
+	}
+	if !strings.Contains(got, "EXTRA=ok") {
+		t.Errorf("env whitelist dropped configured EXTRA: %s", got)
+	}
+	if !strings.Contains(got, "PATH=") {
+		t.Errorf("env whitelist dropped PATH: %s", got)
+	}
+}
+
+// DefaultSetupEnv exposes the §7.5 minimal whitelist; the
+// returned list seeds only PATH/HOME/USER/LANG/LC_ALL/PWD/TMPDIR.
+func TestDefaultSetupEnv(t *testing.T) {
+	env := workspace.DefaultSetupEnv("/workspace/slots/sess-1/current")
+	required := []string{"PATH=", "HOME=", "USER=", "LANG=", "LC_ALL=", "PWD=/workspace/slots/sess-1/current", "TMPDIR=/tmp"}
+	for _, prefix := range required {
+		var found bool
+		for _, e := range env {
+			if strings.HasPrefix(e, prefix) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("DefaultSetupEnv missing %q in %v", prefix, env)
+		}
+	}
+	// A nil workdir omits the path-scoped keys.
+	noWorkdir := workspace.DefaultSetupEnv("")
+	for _, e := range noWorkdir {
+		if strings.HasPrefix(e, "PWD=") || strings.HasPrefix(e, "TMPDIR=") {
+			t.Errorf("DefaultSetupEnv(\"\") should omit PWD/TMPDIR, got %q", e)
+		}
+	}
+}
+
+// spec: §7.5 — F-7.5.2. Argv-mode execution must run the command
+// via direct exec rather than `/bin/sh -c`. A shell metacharacter like `>`
+// survives as a literal argument to the program; if the adapter were
+// running the command through a shell it would be interpreted as a
+// redirect instead.
+func TestRunSetupArgvModeNeutersShellMetacharacters(t *testing.T) {
+	dir := t.TempDir()
+	// In shell mode, `echo hello > file.txt` redirects stdout into
+	// file.txt and exits 0. In argv mode the `>` becomes a literal argv
+	// element passed to /bin/echo, which simply prints `hello > file.txt`
+	// to stdout and exits 0 — no file.txt is created.
+	_, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+		cmd("echo hello > should-not-be-created.txt", 30),
+	}, workspace.SetupOptions{Shell: false, Env: workspace.DefaultSetupEnv(dir)})
+	if err != nil {
+		t.Fatalf("RunSetup argv-mode: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "should-not-be-created.txt")); statErr == nil {
+		t.Error("argv-mode incorrectly invoked shell redirection (file.txt was created)")
+	}
+}
+
+// spec: §7.5 — F-7.5.2. Argv-mode splits the command string on
+// whitespace and execs argv[0] with argv[1:]; an empty argv is rejected.
+func TestRunSetupArgvModeRejectsEmptyAfterSplit(t *testing.T) {
+	_, err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
+		cmd("   ", 30),
+	}, workspace.SetupOptions{Shell: false, Env: workspace.DefaultSetupEnv("")})
+	if err == nil {
+		t.Fatal("argv-mode with a whitespace-only command must reject")
+	}
+	if !strings.Contains(err.Error(), "argv-mode setup command is empty") &&
+		!strings.Contains(err.Error(), "command is empty") {
+		t.Errorf("argv-mode empty-after-split error = %v, want a typed rejection", err)
+	}
+}
+
+// spec: §7.5 — F-7.5.2. Argv-mode also accepts multi-token
+// commands; the split is whitespace-only.
+func TestRunSetupArgvModeRunsMultiTokenCommand(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "marker.txt")
+	_, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+		cmd("touch "+target, 30),
+	}, workspace.SetupOptions{Shell: false, Env: workspace.DefaultSetupEnv(dir)})
+	if err != nil {
+		t.Fatalf("RunSetup argv-mode: %v", err)
+	}
+	if _, statErr := os.Stat(target); statErr != nil {
+		t.Errorf("argv-mode did not run multi-token command: %v", statErr)
+	}
+}
+
+// spec: §7.5 — F-7.5.4. Every executed command must surface a
+// SetupCommandOutput record with the captured stdout, stderr, exit code,
+// and duration so the gateway can persist the trail.
+func TestRunSetupReturnsPerCommandOutputs(t *testing.T) {
+	dir := t.TempDir()
+	outputs, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+		cmd("echo hello", 30),
+		cmd("echo world >&2", 30),
+	}, workspace.SetupOptions{Shell: true, Env: workspace.DefaultSetupEnv(dir)})
+	if err != nil {
+		t.Fatalf("RunSetup: %v", err)
+	}
+	if len(outputs) != 2 {
+		t.Fatalf("outputs len = %d, want 2", len(outputs))
+	}
+	if !strings.Contains(outputs[0].Stdout, "hello") {
+		t.Errorf("outputs[0].Stdout = %q, want to contain hello", outputs[0].Stdout)
+	}
+	if outputs[0].ExitCode != 0 {
+		t.Errorf("outputs[0].ExitCode = %d, want 0", outputs[0].ExitCode)
+	}
+	if !strings.Contains(outputs[1].Stderr, "world") {
+		t.Errorf("outputs[1].Stderr = %q, want to contain world", outputs[1].Stderr)
+	}
+}
+
+// spec: §7.5 — F-7.5.4. A failing command's transcript is
+// preserved so the gateway can persist what was captured before the
+// abort. The function returns an error AND the partial outputs.
+func TestRunSetupReturnsPartialOutputsOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	outputs, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+		cmd("echo first", 30),
+		cmd("echo failing-stderr >&2; exit 7", 30),
+		cmd("echo unreached", 30),
+	}, workspace.SetupOptions{Shell: true, Env: workspace.DefaultSetupEnv(dir)})
+	if err == nil {
+		t.Fatal("RunSetup should return an error when a command exits non-zero")
+	}
+	// Two outputs: the successful first command and the failing second.
+	// The third command must NOT have run.
+	if len(outputs) != 2 {
+		t.Fatalf("partial outputs len = %d, want 2 (first + failing)", len(outputs))
+	}
+	if outputs[1].ExitCode == 0 {
+		t.Errorf("failing-command outputs[1].ExitCode = %d, want non-zero", outputs[1].ExitCode)
+	}
+	if !strings.Contains(outputs[1].Stderr, "failing-stderr") {
+		t.Errorf("outputs[1].Stderr = %q, want to contain failing-stderr", outputs[1].Stderr)
+	}
+}
+
+// spec: §7.5 — F-7.5.4. The per-stream byte budget must apply
+// so a chatty setup command cannot blow the gRPC response.
+func TestRunSetupTruncatesLargeOutput(t *testing.T) {
+	dir := t.TempDir()
+	// Emit 128KB on stdout — beyond the 64KB SetupStreamCapBytes budget.
+	outputs, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+		cmd(`head -c 131072 /dev/zero | tr '\0' a`, 30),
+	}, workspace.SetupOptions{Shell: true, Env: workspace.DefaultSetupEnv(dir)})
+	if err != nil {
+		t.Fatalf("RunSetup: %v", err)
+	}
+	if len(outputs) != 1 {
+		t.Fatalf("outputs len = %d, want 1", len(outputs))
+	}
+	if !outputs[0].Truncated {
+		t.Error("outputs[0].Truncated should be true when stdout > SetupStreamCapBytes")
+	}
+	if !strings.Contains(outputs[0].Stdout, "[truncated]") {
+		t.Error("truncated stdout should carry the [truncated] suffix")
+	}
+}

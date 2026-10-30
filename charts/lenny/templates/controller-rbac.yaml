@@ -1,0 +1,176 @@
+{{- /*
+RBAC for the lenny-controller ServiceAccount (§4.6, §5.2). The
+WarmPoolController watches SandboxWarmPool and SandboxTemplate
+resources across agent namespaces and creates Sandbox pods, so the
+cluster role grants cross-namespace read plus Sandbox create and the
+status-subresource writes the §4.6.3 ownership table assigns to the
+controller. The §13.2 NET-022 cluster-CIDR drift detector additionally
+reads Nodes (for spec.podCIDR aggregation) and NetworkPolicies (for the
+installed except blocks); both are read-only — §13.2 deliberately keeps
+NetworkPolicy write RBAC off the controller. Leader election uses a
+Lease in the release namespace, covered by the namespaced role. The
+ServiceAccount name is fixed: §5.2 authorizes it by the literal
+identity system:serviceaccount:lenny-system:lenny-controller.
+*/ -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lenny-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lenny-controller
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["lenny.dev"]
+    resources: ["sandboxtemplates", "sandboxwarmpools"]
+    verbs: ["get", "list", "watch"]
+  # Runtimes: the §5.1 RuntimeReconciler watches Runtime resources and
+  # mirrors them into the gateway runtime registry. It manages a
+  # finalizer (update/patch on the resource) so a Runtime deletion
+  # soft-deletes the registry row before the object leaves etcd, and
+  # sets the Registered status condition.
+  - apiGroups: ["lenny.dev"]
+    resources: ["runtimes"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["lenny.dev"]
+    resources: ["runtimes/finalizers"]
+    verbs: ["update"]
+  # Sandboxes: the WarmPoolController creates idle pods, drains and
+  # recreates pods near cert expiry, and retires pod-failed Sandboxes;
+  # the §4.6.1 cert-expiry replacement and pod-failed retire paths
+  # require delete (§4.6.3 RBAC backstop grants create/update/delete).
+  - apiGroups: ["lenny.dev"]
+    resources: ["sandboxes"]
+    # patch is required for the WarmPoolController's Server-Side Apply write of
+    # the §4.7 nonce-only render decision onto the Sandbox.spec.requireSoPeercred
+    # carrier (pkg/controller/sandbox/controller.go recordNonceOnlyCarrier /
+    # clearNonceOnlyCarrier); SSA issues an HTTP PATCH, for which `update` is
+    # insufficient — the same reason the sandboxes/status rule below needs patch.
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # SandboxClaims: the §4.6.1 occupancy projection watches SandboxClaim
+  # resources and computes Sandbox.status.phase as a level-triggered
+  # projection of claim existence and binding state, so the
+  # WarmPoolController needs `get`/`watch` here. The Sandbox-to-Pod
+  # reconciler additionally `get`s the per-pod claim to read the §6.1
+  # rewarmStartedAt stamp, which re-anchors the sdk_connecting watchdog
+  # clock on the recycle re-warm edge. The §4.6.1 orphaned-claim
+  # garbage-collection loop lists all claims and deletes those that no
+  # live session references (§4.6.3 RBAC backstop grants
+  # get/list/watch/delete).
+  - apiGroups: ["lenny.dev"]
+    resources: ["sandboxclaims"]
+    verbs: ["get", "list", "watch", "delete"]
+  - apiGroups: ["lenny.dev"]
+    resources: ["sandboxtemplates/status", "sandboxwarmpools/status", "sandboxes/status", "runtimes/status"]
+    verbs: ["get", "update", "patch"]
+  # PodDisruptionBudgets: the §4.6.1 per-SandboxTemplate warm-pod PDB
+  # management owns one PDB per pool (maxUnavailable: 1) and tears it
+  # down when the pool is deleted or scaled to zero.
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+  # Pods: the Sandbox-to-Pod reconciler creates and deletes backing
+  # pods, and patches the §4.6.1 lenny.dev/state label so the per-pool
+  # warm-pod PodDisruptionBudget's idle selector tracks pod lifecycle.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "patch", "delete"]
+  # Pods/status: the §6.1 syncReadinessGate flips the
+  # lenny.dev/sandbox-ready pod readiness gate to True once the backing
+  # pod's containers report ready, which is what makes a warm pod
+  # claimable (the kubelet holds Pod.Ready False until the gate is set).
+  # The reconciler patches it through the status subresource
+  # (Status().Patch), a distinct RBAC resource from `pods`, so without
+  # this rule every warm pod stays NotReady and the pool never fills.
+  - apiGroups: [""]
+    resources: ["pods/status"]
+    verbs: ["get", "patch", "update"]
+  # Nodes: read-only, for the §13.2 NET-022 cluster-CIDR drift detector
+  # aggregating spec.podCIDR, and for the §4.6.1 host-node
+  # schedulability Node informer.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  # Services: read-only, for the §13.2 NET-065 service-CIDR drift probe.
+  # The detector reads the `kubernetes` apiserver Service ClusterIP (the
+  # canonical first address of the cluster service range) to audit
+  # whether the broad-egress except blocks exclude the service CIDR.
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch"]
+  # NetworkPolicies: read-only, for the §13.2 NET-022 drift detector
+  # reading installed except blocks. The controller never writes
+  # NetworkPolicies — remediation is an operator-run helm upgrade.
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch"]
+  # RuntimeClasses: read-only, for the §5.3 WarmPoolController
+  # startup/reconcile validation. A pool whose isolation profile maps to
+  # a RuntimeClass the cluster has not installed is marked Degraded
+  # instead of tight-looping on rejected pod creates. The read uses the
+  # manager's uncached API reader, so get suffices (no watch).
+  - apiGroups: ["node.k8s.io"]
+    resources: ["runtimeclasses"]
+    verbs: ["get", "list"]
+  # CustomResourceDefinitions: read-only, for the §10 startup
+  # CRD schema-version self-check (F-15.5.12). Before the manager starts
+  # reconciling, the controller fetches each installed lenny.dev CRD by
+  # name and asserts its `lenny.dev/schema-version` annotation matches the
+  # version this build expects, failing closed so a stale CRD never
+  # silently strips fields a newer controller writes. The check `get`s
+  # each CRD individually, so get suffices (no list/watch).
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: lenny-controller
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lenny-controller
+subjects:
+  - kind: ServiceAccount
+    name: lenny-controller
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lenny-controller-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lenny-controller-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: lenny-controller-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: lenny-controller
+    namespace: {{ .Release.Namespace }}

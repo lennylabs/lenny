@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+#
+# The carrier holds one bare citation. The two §-form tokens written
+# inside link labels are not occurrences, so the prose citation beside
+# them is the first, and the entry written for it lands there.
+kind: anchor-senses
+version: 1
+entries:
+  - file: docs/reference/label-plain.md
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format

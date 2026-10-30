@@ -259,7 +259,7 @@ This enables multi-turn conversations through the Responses API without maintain
 | **File search tool** | Not implemented (OpenAI-proprietary) | Supported |
 | **Computer use tool** | Not implemented (OpenAI-proprietary) | Supported |
 | **MCP connectors** | Not via this adapter (use MCP API) | Supported (recent addition) |
-| **Reasoning** | Output includes reasoning if the runtime produces it, but `reasoning_trace` OutputParts are mapped to `output_text` with a role annotation; type is lossy. | Native `reasoning` output type |
+| **Reasoning** | Output includes reasoning if the runtime produces it, but `reasoning_trace` MessageParts are mapped to `output_text` with a role annotation; type is lossy. | Native `reasoning` output type |
 | **Background mode** | Mapped to Lenny's async session with `callbackUrl` | Native background execution |
 
 Requests that reference OpenAI-proprietary tools (`web_search`, `code_interpreter`, `file_search`, `computer_use`) return `400 VALIDATION_ERROR` with a message indicating the tool is not supported.

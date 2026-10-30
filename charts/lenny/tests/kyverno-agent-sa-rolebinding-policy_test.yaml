@@ -1,0 +1,81 @@
+suite: kyverno agent-SA RoleBinding ClusterPolicy (§10.3 Admission-time RBAC enforcement)
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - admission-policies/kyverno-agent-sa-rolebinding-policy.yaml
+tests:
+  - it: renders nothing when the kyverno admission-policy block is disabled
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders nothing when only the parent kyverno block is disabled
+    set:
+      admissionPolicies.kyverno.enabled: false
+      admissionPolicies.kyverno.agentServiceAccountRoleBindings.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders nothing when the agentServiceAccountRoleBindings sub-rule is disabled
+    set:
+      admissionPolicies.kyverno.enabled: true
+      admissionPolicies.kyverno.agentServiceAccountRoleBindings.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders the kyverno ClusterPolicy when both flags are enabled
+    set:
+      admissionPolicies.kyverno.enabled: true
+      admissionPolicies.kyverno.agentServiceAccountRoleBindings.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ClusterPolicy
+      - equal:
+          path: apiVersion
+          value: kyverno.io/v1
+      - equal:
+          path: metadata.name
+          value: lenny-disallow-agent-sa-rolebindings
+
+  - it: matches RoleBinding and ClusterRoleBinding in Enforce mode and denies agent-namespace SAs
+    set:
+      admissionPolicies.kyverno.enabled: true
+      admissionPolicies.kyverno.agentServiceAccountRoleBindings.enabled: true
+    asserts:
+      - equal:
+          path: spec.validationFailureAction
+          value: Enforce
+      - equal:
+          path: spec.rules[0].match.any[0].resources.kinds[0]
+          value: RoleBinding
+      - equal:
+          path: spec.rules[0].match.any[0].resources.kinds[1]
+          value: ClusterRoleBinding
+      - equal:
+          path: spec.rules[0].validate.deny.conditions.any[0].operator
+          value: AnyIn
+      - equal:
+          path: spec.rules[0].validate.deny.conditions.any[0].value[0]
+          value: lenny-agents
+      - equal:
+          path: spec.rules[0].validate.deny.conditions.any[0].value[1]
+          value: lenny-agents-kata
+
+  - it: derives the agent-namespace value list from .Values.agentNamespaces
+    set:
+      admissionPolicies.kyverno.enabled: true
+      admissionPolicies.kyverno.agentServiceAccountRoleBindings.enabled: true
+      agentNamespaces:
+        - name: custom-agents
+    asserts:
+      - equal:
+          path: spec.rules[0].validate.deny.conditions.any[0].value[0]
+          value: custom-agents
+      - lengthEqual:
+          path: spec.rules[0].validate.deny.conditions.any[0].value
+          count: 1

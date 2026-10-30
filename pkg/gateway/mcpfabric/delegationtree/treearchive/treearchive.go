@@ -1,0 +1,207 @@
+// SPDX-License-Identifier: MIT
+
+// Package treearchive is the §8.10 session_tree_archive: the durable
+// record of a delegation tree's settled child results. When a child
+// session reaches a terminal state the gateway archives its result
+// here, keyed by (root_session_id, node_session_id). A resumed parent
+// replays the archived results in original-settlement order so it
+// observes a consistent view of every child outcome regardless of when
+// each settled relative to the parent's own pod failure.
+//
+// The store is tenant-scoped: every Get and Replay call carries the
+// tenant_id and the store asserts the record's tenant_id matches
+// before returning it, so a tree in one tenant is never visible to
+// another.
+package treearchive
+
+import (
+	"context"
+	"errors"
+	"sort"
+	"sync"
+	"time"
+)
+
+// ArchivedNode is one settled node of a delegation tree.
+type ArchivedNode struct {
+	// TenantID scopes the record.
+	TenantID string
+	// RootSessionID is the delegation tree's root session.
+	RootSessionID string
+	// NodeSessionID is the settled child session.
+	NodeSessionID string
+	// ParentSessionID is the node's direct parent. The archive keys by
+	// the tree root, but the parent is recorded so a resumed parent's
+	// lenny/await_children can authorize a replayed child without its
+	// live session row.
+	ParentSessionID string
+	// State is the node's terminal session state (`completed`,
+	// `failed`, `cancelled`, or `expired`).
+	State string
+	// Result is the §8.8 TaskResult JSON the resumed parent replays.
+	Result string
+	// SettledAt is the instant the node reached its terminal state. It
+	// defines the §8.10 original-settlement replay order.
+	SettledAt time.Time
+	// ArchivedAt is the instant the node was written to the archive.
+	ArchivedAt time.Time
+	// CompletionSeq is the §15.1 reattach predicate: the
+	// children_reattached synthesis streams archived nodes whose
+	// CompletionSeq exceeds the resuming client's resumeFromSeq. A v1
+	// writer that does not track a per-session sequence leaves it 0.
+	CompletionSeq int64
+}
+
+// ErrNotFound is returned by Get for an unknown node or a tenant
+// mismatch — a cross-tenant miss is indistinguishable from "does not
+// exist" by design.
+var ErrNotFound = errors.New("treearchive: archived node not found")
+
+// Store is the §8.10 session_tree_archive contract. Every method is
+// goroutine-safe.
+type Store interface {
+	// Archive records a settled node. Re-archiving the same
+	// (tenant, root, node) overwrites the prior record — a node
+	// reaches a terminal state once, so re-archiving is idempotent.
+	Archive(ctx context.Context, n ArchivedNode) error
+
+	// Replay returns every archived node of the tree rooted at
+	// rootSessionID within tenantID, ordered by SettledAt — the §8.10
+	// original-settlement order a resumed parent observes.
+	Replay(ctx context.Context, tenantID, rootSessionID string) ([]ArchivedNode, error)
+
+	// Get returns one archived node. ErrNotFound is returned when no
+	// matching node exists within tenantID.
+	Get(ctx context.Context, tenantID, rootSessionID, nodeSessionID string) (ArchivedNode, error)
+
+	// GetByNode returns the archived node with nodeSessionID within
+	// tenantID, regardless of which tree it belongs to. A node session
+	// id is globally unique, so this resolves a settled child without
+	// knowing its tree root. ErrNotFound is returned when no matching
+	// node exists.
+	GetByNode(ctx context.Context, tenantID, nodeSessionID string) (ArchivedNode, error)
+
+	// DeleteBySession removes every archived node of the tree rooted at
+	// rootSessionID within tenantID and returns the count removed. It is
+	// the §12.8 step-11 session_tree_archive erasure primitive: the GDPR
+	// erasure orchestrator calls it for each session the erased user
+	// owns, before SessionStore deletion — the FK
+	// session_tree_archive.root_session_id → sessions.id requires the
+	// archive rows to be removed first. A non-root session id matches no
+	// archive row, so the call is a no-op in that case.
+	//
+	// spec: §12.8.
+	DeleteBySession(ctx context.Context, tenantID, rootSessionID string) (int, error)
+
+	// DeleteByTenant removes every archived node within tenantID and
+	// returns the count removed. It is the session_tree_archive step of
+	// §12.8 tenant deletion Phase 4, which runs before the SessionStore
+	// step: the FK session_tree_archive.root_session_id → sessions.id
+	// carries no ON DELETE action, so a tenant's sessions cannot be
+	// deleted while any of its archive rows remain. An empty tenantID is
+	// rejected rather than read as "every tenant". Idempotent.
+	//
+	// spec: §12.8 (Compliance Interfaces, tenant deletion Phase 4).
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
+}
+
+// Memory is the in-memory Store implementation. The minimal gateway
+// uses it; production swaps in a Postgres-backed implementation behind
+// the same contract.
+type Memory struct {
+	mu    sync.RWMutex
+	nodes map[string]ArchivedNode
+}
+
+// NewMemory returns an empty in-memory archive.
+func NewMemory() *Memory {
+	return &Memory{nodes: map[string]ArchivedNode{}}
+}
+
+// key joins the tenant, root, and node ids into a map key. The NUL
+// separator cannot appear in an id, so distinct triples never collide.
+func key(tenantID, rootSessionID, nodeSessionID string) string {
+	return tenantID + "\x00" + rootSessionID + "\x00" + nodeSessionID
+}
+
+// Archive implements Store.
+func (m *Memory) Archive(_ context.Context, n ArchivedNode) error {
+	if n.ArchivedAt.IsZero() {
+		n.ArchivedAt = time.Now().UTC()
+	}
+	m.mu.Lock()
+	m.nodes[key(n.TenantID, n.RootSessionID, n.NodeSessionID)] = n
+	m.mu.Unlock()
+	return nil
+}
+
+// Replay implements Store.
+func (m *Memory) Replay(_ context.Context, tenantID, rootSessionID string) ([]ArchivedNode, error) {
+	m.mu.RLock()
+	out := make([]ArchivedNode, 0)
+	for _, n := range m.nodes {
+		if n.TenantID == tenantID && n.RootSessionID == rootSessionID {
+			out = append(out, n)
+		}
+	}
+	m.mu.RUnlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].SettledAt.Before(out[j].SettledAt) })
+	return out, nil
+}
+
+// Get implements Store.
+func (m *Memory) Get(_ context.Context, tenantID, rootSessionID, nodeSessionID string) (ArchivedNode, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	n, ok := m.nodes[key(tenantID, rootSessionID, nodeSessionID)]
+	if !ok {
+		return ArchivedNode{}, ErrNotFound
+	}
+	return n, nil
+}
+
+// GetByNode implements Store.
+func (m *Memory) GetByNode(_ context.Context, tenantID, nodeSessionID string) (ArchivedNode, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, n := range m.nodes {
+		if n.TenantID == tenantID && n.NodeSessionID == nodeSessionID {
+			return n, nil
+		}
+	}
+	return ArchivedNode{}, ErrNotFound
+}
+
+// DeleteByTenant implements Store.
+func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, errors.New("treearchive: DeleteByTenant requires a non-empty tenant id")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	deleted := 0
+	for k, n := range m.nodes {
+		if n.TenantID == tenantID {
+			delete(m.nodes, k)
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
+// DeleteBySession implements Store.
+func (m *Memory) DeleteBySession(_ context.Context, tenantID, rootSessionID string) (int, error) {
+	if tenantID == "" || rootSessionID == "" {
+		return 0, errors.New("treearchive: DeleteBySession requires non-empty tenant and root session ids")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	deleted := 0
+	for k, n := range m.nodes {
+		if n.TenantID == tenantID && n.RootSessionID == rootSessionID {
+			delete(m.nodes, k)
+			deleted++
+		}
+	}
+	return deleted, nil
+}

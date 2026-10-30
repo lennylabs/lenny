@@ -28,7 +28,19 @@ This page describes the security posture Lenny is built to. It is a companion to
 
 ### 1.1 The pod is the trust boundary
 
-Every session runs in its own Kubernetes pod. Pods do not share filesystems, credentials, or long-lived network paths. Cross-session leakage through `/tmp`, environment, or a shared in-process cache is architecturally impossible because nothing is shared. The gateway — not the pod — is the sole intermediary that sees cross-session context, and it sees only the slivers a given request requires.
+In the default configuration (`sessionPolicy.maxConcurrentSessions: 1`, `recycle.enabled: false`) every session runs in its own Kubernetes pod that is terminated when the session ends. Pods do not share filesystems, credentials, or long-lived network paths, and cross-session leakage through `/tmp`, environment, or a shared in-process cache cannot occur because nothing is reused. The gateway, rather than the pod, is the sole intermediary that sees cross-session context, and it sees only the slivers a given request requires.
+
+A per-slot cleanup runs at each session release in session mode, on a pod of any concurrency and any recycle setting.
+
+When a deployer opts into pod reuse, the trust boundary relaxes by acknowledgment. Credential leases are always per session, but residual state can survive between sessions:
+
+- `recycle.enabled: true` requires `recycle.acknowledgeBestEffortScrub: true`. A whole-pod scrub (credential purge, `cleanupCommands`, workspace and `/tmp` cleanup, and residual-process kill) runs when occupancy reaches zero, unless the release ends the occupancy without reuse ([Recycle lifecycle](../reference/execution-modes#recycle-lifecycle)). The scrub is best-effort: DNS cache, TCP `TIME_WAIT`, and page cache may persist.
+- `maxConcurrentSessions > 1` requires `acknowledgeProcessLevelIsolation: true`. Concurrent slots share process namespace, `/tmp`, cgroup memory, and network stack.
+- `recycle.enabled: true` with `recycle.maxSessionsPerPod` above 1, a `recycle.scrubProfile` other than `vm-restart`, and `recycle.runtimeProcess: keep` requires `acknowledgeProcessLevelIsolation: true`, because a `keep` pod's runtime process and its memory persist across the recycle boundary, and the whole-pod scrub leaves that process running. Under `recycle.runtimeProcess: restart` the runtime supervisor ends the runtime process and every process it started in each whole-pod scrub, so a sequential pool needs only `acknowledgeBestEffortScrub`.
+- An admitted update that ends process reuse (`recycle.enabled: false`, `maxSessionsPerPod: 1`, or `scrubProfile: vm-restart`) takes effect at the next session. The gateway places no later session on a pod that served an earlier session and drains each such pod an acquisition reads, so the tenant's next session starts on a fresh pod.
+- `recycle.scrubProfile: in-place` keeps the continuing microvm guest across the pinned tenant's later sessions and serves no other tenant, and requires `recycle.acknowledgeMicrovmResidualState: true`, because guest-kernel residual state persists across the pinned tenant's sessions in the continuing guest. The `vm-restart` profile instead retires the pod at the recycle boundary and provisions a fresh replacement pod, which is a fresh guest VM, from the warm pool, so it carries no residual-state acknowledgment.
+
+Each acknowledgment is fail-closed: the pool controller rejects a pool that opts into the reuse mode without the corresponding acknowledgment. The session creation response carries `sessionIsolationLevel.residualStateWarning: true` whenever a session runs on a pool configured to reuse pods (`recycle.enabled: true`, `maxConcurrentSessions > 1`, or service mode), so a client that requires strict isolation can reject it.
 
 ### 1.2 Default-deny networking
 
@@ -85,7 +97,7 @@ Each primitive below has a canonical configuration surface on the [Security](sec
 | **OIDC/OAuth 2.1 auth** | Every client request carries a validated IdP token; admin token managed separately. | [Security — OIDC / OAuth 2.1 Authentication](security#oidc--oauth-21-authentication) |
 | **Token Service** | Stateless credential lifecycle manager; KMS-backed; per-replica mTLS. | [Security — Token Service](security#token-service) |
 | **KMS envelope encryption** | AWS KMS / GCP KMS / Azure Key Vault / HashiCorp Vault; application-layer crypto for T3/T4 data. | [Security — KMS Integration](security#kms-integration) |
-| **Credential leasing** | Per-session / per-task / per-slot leases; emergency revocation API. | [Security — Credential Leasing](security#credential-leasing) |
+| **Credential leasing** | Per-session leases on every pod (including each session served by a recycling pod), materialized at that session's own `/run/lenny/slots/{sessionId}/credentials.json`; emergency revocation API. | [Security — Credential Leasing](security#credential-leasing) |
 | **LLM Proxy** | For proxy-mode pools (the default), outbound provider traffic flows from the gateway, not from pods. Direct-mode pools bypass this subsystem and call the provider from the pod with a short-lived materialized credential. | [Security — LLM Proxy](security#llm-proxy) |
 | **Pod security controls** | PSS Restricted, non-root, read-only rootfs, dropped capabilities, adapter-agent boundary. | [Security — Pod Security Controls](security#pod-security-controls) |
 | **Default-deny NetworkPolicies** | Foundation policy denies everything; allowed paths added explicitly. | [Security — Network Policies](security#network-policies) |

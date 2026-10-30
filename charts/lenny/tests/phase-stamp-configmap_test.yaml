@@ -1,0 +1,82 @@
+suite: §17.2/§16.5 phase-stamp ConfigMap feature-flag downgrade labels
+templates:
+  - phase-stamp-configmap.yaml
+tests:
+  # spec: §16.5; §17.2 — the per-flag label must be the
+  # kebab-case slug with an -enabled suffix so kube-state-metrics surfaces
+  # label_lenny_dev_flag_<slug>_enabled, the series the
+  # AdmissionPlaneFeatureFlagDowngrade alert matches on. F-17.2.5.
+  - it: stamps lenny.dev/flag-<slug>-enabled labels for every enabled flag
+    set:
+      features.llmProxy: true
+      features.drainReadiness: true
+      features.compliance: true
+    asserts:
+      - equal:
+          path: metadata.labels["lenny.dev/flag-llm-proxy-enabled"]
+          value: "true"
+      - equal:
+          path: metadata.labels["lenny.dev/flag-drain-readiness-enabled"]
+          value: "true"
+      - equal:
+          path: metadata.labels["lenny.dev/flag-compliance-enabled"]
+          value: "true"
+
+  # The data keys remain camelCase (one per features.<flag> value) per
+  # §17.2 layer 1; only the metric label uses the slug form.
+  - it: keeps the data keys in camelCase form
+    set:
+      features.llmProxy: true
+    asserts:
+      - exists:
+          path: data.llmProxy
+
+  # The pre-fix chart wrote lenny.dev/flag-llmProxy (camelCase, no suffix),
+  # which kube-state-metrics could never render to the alert's expected
+  # series. Assert the regression cannot return.
+  - it: does not stamp the legacy camelCase label form
+    set:
+      features.llmProxy: true
+    asserts:
+      - notExists:
+          path: metadata.labels["lenny.dev/flag-llmProxy"]
+
+  - it: stamps no per-flag labels when all features are disabled (chart default)
+    asserts:
+      - notExists:
+          path: metadata.labels["lenny.dev/flag-llm-proxy-enabled"]
+      - notExists:
+          path: metadata.labels["lenny.dev/flag-compliance-enabled"]
+
+  # spec: §17.2, layer 2 — the fail-closed render-time downgrade
+  # guard reads the prior phase-stamp via `lookup`, which returns nil
+  # under `helm template`/helm-unittest (no live cluster). The guard is
+  # therefore a no-op here and the no-prior render must always succeed,
+  # even when a flag is disabled — a recorded-enabled flag exists only
+  # once a prior install has stamped it. The identical comparison
+  # semantics (recorded-enabled vs incoming-disabled vs acknowledged) are
+  # exercised against real prior state by the layer-3 Go check
+  # pkg/preflight.CheckPhaseStamp; the layer-2 fail path cannot be driven
+  # without lookup-backed prior state. F-17.2.7.
+  - it: renders without firing the downgrade guard when no prior stamp exists
+    set:
+      features.llmProxy: false
+      features.drainReadiness: false
+      features.compliance: false
+    asserts:
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: lenny-deployment-phase-stamp
+
+  # An acknowledged downgrade (acceptFeatureFlagDowngrade.<flag>=true)
+  # must never break the render; the guard honours the acknowledgement
+  # the same way the layer-3 preflight check does.
+  - it: renders with an acknowledged downgrade override set
+    set:
+      features.llmProxy: false
+      acceptFeatureFlagDowngrade.llmProxy: true
+    asserts:
+      - isKind:
+          of: ConfigMap

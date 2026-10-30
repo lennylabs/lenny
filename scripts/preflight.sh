@@ -213,6 +213,17 @@ if want cloud; then
   check_simple aws     aws     --version  '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_AWS_CLI"  cloud
   check_simple az      az      version    '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_AZ_CLI"   cloud
   check_simple eksctl  eksctl  version    '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_EKSCTL"   cloud
+  # Terraform / OpenTofu — required by scripts/cloud/{eks,gke,aks}/{up,down}.sh.
+  # Either satisfies the cloud toolchain. Prefer terraform; treat tofu as a
+  # drop-in equivalent (the per-provider drivers fall back to `tofu` when
+  # `terraform` is absent).
+  if command -v terraform >/dev/null 2>&1; then
+    check_simple terraform terraform -version '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_TERRAFORM" cloud
+  elif command -v tofu >/dev/null 2>&1; then
+    check_simple tofu      tofu      -version '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_TERRAFORM" cloud
+  else
+    record "miss" "terraform" "" "$LENNY_VERSION_TERRAFORM" cloud
+  fi
 fi
 
 # ---- Load and chaos (tiers 7-8) ----

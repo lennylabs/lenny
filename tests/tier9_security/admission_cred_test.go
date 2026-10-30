@@ -1,0 +1,179 @@
+// SPDX-License-Identifier: MIT
+
+//go:build security
+
+// Tier-9 security tests for the TESTING.md §12.9.3 lenny-pod-security credential
+// controls. The e2e Kind cluster runs the live pod-security webhook
+// over Pod CREATE in the lenny-agents namespace, so the §13.1 fsGroup
+// invariant and the §13.1 lenny-cred-readers membership boundary are
+// exercised as adversarial admission cases against the running cluster.
+//
+// §13.1 requires every agent pod to carry a pod-level
+// securityContext.fsGroup equal to the lenny-cred-readers GID: that
+// supplementary group is what makes the §4.7 credential file
+// group-readable by the agent across the adapter/agent UID boundary. A
+// pod whose pod-level securityContext omits fsGroup entirely breaches
+// the control and must be rejected with POD_SPEC_CRED_FSGROUP_MISSING.
+//
+// The companion §13.1 single-vector bypass suite is in
+// admission_security_test.go; that file's agentPodManifest hard-codes a
+// pod-level fsGroup, so the fsGroup-missing vector needs the distinct
+// manifest builder this file provides. Every manifest is applied with
+// kubectl apply --dry-run=server, so the admission chain runs but
+// nothing is persisted.
+
+package tier9_security_test
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
+	"github.com/lennylabs/lenny/tests/testinfra/kind"
+)
+
+// credFsGroupMissingReason is the §13.1 reason code the lenny-pod-security
+// webhook stamps on a pod whose pod-level securityContext omits the
+// credential fsGroup.
+const credFsGroupMissingReason = "POD_SPEC_CRED_FSGROUP_MISSING"
+
+// spec: 12.9.3, 13.1 (Pod Security)
+// diagnosis: the TESTING.md §12.9.3 lenny-pod-security webhook admits an agent pod
+// whose pod-level securityContext omits fsGroup. The test drives a pod
+// that is §13.1-compliant in every other respect but carries no
+// pod-level fsGroup through the live admission chain and asserts
+// lenny-pod-security rejects it with POD_SPEC_CRED_FSGROUP_MISSING. An
+// admitted pod means the §4.7 credential file would not be group-owned
+// by the lenny-cred-readers GID, so the cross-UID credential-delivery
+// path is unguarded.
+func TestAdmissionPolicyFsGroupMissing(t *testing.T) {
+	c := kind.InstallLenny(t)
+
+	out, err := c.DryRunApplyStdin(t, fsGroupMissingPodManifest())
+	if err == nil {
+		t.Fatalf("TESTING.md §12.9.3 violation: the API server admitted an agent pod whose pod-level "+
+			"securityContext omits fsGroup; the lenny-pod-security webhook did not enforce the §13.1 "+
+			"credential-fsGroup control.\noutput:\n%s", out)
+	}
+	if !strings.Contains(out, podSecurityWebhook) {
+		t.Fatalf("the fsGroup-missing pod was rejected, but not by the %s webhook — the rejection "+
+			"came from elsewhere in the admission chain, so the webhook itself may not guard the "+
+			"fsGroup control.\noutput:\n%s", podSecurityWebhook, out)
+	}
+	if !strings.Contains(out, credFsGroupMissingReason) {
+		t.Errorf("the %s rejection of the fsGroup-missing pod lacks the §13.1 reason %q.\noutput:\n%s",
+			podSecurityWebhook, credFsGroupMissingReason, out)
+	}
+	t.Logf("TESTING.md §12.9.3: %s rejected the fsGroup-missing agent pod: %s",
+		podSecurityWebhook, rejectionLine(out))
+}
+
+// fsGroupMissingPodManifest renders an agent-namespace pod that is
+// §13.1-compliant in every respect except the pod-level fsGroup, which
+// it omits. Every other §13.1 control is satisfied so the rejection is
+// attributable to the missing fsGroup alone: runAsNonRoot and the
+// RuntimeDefault seccomp profile are set at the pod level, and the
+// container drops all capabilities, sets allowPrivilegeEscalation false,
+// runs a read-only root filesystem, and sets the explicit non-reserved
+// runAsUser and runAsGroup §13.1 (Container identity) requires.
+func fsGroupMissingPodManifest() string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Pod
+metadata:
+  name: t9-cred-fsgroup-missing
+  namespace: %s
+spec:
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: agent
+      image: busybox:1.36
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        runAsUser: %d
+        runAsGroup: %d
+        capabilities:
+          drop: ["ALL"]
+`, agentNamespace, injectedSidecarUID, injectedSidecarUID)
+}
+
+// credGroupOverbroadReason is the §13.1 reason code the lenny-pod-security
+// webhook stamps on a pod whose non-adapter, non-agent container
+// declares the lenny-cred-readers GID.
+const credGroupOverbroadReason = "POD_SPEC_CRED_GROUP_OVERBROAD"
+
+// credReadersGID is the lenny-cred-readers supplementary GID the §13.1
+// cross-UID credential-delivery path uses. The Sandbox podspec builder
+// pins it; the webhook validates a non-credential container's
+// runAsGroup against it.
+const credReadersGID = 65534
+
+// spec: 12.9.3, 13.1 (Pod Security)
+// diagnosis: the TESTING.md §12.9.3 lenny-pod-security webhook admits an agent pod
+// whose non-adapter, non-agent container declares the lenny-cred-readers
+// GID in runAsGroup. §13.1 permits only the adapter and agent containers
+// to declare that GID in container-level runAsGroup. The test drives a pod with a compliant
+// adapter and runtime container plus a third container carrying the GID
+// and asserts lenny-pod-security rejects it with
+// POD_SPEC_CRED_GROUP_OVERBROAD. An admitted pod means an injected
+// sidecar could read the §4.7 credential file.
+func TestAdmissionPolicyCredGroupOverbroad(t *testing.T) {
+	c := kind.InstallLenny(t)
+
+	out, err := c.DryRunApplyStdin(t, credGroupOverbroadPodManifest())
+	if err == nil {
+		t.Fatalf("TESTING.md §12.9.3 violation: the API server admitted an agent pod whose non-credential "+
+			"container declares the lenny-cred-readers GID; the lenny-pod-security webhook did not "+
+			"enforce the §13.1 cred-group boundary.\noutput:\n%s", out)
+	}
+	if !strings.Contains(out, podSecurityWebhook) {
+		t.Fatalf("the cred-group-overbroad pod was rejected, but not by the %s webhook — the "+
+			"rejection came from elsewhere in the admission chain.\noutput:\n%s", podSecurityWebhook, out)
+	}
+	if !strings.Contains(out, credGroupOverbroadReason) {
+		t.Errorf("the %s rejection lacks the §13.1 reason %q.\noutput:\n%s",
+			podSecurityWebhook, credGroupOverbroadReason, out)
+	}
+	t.Logf("TESTING.md §12.9.3: %s rejected the cred-group-overbroad agent pod: %s",
+		podSecurityWebhook, rejectionLine(out))
+}
+
+// credGroupOverbroadPodManifest renders an agent-namespace pod that is
+// §13.1-compliant in every respect except that a third container,
+// neither the adapter nor the agent, declares the lenny-cred-readers
+// GID in runAsGroup. The adapter and runtime containers carry the §4.7
+// names the webhook reads as the credential containers and run at their
+// own reserved UIDs, and the third container runs at a non-reserved
+// UID, so the §13.1 container identity clause admits every container
+// and the rejection is attributable to the third container's group
+// alone.
+func credGroupOverbroadPodManifest() string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Pod
+metadata:
+  name: t9-cred-group-overbroad
+  namespace: %s
+spec:
+  securityContext:
+    runAsNonRoot: true
+    fsGroup: %d
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+%s%s    - name: sidecar
+      image: busybox:1.36
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        runAsUser: %d
+        runAsGroup: %d
+        capabilities:
+          drop: ["ALL"]
+`, agentNamespace, credReadersGID,
+		containerYAML("adapter", podspec.AdapterUID), containerYAML("runtime", podspec.AgentUID),
+		injectedSidecarUID, credReadersGID)
+}

@@ -1,0 +1,354 @@
+suite: lenny-minio-bucket-lifecycle Job and TLS-mandate guards
+release:
+  name: lenny
+  namespace: lenny-system
+tests:
+  - it: skips the lifecycle Job when MinIO is unconfigured (stock dev render)
+    template: minio-bucket-lifecycle-job.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders the lifecycle Job when MinIO endpoint is set
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Job
+      - equal:
+          path: metadata.name
+          value: lenny-minio-bucket-lifecycle
+      - equal:
+          path: metadata.annotations["helm.sh/hook"]
+          value: post-install,post-upgrade
+
+  # spec: §17.9.4 — the post-install Job runs `mc ilm add`; its default
+  # image is the maintained, anonymously pullable mc fork pinned by tag and
+  # index digest, so the hook can pull it on a fresh install.
+  - it: defaults the lifecycle Job image to pgsty/mc pinned by tag and digest
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "pgsty/mc:RELEASE.2026-10-26T00-00-00Z@sha256:ce62c9053c69ce12a527a322345b5ad9f44b5f8a7b8189f82e516f2e3f30f1d8"
+
+  - it: falls back to the pinned mc image when minio.lifecycle.image is empty
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+        lifecycle:
+          image: ""
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "pgsty/mc:RELEASE.2026-10-26T00-00-00Z@sha256:ce62c9053c69ce12a527a322345b5ad9f44b5f8a7b8189f82e516f2e3f30f1d8"
+
+  - it: honours an operator-supplied lifecycle Job image
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+        lifecycle:
+          image: "registry.acme.com/mirror/mc:RELEASE.2026-10-26T00-00-00Z"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "registry.acme.com/mirror/mc:RELEASE.2026-10-26T00-00-00Z"
+
+  - it: emits the post-install hook with the §12.5 versioning + lifecycle commands
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "mc mb --ignore-existing"
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "mc version enable"
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "mc ilm add lenny/lenny-artifacts"
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "--expired-object-delete-marker"
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "--noncurrentversion-expiration-days 1"
+
+  - it: honors minio.lifecycle.noncurrentExpirationDays override
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+        lifecycle:
+          noncurrentExpirationDays: 7
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "--noncurrentversion-expiration-days 7"
+
+  - it: declares MINIO_ACCESS_KEY and MINIO_SECRET_KEY before MC_HOST_lenny so $(VAR) substitution resolves
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+    asserts:
+      # Kubernetes $(VAR) env substitution expands only a reference to a
+      # variable defined earlier in the env list; a forward reference is
+      # left literal. MC_HOST_lenny embeds $(MINIO_ACCESS_KEY) and
+      # $(MINIO_SECRET_KEY), so both credential vars must come before it,
+      # or mc receives the literal text "$(MINIO_ACCESS_KEY)" as the
+      # access key and fails with "The Access Key Id you provided does not
+      # exist in our records." Pin the order at indices 0, 1, then 2.
+      - equal:
+          path: spec.template.spec.containers[0].env[0].name
+          value: MINIO_ACCESS_KEY
+      - equal:
+          path: spec.template.spec.containers[0].env[1].name
+          value: MINIO_SECRET_KEY
+      - equal:
+          path: spec.template.spec.containers[0].env[2].name
+          value: MC_HOST_lenny
+      - matchRegex:
+          path: spec.template.spec.containers[0].env[2].value
+          pattern: '\$\(MINIO_ACCESS_KEY\):\$\(MINIO_SECRET_KEY\)@minio.lenny-system:9000$'
+
+  - it: skips when minio.lifecycle.enabled is explicitly false
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+        lifecycle:
+          enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # spec: §12.5 — when the self-managed MinIO serving cert is issued by a CA
+  # outside the system trust store, minio.tls.caBundleConfigMap names a
+  # ConfigMap (key ca.crt) the Job mounts and trusts via SSL_CERT_DIR so mc
+  # verifies the HTTPS endpoint against it. Unset leaves the Job unchanged.
+  - it: mounts the MinIO CA bundle and sets SSL_CERT_DIR when caBundleConfigMap is set
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+        tls:
+          caBundleConfigMap: lenny-minio-ca
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SSL_CERT_DIR
+            value: /etc/lenny/minio-ca
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: lenny-minio-ca
+            mountPath: /etc/lenny/minio-ca
+            readOnly: true
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: lenny-minio-ca
+            configMap:
+              name: lenny-minio-ca
+              items:
+                - key: ca.crt
+                  path: ca.crt
+
+  - it: omits the MinIO CA bundle mount when caBundleConfigMap is unset
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SSL_CERT_DIR
+            value: /etc/lenny/minio-ca
+
+  # spec: §17.9.4 — the post-install Job runs `mc ilm add` as uid 1000 on a
+  # read-only root filesystem with no home directory, so mc's config directory
+  # must sit on a writable emptyDir in every mode. Without it, a production
+  # render fails at `mkdir /.mc` and the lifecycle rules are never applied.
+  - it: gives mc a writable config directory outside dev mode
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      global:
+        devMode: false
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: MC_CONFIG_DIR
+            value: /tmp/.mc
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: mc-config
+            mountPath: /tmp
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: mc-config
+            emptyDir: {}
+
+  - it: keeps the mc config directory alongside the MinIO CA bundle mount
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      global:
+        devMode: true
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+        tls:
+          caBundleConfigMap: lenny-minio-ca
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: MC_CONFIG_DIR
+            value: /tmp/.mc
+      - lengthEqual:
+          path: spec.template.spec.containers[0].volumeMounts
+          count: 2
+      - lengthEqual:
+          path: spec.template.spec.volumes
+          count: 2
+
+  - it: §12.5 — render fails when minio.tls.enabled=false with a regulated complianceProfile
+    template: gateway-deployment.yaml
+    set:
+      complianceProfile: "soc2"
+      postgres:
+        dsn: "postgres://lenny:lenny@pg.lenny-system:5432/lenny?sslmode=require"
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+        tls:
+          enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: "§12.5: minio.tls.enabled MUST be true when complianceProfile is \"soc2\" (regulated)."
+
+  # spec: §12.5 — "All other backends enforce TLS." The
+  # plaintext-MinIO exception is bound to backends: embedded ONLY; there is
+  # no devMode qualifier. A non-embedded backend with tls.enabled=false fails
+  # the render regardless of global.devMode.
+  - it: §12.5 — render fails when minio.tls.enabled=false outside embedded mode
+    template: gateway-deployment.yaml
+    set:
+      backends: "selfManaged"
+      postgres:
+        dsn: "postgres://lenny:lenny@pg.lenny-system:5432/lenny?sslmode=require"
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+        tls:
+          enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: "§12.5: minio.tls.enabled may default to false only when backends: embedded; all other backends enforce TLS — set tls.enabled: true."
+
+  # spec: §12.5 — the exception is bound to backends: embedded, NOT
+  # to dev mode. global.devMode does NOT sanction plaintext MinIO on a
+  # non-embedded backend; the guard must still fail. This pins the Fix #1
+  # alignment: a devMode clause on this guard would be a §12.5 misalignment.
+  - it: §12.5 — global.devMode does not relax the TLS mandate on a non-embedded backend
+    template: gateway-deployment.yaml
+    set:
+      global.devMode: true
+      backends: "selfManaged"
+      postgres:
+        dsn: "postgres://lenny:lenny@pg.lenny-system:5432/lenny?sslmode=require"
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+        tls:
+          enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: "§12.5: minio.tls.enabled may default to false only when backends: embedded; all other backends enforce TLS — set tls.enabled: true."
+
+  - it: §12.5 — embedded backends permits minio.tls.enabled=false
+    template: gateway-deployment.yaml
+    set:
+      backends: "embedded"
+      postgres:
+        dsn: "postgres://lenny:lenny@pg.lenny-system:5432/lenny?sslmode=require"
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+        tls:
+          enabled: false
+    asserts:
+      - notFailedTemplate: {}
+
+# §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
+# value with no default; a placeholder lets the gateway-deployment
+# annotation `required` guard render in this suite.
+set:
+  global.spiffeTrustDomain: cluster.local
+  # §13.2 (K8S-033): the dedicated CoreDNS Service ClusterIP, required
+  # when agentNamespaces is configured (the chart default). F-13.2.3.
+  coredns.clusterIP: 10.96.0.53

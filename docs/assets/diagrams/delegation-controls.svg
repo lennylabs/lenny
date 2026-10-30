@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 620" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <style>
+      .b-bg { fill: #ffffff; }
+      .card-mustard { fill: #ffe9c7; stroke: #1f2933; stroke-width: 2.2; }
+      .card-cream { fill: #fffaf0; stroke: #1f2933; stroke-width: 2; }
+      .card-coral { fill: #fde2d6; stroke: #c84a1d; stroke-width: 2; }
+      .title { fill: #1f2933; font-size: 17px; font-weight: 600; }
+      .sub { fill: #54616e; font-size: 14px; }
+      .edge { fill: #1f2933; font-size: 14px; }
+      .edge-co { fill: #c84a1d; font-size: 14px; }
+      .mono { font-family: 'SF Mono','Menlo','Consolas',monospace; fill: #c84a1d; font-size: 13px; }
+      .foot { fill: #8a7755; font-size: 13px; }
+      .ln { stroke: #1f2933; stroke-width: 1.8; fill: none; stroke-linecap: round; }
+      .ln-dash { stroke: #c84a1d; stroke-width: 1.8; fill: none; stroke-dasharray: 6 4; stroke-linecap: round; }
+    </style>
+    <marker id="ar" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto">
+      <path d="M 0 0 L 11 6 L 0 12 z" fill="#1f2933"/>
+    </marker>
+    <marker id="ar-co" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto">
+      <path d="M 0 0 L 11 6 L 0 12 z" fill="#c84a1d"/>
+    </marker>
+  </defs>
+  <rect class="b-bg" width="1000" height="620"/>
+
+  <!-- Root -->
+  <rect class="card-mustard" x="370" y="30" width="260" height="76" rx="10"/>
+  <text class="title" x="500" y="62" text-anchor="middle">Root session</text>
+  <text class="sub" x="500" y="86" text-anchor="middle">500,000 tokens, sandboxed</text>
+
+  <!-- Trunk and branches -->
+  <path class="ln" d="M 500 106 L 500 150 L 240 150"/>
+  <path class="ln" d="M 500 150 L 760 150"/>
+  <path class="ln" d="M 240 150 L 240 262" marker-end="url(#ar)"/>
+  <path class="ln" d="M 760 150 L 760 262" marker-end="url(#ar)"/>
+
+  <text class="edge" x="254" y="198">200,000 tokens</text>
+  <text class="edge" x="254" y="220">sandboxed (equal)</text>
+  <text class="edge" x="774" y="198">150,000 tokens</text>
+  <text class="edge" x="774" y="220">microvm (stricter)</text>
+
+  <!-- Children -->
+  <rect class="card-cream" x="120" y="268" width="240" height="64" rx="8"/>
+  <text class="title" x="240" y="306" text-anchor="middle">Child A</text>
+
+  <rect class="card-cream" x="640" y="268" width="240" height="64" rx="8"/>
+  <text class="title" x="760" y="306" text-anchor="middle">Child B</text>
+
+  <!-- Grandchild -->
+  <path class="ln" d="M 240 332 L 240 438" marker-end="url(#ar)"/>
+  <text class="edge" x="254" y="378">80,000 tokens</text>
+  <text class="edge" x="254" y="400">microvm (stricter)</text>
+
+  <rect class="card-cream" x="120" y="444" width="240" height="64" rx="8"/>
+  <text class="title" x="240" y="482" text-anchor="middle">Grandchild</text>
+
+  <!-- Rejected edge -->
+  <path class="ln-dash" d="M 760 332 L 760 438" marker-end="url(#ar-co)"/>
+  <text class="edge-co" x="774" y="378">sandboxed</text>
+  <text class="edge-co" x="774" y="400">(weaker than microvm)</text>
+
+  <rect class="card-coral" x="610" y="444" width="300" height="76" rx="8"/>
+  <text class="title" x="760" y="474" text-anchor="middle">Delegation rejected</text>
+  <text class="mono" x="760" y="500" text-anchor="middle">ISOLATION_MONOTONICITY_VIOLATED</text>
+
+  <text class="foot" x="500" y="566" text-anchor="middle">Isolation order: standard &lt; sandboxed &lt; microvm. The gateway carves each child's token budget</text>
+  <text class="foot" x="500" y="586" text-anchor="middle">from the parent's remaining budget and rejects a child profile weaker than the parent's.</text>
+</svg>

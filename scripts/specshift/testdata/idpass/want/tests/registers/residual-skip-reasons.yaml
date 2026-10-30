@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+kind: residual-register
+version: 1
+class: skip-reasons
+entries:
+  - member: |-
+      pkg/adapter/runtimeops_test.go TestChannelServes (site 1): Skip
+    class: skip-reasons
+    disposition: in-class
+    reason: |-
+      a skip whose reason opens with none of the categories the testing document names

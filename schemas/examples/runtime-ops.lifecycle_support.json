@@ -1,0 +1,4 @@
+{
+  "type": "lifecycle_support",
+  "capabilities": ["checkpoint", "interrupt", "deadline_signal"]
+}

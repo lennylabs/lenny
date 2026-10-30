@@ -143,3 +143,128 @@ func TestCheckDepthRejectsZeroMax(t *testing.T) {
 		t.Errorf("zero maxDepth must error as unresolved, got %v", err)
 	}
 }
+
+// spec: §8.4 (Approval Modes) — the closed enum admits "policy",
+// "approval", and "deny". §8.3 (Delegation Policy and Lease) gives the
+// lease's approvalMode field a "policy" value, so the gateway aliases
+// the empty string to ApprovalModePolicy at evaluation time.
+// F-8.4.1, F-8.4.2.
+func TestValidateApprovalModeAcceptsClosedEnum_spec_8_4(t *testing.T) {
+	cases := []ApprovalMode{"", ApprovalModePolicy, ApprovalModeApproval, ApprovalModeDeny}
+	for _, m := range cases {
+		if err := ValidateApprovalMode(m); err != nil {
+			t.Errorf("ValidateApprovalMode(%q) = %v, want nil", m, err)
+		}
+	}
+}
+
+// spec: §8.4 — the closed-enum validator MUST reject any value outside
+// the three documented modes so an operator authoring a typo
+// (approvalMode: "Approval", "polic", "ALLOW") is told immediately
+// rather than silently falling through to the default. F-8.4.2.
+func TestValidateApprovalModeRejectsUnknownValue_spec_8_4(t *testing.T) {
+	cases := []ApprovalMode{"Approval", "polic", "ALLOW", "auto", "Policy"}
+	for _, m := range cases {
+		err := ValidateApprovalMode(m)
+		if err == nil {
+			t.Errorf("ValidateApprovalMode(%q) = nil, want InvalidApprovalModeError", m)
+			continue
+		}
+		var ime *InvalidApprovalModeError
+		if !errors.As(err, &ime) {
+			t.Errorf("ValidateApprovalMode(%q) returned %T, want *InvalidApprovalModeError", m, err)
+		}
+	}
+}
+
+// spec: §8.4 — `approval` is accepted at registration time
+// but the gateway treats it identically to `policy` mode in v1.
+// EffectiveApprovalMode encodes the alias so the §8.5 service can
+// share the policy auto-approval path for both inputs. F-8.4.1.
+func TestEffectiveApprovalModeAliasesApprovalToPolicy_spec_8_4(t *testing.T) {
+	if got := EffectiveApprovalMode(ApprovalModeApproval); got != ApprovalModePolicy {
+		t.Errorf("EffectiveApprovalMode(approval) = %q, want policy", got)
+	}
+	if got := EffectiveApprovalMode(""); got != ApprovalModePolicy {
+		t.Errorf("EffectiveApprovalMode(\"\") = %q, want policy (default)", got)
+	}
+	if got := EffectiveApprovalMode(ApprovalModePolicy); got != ApprovalModePolicy {
+		t.Errorf("EffectiveApprovalMode(policy) = %q, want policy", got)
+	}
+	if got := EffectiveApprovalMode(ApprovalModeDeny); got != ApprovalModeDeny {
+		t.Errorf("EffectiveApprovalMode(deny) = %q, want deny (no alias)", got)
+	}
+}
+
+// spec: §8.3 — the credentialPropagation closed enum admits "inherit",
+// "independent", "deny", and the empty string (which resolves to the
+// independent default when the field is omitted from a delegate_task
+// call).
+func TestValidateCredentialPropagationAcceptsClosedEnum_spec_8_3(t *testing.T) {
+	cases := []CredentialPropagation{
+		"",
+		CredentialPropagationInherit,
+		CredentialPropagationIndependent,
+		CredentialPropagationDeny,
+	}
+	for _, m := range cases {
+		if err := ValidateCredentialPropagation(m); err != nil {
+			t.Errorf("ValidateCredentialPropagation(%q) = %v, want nil", m, err)
+		}
+	}
+}
+
+// spec: §8.3 — the closed-enum validator MUST reject any value outside
+// the three documented modes so a lease authored with a typo
+// (credentialPropagation: "Inherit", "share", "none") is rejected at
+// ingress rather than silently falling through to the default.
+func TestValidateCredentialPropagationRejectsUnknownValue_spec_8_3(t *testing.T) {
+	cases := []CredentialPropagation{"Inherit", "share", "none", "Independent", "DENY"}
+	for _, m := range cases {
+		err := ValidateCredentialPropagation(m)
+		if err == nil {
+			t.Errorf("ValidateCredentialPropagation(%q) = nil, want InvalidCredentialPropagationError", m)
+			continue
+		}
+		var ipe *InvalidCredentialPropagationError
+		if !errors.As(err, &ipe) {
+			t.Errorf("ValidateCredentialPropagation(%q) returned %T, want *InvalidCredentialPropagationError", m, err)
+			continue
+		}
+		if ipe.Value != string(m) {
+			t.Errorf("InvalidCredentialPropagationError.Value = %q, want %q", ipe.Value, m)
+		}
+	}
+}
+
+// spec: §8.3 — the provider-intersection primitive returns
+// the a-ordered intersection, deduplicated, and preserves the order of
+// the first list so a credential can be assigned deterministically
+// from the parent pool.
+func TestIntersectProvidersOrderStable_spec_8_3(t *testing.T) {
+	cases := []struct {
+		name string
+		a    []string
+		b    []string
+		want []string
+	}{
+		{"non-empty intersection preserves a order", []string{"anthropic", "openai", "google"}, []string{"google", "anthropic"}, []string{"anthropic", "google"}},
+		{"empty intersection", []string{"anthropic"}, []string{"openai"}, []string{}},
+		{"a empty", nil, []string{"openai"}, []string{}},
+		{"b empty", []string{"anthropic"}, nil, []string{}},
+		{"deduplicates repeats in a", []string{"anthropic", "anthropic", "openai"}, []string{"anthropic", "openai"}, []string{"anthropic", "openai"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := IntersectProviders(tc.a, tc.b)
+			if len(got) != len(tc.want) {
+				t.Fatalf("IntersectProviders(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Fatalf("IntersectProviders(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
+				}
+			}
+		})
+	}
+}

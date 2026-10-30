@@ -1,0 +1,621 @@
+// SPDX-License-Identifier: MIT
+
+package scrub
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// fakeOps records every host operation in call order and can be programmed
+// to error a specific op or report a specific PathState, so the §5.2 scrub
+// ordering and best-effort semantics are testable without running kill -9
+// -1 against the test process.
+type fakeOps struct {
+	calls []string
+
+	killErr  error
+	ipcErr   error
+	clearErr map[string]error // dir -> err
+
+	removed   []string
+	removeErr map[string]error // path -> err
+	cleared   []string
+
+	// state maps a path to its reported (exists, empty). A path absent from
+	// the map reports (false, true) — does not exist, vacuously empty.
+	state    map[string]pathState
+	stateErr map[string]error
+}
+
+type pathState struct {
+	exists bool
+	empty  bool
+}
+
+func newFakeOps() *fakeOps {
+	return &fakeOps{
+		clearErr:  map[string]error{},
+		removeErr: map[string]error{},
+		state:     map[string]pathState{},
+		stateErr:  map[string]error{},
+	}
+}
+
+func (f *fakeOps) KillUserProcesses(context.Context) error {
+	f.calls = append(f.calls, "kill")
+	return f.killErr
+}
+
+func (f *fakeOps) PurgeIPCShm(context.Context) error {
+	f.calls = append(f.calls, "ipc")
+	return f.ipcErr
+}
+
+func (f *fakeOps) RemoveAll(path string) error {
+	f.calls = append(f.calls, "rm:"+path)
+	f.removed = append(f.removed, path)
+	return f.removeErr[path]
+}
+
+func (f *fakeOps) ClearContents(dir string) error {
+	f.calls = append(f.calls, "clear:"+dir)
+	f.cleared = append(f.cleared, dir)
+	return f.clearErr[dir]
+}
+
+func (f *fakeOps) PathState(path string) (bool, bool, error) {
+	if err := f.stateErr[path]; err != nil {
+		return false, false, err
+	}
+	if s, ok := f.state[path]; ok {
+		return s.exists, s.empty, nil
+	}
+	return false, true, nil
+}
+
+// stepIndex returns the index of step in the report, or -1.
+func stepIndex(rep *Report, step StepName) int {
+	for i, s := range rep.Steps {
+		if s.Step == step {
+			return i
+		}
+	}
+	return -1
+}
+
+func stepErr(rep *Report, step StepName) error {
+	for _, s := range rep.Steps {
+		if s.Step == step {
+			return s.Err
+		}
+	}
+	return errors.New("step not present")
+}
+
+// spec: §5.2 — a clean scrub with no cleanup commands runs
+// every step and verifies clean, reporting Succeeded.
+func TestRun_CleanScrub_spec_5_2(t *testing.T) {
+	ops := newFakeOps()
+	rep, err := Run(context.Background(), ops, Config{
+		CredentialFiles: []string{"/run/lenny/slots/sess-a/credentials.json"},
+		WorkspaceDirs:   []string{"/workspace/slots/sess-1/current"},
+		CleanupDir:      "/workspace/slots/sess-1/current",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if rep.Result != Succeeded {
+		t.Fatalf("Result = %v, want Succeeded; dirty=%v", rep.Result, rep.VerifyDirty)
+	}
+	for _, step := range []StepName{
+		StepCredentialPurge, StepCleanupCommands, StepKillProcesses, StepPurgeIPCShm,
+		StepRemoveWorkspace, StepResetEnv, StepClearScratch, StepTruncateLogs, StepVerify,
+	} {
+		if stepIndex(rep, step) < 0 {
+			t.Errorf("step %q not recorded", step)
+		}
+	}
+}
+
+// spec: §5.2 — step 0 (credential purge) MUST precede cleanupCommands,
+// which MUST precede the post-cleanup scrub steps 1-6.
+func TestRun_StepOrdering_spec_5_2_424(t *testing.T) {
+	ops := newFakeOps()
+	rep, err := Run(context.Background(), ops, Config{
+		CredentialFiles: []string{"/run/lenny/slots/sess-a/credentials.json"},
+		CleanupCommands: []string{"true"},
+		WorkspaceDirs:   []string{"/workspace/slots/sess-1/current"},
+		CleanupDir:      "/workspace/slots/sess-1/current",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	purge := stepIndex(rep, StepCredentialPurge)
+	cleanup := stepIndex(rep, StepCleanupCommands)
+	kill := stepIndex(rep, StepKillProcesses)
+	rmWs := stepIndex(rep, StepRemoveWorkspace)
+	verify := stepIndex(rep, StepVerify)
+	if purge >= cleanup || cleanup >= kill || kill >= rmWs || rmWs >= verify {
+		t.Fatalf("bad order purge=%d cleanup=%d kill=%d rmWs=%d verify=%d", purge, cleanup, kill, rmWs, verify)
+	}
+}
+
+// spec: §5.2 step 1b — ipcrm runs after kill (step 1).
+func TestRun_IPCAfterKill_spec_5_2_step1b(t *testing.T) {
+	ops := newFakeOps()
+	if _, err := Run(context.Background(), ops, Config{}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	killAt, ipcAt := -1, -1
+	for i, c := range ops.calls {
+		if c == "kill" {
+			killAt = i
+		}
+		if c == "ipc" {
+			ipcAt = i
+		}
+	}
+	if killAt < 0 || ipcAt < 0 || killAt > ipcAt {
+		t.Fatalf("kill at %d, ipc at %d; want kill before ipc", killAt, ipcAt)
+	}
+}
+
+// spec: §5.2 — step 6 fails the scrub when the workspace is left
+// non-empty.
+// One surviving member of the set fails step 6 even when its sibling
+// verified clean, which is what keeps a leaked slot's residue from being
+// masked by the pod's other trees.
+func TestRun_DirtyWorkspaceFailsVerify_spec_5_2_436(t *testing.T) {
+	ops := newFakeOps()
+	dirty := "/workspace/slots/sess-a"
+	clean := "/workspace/slots/sess-b"
+	ops.state[dirty] = pathState{exists: true, empty: false}
+	ops.state[clean] = pathState{exists: false}
+	rep, err := Run(context.Background(), ops, Config{WorkspaceDirs: []string{dirty, clean}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if rep.Result != Failed {
+		t.Fatalf("Result = %v, want Failed", rep.Result)
+	}
+	if len(rep.VerifyDirty) != 1 || rep.VerifyDirty[0] != dirty {
+		t.Fatalf("VerifyDirty = %v, want [%s]", rep.VerifyDirty, dirty)
+	}
+}
+
+// spec: §5.2 — if a per-slot credential file still exists despite
+// step 0, the scrub is marked failed.
+func TestRun_CredentialStillPresentFailsVerify_spec_5_2_436(t *testing.T) {
+	ops := newFakeOps()
+	cred := "/run/lenny/slots/sess-a/credentials.json"
+	sibling := "/run/lenny/slots/sess-b/credentials.json"
+	// One member of the set exists at verify time (step 0 removal did not
+	// take for it); its sibling was removed. One survivor fails the scrub.
+	ops.state[cred] = pathState{exists: true, empty: false}
+	ops.state[sibling] = pathState{exists: false}
+	rep, err := Run(context.Background(), ops, Config{CredentialFiles: []string{cred, sibling}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if rep.Result != Failed {
+		t.Fatalf("Result = %v, want Failed", rep.Result)
+	}
+	found := false
+	for _, d := range rep.VerifyDirty {
+		if d == cred {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("VerifyDirty = %v, want it to contain %q", rep.VerifyDirty, cred)
+	}
+}
+
+// spec: §5.2 — a cleanup-command failure marks the scrub
+// failed but does not abort steps 1-6 (the workspace is still scrubbed).
+func TestRun_CleanupFailureStillRunsScrub_spec_5_2_426(t *testing.T) {
+	ops := newFakeOps()
+	rep, err := Run(context.Background(), ops, Config{
+		CleanupCommands: []string{"false"}, // exits non-zero
+		WorkspaceDirs:   []string{"/workspace/slots/sess-1/current"},
+		CleanupDir:      "/workspace/slots/sess-1/current",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if rep.Result != Failed {
+		t.Fatalf("Result = %v, want Failed", rep.Result)
+	}
+	if stepErr(rep, StepCleanupCommands) == nil {
+		t.Errorf("cleanup step recorded no error for a failing command")
+	}
+	// Steps 1-6 still ran despite the cleanup failure.
+	if stepIndex(rep, StepKillProcesses) < 0 || stepIndex(rep, StepRemoveWorkspace) < 0 {
+		t.Errorf("scrub steps were skipped after cleanup failure")
+	}
+	removedWorkspace := false
+	for _, p := range ops.removed {
+		if p == "/workspace/slots/sess-1/current" {
+			removedWorkspace = true
+		}
+	}
+	if !removedWorkspace {
+		t.Errorf("workspace not removed after cleanup failure; removed=%v", ops.removed)
+	}
+}
+
+// spec: §5.2 step 1 — a kill-step error is recorded and fails the scrub but
+// does not abort the remaining steps.
+func TestRun_KillErrorIsBestEffort_spec_5_2_step1(t *testing.T) {
+	ops := newFakeOps()
+	ops.killErr = errors.New("boom")
+	rep, err := Run(context.Background(), ops, Config{WorkspaceDirs: []string{"/workspace/slots/sess-a"}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if rep.Result != Failed {
+		t.Fatalf("Result = %v, want Failed", rep.Result)
+	}
+	if stepIndex(rep, StepRemoveWorkspace) < 0 {
+		t.Errorf("remove-workspace step did not run after a kill error")
+	}
+}
+
+// spec: §5.2 step 4 — /tmp and /dev/shm are always cleared, plus configured
+// scratch dirs.
+func TestRun_ClearsTmpDevShmAndScratch_spec_5_2_step4(t *testing.T) {
+	ops := newFakeOps()
+	if _, err := Run(context.Background(), ops, Config{ScratchDirs: []string{"/var/adapter-scratch"}}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	want := map[string]bool{"/tmp": false, "/dev/shm": false, "/var/adapter-scratch": false}
+	for _, c := range ops.cleared {
+		if _, ok := want[c]; ok {
+			want[c] = true
+		}
+	}
+	for dir, cleared := range want {
+		if !cleared {
+			t.Errorf("scratch dir %q was not cleared; cleared=%v", dir, ops.cleared)
+		}
+	}
+}
+
+// spec: §5.2 step 4 — a clear-scratch failure fails the scrub.
+func TestRun_ScratchClearErrorFails_spec_5_2_step4(t *testing.T) {
+	ops := newFakeOps()
+	ops.clearErr["/dev/shm"] = errors.New("ebusy")
+	rep, err := Run(context.Background(), ops, Config{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if rep.Result != Failed {
+		t.Fatalf("Result = %v, want Failed", rep.Result)
+	}
+}
+
+// spec: §5.2 steps 3 and 5 — nil env-reset / log-truncate callbacks are
+// recorded skipped and never fail the scrub.
+func TestRun_NilCallbacksSkipped_spec_5_2_steps3_5(t *testing.T) {
+	ops := newFakeOps()
+	rep, err := Run(context.Background(), ops, Config{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, step := range []StepName{StepResetEnv, StepTruncateLogs} {
+		idx := stepIndex(rep, step)
+		if idx < 0 {
+			t.Fatalf("step %q not recorded", step)
+		}
+		if !rep.Steps[idx].Skipped {
+			t.Errorf("step %q not marked skipped with a nil callback", step)
+		}
+	}
+	if rep.Result != Succeeded {
+		t.Fatalf("Result = %v, want Succeeded", rep.Result)
+	}
+}
+
+// spec: §5.2 steps 3 and 5 — a callback that errors fails the scrub.
+func TestRun_CallbackErrorFails_spec_5_2_steps3_5(t *testing.T) {
+	ops := newFakeOps()
+	rep, err := Run(context.Background(), ops, Config{
+		ResetEnv:     func() error { return errors.New("env reset failed") },
+		TruncateLogs: func() error { return nil },
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if rep.Result != Failed {
+		t.Fatalf("Result = %v, want Failed", rep.Result)
+	}
+	if stepErr(rep, StepResetEnv) == nil {
+		t.Errorf("env-reset error not recorded")
+	}
+}
+
+// stepSequence returns the ordered list of step names recorded in a report,
+// so two scrub runs can be compared for an identical step-0-6 sequence.
+func stepSequence(rep *Report) []StepName {
+	seq := make([]StepName, len(rep.Steps))
+	for i, s := range rep.Steps {
+		seq[i] = s.Step
+	}
+	return seq
+}
+
+// spec: §5.2 step 7 (F-5.2.32) — the vm-restart profile no longer runs an
+// in-guest guest-VM restart; scrub.Run executes the identical whole-pod scrub
+// steps 0-6 for every profile and records no step-7 guest_restart record. The
+// retire-and-reprovision that step 7 mandates for a vm-restart pool happens at
+// the gateway recycle boundary, not in this engine. The scrub Config carries
+// no scrub-profile input, so a vm-restart pool and a standard pool drive Run
+// with identical configs; this test pins that Run produces the identical
+// step-0-6 sequence with no guest_restart step, which is the corrected
+// behavior the pre-fix code violated (it appended a guest_restart step and a
+// second verify for a MicrovmRestart config).
+func TestRun_VMRestartRunsIdenticalSteps0To6AsStandard_spec_5_2_step7(t *testing.T) {
+	cfg := Config{
+		CredentialFiles: []string{"/run/lenny/slots/sess-a/credentials.json"},
+		WorkspaceDirs:   []string{"/workspace/slots/sess-1/current"},
+		CleanupDir:      "/workspace/slots/sess-1/current",
+		ScratchDirs:     []string{"/var/adapter-scratch"},
+	}
+
+	// A standard pool and a vm-restart pool both drive Run with the same
+	// profile-agnostic config, because the scrub engine no longer branches on
+	// the profile.
+	standardRep, err := Run(context.Background(), newFakeOps(), cfg)
+	if err != nil {
+		t.Fatalf("Run (standard): %v", err)
+	}
+	vmRestartRep, err := Run(context.Background(), newFakeOps(), cfg)
+	if err != nil {
+		t.Fatalf("Run (vm-restart): %v", err)
+	}
+
+	standardSeq := stepSequence(standardRep)
+	vmRestartSeq := stepSequence(vmRestartRep)
+	if len(standardSeq) != len(vmRestartSeq) {
+		t.Fatalf("step count differs: standard=%v vm-restart=%v", standardSeq, vmRestartSeq)
+	}
+	for i := range standardSeq {
+		if standardSeq[i] != vmRestartSeq[i] {
+			t.Fatalf("step %d differs: standard=%q vm-restart=%q (standard=%v vm-restart=%v)",
+				i, standardSeq[i], vmRestartSeq[i], standardSeq, vmRestartSeq)
+		}
+	}
+
+	// The scrub records exactly steps 0-6 (one verify, no guest_restart) for
+	// both profiles.
+	wantSteps := []StepName{
+		StepCredentialPurge, StepCleanupCommands, StepKillProcesses, StepPurgeIPCShm,
+		StepRemoveWorkspace, StepResetEnv, StepClearScratch, StepTruncateLogs, StepVerify,
+	}
+	for i, want := range wantSteps {
+		if i >= len(vmRestartSeq) || vmRestartSeq[i] != want {
+			t.Fatalf("vm-restart step %d = %v, want %q (seq=%v)", i, stepAt(vmRestartSeq, i), want, vmRestartSeq)
+		}
+	}
+	if len(vmRestartSeq) != len(wantSteps) {
+		t.Fatalf("vm-restart recorded %d steps, want exactly %d (steps 0-6, no step 7): %v",
+			len(vmRestartSeq), len(wantSteps), vmRestartSeq)
+	}
+	verifies := 0
+	for _, s := range vmRestartSeq {
+		if s == StepVerify {
+			verifies++
+		}
+	}
+	if verifies != 1 {
+		t.Fatalf("vm-restart recorded %d verify steps, want 1 (no re-verify after a removed step 7)", verifies)
+	}
+}
+
+// stepAt returns the step name at i, or a sentinel when i is out of range, so
+// a failure message does not panic on a short sequence.
+func stepAt(seq []StepName, i int) StepName {
+	if i < 0 || i >= len(seq) {
+		return "<out-of-range>"
+	}
+	return seq[i]
+}
+
+// A nil Ops is a programming error surfaced as a returned error, not a panic.
+func TestRun_NilOps(t *testing.T) {
+	if _, err := Run(context.Background(), nil, Config{}); err == nil {
+		t.Fatalf("expected an error for nil Ops")
+	}
+}
+
+// spec: §5.2 — cleanupCommands run with the sanitized
+// LENNY_PREV_CREDENTIAL_PROVIDER / LENNY_PREV_LEASE_ID metadata and the
+// minimal §7.5 whitelist, never the credential file.
+func TestCleanupEnv_spec_5_2_424(t *testing.T) {
+	env := CleanupEnv("/workspace", "anthropic", "lease-abc123")
+	want := map[string]bool{
+		"LENNY_PREV_CREDENTIAL_PROVIDER=anthropic": false,
+		"LENNY_PREV_LEASE_ID=lease-abc123":         false,
+		"HOME=/home/agent":                         false,
+	}
+	for _, kv := range env {
+		if _, ok := want[kv]; ok {
+			want[kv] = true
+		}
+		if kv == "LENNY_ADAPTER_SOCKET" {
+			t.Errorf("cleanup env leaked a platform-internal variable: %q", kv)
+		}
+	}
+	for kv, present := range want {
+		if !present {
+			t.Errorf("cleanup env missing %q; env=%v", kv, env)
+		}
+	}
+}
+
+// spec: §5.2 — the credential purge runs before cleanupCommands, so
+// a cleanup command cannot read the just-purged credential file. This drives
+// the real DefaultOps.RemoveAll and the real bounded cleanup executor.
+func TestRun_CredentialPurgedBeforeCleanup_integration_spec_5_2_424(t *testing.T) {
+	dir := t.TempDir()
+	cred := filepath.Join(dir, "credentials.json")
+	if err := os.WriteFile(cred, []byte(`{"token":"secret"}`), 0o600); err != nil {
+		t.Fatalf("seed cred: %v", err)
+	}
+	marker := filepath.Join(dir, "leaked")
+
+	rep, err := Run(context.Background(), killSafeOps{DefaultOps{}}, Config{
+		CredentialFiles: []string{cred},
+		CleanupDir:      dir,
+		// If the credential file still existed, `cat` would succeed and the
+		// shell would create the marker. Step 0 removes it first, so cat
+		// fails and the marker is never written.
+		CleanupCommands: []string{"sh -c 'cat " + cred + " && touch " + marker + "'"},
+		ShellMode:       true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {
+		t.Fatalf("cleanup command read the credential file; marker present (stat err=%v)", statErr)
+	}
+	if _, statErr := os.Stat(cred); !os.IsNotExist(statErr) {
+		t.Fatalf("credential file not purged in step 0")
+	}
+	// cat failed, so the cleanup phase records a failure → scrub Failed.
+	if rep.Result != Failed {
+		t.Fatalf("Result = %v, want Failed (cleanup cat should fail on the purged file)", rep.Result)
+	}
+}
+
+// killSafeOps wraps DefaultOps so the process-kill steps are no-ops in
+// tests: a real kill -9 -1 would terminate the test binary. The filesystem
+// ops fall through to the real DefaultOps so the integration test exercises
+// the actual RemoveAll / PathState code paths.
+type killSafeOps struct{ DefaultOps }
+
+func (killSafeOps) KillUserProcesses(context.Context) error { return nil }
+func (killSafeOps) PurgeIPCShm(context.Context) error       { return nil }
+
+// spec: §5.2 (step 0 purges the credential file before cleanupCommands
+// run; step 2 removes the workspace)
+//
+// The purge is ordered ahead of the deployer's cleanupCommands so that no
+// session's credential file is on disk while third-party code runs as the
+// pod user. Every session on the pod owns its own credential file, so a
+// purge that returned on the first unremovable member would leave the rest
+// of the set in place for exactly that window. Every member is attempted
+// and every failure is reported.
+//
+// diagnosis: the credential purge short-circuits on the first failure
+// again, so one unremovable file shields the rest of the pod's per-session
+// credential files from the purge and they are still on disk while the
+// deployer's cleanup commands run.
+func TestRun_PurgeAttemptsEveryMemberAfterAFailure_spec_5_2(t *testing.T) {
+	ops := newFakeOps()
+	ops.removeErr["/run/lenny/slots/sess-b/credentials.json"] = errors.New("permission denied")
+	ops.removeErr["/workspace/slots/sess-b"] = errors.New("io error")
+	creds := []string{
+		"/run/lenny/slots/sess-a/credentials.json",
+		"/run/lenny/slots/sess-b/credentials.json",
+		"/run/lenny/slots/sess-c/credentials.json",
+	}
+	workspaces := []string{
+		"/workspace/slots/sess-a",
+		"/workspace/slots/sess-b",
+		"/workspace/slots/sess-c",
+	}
+	rep, err := Run(context.Background(), ops, Config{
+		CredentialFiles: creds,
+		WorkspaceDirs:   workspaces,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	for _, want := range append(append([]string{}, creds...), workspaces...) {
+		found := false
+		for _, got := range ops.removed {
+			if got == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s was never attempted; the purge short-circuited on an earlier failure", want)
+		}
+	}
+	for _, step := range []StepName{StepCredentialPurge, StepRemoveWorkspace} {
+		if stepErr(rep, step) == nil {
+			t.Errorf("%s reported no error, want the failing member's error", step)
+		}
+	}
+	if rep.Result != Failed {
+		t.Errorf("scrub result = %v, want %v", rep.Result, Failed)
+	}
+}
+
+// spec: §5.2 (the deployer's cleanupCommands run at the recycle boundary,
+// after every session on the pod has been torn down)
+//
+// Each session's teardown removes that session's slot tree and credential
+// file before the pod scrub runs, so by the time the cleanupCommands run
+// the two slot containers are empty and no slot root exists to run them
+// in. They run with the workspace base as their working directory. This
+// case drives the real cleanup executor and asserts what a deployer's
+// command observes: its own PWD is the base, nothing remains under the
+// base's slots container, and nothing remains under the credential root's
+// slots container.
+//
+// diagnosis: the cleanup working directory was left empty or pointed at
+// one session's slot root, so the deployer's cleanup code runs in a
+// directory that the preceding per-session teardowns already removed, or
+// beside another session's residue.
+func TestRun_CleanupRunsInTheWorkspaceBaseWithNoSlotResidue_spec_5_2(t *testing.T) {
+	base := t.TempDir()
+	credRoot := t.TempDir()
+	// The per-session teardowns have already run, so both containers exist
+	// and hold nothing.
+	if err := os.MkdirAll(filepath.Join(base, "slots"), 0o700); err != nil {
+		t.Fatalf("seed workspace slots container: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(credRoot, "slots"), 0o700); err != nil {
+		t.Fatalf("seed credential slots container: %v", err)
+	}
+
+	observed := filepath.Join(t.TempDir(), "observed")
+	rep, err := Run(context.Background(), newFakeOps(), Config{
+		CleanupDir: base,
+		CleanupCommands: []string{
+			"sh -c 'pwd > " + observed + "; ls " + filepath.Join(base, "slots") +
+				" >> " + observed + " 2>&1; ls " + filepath.Join(credRoot, "slots") +
+				" >> " + observed + " 2>&1'",
+		},
+		ShellMode: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if rep.Result != Succeeded {
+		t.Fatalf("Result = %v, want Succeeded: %+v", rep.Result, rep.Steps)
+	}
+
+	out, readErr := os.ReadFile(observed)
+	if readErr != nil {
+		t.Fatalf("cleanup command wrote no observation: %v", readErr)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if lines[0] != base {
+		t.Errorf("cleanup PWD = %q, want the workspace base %q", lines[0], base)
+	}
+	for _, residue := range lines[1:] {
+		if residue != "" {
+			t.Errorf("cleanup observed slot residue %q; every session's teardown precedes the pod scrub", residue)
+		}
+	}
+}

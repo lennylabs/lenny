@@ -1,0 +1,5 @@
+package carrier
+
+// This slice is the canonical enumeration §17.2
+// Lines 40-41 the inventory cross-checks against.
+const Name = "carrier"

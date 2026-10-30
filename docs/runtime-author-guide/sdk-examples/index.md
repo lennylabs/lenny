@@ -8,33 +8,35 @@ has_children: true
 
 # Runtime SDK Examples
 
-This section provides complete, runnable runtime implementations in Go, Python, and TypeScript. Each example implements the same agent: a **file summarizer** that reads workspace files and produces summaries using an LLM.
+This section provides complete, runnable `type: agent` runtime implementations in Go, Python, and TypeScript. Each example implements the same runtime, a file summarizer that reads workspace files and returns their contents in a single summary response. The examples speak the adapter binary protocol directly, so they show the protocol the [runtime SDKs](../runtime-sdk.md) wrap. The integration-level model these pages follow applies to `type: agent` runtimes; `type: mcp` runtimes host an MCP server and do not use the stdin/stdout contract, as described in [Integration Levels](../integration-levels.md).
+
+Read the pages in the order Go, Python, and TypeScript. Each is self-contained, so a reader who wants one language can read that page alone.
 
 ---
 
-## The File Summarizer Runtime
+## The file summarizer runtime
 
 All three examples implement the same behavior:
 
 1. **Receive a message** asking to summarize workspace files.
-2. **Read files** from the workspace using the `read_file` adapter-local tool.
-3. **Produce a summary** as a `response` on stdout.
-4. **Handle heartbeats** by immediately writing `heartbeat_ack`.
+2. **Read files** from the workspace using the `list_dir` and `read_file` adapter-local tools.
+3. **Produce a summary** as a `response` on stdout, carrying the `sessionId` the inbound `message` was addressed with. The examples concatenate truncated file contents; a production summarizer would pass the contents to an LLM.
+4. **Handle heartbeats** by immediately writing `heartbeat_ack`. While a message is in progress, the acknowledgement of a heartbeat that names the message's session carries that `sessionId` and `busy: true`. If no acknowledgment arrives within 10 seconds, the adapter treats the runtime as hung for the session the heartbeat names: it ends the session's stream to the gateway when one is open and refuses each later stream for the session until the adapter releases the session, and the runtime process receives no signal. The gateway handles the session as a runtime crash under its retry policy. A runtime reports `busy: true` with the heartbeat's `sessionId` on its `heartbeat_ack` while it does any work for the session the heartbeat names, as in `{"type":"heartbeat_ack","sessionId":"sess_abc","busy":true}`. The runtime SDKs do this while a message for the session is pending or being handled and while a busy hold (`HoldBusy` in Go, `hold_busy` in Python, `holdBusy` in TypeScript) is held. Work after a handler returns that takes no hold, including the rest of a streaming turn whose reply is not yet final, is not reported. Without a report, the adapter counts only the following traffic as activity for a session: each frame it writes to the runtime for the session other than `heartbeat` and `session_end`; each `message`, `tool_call`, `tool_result`, `response`, `set_tracing_context`, or `status` frame it reads from the runtime that names the session, or that carries no `sessionId` on a pod holding at most one [slot](../../reference/glossary#slot); each CH-RUNTIMEOPS `llm_request_completed` that names the session; and each platform or connector MCP tool call for the session while it is in flight. When the gateway's idle clock (`maxClientIdleSeconds`, default 900s) fires for a session, the adapter seals the session only when it had none of that activity and no `busy` report in the window, and the gateway then idle-suspends the session and releases its pod or slot. See [Idle suspension](../lifecycle.md#idle-suspension).
 5. **Handle shutdown** by exiting cleanly.
 
-The examples start at the Basic integration level (stdin/stdout only) and include guidance for upgrading to Standard (adding MCP tools).
+The examples start at the Basic integration level (stdin/stdout only) and include guidance for upgrading to Standard, which adds the platform MCP tools.
 
 ---
 
-## Language Choice Guidance
+## Language choice
 
-| Language | Best For | Basic Level Complexity | Standard Level Complexity |
-|----------|----------|------------------------|-------------------------|
-| **Go** | Systems programming, high-performance runtimes, production agents | ~100 lines | ~200 lines + `mcp-go` dependency |
-| **Python** | Rapid prototyping, ML/AI integrations, wrapping existing frameworks | ~80 lines | ~150 lines + `mcp` dependency |
-| **TypeScript** | Web-oriented agents, Node.js ecosystem integrations | ~90 lines | ~180 lines + `@modelcontextprotocol/sdk` dependency |
+| Language | Suited to | Basic level | Standard level |
+|----------|-----------|-------------|----------------|
+| **Go** | Systems programming, high-performance runtimes, production agents | around 100 lines, standard library only | adds the `mcp-go` dependency |
+| **Python** | Rapid prototyping, ML and AI integrations, wrapping existing frameworks | around 80 lines, standard library only | adds the `mcp` dependency |
+| **TypeScript** | Web-oriented agents, Node.js ecosystem integrations | around 90 lines, standard library only | adds the `@modelcontextprotocol/sdk` dependency |
 
-All three languages work equally well with Lenny. The adapter contract is language-agnostic --- if your language can read lines from stdin and write lines to stdout, it works.
+The adapter contract is language-agnostic. Any language that can read lines from stdin and write lines to stdout can implement a runtime, so the line counts above are approximate and reflect the example code rather than a requirement.
 
 ---
 
@@ -44,6 +46,7 @@ Each example covers:
 
 ### Basic level (complete)
 - Message handling with file reading via `tool_call`/`tool_result`
+- Echoing the inbound `sessionId` on every session-scoped frame emitted in response
 - Heartbeat/shutdown handling
 - Proper stdout flushing
 - Complete `go.mod`/`requirements.txt`/`package.json`
@@ -52,7 +55,7 @@ Each example covers:
 
 ### Standard level (upgrade guide)
 - Reading the adapter manifest
-- Connecting to Lenny's local tool server
+- Connecting to the platform MCP server
 - Using `lenny/output` for incremental streaming
 - Using `lenny/delegate_task` for subtask delegation
 

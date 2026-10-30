@@ -13,7 +13,9 @@ package chaos
 
 import (
 	"errors"
+	"fmt"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 )
@@ -81,14 +83,112 @@ func injectViaToxiproxy(t testing.TB, target string, latency time.Duration) func
 
 func injectViaChaosMesh(t testing.TB, target string, latency time.Duration) func() {
 	t.Helper()
-	t.Logf("chaos.LatencyFault via chaos-mesh: %s latency on %q (placeholder; applies a NetworkChaos CR)", latency, target)
-	// Real implementation applies a NetworkChaos manifest via
-	// kubectl apply -f -. The CR shape is documented at
-	// https://chaos-mesh.org/docs/define-network-chaos/. For Phase
-	// 0 we emit a log and return a no-op cleanup; the test that
-	// drives this still skips via SkipUnlessAvailable when the CRDs
-	// aren't present.
-	return func() {}
+	namespace, app, err := parseChaosMeshTarget(target)
+	if err != nil {
+		t.Fatalf("chaos.LatencyFault chaos-mesh target %q: %v", target, err)
+	}
+	name := chaosResourceName("lenny-latency", app)
+	manifest := networkChaosLatencyManifest(name, namespace, app, latency)
+	if err := kubectlApply(manifest); err != nil {
+		t.Fatalf("chaos.LatencyFault apply NetworkChaos: %v", err)
+	}
+	return func() { _ = kubectlDelete("networkchaos", namespace, name) }
+}
+
+// parseChaosMeshTarget parses the "<namespace>/<app-label>" target
+// shape callers pass to LatencyFault and PartitionService. The
+// chaos-mesh selector picks pods by `app=<app-label>` inside the
+// supplied namespace, matching the convention the §12.8 chaos
+// scenarios use.
+func parseChaosMeshTarget(target string) (namespace, app string, err error) {
+	parts := strings.SplitN(target, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", fmt.Errorf("target must be <namespace>/<app-label>, got %q", target)
+	}
+	return parts[0], parts[1], nil
+}
+
+// chaosResourceName builds a chaos-resource name that is stable per
+// app label so retries against the same target overwrite rather than
+// accumulating. A timestamp suffix would be a better differentiator
+// when two faults overlap, but the §12.8 scenarios inject one fault
+// at a time so the stable name is sufficient and simpler to clean
+// up after a test crash.
+func chaosResourceName(prefix, app string) string {
+	return prefix + "-" + app
+}
+
+// networkChaosLatencyManifest renders the §12.8 latency-injection
+// CR. The manifest applies to every pod under `app=<app>` in the
+// supplied namespace and adds the documented latency to every TCP
+// packet. The duration field is intentionally omitted so the fault
+// stays in place until the cleanup deletes the CR; the test owns
+// the lifetime via the returned cleanup func.
+func networkChaosLatencyManifest(name, namespace, app string, latency time.Duration) string {
+	return fmt.Sprintf(`apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  action: delay
+  mode: all
+  selector:
+    namespaces:
+      - %s
+    labelSelectors:
+      app: %s
+  delay:
+    latency: "%s"
+`, name, namespace, namespace, app, latency)
+}
+
+// networkChaosPartitionManifest renders the §12.8 network-partition
+// CR. The manifest drops bidirectional traffic to every pod under
+// `app=<app>` in the supplied namespace. The duration is honored by
+// the controller; the cleanup deletes the CR early in case the test
+// finishes before the duration expires.
+func networkChaosPartitionManifest(name, namespace, app string, duration time.Duration) string {
+	return fmt.Sprintf(`apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  action: partition
+  mode: all
+  direction: both
+  selector:
+    namespaces:
+      - %s
+    labelSelectors:
+      app: %s
+  duration: "%s"
+`, name, namespace, namespace, app, duration)
+}
+
+// kubectlApply pipes manifest to `kubectl apply -f -` and returns
+// the combined output on failure.
+func kubectlApply(manifest string) error {
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(manifest)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("kubectl apply: %v\n%s", err, out)
+	}
+	return nil
+}
+
+// kubectlDelete deletes a chaos-mesh resource. Errors are swallowed
+// (best-effort cleanup) because cleanup runs in t.Cleanup and the
+// test should not fail on a cleanup race with the controller.
+func kubectlDelete(kind, namespace, name string) error {
+	cmd := exec.Command("kubectl", "-n", namespace, "delete", kind, name, "--ignore-not-found")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("kubectl delete %s/%s: %v\n%s", namespace, name, err, out)
+	}
+	return nil
 }
 
 // KillPod kills a pod matching the label selector via `kubectl
@@ -121,6 +221,14 @@ func PartitionService(t testing.TB, target string, duration time.Duration) func(
 			_, _ = rm.CombinedOutput()
 		}
 	}
-	t.Logf("chaos.PartitionService via chaos-mesh: partition %q for %s (placeholder)", target, duration)
-	return func() {}
+	namespace, app, err := parseChaosMeshTarget(target)
+	if err != nil {
+		t.Fatalf("chaos.PartitionService chaos-mesh target %q: %v", target, err)
+	}
+	name := chaosResourceName("lenny-partition", app)
+	manifest := networkChaosPartitionManifest(name, namespace, app, duration)
+	if err := kubectlApply(manifest); err != nil {
+		t.Fatalf("chaos.PartitionService apply NetworkChaos: %v", err)
+	}
+	return func() { _ = kubectlDelete("networkchaos", namespace, name) }
 }

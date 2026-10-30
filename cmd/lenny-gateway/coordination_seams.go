@@ -1,0 +1,368 @@
+// SPDX-License-Identifier: MIT
+
+package main
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+)
+
+// coordinationBindings adapts the per-replica podsession registry and the pod
+// executor to the coordination.BindingRegistry the §10.1 lease Sweeper
+// consumes. It keeps the coordination lease co-located with the live pod
+// binding: the Sweeper renews the lease only for the sessions this replica
+// binds. It evicts a bound session's binding on two triggers. On a bound
+// session whose held gateway-to-pod channel has died it evicts the binding and
+// releases the lease so a subsequent sweep re-adopts the still-running pod
+// before its §10.1 hold-state self-termination. On a bound session a peer
+// replica has taken over (the lease is held elsewhere and the row's
+// coordination_generation has advanced past the generation stamped on this
+// replica's binding, which BindingGeneration reports) it evicts the binding and
+// writes no lease, so this replica stops coordinating a session it no longer
+// owns.
+//
+// The collaborators (the podsession registry and the executor) are constructed
+// in later composition-root build steps than the Sweeper, so this adapter reads
+// them off the accumulator at call time rather than capturing them at
+// construction. The Sweeper's Run loop starts only after the whole composition
+// root is wired, so both are populated by the first sweep.
+//
+// spec: §4.6.1 (coordinating replica holds the lease), §10.1 (per-session
+// coordination lease; hold state on connection loss), §10.1.1, §10.1.5 (a
+// replica that is no longer the coordinator discards its cached streams), §4.7
+// (single content consumer per session / Attach content stream).
+type coordinationBindings struct {
+	w *gatewayWiring
+}
+
+// streamEvicter is the executor seam the dead-connection eviction calls to drop
+// the session's cached Attach stream. *executor.PodExecutor satisfies it; the
+// echo/subprocess executors do not, and a dead-connection eviction on those is
+// a no-op because they hold no pod binding for the Sweeper to renew.
+type streamEvicter interface {
+	EvictStream(sessionID string)
+}
+
+// Bound reports whether this replica holds a live pod binding for the session.
+func (c coordinationBindings) Bound(sessionID string) bool {
+	if c.w.podRegistry == nil {
+		return false
+	}
+	_, ok := c.w.podRegistry.Get(sessionID)
+	return ok
+}
+
+// ConnAlive reports whether the bound session's held gateway-to-pod gRPC
+// channel is still live. It is consulted only for a bound session. A binding
+// with no live adapter (a channel in TransientFailure or Shutdown, or a missing
+// adapter) reports dead, so the Sweeper surfaces the lease for re-adoption
+// instead of pinning it to a replica that can no longer reach the pod.
+func (c coordinationBindings) ConnAlive(sessionID string) bool {
+	if c.w.podRegistry == nil {
+		return false
+	}
+	bind, ok := c.w.podRegistry.Get(sessionID)
+	if !ok || bind.Adapter == nil {
+		return false
+	}
+	return bind.Adapter.Alive()
+}
+
+// EvictBinding drops the session's binding from the podsession registry and the
+// executor's cached Attach stream in one call. Dropping the cached stream is
+// required because the executor consults its stream cache before the registry,
+// so a registry-only eviction would let a same-replica re-adopt keep serving
+// over the stale dead cached stream instead of Attaching over the freshly
+// published binding. It then closes the removed binding's adapter connection:
+// on both Sweeper triggers (a dead held channel, and a peer takeover) nothing
+// on this replica reaches the pod over it again, and a dropped connection that
+// is never closed leaks its gRPC channel and background goroutines. Only the
+// binding Remove returned is closed, so a concurrent evictor that removed it
+// first is the one that closes it, and each connection is closed once.
+// spec: §4.7 (single content consumer per session), §10.1, §10.1.1 (Stateless
+// Replicas and Per-Session Coordination), §10.1.5 (Stale Replica Behavior).
+func (c coordinationBindings) EvictBinding(sessionID string) {
+	var removed *podsession.BindResult
+	if c.w.podRegistry != nil {
+		if b, ok := c.w.podRegistry.Remove(sessionID); ok {
+			removed = b
+		}
+	}
+	if se, ok := c.w.exec.(streamEvicter); ok {
+		se.EvictStream(sessionID)
+	}
+	if err := removed.CloseAdapter(); err != nil {
+		slog.Warn("lenny-gateway: close evicted adapter connection", "session_id", sessionID, "error", err)
+	}
+}
+
+// BindingGeneration returns the coordination_generation stamped on the
+// session's current binding, or 0 when this replica binds no pod for the
+// session. Every site that publishes a binding stamps it first, so the Sweeper
+// compares a peer's generation with the generation this binding was published
+// at. spec: §10.1.1 (Stateless Replicas and Per-Session Coordination), §10.1.5
+// (Stale Replica Behavior).
+func (c coordinationBindings) BindingGeneration(sessionID string) int64 {
+	if c.w.podRegistry == nil {
+		return 0
+	}
+	bind, ok := c.w.podRegistry.Get(sessionID)
+	if !ok {
+		return 0
+	}
+	return bind.CoordinationGeneration
+}
+
+// readoptDialer re-opens the §4.7 adapter connection to a still-running pod on
+// the crash-takeover edge, without the §15.5 version handshake, so the caller
+// can send CoordinatorFence as the first RPC. *podsession.Binder satisfies it
+// through ReadoptConnect.
+type readoptDialer interface {
+	ReadoptConnect(ctx context.Context, sandboxName string) (*lennyv1.Sandbox, *adapterclient.Client, error)
+}
+
+// readoptFencer announces the session's coordination_generation to the
+// re-adopted pod. sessionserver.CoordinationFencer (a *coordfence.Fencer)
+// satisfies it. It returns relinquished=true only when it released the
+// coordination lease itself on a terminal fence failure (the retry budget was
+// exhausted or the pod is fenced to a higher generation). A best-effort fence
+// failure — a coordination_generation read error or a context cancellation —
+// returns relinquished=false with the lease still held, and the caller
+// releases it so the lapse surfaces for re-adoption. spec: §10.1, §11.3.
+type readoptFencer interface {
+	Fence(ctx context.Context, adapter *adapterclient.Client, tenantID, sessionID string) (relinquished bool, err error)
+}
+
+// leaseReleaser releases the coordination lease this replica holds for a
+// session. leasestore.LeaseStore satisfies it through Release. The re-adopt
+// releases the lease itself on every re-adopt failure that leaves it held: a
+// session-row read fault, a pod dial fault, or a best-effort fence fault the
+// Fencer did not relinquish. Only a terminal fence failure arrives with the
+// lease already relinquished. Releasing the still-held lease surfaces its lapse
+// for a subsequent sweep to re-adopt the still-running pod rather than pinning
+// the lease to a replica that never established the serving binding.
+// spec: §10.1 (relinquish-and-backoff; hold state on connection loss).
+type leaseReleaser interface {
+	Release(ctx context.Context, tenantID, sessionID, holder string) error
+}
+
+// readoptPublisher places the re-established BindResult into the shared
+// per-replica registry. *podsession.Registry satisfies it through Put.
+type readoptPublisher interface {
+	Put(b *podsession.BindResult)
+}
+
+// sandboxNameReader resolves the persisted SandboxName that names the
+// still-running pod to re-adopt. sessionstore.Store satisfies it through Get.
+type sandboxNameReader interface {
+	Get(ctx context.Context, tenantID, id string) (sessionstore.Session, error)
+}
+
+// readoptPoolResolver resolves the pool of the session a takeover re-adopts, so
+// the published binding carries the slot, recycle, and scrub fields every
+// release dispatches on. poolResolver satisfies it in production.
+type readoptPoolResolver interface {
+	ResolveReadoptPool(ctx context.Context, row sessionstore.Session) (podsession.PoolMatch, error)
+}
+
+// poolResolver resolves a re-adopted session's pool against the warm-pool
+// CRDs and the §5.2 sessionPolicy mirror, pinned to the pool the gateway
+// placed the session on (row.PoolRef). The client pin row.Pool is never used:
+// the session already runs on a resolved pool, and the binding must describe
+// that pool. spec: §5.2 (Pool Configuration and Execution Modes), §10.1.2
+// (Coordinator Handoff Protocol).
+type poolResolver struct {
+	reader    client.Reader
+	policy    podsession.PoolPolicyReader
+	namespace string
+}
+
+// ResolveReadoptPool implements readoptPoolResolver.
+func (p poolResolver) ResolveReadoptPool(ctx context.Context, row sessionstore.Session) (podsession.PoolMatch, error) {
+	return podsession.ResolvePool(ctx, p.reader, p.policy, p.namespace,
+		row.RuntimeRef, string(row.IsolationProfile), row.PoolRef)
+}
+
+// coordinationReadopter adapts the podsession Binder's fence-first re-adopt
+// entry point, the reused §10.1 coordfence Fencer, and the podsession registry
+// to the coordination.Readopter the Sweeper drives on the crash-takeover edge.
+// On a successful Acquire that changed the holder to this replica for a
+// still-running-pod session it does not bind, the Sweeper bumps
+// coordination_generation and calls ReadoptAndFence to re-establish the serving
+// binding on this replica.
+//
+// The collaborators are read off the accumulator at call time (the same reason
+// as coordinationBindings): they are constructed in later build steps than the
+// Sweeper, and the Sweeper's Run loop starts only after the whole composition
+// root is wired.
+//
+// spec: §10.1 (coordinator handoff re-adopts the still-running pod;
+// CoordinatorFence is the first RPC; no operational RPC before the fence
+// acknowledges), §4.7 (Attach content stream stays lazy).
+type coordinationReadopter struct {
+	w *gatewayWiring
+}
+
+// ReadoptAndFence re-establishes the serving binding on this replica after the
+// Sweeper's crash-takeover Acquire. The Fencer re-reads the generation the
+// Sweeper bumped from the session row; generation, the value RecordHandoff
+// returned, is stamped on the published binding so a later stream-failure
+// report can tell whether a peer has since taken the session over. A nil
+// collaborator fails closed so the Sweeper publishes no binding it cannot
+// back and a peer replica that has the seams re-adopts the pod.
+// spec: §10.1.1, §10.1.5.
+func (r coordinationReadopter) ReadoptAndFence(ctx context.Context, tenantID, sessionID string, generation int64) (func(), error) {
+	if r.w.f == nil || r.w.podBinder == nil || r.w.podBinder.Client == nil || r.w.podRegistry == nil || r.w.coordFencer == nil || r.w.sessions == nil || r.w.coordLeaseStore == nil {
+		return nil, fmt.Errorf("gateway: crash-takeover re-adopt seams not wired for session %s", sessionID)
+	}
+	pools := poolResolver{
+		reader:    r.w.podBinder.Client,
+		policy:    sessionserver.NewPoolPolicyReader(r.w.pools),
+		namespace: *r.w.f.agentNamespace,
+	}
+	return readoptAndFence(ctx, readoptSeams{
+		dialer:   r.w.podBinder,
+		fencer:   r.w.coordFencer,
+		registry: r.w.podRegistry,
+		sessions: r.w.sessions,
+		releaser: r.w.coordLeaseStore,
+		pools:    pools,
+	}, tenantID, sessionID, r.w.coordHolder, generation)
+}
+
+// readoptSeams groups the collaborators readoptAndFence drives.
+type readoptSeams struct {
+	dialer   readoptDialer
+	fencer   readoptFencer
+	registry readoptPublisher
+	sessions sandboxNameReader
+	releaser leaseReleaser
+	pools    readoptPoolResolver
+}
+
+// releaseAfterReadoptFailure relinquishes the coordination lease the Sweeper
+// acquired for the crash-takeover after a re-adopt failure that left the lease
+// held: a session-row read fault, a pod dial fault, or a best-effort fence
+// fault the Fencer did not relinquish. Releasing it surfaces the lease lapse
+// for a subsequent sweep to re-adopt the still-running pod rather than pinning
+// the lease to a replica that never fenced it. It returns the triggering error
+// and, when the release itself faults, appends the release error so the
+// fail-closed lapse is not lost silently.
+// spec: §10.1 (relinquish-and-backoff; hold state on connection loss).
+func releaseAfterReadoptFailure(ctx context.Context, releaser leaseReleaser, tenantID, sessionID, holder string, cause error) error {
+	if rerr := releaser.Release(ctx, tenantID, sessionID, holder); rerr != nil {
+		return fmt.Errorf("%w; release still-held lease: %v", cause, rerr)
+	}
+	return cause
+}
+
+// readoptAndFence resolves the session's pool, dials the still-running pod,
+// fences it as the first RPC, and returns a publish callback the Sweeper
+// invokes only after the fence acknowledges. Every failure closes any dialed
+// connection, publishes no binding, and returns the error, so the Sweeper
+// records a per-session adoption backoff. On every failure that leaves the
+// coordination lease held — the session-row read fault, the pool-resolve
+// fault, and the pod dial fault (all before the fence),
+// and a best-effort fence fault the Fencer did not relinquish — this releases
+// the lease itself. Only a terminal fence failure arrives with the lease
+// already relinquished (relinquish-and-backoff, relinquished=true), so on that
+// one path this closes the connection without a redundant release. Releasing
+// the still-held lease is what surfaces its lapse for a subsequent sweep to
+// re-adopt the still-running pod; without it the lease pins to this replica,
+// which never established the serving binding, the next sweep renews it
+// forever, and the fenced-by-nothing pod self-terminates in its §10.1 hold
+// state at 120s with no recovery. Publishing only after the acknowledgement
+// honors the §10.1 precondition that no operational RPC (the executor's first
+// Attach) reaches the pod until the fence acknowledges; the held connection
+// keeps the pod continuously coordinated so it does not re-enter hold state.
+// The published binding carries generation, the coordination_generation the
+// takeover's RecordHandoff wrote.
+// spec: §10.1 (relinquish-and-backoff; hold state on connection loss), §11.3,
+// §4.7, §10.1.5.
+func readoptAndFence(ctx context.Context, seams readoptSeams, tenantID, sessionID, holder string, generation int64) (func(), error) {
+	releaser := seams.releaser
+	row, err := seams.sessions.Get(ctx, tenantID, sessionID)
+	if err != nil {
+		// A pre-fence failure leaves the lease the Sweeper acquired held by
+		// this replica; release it so its lapse surfaces for a subsequent
+		// re-adopt rather than pinning the lease to a replica that never fenced
+		// the pod. spec: §10.1 (relinquish-and-backoff).
+		return nil, releaseAfterReadoptFailure(ctx, releaser, tenantID, sessionID, holder,
+			fmt.Errorf("gateway: read session %s for crash-takeover re-adopt: %w", sessionID, err))
+	}
+	// Resolve the pool before the dial, pinned to the pool the session was
+	// placed on, so the published binding carries the fields every release
+	// dispatches on. A resolve error publishes nothing and releases the lease.
+	// spec: §5.2 (Pool Configuration and Execution Modes), §10.1.2
+	// (Coordinator Handoff Protocol).
+	match, err := seams.pools.ResolveReadoptPool(ctx, row)
+	if err != nil {
+		return nil, releaseAfterReadoptFailure(ctx, releaser, tenantID, sessionID, holder,
+			fmt.Errorf("gateway: resolve pool %q for crash-takeover re-adopt of session %s: %w", row.PoolRef, sessionID, err))
+	}
+	// Dial the pod without the §15.5 version handshake so CoordinatorFence is
+	// the first RPC to the hold-state pod.
+	sb, adapter, err := seams.dialer.ReadoptConnect(ctx, row.PodAssignment)
+	if err != nil {
+		// The dial failed before the fence, so the Fencer never ran to
+		// relinquish the lease; release the still-held lease here for the same
+		// reason as the row-read failure above.
+		// spec: §10.1 (relinquish-and-backoff).
+		return nil, releaseAfterReadoptFailure(ctx, releaser, tenantID, sessionID, holder,
+			fmt.Errorf("gateway: re-adopt dial for session %s: %w", sessionID, err))
+	}
+	// Fence as the first RPC. On any fence error close the connection and
+	// report it so the Sweeper backs off and publishes no binding. A terminal
+	// failure (relinquished) already released the lease; a best-effort failure
+	// (a coordination_generation read error or a context cancellation) leaves
+	// the lease held, so release it here so its lapse surfaces for a subsequent
+	// re-adopt. spec: §10.1 (relinquish-and-backoff), §11.3.
+	relinquished, ferr := seams.fencer.Fence(ctx, adapter, tenantID, sessionID)
+	if ferr != nil {
+		_ = adapter.Close()
+		cause := fmt.Errorf("gateway: re-adopt fence for session %s: %w", sessionID, ferr)
+		if relinquished {
+			return nil, cause
+		}
+		return nil, releaseAfterReadoptFailure(ctx, releaser, tenantID, sessionID, holder, cause)
+	}
+	bind := readoptBinding(row, match, sb.Status.PodIP, adapter, generation)
+	return func() { seams.registry.Put(bind) }, nil
+}
+
+// readoptBinding builds the serving binding a takeover publishes for a
+// re-adopted pod. Every release (Binder.Release or Binder.ReleaseSlot)
+// dispatches on the binding alone, so it carries the slot and the §5.2
+// recycle and scrub fields the resume path copies onto its request
+// (checkpointResumeRequest): a concurrent-workspace pool's binding is a slot
+// keyed by the session ID, and an exclusive pool's binding has no slot. The
+// generation is the one the takeover's compare-and-swap wrote.
+// spec: §5.2 (Pool Configuration and Execution Modes), §10.1.2 (Coordinator
+// Handoff Protocol), §10.1.5 (Stale Replica Behavior).
+func readoptBinding(row sessionstore.Session, match podsession.PoolMatch, podIP string, adapter *adapterclient.Client, generation int64) *podsession.BindResult {
+	bind := &podsession.BindResult{
+		SessionID:             row.ID,
+		TenantID:              row.TenantID,
+		SandboxName:           row.PodAssignment,
+		PodIP:                 podIP,
+		Adapter:               adapter,
+		Recycle:               match.Recycle,
+		CleanupCommands:       match.CleanupCommands,
+		CleanupTimeoutSeconds: match.CleanupTimeoutSeconds,
+
+		CoordinationGeneration: generation,
+	}
+	if match.MaxConcurrentSessions > 1 {
+		bind.SlotID = row.ID
+	}
+	return bind
+}

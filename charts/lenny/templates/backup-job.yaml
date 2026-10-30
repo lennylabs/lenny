@@ -1,0 +1,261 @@
+{{- /*
+The lenny-backup ServiceAccount, its RBAC envelope, and the opt-in
+on-demand backup Job (§17.1 row 17; §25.11 "Job Pod Specification"; §25).
+
+lenny-ops creates transient lenny-backup Jobs on demand to run Postgres
+and MinIO backup, restore, and verification (§25.11). Those Jobs run
+under the dedicated lenny-backup-sa ServiceAccount, distinct from
+lenny-ops-sa: §25 narrows its K8s API access to get/list on CRDs in the
+cluster and get on ConfigMaps in the release namespace, with no Pod,
+Deployment, or Secret read access. The ServiceAccount and its bindings
+are part of the §17.8.5 mandatory core inventory, so they render in
+every install regardless of tier; the core_deployment_inventory test
+fail-closes on their absence.
+
+The Job itself is opt-in via backups.onDemand.enabled so a stock render
+emits no Job (a chart-rendered Job runs on every helm upgrade, which a
+backup must not). When enabled, it runs the lenny-backup image with the
+§25.11 Job Pod Specification: restartPolicy Never, backoffLimit 3,
+ttlSecondsAfterFinished 3600 (one hour for kubectl describe), and
+activeDeadlineSeconds 7200 (two-hour hard deadline). lenny-ops remains
+the production Job factory for scheduled runs against ops_backup_schedule;
+this template is the operator-triggerable on-demand form with the same
+identity and pod security posture.
+*/ -}}
+{{- /* §12.5 — when the self-managed MinIO serving cert is issued by a CA
+   outside the system trust store, the operator names a ConfigMap (key
+   ca.crt) via minio.tls.caBundleConfigMap; the gateway and the
+   bucket-lifecycle Job already mount it and point SSL_CERT_DIR at it so
+   their MinIO clients verify the endpoint against it in addition to the
+   system roots (§12.5 "TLS: MinIO connections MUST use TLS"). The backup
+   Job mirrors that mount so its own MinIO client can complete the same
+   handshake. */ -}}
+{{- $minio := .Values.minio | default dict -}}
+{{- $minioTLS := $minio.tls | default dict -}}
+{{- $minioCABundle := default "" $minioTLS.caBundleConfigMap -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lenny-backup-sa
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: backup
+---
+{{/*
+The cluster-scoped read on CRDs: the backup flow exports the CRD
+manifests and the lenny.dev custom resources (runtimes, pools, tenants)
+as part of the platform-configuration snapshot (§25.11 backup flow steps
+2-3). get/list only — no write, and no access to Pods, Deployments, or
+Secrets.
+*/ -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lenny-backup
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: backup
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list"]
+  - apiGroups: ["lenny.dev"]
+    resources: ["*"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: lenny-backup
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: backup
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lenny-backup
+subjects:
+  - kind: ServiceAccount
+    name: lenny-backup-sa
+    namespace: {{ .Release.Namespace }}
+---
+{{/*
+The release-namespace ConfigMap read (§25: "get on ConfigMaps
+in lenny-system"). The release namespace is lenny-system by default; the
+Role is scoped to it so the backup resolves platform configuration from
+the bundled ConfigMaps without any Secret access.
+*/ -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lenny-backup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: backup
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lenny-backup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: backup
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: lenny-backup
+subjects:
+  - kind: ServiceAccount
+    name: lenny-backup-sa
+    namespace: {{ .Release.Namespace }}
+{{- with .Values.backups.onDemand }}
+{{- if .enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lenny-backup
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+    lenny.dev/component: backup
+spec:
+  # §25.11 Job Pod Specification — Job-level retry, post-mortem TTL, and
+  # the two-hour hard deadline.
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 3600
+  activeDeadlineSeconds: 7200
+  template:
+    metadata:
+      labels:
+        {{- include "lenny.labels" $ | nindent 8 }}
+        lenny.dev/component: backup
+        # §25.11 "Backup Job NetworkPolicy": the lenny-backup-job
+        # NetworkPolicy podSelector matches app: lenny-backup. The
+        # on-demand backup Job runs the lenny-backup image, so its pod
+        # template carries this label to get the Postgres/MinIO/K8s API/
+        # DNS egress the policy grants under the namespace-wide
+        # default-deny-all.
+        app: lenny-backup
+    spec:
+      serviceAccountName: lenny-backup-sa
+      {{- include "lenny.imagePullSecrets" $ | nindent 6 }}
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backup
+          image: {{ include "lenny.componentImage" (dict "root" $ "name" "lenny-backup" "image" $.Values.backups.image) | quote }}
+          imagePullPolicy: {{ $.Values.backups.image.pullPolicy }}
+          args:
+            - --mode={{ .mode | default "full" }}
+            - --backup-id=$(LENNY_BACKUP_ID)
+            {{- /* §25.11 step-2 config export reads the lenny-bootstrap-values
+                   ConfigMap in the release namespace through the lenny-backup-sa
+                   get-on-ConfigMaps grant; pass the namespace so the read
+                   targets it. */}}
+            - --namespace={{ $.Release.Namespace }}
+            {{- /* §25.11 step-1/2: full and postgres modes pg_dump the shard;
+                   config mode does not pg_dump but still needs the shard DSN
+                   so the config export can SELECT tenants/quotas/runtimes/pools
+                   through the read-only lenny-backup role (SEC-BACKUP-1). A
+                   config-only run without the shard DSN would export an empty
+                   config archive, the very defect SEC-BACKUP-1 closes. */}}
+            {{- if or (eq (.mode | default "full") "full") (eq (.mode | default "full") "postgres") (eq (.mode | default "full") "config") }}
+            - --postgres-shard=$(LENNY_BACKUP_POSTGRES_DSN)
+            {{- end }}
+            {{- /* §25.11 Sensitive Content Policy — forward the
+                   content-policy and encryption selections from
+                   backups.contentPolicy / backups.encryption so the
+                   on-demand Job honors the same policy the lenny-ops Job
+                   factory applies. */ -}}
+            {{- if $.Values.backups.contentPolicy.includeSensitiveTables }}
+            - --include-sensitive-tables
+            {{- end }}
+            {{- range $.Values.backups.contentPolicy.excludeTables }}
+            - --exclude-table={{ . }}
+            {{- end }}
+            {{- range $.Values.backups.contentPolicy.redactColumns }}
+            - --redact-column={{ . }}
+            {{- end }}
+            {{- if $.Values.backups.encryption.kmsKeyId }}
+            - --kms-key-id=$(LENNY_BACKUP_KMS_KEY_ID)
+            {{- end }}
+            {{- range .extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          env:
+            - name: LENNY_BACKUP_ID
+              value: {{ .backupID | default "ondemand" | quote }}
+            {{- if $.Values.backups.encryption.kmsKeyId }}
+            - name: LENNY_BACKUP_KMS_KEY_ID
+              value: {{ $.Values.backups.encryption.kmsKeyId | quote }}
+            {{- end }}
+            - name: LENNY_BACKUP_MINIO_ENDPOINT
+              value: {{ .minioEndpoint | quote }}
+            - name: LENNY_BACKUP_MINIO_BUCKET
+              value: {{ .minioBucket | quote }}
+            - name: LENNY_BACKUP_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-backup-postgres
+                  key: postgres-dsn
+            - name: LENNY_BACKUP_MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-backup-minio
+                  key: minio-access-key
+            - name: LENNY_BACKUP_MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-backup-minio
+                  key: minio-secret-key
+            {{- if $minioCABundle }}
+            # §12.5 — add the operator-supplied MinIO CA directory to the
+            # backup Job's Go trust pool so it verifies the HTTPS endpoint
+            # against this CA in addition to the system roots.
+            - name: SSL_CERT_DIR
+              value: /etc/lenny/minio-ca
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if $minioCABundle }}
+            # §12.5 — the operator-supplied MinIO CA bundle (key ca.crt),
+            # added to the Go trust pool via SSL_CERT_DIR above.
+            - name: lenny-minio-ca
+              mountPath: /etc/lenny/minio-ca
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- toYaml .resources | nindent 12 }}
+      volumes:
+        # §25.11 Job Pod Specification — /tmp is writable via emptyDir for
+        # staging the archive while the root filesystem stays read-only.
+        - name: tmp
+          emptyDir: {}
+        {{- if $minioCABundle }}
+        - name: lenny-minio-ca
+          configMap:
+            name: {{ $minioCABundle | quote }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
+{{- end }}
+{{- end }}

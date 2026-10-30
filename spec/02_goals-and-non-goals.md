@@ -6,7 +6,7 @@
 - Support full SDK-like interactive sessions (streaming, interrupts, follow-up prompts, tool use)
 - Support multiple runtime binaries via a standard runtime adapter contract
 - Support two runtime types: `type: agent` (full task lifecycle with sessions, delegation, elicitation, multi-turn dialog) and `type: mcp` (managed MCP server hosting with Lenny-managed pod lifecycle but no task lifecycle)
-- Support multiple execution modes for agent runtimes: `session` (one session per pod), `task` (sequential pod reuse with workspace scrub), and `concurrent` (slot-multiplexed parallel tasks) — with mode-aware pool scaling
+- Support the `session` and `service` execution modes for agent runtimes: `session` binds a managed session to a pod and is parameterized by a `sessionPolicy` block (pod recycling across sessions and concurrent session slots), `service` routes each message to any ready replica, and pool scaling factors derive from the policy properties
 - Enable recursive orchestration: any pod can delegate to other pods
 - Make gateway failure survivable and pod failure recoverable (bounded resume)
 - Enforce least-privilege security: no standing credentials in pods, gateway-mediated file delivery

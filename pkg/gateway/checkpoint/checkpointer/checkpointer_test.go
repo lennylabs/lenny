@@ -1,0 +1,1270 @@
+// SPDX-License-Identifier: MIT
+
+package checkpointer_test
+
+import (
+	"context"
+	"errors"
+	"net"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/test/bufconn"
+
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/checkpoint"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointretention"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+)
+
+// spec: §4.4 / §7.1 — the gateway checkpointer drives a pod checkpoint
+// and records the resulting WorkspaceSnapshot on the session row.
+
+// fakeCheckpointAdapter is a minimal streaming AdapterServer standing in
+// for the pod adapter's §10.1 chunked producer. Its Checkpoint handler
+// consumes the gateway-minted CheckpointStart and closes the stream with
+// a CheckpointSummary reporting bytes, or fails the attempt with a gRPC
+// error. The gateway mints the checkpoint id, so the fake reports no id.
+type fakeCheckpointAdapter struct {
+	adapterv1.UnimplementedAdapterServer
+	bytes  int64
+	fail   bool
+	failed *adapterv1.CheckpointFailed
+}
+
+func (f fakeCheckpointAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointRequest, adapterv1.CheckpointResponse]) error {
+	// Consume the gateway's CheckpointStart so its Send completes before
+	// the stream terminates.
+	if _, err := stream.Recv(); err != nil {
+		return err
+	}
+	if f.fail {
+		return status.Error(codes.Internal, "artifact store down")
+	}
+	if f.failed != nil {
+		return stream.Send(&adapterv1.CheckpointResponse{
+			Msg: &adapterv1.CheckpointResponse_Failed{Failed: f.failed},
+		})
+	}
+	return stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_Summary{
+			Summary: &adapterv1.CheckpointSummary{TotalBytes: f.bytes},
+		},
+	})
+}
+
+// dialAdapter serves srv over an in-memory connection and returns a
+// connected adapter client.
+func dialAdapter(t *testing.T, srv adapterv1.AdapterServer) *adapterclient.Client {
+	t.Helper()
+	lis := bufconn.Listen(1 << 20)
+	gs := grpc.NewServer()
+	adapterv1.RegisterAdapterServer(gs, srv)
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(gs.Stop)
+	cl, err := adapterclient.Dial("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial adapter: %v", err)
+	}
+	t.Cleanup(func() { _ = cl.Close() })
+	return cl
+}
+
+// runningSession seeds store with one running session.
+func runningSession(t *testing.T, store sessionstore.Store, tenantID, sessionID string) {
+	t.Helper()
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID:         sessionID,
+		TenantID:   tenantID,
+		State:      session.StateRunning,
+		RuntimeRef: "echo",
+	}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+}
+
+func TestCheckpointRecordsTheWorkspaceSnapshot(t *testing.T) {
+	client := dialAdapter(t, fakeCheckpointAdapter{bytes: 4096})
+
+	registry := podsession.NewRegistry()
+	registry.Put(&podsession.BindResult{SessionID: "s1", Adapter: client})
+
+	store := memstore.New()
+	runningSession(t, store, "acme", "s1")
+
+	when := time.Date(2026, 5, 16, 9, 0, 0, 0, time.UTC)
+	cp := &checkpointer.Checkpointer{
+		Sessions: store,
+		Registry: registry,
+		Now:      func() time.Time { return when },
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+
+	row, err := store.Get(context.Background(), "acme", "s1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if row.WorkspaceSnapshot == nil {
+		t.Fatal("no WorkspaceSnapshot recorded on the session row")
+	}
+	// spec: §10.1.7 — the ref is the gateway-minted checkpoint_id
+	// (a UUID), not an adapter-supplied value.
+	if _, err := uuid.Parse(row.WorkspaceSnapshot.Ref); err != nil {
+		t.Errorf("snapshot ref = %q, want a gateway-minted UUID: %v", row.WorkspaceSnapshot.Ref, err)
+	}
+	if row.WorkspaceSnapshot.Source != sessionstore.WorkspaceSnapshotCheckpoint {
+		t.Errorf("snapshot source = %q, want checkpoint", row.WorkspaceSnapshot.Source)
+	}
+	if !row.WorkspaceSnapshot.Timestamp.Equal(when) {
+		t.Errorf("snapshot timestamp = %v, want %v", row.WorkspaceSnapshot.Timestamp, when)
+	}
+	// spec: §4.4 — every successful checkpoint bumps
+	// last_successful_checkpoint_at on the session row, regardless of
+	// trigger. The freshness gauge keys off this field.
+	if !row.LastSuccessfulCheckpointAt.Equal(when) {
+		t.Errorf("LastSuccessfulCheckpointAt = %v, want %v", row.LastSuccessfulCheckpointAt, when)
+	}
+	// spec: §7.3 / §10.1 — the adapter-reported total
+	// byte count from the CheckpointSummary frame flows into
+	// WorkspaceSnapshot.Bytes so the §10.1 preStop tiered-cap selection
+	// and §7.2 workspaceRecoveryFraction both have a non-NULL
+	// input. F-7.3.21.
+	if row.WorkspaceSnapshot.Bytes != 4096 {
+		t.Errorf("WorkspaceSnapshot.Bytes = %d, want 4096 (the CheckpointSummary total)", row.WorkspaceSnapshot.Bytes)
+	}
+}
+
+// spec: §4.4 — a failed adapter checkpoint must NOT bump
+// last_successful_checkpoint_at; the freshness gauge would otherwise
+// report falsely-fresh sessions.
+func TestFailedCheckpointDoesNotBumpFreshnessTimestamp(t *testing.T) {
+	client := dialAdapter(t, fakeCheckpointAdapter{fail: true})
+	registry := podsession.NewRegistry()
+	registry.Put(&podsession.BindResult{SessionID: "s1", Adapter: client})
+	store := memstore.New()
+	runningSession(t, store, "acme", "s1")
+
+	cp := &checkpointer.Checkpointer{Sessions: store, Registry: registry}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err == nil {
+		t.Fatal("Checkpoint succeeded though the adapter checkpoint failed")
+	}
+	row, _ := store.Get(context.Background(), "acme", "s1")
+	if !row.LastSuccessfulCheckpointAt.IsZero() {
+		t.Errorf("LastSuccessfulCheckpointAt = %v on failed checkpoint, want zero", row.LastSuccessfulCheckpointAt)
+	}
+}
+
+// spec: §10.1.7 — a CheckpointFailed frame terminates the stream
+// and the checkpoint fails; the gateway records no WorkspaceSnapshot and
+// surfaces the adapter-reported reason.
+func TestCheckpointSurfacesACheckpointFailedFrame_spec_10_1(t *testing.T) {
+	client := dialAdapter(t, fakeCheckpointAdapter{failed: &adapterv1.CheckpointFailed{
+		Reason:     "chunk put rejected",
+		HttpStatus: 403,
+		ErrorCode:  "AccessDenied",
+	}})
+	registry := podsession.NewRegistry()
+	registry.Put(&podsession.BindResult{SessionID: "s1", Adapter: client})
+	store := memstore.New()
+	runningSession(t, store, "acme", "s1")
+
+	cp := &checkpointer.Checkpointer{Sessions: store, Registry: registry}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err == nil {
+		t.Fatal("Checkpoint succeeded though the adapter sent CheckpointFailed")
+	}
+	row, _ := store.Get(context.Background(), "acme", "s1")
+	if row.WorkspaceSnapshot != nil {
+		t.Error("a WorkspaceSnapshot was recorded despite the CheckpointFailed frame")
+	}
+	if !row.LastSuccessfulCheckpointAt.IsZero() {
+		t.Error("LastSuccessfulCheckpointAt was bumped on a failed checkpoint")
+	}
+}
+
+// spec: §4.4 — Seal counts as a successful checkpoint and
+// MUST bump last_successful_checkpoint_at as a regular checkpoint
+// would. A sealed session whose seal-recorded timestamp is stale would
+// otherwise resurface as stale in the freshness gauge.
+func TestSealBumpsFreshnessTimestamp(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+
+	when := time.Date(2026, 5, 16, 18, 0, 0, 0, time.UTC)
+	cp := &checkpointer.Checkpointer{
+		Sessions: store,
+		Registry: registry,
+		Now:      func() time.Time { return when },
+	}
+	if err := cp.Seal(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	row, _ := store.Get(context.Background(), "acme", "s1")
+	if !row.LastSuccessfulCheckpointAt.Equal(when) {
+		t.Errorf("Seal LastSuccessfulCheckpointAt = %v, want %v", row.LastSuccessfulCheckpointAt, when)
+	}
+}
+
+func TestCheckpointReturnsErrNoBindingForAnUncoordinatedSession(t *testing.T) {
+	cp := &checkpointer.Checkpointer{
+		Sessions: memstore.New(),
+		Registry: podsession.NewRegistry(), // empty
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); !errors.Is(err, checkpointer.ErrNoBinding) {
+		t.Errorf("error = %v, want ErrNoBinding", err)
+	}
+}
+
+// TestSealReturnsErrNoBindingForAnUncoordinatedSession_spec_7_1 asserts that
+// Seal, like Checkpoint, returns ErrNoBinding for a session this replica
+// holds no binding for. The seal step calls Seal only while it holds a
+// binding, so the error means the binding was removed after the seal began,
+// which the seal step classifies as the permanent outcome. Mapping it to nil
+// reported a seal success for a workspace that was never exported.
+// spec: 7.1 (Normal Flow)
+func TestSealReturnsErrNoBindingForAnUncoordinatedSession_spec_7_1(t *testing.T) {
+	cp := &checkpointer.Checkpointer{
+		Sessions: memstore.New(),
+		Registry: podsession.NewRegistry(), // empty
+	}
+	if err := cp.Seal(context.Background(), "acme", "s1"); !errors.Is(err, checkpointer.ErrNoBinding) {
+		t.Errorf("Seal for an uncoordinated session = %v, want ErrNoBinding", err)
+	}
+}
+
+func TestCheckpointSurfacesAnAdapterFailure(t *testing.T) {
+	client := dialAdapter(t, fakeCheckpointAdapter{fail: true})
+
+	registry := podsession.NewRegistry()
+	registry.Put(&podsession.BindResult{SessionID: "s1", Adapter: client})
+	store := memstore.New()
+	runningSession(t, store, "acme", "s1")
+
+	cp := &checkpointer.Checkpointer{Sessions: store, Registry: registry}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err == nil {
+		t.Error("Checkpoint succeeded though the adapter checkpoint failed")
+	}
+
+	// The session row carries no snapshot when the checkpoint failed.
+	row, err := store.Get(context.Background(), "acme", "s1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if row.WorkspaceSnapshot != nil {
+		t.Error("a WorkspaceSnapshot was recorded despite the checkpoint failure")
+	}
+}
+
+// bindSession wires a bufconn adapter for sessionID, registers the pod
+// binding, and seeds a running session row.
+func bindSession(t *testing.T, registry *podsession.Registry, store sessionstore.Store, tenantID, sessionID string, fake fakeCheckpointAdapter) {
+	t.Helper()
+	client := dialAdapter(t, fake)
+	registry.Put(&podsession.BindResult{SessionID: sessionID, TenantID: tenantID, Adapter: client})
+	runningSession(t, store, tenantID, sessionID)
+}
+
+func TestSweepCheckpointsEveryCoordinatedSession(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+	bindSession(t, registry, store, "acme", "s2", fakeCheckpointAdapter{})
+
+	cp := &checkpointer.Checkpointer{Sessions: store, Registry: registry}
+	cp.Sweep(context.Background())
+
+	// Each coordinated session receives its own gateway-minted checkpoint
+	// id (§10.1.7), so the two refs are present and distinct.
+	refs := map[string]string{}
+	for _, id := range []string{"s1", "s2"} {
+		row, err := store.Get(context.Background(), "acme", id)
+		if err != nil {
+			t.Fatalf("Get %s: %v", id, err)
+		}
+		if row.WorkspaceSnapshot == nil {
+			t.Fatalf("session %s was not checkpointed", id)
+		}
+		if _, err := uuid.Parse(row.WorkspaceSnapshot.Ref); err != nil {
+			t.Errorf("session %s ref = %q, want a gateway-minted UUID: %v", id, row.WorkspaceSnapshot.Ref, err)
+		}
+		refs[id] = row.WorkspaceSnapshot.Ref
+	}
+	if refs["s1"] == refs["s2"] {
+		t.Errorf("both sessions share checkpoint ref %q, want distinct ids", refs["s1"])
+	}
+}
+
+func TestSweepReportsPerSessionFailuresAndContinues(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "ok", fakeCheckpointAdapter{})
+	bindSession(t, registry, store, "acme", "bad", fakeCheckpointAdapter{fail: true})
+
+	var failed []string
+	cp := &checkpointer.Checkpointer{
+		Sessions: store,
+		Registry: registry,
+		OnError:  func(sessionID string, _ error) { failed = append(failed, sessionID) },
+	}
+	cp.Sweep(context.Background())
+
+	if len(failed) != 1 || failed[0] != "bad" {
+		t.Errorf("OnError saw %v, want [bad]", failed)
+	}
+	if row, _ := store.Get(context.Background(), "acme", "ok"); row.WorkspaceSnapshot == nil {
+		t.Error("the sweep stopped after the failed session — ok was not checkpointed")
+	}
+}
+
+func TestRunPeriodicallySweeps(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+
+	cp := &checkpointer.Checkpointer{Sessions: store, Registry: registry, Interval: 10 * time.Millisecond}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go cp.Run(ctx)
+
+	deadline := time.After(2 * time.Second)
+	for {
+		if row, _ := store.Get(context.Background(), "acme", "s1"); row.WorkspaceSnapshot != nil {
+			return // the periodic loop checkpointed the session.
+		}
+		select {
+		case <-deadline:
+			t.Fatal("Run did not checkpoint the session within the deadline")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
+// spec: §4.4 — jitter spreads the first periodic checkpoint
+// across [interval, interval + interval × jitterFraction]; the same
+// session must receive the same jitter across restarts.
+func TestFirstCheckpointDelayIsStableAndBounded(t *testing.T) {
+	interval := 600 * time.Second
+	jitter := 0.2
+
+	// The delay is bounded by the spec range.
+	for _, sessionID := range []string{"alice-1", "bob-2", "carol-3", "dave-4"} {
+		delay := checkpointer.FirstCheckpointDelay(sessionID, interval, jitter)
+		if delay < interval {
+			t.Errorf("session %s: delay %v < interval %v (spec §4.4 floor)", sessionID, delay, interval)
+		}
+		if delay > interval+time.Duration(float64(interval)*jitter) {
+			t.Errorf("session %s: delay %v > interval+jitter %v (spec §4.4 ceiling)",
+				sessionID, delay, interval+time.Duration(float64(interval)*jitter))
+		}
+	}
+
+	// The delay is stable: the same session ID returns the same value
+	// across calls so a coordinator handoff or gateway restart does not
+	// re-roll the jitter into a thundering-herd pattern.
+	first := checkpointer.FirstCheckpointDelay("acme-session-1", interval, jitter)
+	for i := 0; i < 10; i++ {
+		if got := checkpointer.FirstCheckpointDelay("acme-session-1", interval, jitter); got != first {
+			t.Errorf("call %d: delay %v, want stable %v", i, got, first)
+		}
+	}
+}
+
+// spec: §4.4 — jitterFraction = 0 selects no jitter; every
+// session ticks at the same wall-clock second. Used by tests and by
+// dev-mode deployments.
+func TestFirstCheckpointDelayWithZeroJitterReturnsInterval(t *testing.T) {
+	got := checkpointer.FirstCheckpointDelay("any-session", 600*time.Second, 0)
+	if got != 600*time.Second {
+		t.Errorf("FirstCheckpointDelay(jitter=0) = %v, want exactly interval", got)
+	}
+}
+
+// spec: §4.4 — jitterFraction range is [0.0, 1.0]; out-of-range
+// values are clamped at the boundary rather than rejected so an
+// operator typo cannot crash the loop.
+func TestFirstCheckpointDelayClampsOutOfRangeJitter(t *testing.T) {
+	interval := 600 * time.Second
+	// Negative jitterFraction clamps to 0: delay == interval.
+	if got := checkpointer.FirstCheckpointDelay("s1", interval, -0.5); got != interval {
+		t.Errorf("negative jitter: delay %v, want interval %v", got, interval)
+	}
+	// jitterFraction > 1.0 clamps to 1.0: delay ∈ [interval, 2×interval].
+	for _, sessionID := range []string{"s1", "s2", "s3"} {
+		got := checkpointer.FirstCheckpointDelay(sessionID, interval, 2.0)
+		if got < interval || got > 2*interval {
+			t.Errorf("clamped jitter for %s: delay %v, want [%v, %v]", sessionID, got, interval, 2*interval)
+		}
+	}
+}
+
+// spec: §4.4 — different session IDs yield different first
+// delays so a burst of sessions started in the same wall-clock second
+// does not align their next checkpoints.
+func TestFirstCheckpointDelayDiversifiesAcrossSessions(t *testing.T) {
+	interval := 600 * time.Second
+	jitter := 0.2
+	seen := map[time.Duration]int{}
+	for _, sessionID := range []string{"a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8"} {
+		seen[checkpointer.FirstCheckpointDelay(sessionID, interval, jitter)]++
+	}
+	if len(seen) < 2 {
+		t.Errorf("only %d distinct delays across 8 sessions: %v", len(seen), seen)
+	}
+}
+
+// spec: §4.4 — empty session ID degrades to the no-jitter
+// path; this protects callers that mis-pass an empty string.
+func TestFirstCheckpointDelayWithEmptySessionIDReturnsInterval(t *testing.T) {
+	got := checkpointer.FirstCheckpointDelay("", 600*time.Second, 0.2)
+	if got != 600*time.Second {
+		t.Errorf("empty session id: delay %v, want interval", got)
+	}
+}
+
+// spec: §4.4 — zero or negative interval returns 0 (the loop
+// is effectively disabled, matching the test-mode contract).
+func TestFirstCheckpointDelayWithZeroIntervalReturnsZero(t *testing.T) {
+	if got := checkpointer.FirstCheckpointDelay("s1", 0, 0.2); got != 0 {
+		t.Errorf("zero interval: delay %v, want 0", got)
+	}
+	if got := checkpointer.FirstCheckpointDelay("s1", -1*time.Second, 0.2); got != 0 {
+		t.Errorf("negative interval: delay %v, want 0", got)
+	}
+}
+
+func TestSealRecordsASealedSnapshot(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+
+	when := time.Date(2026, 5, 16, 18, 0, 0, 0, time.UTC)
+	cp := &checkpointer.Checkpointer{
+		Sessions: store,
+		Registry: registry,
+		Now:      func() time.Time { return when },
+	}
+	if err := cp.Seal(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	row, err := store.Get(context.Background(), "acme", "s1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if row.WorkspaceSnapshot == nil {
+		t.Fatal("Seal recorded no WorkspaceSnapshot")
+	}
+	// A seal records source `sealed`, distinguishing the final
+	// workspace from a periodic `checkpoint` snapshot.
+	if row.WorkspaceSnapshot.Source != sessionstore.WorkspaceSnapshotSealed {
+		t.Errorf("snapshot source = %q, want sealed", row.WorkspaceSnapshot.Source)
+	}
+	// spec: §10.1.7 — the ref is the gateway-minted checkpoint_id.
+	if _, err := uuid.Parse(row.WorkspaceSnapshot.Ref); err != nil {
+		t.Errorf("snapshot ref = %q, want a gateway-minted UUID: %v", row.WorkspaceSnapshot.Ref, err)
+	}
+	if !row.WorkspaceSnapshot.Timestamp.Equal(when) {
+		t.Errorf("snapshot timestamp = %v, want %v", row.WorkspaceSnapshot.Timestamp, when)
+	}
+}
+
+// captureMetrics records every observed duration call so tests can
+// assert §4.4 emission.
+type captureMetrics struct {
+	calls []durationCall
+}
+
+type durationCall struct {
+	pool    string
+	level   string
+	trigger string
+	seconds float64
+}
+
+func (c *captureMetrics) ObserveCheckpointDuration(pool, level, trigger string, seconds float64) {
+	c.calls = append(c.calls, durationCall{pool, level, trigger, seconds})
+}
+
+// spec: §4.4 — every checkpoint emits the duration histogram.
+func TestCheckpointEmitsDurationHistogram(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+
+	metrics := &captureMetrics{}
+	cp := &checkpointer.Checkpointer{
+		Sessions: store,
+		Registry: registry,
+		Metrics:  metrics,
+		Pool:     "default",
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if len(metrics.calls) != 1 {
+		t.Fatalf("ObserveCheckpointDuration: want 1 call, got %d", len(metrics.calls))
+	}
+	c := metrics.calls[0]
+	if c.pool != "default" || c.level != "basic" || c.trigger != "periodic" {
+		t.Fatalf("labels: got pool=%s level=%s trigger=%s", c.pool, c.level, c.trigger)
+	}
+	if c.seconds < 0 {
+		t.Fatalf("seconds must be non-negative: got %v", c.seconds)
+	}
+}
+
+// spec: §4.4 — even a failed checkpoint emits the duration
+// histogram. The §16.5 CheckpointDurationHigh alert reads the P95,
+// which would otherwise miss slow-then-failing checkpoints.
+func TestFailedCheckpointStillObservesDuration(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{fail: true})
+
+	metrics := &captureMetrics{}
+	cp := &checkpointer.Checkpointer{
+		Sessions: store,
+		Registry: registry,
+		Metrics:  metrics,
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err == nil {
+		t.Fatal("Checkpoint: want failure, got success")
+	}
+	if len(metrics.calls) != 1 {
+		t.Fatalf("ObserveCheckpointDuration on failure: want 1 call, got %d", len(metrics.calls))
+	}
+}
+
+// spec: §4.4 — the lenny_checkpoint_duration_seconds trigger
+// label is sourced from the trigger the caller threads into the
+// snapshot, so a non-periodic trigger such as the gateway preStop
+// drain's checkpoint.TriggerEviction is stamped verbatim. The retired
+// source-to-trigger switch reported every checkpoint as periodic, so it
+// would have emitted trigger="periodic" here.
+func TestSnapshotStampsTheCallerSuppliedTrigger(t *testing.T) {
+	client := dialAdapter(t, fakeCheckpointAdapter{})
+
+	registry := podsession.NewRegistry()
+	registry.Put(&podsession.BindResult{SessionID: "s1", Adapter: client})
+	store := memstore.New()
+	runningSession(t, store, "acme", "s1")
+
+	metrics := &captureMetrics{}
+	cp := &checkpointer.Checkpointer{
+		Sessions: store,
+		Registry: registry,
+		Metrics:  metrics,
+	}
+	if err := cp.Snapshot(context.Background(), "acme", "s1", sessionstore.WorkspaceSnapshotCheckpoint, checkpoint.TriggerEviction); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(metrics.calls) != 1 {
+		t.Fatalf("ObserveCheckpointDuration: want 1 call, got %d", len(metrics.calls))
+	}
+	if got := metrics.calls[0].trigger; got != string(checkpoint.TriggerEviction) {
+		t.Errorf("duration histogram trigger label = %q, want %q", got, checkpoint.TriggerEviction)
+	}
+}
+
+// fakeRetention captures Insert + Rotate so the test asserts §4.4 / §12.5 latest-2 wiring. rotateReturn is the set of rows Rotate
+// reports as dropped past the latest-2 cap, so a test can drive the
+// rotation-side chunk release.
+type fakeRetention struct {
+	inserts      []retInsert
+	rotates      []retRotate
+	rotateReturn []checkpointretention.Record
+	insertErr    error
+	rotateErr    error
+}
+
+type retInsert struct {
+	tenantID  string
+	sessionID string
+	ref       string
+}
+
+type retRotate struct {
+	tenantID  string
+	sessionID string
+}
+
+func (f *fakeRetention) Insert(_ context.Context, r checkpointretention.Record) error {
+	f.inserts = append(f.inserts, retInsert{r.TenantID, r.SessionID, r.Ref})
+	return f.insertErr
+}
+
+func (f *fakeRetention) Rotate(_ context.Context, tenantID, sessionID string) ([]checkpointretention.Record, error) {
+	f.rotates = append(f.rotates, retRotate{tenantID, sessionID})
+	if f.rotateErr != nil {
+		return nil, f.rotateErr
+	}
+	return f.rotateReturn, nil
+}
+
+// spec: §4.4 / §12.5 — every successful checkpoint records
+// to the retention catalog and runs Rotate to enforce latest-2.
+func TestCheckpointWritesRetentionCatalog(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+
+	ret := &fakeRetention{}
+	cp := &checkpointer.Checkpointer{
+		Sessions:  store,
+		Registry:  registry,
+		Retention: ret,
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if len(ret.inserts) != 1 {
+		t.Fatalf("Insert: want 1 call, got %d", len(ret.inserts))
+	}
+	ins := ret.inserts[0]
+	// The catalog row records the gateway-minted checkpoint id, the same
+	// ref recorded on the session's WorkspaceSnapshot (§10.1.7).
+	row, err := store.Get(context.Background(), "acme", "s1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if ins.tenantID != "acme" || ins.sessionID != "s1" || ins.ref != row.WorkspaceSnapshot.Ref {
+		t.Fatalf("Insert args: got %+v, want ref %q", ins, row.WorkspaceSnapshot.Ref)
+	}
+	if len(ret.rotates) != 1 {
+		t.Fatalf("Rotate: want 1 call, got %d", len(ret.rotates))
+	}
+}
+
+// spec: §4.4 — a failed checkpoint must not record to the
+// retention catalog (no ref to rotate against).
+func TestFailedCheckpointDoesNotRecordRetention(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{fail: true})
+
+	ret := &fakeRetention{}
+	cp := &checkpointer.Checkpointer{
+		Sessions:  store,
+		Registry:  registry,
+		Retention: ret,
+	}
+	_ = cp.Checkpoint(context.Background(), "acme", "s1")
+	if len(ret.inserts) != 0 {
+		t.Fatalf("Insert: want 0 calls on failure, got %d", len(ret.inserts))
+	}
+	if len(ret.rotates) != 0 {
+		t.Fatalf("Rotate: want 0 calls on failure, got %d", len(ret.rotates))
+	}
+}
+
+// spec: §12.5 — a session under legal hold is exempt from
+// the latest-2 rotation. The checkpoint is still catalogued (so the
+// §12.8 reconciler can see it) but Rotate is not run, so every
+// checkpoint is retained until the hold is lifted.
+func TestLegalHoldSessionSkipsRotation(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "held", fakeCheckpointAdapter{})
+	// Place the session under legal hold.
+	if _, err := store.Update(context.Background(), "acme", "held", func(row *sessionstore.Session) error {
+		row.LegalHold = true
+		return nil
+	}); err != nil {
+		t.Fatalf("set legal hold: %v", err)
+	}
+
+	ret := &fakeRetention{}
+	cp := &checkpointer.Checkpointer{Sessions: store, Registry: registry, Retention: ret}
+	if err := cp.Checkpoint(context.Background(), "acme", "held"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if len(ret.inserts) != 1 {
+		t.Fatalf("Insert: want 1 call (catalogued), got %d", len(ret.inserts))
+	}
+	if len(ret.rotates) != 0 {
+		t.Fatalf("Rotate: held session must not rotate, got %d calls", len(ret.rotates))
+	}
+}
+
+// spec: §12.5 — the retention catalog and its rotation are keyed on the
+// session alone. A session-mode slot's identifier is its session's
+// identifier, so the catalog write and the Rotate call that follows it both
+// name the session being checkpointed and carry no second dimension.
+func TestCheckpointKeysRetentionOnSession(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	client := dialAdapter(t, fakeCheckpointAdapter{})
+	registry.Put(&podsession.BindResult{SessionID: "cw", TenantID: "acme", SlotID: "cw", Adapter: client})
+	runningSession(t, store, "acme", "cw")
+
+	ret := &fakeRetention{}
+	cp := &checkpointer.Checkpointer{Sessions: store, Registry: registry, Retention: ret}
+	if err := cp.Checkpoint(context.Background(), "acme", "cw"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if len(ret.inserts) != 1 || ret.inserts[0].sessionID != "cw" || ret.inserts[0].tenantID != "acme" {
+		t.Fatalf("Insert: got %+v, want one row for acme/cw", ret.inserts)
+	}
+	if len(ret.rotates) != 1 || ret.rotates[0].sessionID != "cw" || ret.rotates[0].tenantID != "acme" {
+		t.Fatalf("Rotate: got %+v, want one call for acme/cw", ret.rotates)
+	}
+}
+
+// spec: §12.5 GC rule 5 — a checkpoint the latest-2 rotation
+// drops must have its chunk rows released (issuing the §12.5 rule 4 Redis
+// decrement) and its objects deleted, so a long-running session's
+// storage_bytes_used does not climb monotonically to STORAGE_QUOTA_EXCEEDED.
+// The pre-fix recordRetention discarded the rows Rotate returns, so none of
+// this ran and the chunks leaked; this pins the corrected behavior.
+func TestRotatedOutCheckpointReleasesItsChunkRowsAndObjects(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+
+	manifests := partialmanifeststore.NewMemoryStore(nil)
+	seedCompleteManifest(t, manifests, "acme", "cp-old", "s1")
+	catalog := newFakeChunkCatalog(
+		chunkRow("acme", "s1", "cp-old", 0, 100),
+		chunkRow("acme", "s1", "cp-old", 1, 250),
+	)
+	objects := newFakeObjectStore(
+		chunkURI("acme", "s1", "cp-old", 0),
+		chunkURI("acme", "s1", "cp-old", 1),
+	)
+
+	ret := &fakeRetention{rotateReturn: []checkpointretention.Record{
+		{TenantID: "acme", SessionID: "s1", Ref: "cp-old"},
+	}}
+	cp := &checkpointer.Checkpointer{
+		Sessions:     store,
+		Registry:     registry,
+		Retention:    ret,
+		Manifests:    manifests,
+		ChunkCatalog: catalog,
+		ChunkObjects: objects,
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+
+	if catalog.freed != 350 {
+		t.Errorf("released bytes = %d, want 350 (cp-old's two chunk rows)", catalog.freed)
+	}
+	if len(objects.deleted) != 2 {
+		t.Errorf("hard-deleted objects = %v, want the two cp-old chunks", objects.deleted)
+	}
+	row, err := manifests.Get(context.Background(), "acme", "cp-old")
+	if err != nil {
+		t.Fatalf("Get manifest: %v", err)
+	}
+	if row.DeletedAt.IsZero() {
+		t.Error("rotated-out checkpoint's manifest row was not soft-deleted")
+	}
+}
+
+// spec: §12.5 GC rule 6 / §4.4 — a completed (partial = false)
+// checkpoint the latest-2 rotation drops has no §12.5 backstop sweep to retry
+// a failed chunk delete (that sweep's predicate carries partial = true and
+// never re-selects a finalised checkpoint), so a failed DeleteObject on the
+// rotation path orphans the object with no reclaimer. The gateway surfaces it
+// on lenny_checkpoint_orphaned_objects_total. The pre-fix code discarded the
+// release error and emitted nothing, attributing the leak to a backstop that
+// never runs; this pins the corrected, observable behavior.
+func TestRotatedOutCheckpointObjectDeleteFailureEmitsOrphanCounter(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+
+	manifests := partialmanifeststore.NewMemoryStore(nil)
+	seedCompleteManifest(t, manifests, "acme", "cp-old", "s1")
+	catalog := newFakeChunkCatalog(chunkRow("acme", "s1", "cp-old", 0, 100))
+	objects := newFakeObjectStore(chunkURI("acme", "s1", "cp-old", 0))
+	// MinIO is unreachable, so the per-key DeleteObject fails and the object
+	// survives under a checkpoint no backstop reclaims.
+	objects.deleteErr = errors.New("minio unreachable")
+
+	metrics := &captureDriverMetrics{}
+	ret := &fakeRetention{rotateReturn: []checkpointretention.Record{
+		{TenantID: "acme", SessionID: "s1", Ref: "cp-old"},
+	}}
+	cp := &checkpointer.Checkpointer{
+		Sessions:      store,
+		Registry:      registry,
+		Retention:     ret,
+		Manifests:     manifests,
+		ChunkCatalog:  catalog,
+		ChunkObjects:  objects,
+		DriverMetrics: metrics,
+		Pool:          "pool-a",
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+
+	if metrics.orphanedObjects != 1 {
+		t.Fatalf("orphaned-object counter fires = %d, want 1 (the undeletable chunk)", metrics.orphanedObjects)
+	}
+	if metrics.orphanedPool != "pool-a" {
+		t.Errorf("orphaned-object pool label = %q, want pool-a", metrics.orphanedPool)
+	}
+	if metrics.orphanedTrigger != string(checkpoint.TriggerPeriodic) {
+		t.Errorf("orphaned-object trigger label = %q, want %q", metrics.orphanedTrigger, checkpoint.TriggerPeriodic)
+	}
+	// Step 3 never runs after the failed delete, so the manifest row stays
+	// active. A soft-deleted row would drop out of every deleted_at IS NULL
+	// selector and abandon the surviving object entirely.
+	row, err := manifests.Get(context.Background(), "acme", "cp-old")
+	if err != nil {
+		t.Fatalf("Get manifest: %v", err)
+	}
+	if !row.DeletedAt.IsZero() {
+		t.Error("release soft-deleted the manifest row despite the undeletable object")
+	}
+}
+
+// spec: §12.5 GC rule 5 — with the release seams unwired (dev-mode) the
+// rotation still runs and the retention row is dropped; the chunk release is
+// simply skipped, leaving the chunk rows and objects in place (the §12.5
+// backstop sweeps partial = true rows only and does not reclaim a completed
+// checkpoint), and Checkpoint does not fail.
+func TestRotationWithoutReleaseSeamsDoesNotFail(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+
+	ret := &fakeRetention{rotateReturn: []checkpointretention.Record{
+		{TenantID: "acme", SessionID: "s1", Ref: "cp-old"},
+	}}
+	cp := &checkpointer.Checkpointer{Sessions: store, Registry: registry, Retention: ret}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if len(ret.rotates) != 1 {
+		t.Fatalf("Rotate: want 1 call, got %d", len(ret.rotates))
+	}
+}
+
+// spec: §4.4 — a catalog Insert failure skips Rotate so the latest-2
+// cap is not enforced against an unwritten row; the next successful checkpoint
+// rotates the catalog. The checkpoint itself still succeeds (the retention
+// write is best-effort).
+func TestRetentionInsertFailureSkipsRotation(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+
+	ret := &fakeRetention{insertErr: errors.New("postgres unreachable")}
+	cp := &checkpointer.Checkpointer{Sessions: store, Registry: registry, Retention: ret}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if len(ret.rotates) != 0 {
+		t.Errorf("Rotate: want 0 calls after a failed Insert, got %d", len(ret.rotates))
+	}
+}
+
+// spec: §12.5 GC rule 5 — a Rotate failure aborts the release step so no chunk
+// release runs against an unresolved rotation set; the checkpoint still
+// succeeds and the next cycle re-rotates.
+func TestRetentionRotateFailureSkipsChunkRelease(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+
+	catalog := newFakeChunkCatalog(chunkRow("acme", "s1", "cp-old", 0, 100))
+	objects := newFakeObjectStore(chunkURI("acme", "s1", "cp-old", 0))
+	// Rotate errors, so the rows it would have reported as dropped never reach
+	// the release path.
+	ret := &fakeRetention{
+		rotateErr:    errors.New("postgres unreachable"),
+		rotateReturn: []checkpointretention.Record{{TenantID: "acme", SessionID: "s1", Ref: "cp-old"}},
+	}
+	cp := &checkpointer.Checkpointer{
+		Sessions: store, Registry: registry, Retention: ret,
+		Manifests: partialmanifeststore.NewMemoryStore(nil), ChunkCatalog: catalog, ChunkObjects: objects,
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if catalog.freed != 0 || len(objects.deleted) != 0 {
+		t.Errorf("chunk release ran after a Rotate failure: freed=%d deleted=%v", catalog.freed, objects.deleted)
+	}
+}
+
+// spec: §12.5 GC rule 5 — the rotation-side release resolves the dropped
+// checkpoint's manifest by its ref; a checkpoint whose manifest row is absent
+// (already reclaimed) is skipped silently rather than logged as an error.
+func TestReleaseRotatedCheckpointSkipsMissingManifest(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+
+	catalog := newFakeChunkCatalog()
+	objects := newFakeObjectStore()
+	// The rotation reports cp-gone as dropped, but the manifest store holds no
+	// row for it, so Get returns ErrNotFound and the release is a no-op.
+	ret := &fakeRetention{rotateReturn: []checkpointretention.Record{{TenantID: "acme", SessionID: "s1", Ref: "cp-gone"}}}
+	cp := &checkpointer.Checkpointer{
+		Sessions: store, Registry: registry, Retention: ret,
+		Manifests: partialmanifeststore.NewMemoryStore(nil), ChunkCatalog: catalog, ChunkObjects: objects,
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if len(objects.deleted) != 0 {
+		t.Errorf("release deleted objects for a missing manifest: %v", objects.deleted)
+	}
+}
+
+// spec: §12.5 GC rule 5 — a non-not-found manifest read error on the rotation
+// release path is logged and the release is skipped; the checkpoint still
+// succeeds so a transient store failure does not fail the snapshot.
+func TestReleaseRotatedCheckpointToleratesManifestReadError(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+
+	manifests := &errInjectStore{MemoryStore: partialmanifeststore.NewMemoryStore(nil), getErr: errors.New("postgres unreachable")}
+	catalog := newFakeChunkCatalog()
+	objects := newFakeObjectStore()
+	ret := &fakeRetention{rotateReturn: []checkpointretention.Record{{TenantID: "acme", SessionID: "s1", Ref: "cp-old"}}}
+	cp := &checkpointer.Checkpointer{
+		Sessions: store, Registry: registry, Retention: ret,
+		Manifests: manifests, ChunkCatalog: catalog, ChunkObjects: objects,
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if len(objects.deleted) != 0 {
+		t.Errorf("release proceeded despite a manifest read error: %v", objects.deleted)
+	}
+}
+
+// spec: §4.4 — a failed object delete on the rotation path with no
+// DriverMetrics wired skips the orphaned-object emission without panicking;
+// the manifest row still stays active for observability.
+func TestRotatedOutCheckpointOrphanWithoutMetricsIsSilent(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+
+	manifests := partialmanifeststore.NewMemoryStore(nil)
+	seedCompleteManifest(t, manifests, "acme", "cp-old", "s1")
+	catalog := newFakeChunkCatalog(chunkRow("acme", "s1", "cp-old", 0, 100))
+	objects := newFakeObjectStore(chunkURI("acme", "s1", "cp-old", 0))
+	objects.deleteErr = errors.New("minio unreachable")
+
+	ret := &fakeRetention{rotateReturn: []checkpointretention.Record{{TenantID: "acme", SessionID: "s1", Ref: "cp-old"}}}
+	cp := &checkpointer.Checkpointer{
+		Sessions: store, Registry: registry, Retention: ret,
+		Manifests: manifests, ChunkCatalog: catalog, ChunkObjects: objects,
+		// DriverMetrics deliberately unset.
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	row, err := manifests.Get(context.Background(), "acme", "cp-old")
+	if err != nil {
+		t.Fatalf("Get manifest: %v", err)
+	}
+	if !row.DeletedAt.IsZero() {
+		t.Error("release soft-deleted the manifest row despite the undeletable object")
+	}
+}
+
+// spec: §12.5 — the rotation-side release stamps each soft-deleted
+// chunk row with the configured gc.tombstoneRetentionSeconds window rather
+// than the default.
+func TestRotationReleaseUsesConfiguredTombstoneRetention(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+
+	manifests := partialmanifeststore.NewMemoryStore(nil)
+	seedCompleteManifest(t, manifests, "acme", "cp-old", "s1")
+	catalog := newFakeChunkCatalog(chunkRow("acme", "s1", "cp-old", 0, 100))
+	objects := newFakeObjectStore(chunkURI("acme", "s1", "cp-old", 0))
+
+	const window = 42 * time.Hour
+	ret := &fakeRetention{rotateReturn: []checkpointretention.Record{{TenantID: "acme", SessionID: "s1", Ref: "cp-old"}}}
+	cp := &checkpointer.Checkpointer{
+		Sessions: store, Registry: registry, Retention: ret,
+		Manifests: manifests, ChunkCatalog: catalog, ChunkObjects: objects,
+		TombstoneRetention: window,
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if catalog.lastRetention != window {
+		t.Errorf("tombstone retention stamped = %s, want %s", catalog.lastRetention, window)
+	}
+}
+
+// countingCheckpointAdapter counts each Checkpoint stream the gateway opens
+// on it, then answers an empty workspace probe, which writes the intent row,
+// and closes the attempt with a zero-byte summary.
+type countingCheckpointAdapter struct {
+	adapterv1.UnimplementedAdapterServer
+	opened *atomic.Int64
+}
+
+func (a countingCheckpointAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointRequest, adapterv1.CheckpointResponse]) error {
+	a.opened.Add(1)
+	if _, err := stream.Recv(); err != nil {
+		return err
+	}
+	if err := stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_Probe{Probe: &adapterv1.CheckpointProbe{}},
+	}); err != nil {
+		return err
+	}
+	return stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_Summary{Summary: &adapterv1.CheckpointSummary{}},
+	})
+}
+
+// goneRecorder records every ReleaseGone call.
+type goneRecorder struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (r *goneRecorder) release(tenantID, sessionID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, tenantID+"/"+sessionID)
+}
+
+func (r *goneRecorder) snapshot() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.calls...)
+}
+
+// laggingReplicaStore answers the replica Get with ErrNotFound for every
+// session while the embedded memstore answers the primary read and writes,
+// standing in for a pgstore whose replica has not caught up with the bind.
+type laggingReplicaStore struct{ *memstore.Store }
+
+func (laggingReplicaStore) Get(context.Context, string, string) (sessionstore.Session, error) {
+	return sessionstore.Session{}, sessionstore.ErrNotFound
+}
+
+// failingPrimaryStore fails the primary read with an error other than
+// ErrNotFound.
+type failingPrimaryStore struct{ *memstore.Store }
+
+var errPrimaryDown = errors.New("primary unreachable")
+
+func (failingPrimaryStore) GetPrimary(context.Context, string, string) (sessionstore.Session, error) {
+	return sessionstore.Session{}, errPrimaryDown
+}
+
+func (failingPrimaryStore) Update(context.Context, string, string, func(*sessionstore.Session) error) (sessionstore.Session, error) {
+	return sessionstore.Session{}, errPrimaryDown
+}
+
+// countingManifests counts the intent rows written.
+type countingManifests struct {
+	*partialmanifeststore.MemoryStore
+	puts    atomic.Int64
+	lastGen atomic.Int64
+}
+
+func (m *countingManifests) Put(ctx context.Context, r partialmanifeststore.Record) error {
+	m.puts.Add(1)
+	m.lastGen.Store(r.CoordinationGeneration)
+	return m.MemoryStore.Put(ctx, r)
+}
+
+// goneFixture binds s1 on a counting adapter with no session row.
+func goneFixture(t *testing.T) (*checkpointer.Checkpointer, *goneRecorder, *atomic.Int64) {
+	t.Helper()
+	opened := &atomic.Int64{}
+	registry := podsession.NewRegistry()
+	registry.Put(&podsession.BindResult{
+		SessionID: "s1", TenantID: "acme",
+		Adapter: dialAdapter(t, countingCheckpointAdapter{opened: opened}),
+	})
+	rec := &goneRecorder{}
+	cp := &checkpointer.Checkpointer{Sessions: memstore.New(), Registry: registry, ReleaseGone: rec.release}
+	return cp, rec, opened
+}
+
+// TestCheckpointReleasesABindingWhoseRowIsGoneOnThePrimary_spec_7_1 asserts
+// that a periodic or eviction checkpoint of a bound session whose row is
+// absent on the primary calls ReleaseGone with the session's tenant and ID
+// once per tick, concurrent ticks included, returns an error wrapping
+// sessionstore.ErrNotFound, and opens no adapter Checkpoint stream. Before
+// the fix the attempt opened a stream at generation 0 and released nothing,
+// so the binding stayed until the replica exited.
+//
+// spec: 7.1 (Seal-and-export invariant), 10.1.7 (preStop Hook Drain)
+func TestCheckpointReleasesABindingWhoseRowIsGoneOnThePrimary_spec_7_1(t *testing.T) {
+	cp, rec, opened := goneFixture(t)
+	const ticks = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, ticks)
+	for i := range ticks {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if i%2 == 0 {
+				errs <- cp.Checkpoint(context.Background(), "acme", "s1")
+				return
+			}
+			errs <- cp.CheckpointWithTrigger(context.Background(), "acme", "s1", checkpoint.TriggerEviction)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if !errors.Is(err, sessionstore.ErrNotFound) {
+			t.Errorf("checkpoint error = %v, want one wrapping ErrNotFound", err)
+		}
+	}
+	calls := rec.snapshot()
+	if len(calls) != ticks {
+		t.Fatalf("ReleaseGone calls = %d, want one per tick (%d)", len(calls), ticks)
+	}
+	for _, c := range calls {
+		if c != "acme/s1" {
+			t.Errorf("ReleaseGone(%s), want acme/s1", c)
+		}
+	}
+	if n := opened.Load(); n != 0 {
+		t.Errorf("adapter Checkpoint streams opened = %d, want 0", n)
+	}
+}
+
+// TestSweepReleasesABindingWhoseRowIsGoneOnThePrimary_spec_7_1 asserts the
+// periodic Sweep reaches the release through Checkpoint.
+//
+// spec: 7.1 (Seal-and-export invariant)
+func TestSweepReleasesABindingWhoseRowIsGoneOnThePrimary_spec_7_1(t *testing.T) {
+	cp, rec, opened := goneFixture(t)
+	cp.Sweep(context.Background())
+	if got := rec.snapshot(); len(got) != 1 || got[0] != "acme/s1" {
+		t.Errorf("ReleaseGone calls = %v, want [acme/s1]", got)
+	}
+	if n := opened.Load(); n != 0 {
+		t.Errorf("adapter Checkpoint streams opened = %d, want 0", n)
+	}
+}
+
+// TestCheckpointReadsTheRowFromThePrimaryNotTheReplica_spec_10_1_7 asserts
+// that a row present on the primary but missing from a lagging replica is
+// neither released nor skipped: the checkpoint runs and records its snapshot
+// at the primary's coordination generation.
+//
+// spec: 10.1.7 (preStop Hook Drain), 7.1 (Seal-and-export invariant)
+func TestCheckpointReadsTheRowFromThePrimaryNotTheReplica_spec_10_1_7(t *testing.T) {
+	opened := &atomic.Int64{}
+	registry := podsession.NewRegistry()
+	registry.Put(&podsession.BindResult{
+		SessionID: "s1", TenantID: "acme",
+		Adapter: dialAdapter(t, countingCheckpointAdapter{opened: opened}),
+	})
+	mem := memstore.New()
+	if err := mem.Create(context.Background(), sessionstore.Session{
+		ID: "s1", TenantID: "acme", State: session.StateRunning, RuntimeRef: "echo", CoordinationGeneration: 7,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	manifests := &countingManifests{MemoryStore: partialmanifeststore.NewMemoryStore(nil)}
+	rec := &goneRecorder{}
+	cp := &checkpointer.Checkpointer{
+		Sessions: laggingReplicaStore{mem}, Registry: registry, ReleaseGone: rec.release, Manifests: manifests,
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint against a lagging replica: %v", err)
+	}
+	if got := rec.snapshot(); len(got) != 0 {
+		t.Errorf("ReleaseGone calls = %v, want none", got)
+	}
+	if n := opened.Load(); n != 1 {
+		t.Errorf("adapter Checkpoint streams opened = %d, want 1", n)
+	}
+	if n := manifests.puts.Load(); n != 1 {
+		t.Fatalf("intent rows written = %d, want 1", n)
+	}
+	if g := manifests.lastGen.Load(); g != 7 {
+		t.Errorf("intent row coordination_generation = %d, want the primary's 7", g)
+	}
+}
+
+// TestCheckpointPrimaryReadErrorReleasesNothing_spec_10_1_7 asserts that a
+// primary read error other than ErrNotFound fails the attempt with that
+// error wrapped, releases nothing, opens no adapter Checkpoint stream, and
+// writes no intent row. Before the fix the read error degraded to a zero
+// context and the intent row was written at generation 0.
+//
+// spec: 10.1.7 (preStop Hook Drain), 7.1 (Seal-and-export invariant)
+func TestCheckpointPrimaryReadErrorReleasesNothing_spec_10_1_7(t *testing.T) {
+	opened := &atomic.Int64{}
+	registry := podsession.NewRegistry()
+	registry.Put(&podsession.BindResult{
+		SessionID: "s1", TenantID: "acme",
+		Adapter: dialAdapter(t, countingCheckpointAdapter{opened: opened}),
+	})
+	manifests := &countingManifests{MemoryStore: partialmanifeststore.NewMemoryStore(nil)}
+	rec := &goneRecorder{}
+	cp := &checkpointer.Checkpointer{
+		Sessions: failingPrimaryStore{memstore.New()}, Registry: registry, ReleaseGone: rec.release, Manifests: manifests,
+	}
+	for _, trigger := range []checkpoint.Trigger{checkpoint.TriggerPeriodic, checkpoint.TriggerEviction} {
+		err := cp.CheckpointWithTrigger(context.Background(), "acme", "s1", trigger)
+		if !errors.Is(err, errPrimaryDown) || errors.Is(err, sessionstore.ErrNotFound) {
+			t.Errorf("%s: error = %v, want one wrapping the primary read error only", trigger, err)
+		}
+	}
+	if got := rec.snapshot(); len(got) != 0 {
+		t.Errorf("ReleaseGone calls = %v, want none", got)
+	}
+	if n := opened.Load(); n != 0 {
+		t.Errorf("adapter Checkpoint streams opened = %d, want 0", n)
+	}
+	if n := manifests.puts.Load(); n != 0 {
+		t.Errorf("intent rows written = %d, want 0", n)
+	}
+}
+
+// TestSealOfAGoneRowReturnsNotFoundAndReleasesNothing_spec_7_1 asserts that
+// Seal for a bound session whose row is absent on the primary opens no
+// adapter Checkpoint stream, does not call ReleaseGone (the post-terminal
+// hook runs its own release), and returns an error wrapping
+// sessionstore.ErrNotFound, which the seal step classifies as permanent.
+//
+// spec: 7.1 (Seal-and-export invariant)
+func TestSealOfAGoneRowReturnsNotFoundAndReleasesNothing_spec_7_1(t *testing.T) {
+	cp, rec, opened := goneFixture(t)
+	err := cp.Seal(context.Background(), "acme", "s1")
+	if !errors.Is(err, sessionstore.ErrNotFound) {
+		t.Fatalf("Seal error = %v, want one wrapping ErrNotFound", err)
+	}
+	if got := rec.snapshot(); len(got) != 0 {
+		t.Errorf("ReleaseGone calls = %v, want none from Seal", got)
+	}
+	if n := opened.Load(); n != 0 {
+		t.Errorf("adapter Checkpoint streams opened = %d, want 0", n)
+	}
+}

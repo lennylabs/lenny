@@ -1,0 +1,1075 @@
+// SPDX-License-Identifier: MIT
+
+// Package recycle wires the concrete gateway-side seams the §4.7
+// ScrubReporter (pkg/gateway/leasecontrol) drives. The ScrubReporter
+// itself holds the pure orchestration — increment the recycle counters,
+// run the podscrub disposition, drive the claim binding state — behind
+// five narrow interfaces defined at that consumer. This package supplies
+// the concrete implementations so leasecontrol stays free of the
+// Kubernetes client, agentpodstate, slothealth, podclaim, poolstore,
+// runtimestore, and gatewaymetrics. The gateway constructs these here and
+// passes them into leasecontrol.NewScrubReporter.
+//
+// spec: §4.7 (ReportSessionScrub/ReportPodScrub gateway side), the recycle
+// (recycle disposition), §5.2 (scrub model, onScrubFailure), `spec/06_warm-pod-model.md` §6.2
+// (host-node schedulability retire), §16.1 (scrub-failure and retirement
+// metrics).
+package recycle
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/lennylabs/lenny/pkg/agentpodstate"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
+	"github.com/lennylabs/lenny/pkg/controller/warmpool"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/sandbox/podscrub"
+	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
+)
+
+// DefaultClaimHoldTTL is the §4.6.1 / §6.2 deployment-level reserved-hold
+// TTL (`gateway.claimHoldTTLSeconds`) applied when no override is
+// configured: the reservation time plus this TTL is stamped as
+// `holdExpiresAt` when a recycled non-preConnect pod enters `reserved`.
+// The spec deployment default is 10 seconds. spec: §4.6.1, §6.2 (reserved
+// hold semantics, claimHoldTTLSeconds default 10s).
+const DefaultClaimHoldTTL = 10 * time.Second
+
+// HighClaimHoldTTLWarnSeconds is the advisory ceiling above which the gateway
+// warns at startup that gateway.claimHoldTTLSeconds is set high. A reserved
+// pod is counted as occupied for inventory and scaling (§4.6.2), so a hold
+// far longer than the spec default depresses apparent idle inventory and
+// delays retirement-limit evaluation at the next disposition. The value is
+// advisory only: a configured TTL above it is still honored. It is a
+// round-number multiple of the §4.6.1 default rather than a spec-fixed
+// constant, so it lives here as the one place the warning threshold is
+// defined. spec: §4.6.1 (configuration validation warns when the TTL is set
+// high), §4.6.2 (reserved pods counted as occupied).
+const HighClaimHoldTTLWarnSeconds = 60
+
+// CounterStore is the agent_pod_state subset the §4.7 recycle-counter seam
+// needs. *agentpodstate.Store (and its memstore/pgstore implementations)
+// satisfy it directly: the three methods are the same recycle-counter
+// surface leasecontrol.RecycleCounterStore declares, so NewCounterStore is
+// an adapter that maps agentpodstate.RecycleCounters onto the leasecontrol
+// return tuple.
+type CounterStore interface {
+	IncrementSessionsServed(ctx context.Context, podID string) (int, bool, error)
+	IncrementScrubFailureCount(ctx context.Context, podID string) (int, bool, error)
+	RecycleCounters(ctx context.Context, podID string) (agentpodstate.RecycleCounters, bool, error)
+}
+
+// recycleCounterStore adapts a CounterStore (agentpodstate.Store) onto the
+// leasecontrol.RecycleCounterStore seam. The increment methods already
+// match; only RecycleCounters needs the struct-to-tuple unpacking.
+type recycleCounterStore struct {
+	store CounterStore
+}
+
+// NewRecycleCounterStore wraps an agent_pod_state store as the §4.7
+// recycle-counter seam the ScrubReporter writes. spec: §4.7
+// (sessionsServed / scrubFailureCount increments), §5.2.
+func NewRecycleCounterStore(store CounterStore) leasecontrol.RecycleCounterStore {
+	return &recycleCounterStore{store: store}
+}
+
+func (s *recycleCounterStore) IncrementSessionsServed(ctx context.Context, podID string) (int, bool, error) {
+	return s.store.IncrementSessionsServed(ctx, podID)
+}
+
+func (s *recycleCounterStore) IncrementScrubFailureCount(ctx context.Context, podID string) (int, bool, error) {
+	return s.store.IncrementScrubFailureCount(ctx, podID)
+}
+
+func (s *recycleCounterStore) RecycleCounters(ctx context.Context, podID string) (int, int, bool, error) {
+	c, found, err := s.store.RecycleCounters(ctx, podID)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	return c.SessionsServed, c.ScrubFailureCount, found, nil
+}
+
+// drainLedger is the §5.2 unhealthy-threshold drain ledger: it records a
+// leaked session-scrub outcome in the in-memory slothealth tracker and,
+// once the pod crosses the §5.2 ceil(maxConcurrentSessions/2) threshold
+// within the rolling window, stamps lenny.dev/drain-request on the agent
+// Pod so the WarmPoolController drains it. The threshold denominator is the
+// pod's pool maxConcurrentSessions, resolved per pod at leak time: a
+// single-session recycling pod crosses on the first leak, and a recycling
+// concurrent-session pool (the §5.2 "Concurrent" preset, maxConcurrentSessions:
+// N with recycle.enabled) drains only at ceil(N/2) failed-or-leaked slots.
+//
+// The gateway never writes Sandbox.status itself (§4.6.3), so the drain is
+// routed through the annotation rather than a phase write; podclaim.
+// StampDrainRequest performs the §4.6.3 gateway-stamps-drain-request patch.
+type drainLedger struct {
+	tracker   *slothealth.Tracker
+	cl        client.Client
+	namespace string
+	pools     poolReader
+	now       func() time.Time
+}
+
+// DrainLedgerOptions configures a drain ledger.
+type DrainLedgerOptions struct {
+	// Tracker accumulates per-pod leak/failure events over the §5.2
+	// rolling window. Required.
+	Tracker *slothealth.Tracker
+	// Client patches the agent Pod's lenny.dev/drain-request annotation and
+	// reads its pool label to resolve the unhealthy threshold. Required.
+	Client client.Client
+	// Namespace is the agent namespace the pods live in. Required.
+	Namespace string
+	// Pools resolves the pod's pool to its §5.2
+	// sessionPolicy.maxConcurrentSessions, the denominator of the
+	// ceil(maxConcurrentSessions/2) unhealthy threshold. Resolving it per
+	// pod keeps a recycling concurrent-session pool (the "Concurrent"
+	// preset) on its ceil(N/2) threshold rather than draining on the first
+	// leak. Required.
+	Pools poolReader
+	// Now overrides the clock for the drain-request stamp; nil uses wall
+	// time.
+	Now func() time.Time
+}
+
+// NewDrainLedger builds the §5.2 unhealthy-threshold drain ledger. Tracker,
+// Client, Namespace, and Pools are required.
+func NewDrainLedger(opts DrainLedgerOptions) (leasecontrol.DrainLedger, error) {
+	if opts.Tracker == nil {
+		return nil, errors.New("recycle: DrainLedger Tracker is required")
+	}
+	if opts.Client == nil {
+		return nil, errors.New("recycle: DrainLedger Client is required")
+	}
+	if opts.Namespace == "" {
+		return nil, errors.New("recycle: DrainLedger Namespace is required")
+	}
+	if opts.Pools == nil {
+		return nil, errors.New("recycle: DrainLedger Pools is required")
+	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
+	return &drainLedger{
+		tracker:   opts.Tracker,
+		cl:        opts.Client,
+		namespace: opts.Namespace,
+		pools:     opts.Pools,
+		now:       now,
+	}, nil
+}
+
+// RecordLeak records one leaked session-scrub outcome for the slot slotID on
+// podID and stamps the drain-request annotation once the pod crosses the
+// unhealthy threshold. A second record of the same slot is a no-op. The threshold denominator is the pod's pool
+// maxConcurrentSessions, resolved per pod: a recycling concurrent-session
+// pool drains at ceil(maxConcurrentSessions/2) failed-or-leaked slots, while
+// a single-session pool drains on the first leak. spec: §4.7 (leaked feeds
+// the unhealthy-threshold ledger), §4.6.3 (gateway stamps drain-request),
+// §5.2 (ceil(maxConcurrentSessions/2) unhealthy threshold).
+func (l *drainLedger) RecordLeak(ctx context.Context, podID, slotID string) error {
+	l.tracker.RecordLeak(podID, slotID)
+	maxConcurrent, err := l.maxConcurrentSessions(ctx, podID)
+	if err != nil {
+		return err
+	}
+	if !l.tracker.Unhealthy(podID, maxConcurrent) {
+		return nil
+	}
+	if err := podclaim.StampDrainRequest(ctx, l.cl, l.namespace, podID, l.now()); err != nil {
+		return fmt.Errorf("recycle: stamp drain-request for leaked pod %s: %w", podID, err)
+	}
+	return nil
+}
+
+// maxConcurrentSessions resolves the pod's pool §5.2
+// sessionPolicy.maxConcurrentSessions, the denominator of the
+// ceil(maxConcurrentSessions/2) unhealthy threshold. A pod or pool that no
+// longer resolves, or a pool with no SessionPolicy, falls back to 1 (the
+// §5.2 default one-session-per-pod bound), which slothealth.UnhealthyThreshold
+// clamps a sub-1 value to anyway. A missing pool label fails closed: a leak
+// on an unresolvable pod must not be silently dropped. spec: §5.2
+// (maxConcurrentSessions default 1).
+func (l *drainLedger) maxConcurrentSessions(ctx context.Context, podID string) (int32, error) {
+	var pod corev1.Pod
+	if err := l.cl.Get(ctx, client.ObjectKey{Namespace: l.namespace, Name: podID}, &pod); err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			// The pod is gone: nothing left to drain, fall back to the default
+			// bound so the threshold check is well-defined.
+			return 1, nil
+		}
+		return 0, fmt.Errorf("recycle: get pod %s for drain threshold: %w", podID, err)
+	}
+	poolName := pod.Labels[warmpool.LabelPool]
+	if poolName == "" {
+		return 0, fmt.Errorf("recycle: leaked pod %s carries no %s label", podID, warmpool.LabelPool)
+	}
+	pool, err := l.pools.Get(ctx, poolName)
+	if err != nil {
+		if errors.Is(err, poolstore.ErrNotFound) {
+			// The pool was deleted with the pod; the default bound keeps the
+			// threshold well-defined.
+			return 1, nil
+		}
+		return 0, fmt.Errorf("recycle: resolve pool %s for leaked pod %s: %w", poolName, podID, err)
+	}
+	return poolMaxConcurrentSessions(pool), nil
+}
+
+// poolMaxConcurrentSessions returns the pool's §5.2
+// sessionPolicy.maxConcurrentSessions, defaulting to 1 (the one-session-per-pod
+// bound) when the pool carries no SessionPolicy or leaves the field unset.
+// spec: §5.2 (maxConcurrentSessions default 1).
+func poolMaxConcurrentSessions(p poolstore.Pool) int32 {
+	if p.SessionPolicy == nil || p.SessionPolicy.MaxConcurrentSessions < 1 {
+		return 1
+	}
+	return int32(p.SessionPolicy.MaxConcurrentSessions)
+}
+
+// sessionCountRetirer is the §5.2 per-release maxSessionsPerPod retirement
+// for a concurrent non-vm-restart pool. On each cleanup-outcome report the
+// ScrubReporter reports the atomic post-increment served-session count and
+// this retirer resolves the pod's pool per release (mirroring
+// drainLedger.maxConcurrentSessions, which loads the same pool from the same
+// poolstore), gates on maxConcurrentSessions > 1 && scrubProfile != vm-restart,
+// and drives the per-release drain decoupled from the whole-pod scrub because
+// a persistently `leaked` slot can hold total occupancy above zero
+// indefinitely, so the occupancy-zero podscrub.Decide maxSessionsPerPod check
+// never fires on such a pool.
+//
+// The drain-request stamp is level-triggered on count >= maxSessionsPerPod and
+// re-issued idempotently on every qualifying release (mirroring
+// drainLedger.RecordLeak's idempotent re-stamp), so a single lost or
+// duplicated crossing report is recovered on the next release rather than
+// abandoning the pod. The lenny_gateway_pod_retirement_total increment is
+// gated on the exact-equality crossing count == maxSessionsPerPod (the count is
+// monotonic and advances by one per release, so exactly one increment lands),
+// additionally suppressed when the pod is already over its maxPodUptimeSeconds
+// cap so a both-caps pod is counted once as uptime_limit by the controller
+// (the cross-process double-count §9 D9 records).
+type sessionCountRetirer struct {
+	cl        client.Client
+	namespace string
+	pools     poolReader
+	runtimes  runtimeReader
+	metrics   RetirementMetricsSink
+	now       func() time.Time
+}
+
+// SessionCountRetirerOptions configures a per-release session-count retirer.
+type SessionCountRetirerOptions struct {
+	// Client reads the agent Pod (pool label, CreationTimestamp) and patches
+	// the lenny.dev/drain-request annotation. Required.
+	Client client.Client
+	// Namespace is the agent namespace the pods live in. Required.
+	Namespace string
+	// Pools resolves the pod's pool to its §5.2 sessionPolicy (the
+	// maxConcurrentSessions denominator, the recycle knobs, and the runtime
+	// reference). Required.
+	Pools poolReader
+	// Runtimes resolves the pool's runtime to its §5.3 default isolation
+	// profile for the §16.1 runtime_class label on the retirement counter.
+	// Required.
+	Runtimes runtimeReader
+	// Metrics records the §16.1 lenny_gateway_pod_retirement_total increment on
+	// the per-release maxSessionsPerPod crossing. Optional; nil discards it.
+	Metrics RetirementMetricsSink
+	// Now overrides the clock for the drain-request stamp instant and the
+	// uptime-suppression check; nil uses wall time.
+	Now func() time.Time
+}
+
+// NewSessionCountRetirer builds the §5.2 per-release maxSessionsPerPod
+// retirer. Client, Namespace, Pools, and Runtimes are required.
+func NewSessionCountRetirer(opts SessionCountRetirerOptions) (leasecontrol.SessionCountRetirer, error) {
+	if opts.Client == nil {
+		return nil, errors.New("recycle: SessionCountRetirer Client is required")
+	}
+	if opts.Namespace == "" {
+		return nil, errors.New("recycle: SessionCountRetirer Namespace is required")
+	}
+	if opts.Pools == nil {
+		return nil, errors.New("recycle: SessionCountRetirer Pools is required")
+	}
+	if opts.Runtimes == nil {
+		return nil, errors.New("recycle: SessionCountRetirer Runtimes is required")
+	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
+	return &sessionCountRetirer{
+		cl:        opts.Client,
+		namespace: opts.Namespace,
+		pools:     opts.Pools,
+		runtimes:  opts.Runtimes,
+		metrics:   opts.Metrics,
+		now:       now,
+	}, nil
+}
+
+// perReleasePolicy is the per-pod §5.2 recycle knobs the per-release
+// maxSessionsPerPod retirement reads, resolved from the pod's pool the same
+// way drainLedger.maxConcurrentSessions resolves the threshold denominator.
+type perReleasePolicy struct {
+	maxConcurrentSessions int32
+	vmRestart             bool
+	maxSessionsPerPod     int
+	maxPodUptimeSeconds   int64
+	// createdAt is the pod's CreationTimestamp, the reference for the
+	// gateway-computed uptime-suppression check. It matches CODE-E's
+	// pod-CreationTimestamp reconcileUptime so both processes key off the same
+	// instant.
+	createdAt time.Time
+	// pool and runtimeClass are the §16.1 dimensions on the retirement counter.
+	pool         string
+	runtimeClass string
+}
+
+// RetireOnSessionCount drives the §5.2 per-release maxSessionsPerPod retirement
+// for podID from the atomic post-increment served-session count. It is a no-op
+// for a single-session pool and a concurrent vm-restart pool (both retire
+// through the occupancy-zero podscrub.Decide path); for a concurrent
+// non-vm-restart pool it stamps lenny.dev/drain-request on count >=
+// maxSessionsPerPod (idempotent, re-issued) and increments
+// lenny_gateway_pod_retirement_total{reason=session_count_limit} once on the
+// exact crossing count == maxSessionsPerPod, suppressed when the pod is already
+// over its maxPodUptimeSeconds cap (counted once as uptime_limit by the
+// controller). spec: §5.2 (per-release maxSessionsPerPod drain, level stamp on
+// >=, counter once on ==, gated on maxConcurrentSessions > 1 && scrubProfile !=
+// vm-restart), §16.1 (session_count_limit counted once), §4.6.3 (gateway
+// stamps drain-request).
+func (r *sessionCountRetirer) RetireOnSessionCount(ctx context.Context, podID string, count int) error {
+	policy, ok, err := r.resolve(ctx, podID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// The pod or pool is gone: nothing left to drain. A per-release report
+		// for a vanished pod is a no-op, matching the drain ledger's gone-pod
+		// tolerance.
+		return nil
+	}
+	// Gate on the concurrent non-vm-restart pod class: a single-session pool
+	// and a concurrent vm-restart pool retire through the occupancy-zero
+	// podscrub.Decide path, so the per-release drain excludes them to keep the
+	// retire reason and the retirement counter consistent with the §5.2 :486
+	// amendment.
+	if policy.maxConcurrentSessions <= 1 || policy.vmRestart {
+		return nil
+	}
+	// maxSessionsPerPod is required with no default on a recycling pool
+	// (spec/05 §5.2), but a defensively unset (<= 0) value disables the
+	// per-release cap rather than draining on the first release.
+	if policy.maxSessionsPerPod <= 0 || count < policy.maxSessionsPerPod {
+		return nil
+	}
+	// Level-triggered stamp on count >= maxSessionsPerPod, re-issued
+	// idempotently on every qualifying release (mirroring
+	// drainLedger.RecordLeak). StampDrainRequest tolerates only NotFound, so a
+	// gone pod is a no-op and any other error propagates.
+	if err := podclaim.StampDrainRequest(ctx, r.cl, r.namespace, podID, r.now()); err != nil {
+		return fmt.Errorf("recycle: stamp drain-request on over-session pod %s: %w", podID, err)
+	}
+	// Exact-equality counter emit: the count is monotonic and advances by one
+	// per release, so exactly one release observes count == maxSessionsPerPod
+	// and the counter records one increment per retirement. A pod already over
+	// its uptime cap is counted once as uptime_limit by the controller's
+	// reconcileUptime, so the gateway suppresses its session_count_limit emit
+	// there to close the cross-process both-caps double-count (§9 D9). The
+	// drain-request stamp above is unaffected, so the pod still drains via the
+	// level predicate. spec: §16.1, §5.2.
+	if count == policy.maxSessionsPerPod && r.metrics != nil && !overUptimeCap(policy, r.now()) {
+		r.metrics.IncRetirement(string(podscrub.ReasonSessionCountLimit), policy.pool, policy.runtimeClass)
+	}
+	return nil
+}
+
+// resolve reads the pod and its pool to the per-release recycle knobs, the
+// same pod-then-pool resolution drainLedger.maxConcurrentSessions performs. A
+// gone pod or a deleted pool reports ok=false (nothing to drain); a pod with
+// no pool label fails closed so a per-release report on an unresolvable pod is
+// not silently dropped. spec: §5.2 (recycle policy keyed on the pool).
+func (r *sessionCountRetirer) resolve(ctx context.Context, podID string) (perReleasePolicy, bool, error) {
+	var pod corev1.Pod
+	if err := r.cl.Get(ctx, client.ObjectKey{Namespace: r.namespace, Name: podID}, &pod); err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			return perReleasePolicy{}, false, nil
+		}
+		return perReleasePolicy{}, false, fmt.Errorf("recycle: get pod %s for per-release retirement: %w", podID, err)
+	}
+	poolName := pod.Labels[warmpool.LabelPool]
+	if poolName == "" {
+		return perReleasePolicy{}, false, fmt.Errorf("recycle: pod %s carries no %s label", podID, warmpool.LabelPool)
+	}
+	pool, err := r.pools.Get(ctx, poolName)
+	if err != nil {
+		if errors.Is(err, poolstore.ErrNotFound) {
+			return perReleasePolicy{}, false, nil
+		}
+		return perReleasePolicy{}, false, fmt.Errorf("recycle: resolve pool %s for pod %s: %w", poolName, podID, err)
+	}
+	recycle := poolRecyclePolicy(pool)
+	if recycle == nil {
+		// A non-recycling pool has no maxSessionsPerPod retirement; the
+		// per-release path is inert. spec: §5.2.
+		return perReleasePolicy{}, false, nil
+	}
+	runtimeProfile, err := r.resolveRuntimeProfile(ctx, pool.RuntimeRef)
+	if err != nil {
+		return perReleasePolicy{}, false, err
+	}
+	return perReleasePolicy{
+		maxConcurrentSessions: poolMaxConcurrentSessions(pool),
+		vmRestart:             recycle.ScrubProfile == runtimestore.MicrovmScrubVMRestart,
+		maxSessionsPerPod:     recycle.MaxSessionsPerPod,
+		maxPodUptimeSeconds:   int64(recycle.MaxPodUptimeSeconds),
+		createdAt:             pod.CreationTimestamp.Time,
+		pool:                  poolName,
+		runtimeClass:          runtimeClass(effectiveProfile(pool, runtimeProfile)),
+	}, true, nil
+}
+
+// resolveRuntimeProfile resolves the pool runtime's §5.3 default isolation
+// profile for the §16.1 runtime_class label. A runtime that no longer resolves
+// yields an empty profile so the label falls through to the pool's explicit
+// profile (or an empty label) rather than erroring. It mirrors
+// podInspector.resolveRuntime but returns only the profile the counter label
+// needs (the retirement counter reads no preConnect capability). spec: §5.3,
+// §16.1.
+func (r *sessionCountRetirer) resolveRuntimeProfile(ctx context.Context, runtimeRef string) (isolation.Profile, error) {
+	if runtimeRef == "" {
+		return "", nil
+	}
+	rt, err := r.runtimes.Get(ctx, runtimeRef)
+	if err != nil {
+		if errors.Is(err, runtimestore.ErrNotFound) {
+			return "", nil
+		}
+		return "", fmt.Errorf("recycle: resolve runtime %s: %w", runtimeRef, err)
+	}
+	return rt.IsolationProfile, nil
+}
+
+// overUptimeCap reports whether the pod is already over its maxPodUptimeSeconds
+// cap at now, the gateway-computed uptime check that suppresses the per-release
+// session_count_limit counter emit (§9 D9 option (a)). The maxPodUptimeSeconds
+// > 0 conjunct is load-bearing: a pool that sets no cap has
+// maxPodUptimeSeconds == 0, and without the guard now > createdAt + 0 would be
+// unconditionally true and zero-count every no-cap concurrent pool across both
+// processes. The guard matches the expiredByUptime and podscrub.Decide
+// maxPodUptimeSeconds > 0 guards, and the check keys off the pod
+// CreationTimestamp so the gateway and CODE-E's reconcileUptime evaluate the
+// same reference instant. spec: §5.2 (uptime drain WarmPoolController-owned),
+// §16.1 (session_count_limit vs uptime_limit partition), §4.6.1 (uptime derived
+// from CreationTimestamp).
+func overUptimeCap(policy perReleasePolicy, now time.Time) bool {
+	if policy.maxPodUptimeSeconds <= 0 || policy.createdAt.IsZero() {
+		return false
+	}
+	deadline := policy.createdAt.Add(time.Duration(policy.maxPodUptimeSeconds) * time.Second)
+	return now.After(deadline)
+}
+
+// poolReader resolves a pool's §5.2 recycle policy and runtime reference.
+// *poolstore.Memory and the pgstore satisfy it through poolstore.Store.
+type poolReader interface {
+	Get(ctx context.Context, name string) (poolstore.Pool, error)
+}
+
+// runtimeReader resolves a runtime's §5.1 capabilities (preConnect).
+// *runtimestore.Memory and the pgstore satisfy it through
+// runtimestore.Store.
+type runtimeReader interface {
+	Get(ctx context.Context, name string) (runtimestore.Runtime, error)
+}
+
+// podInspector resolves the §5.2 recycle policy and `spec/06_warm-pod-model.md` §6.2 host-node
+// schedulability for a pod under a whole-pod scrub report. It reads the
+// agent Pod (the lenny.dev/host-schedulable label, the lenny.dev/pool
+// label, and the pod's creation time for uptime) via the gateway's Pods
+// get access, the pool's recycle policy and runtime reference from
+// poolstore, and the runtime's preConnect capability from runtimestore.
+type podInspector struct {
+	cl        client.Client
+	namespace string
+	pools     poolReader
+	runtimes  runtimeReader
+	now       func() time.Time
+}
+
+// PodInspectorOptions configures a pod inspector.
+type PodInspectorOptions struct {
+	// Client reads the agent Pod (host-schedulable label, pool label,
+	// creation time). Required.
+	Client client.Client
+	// Namespace is the agent namespace the pods live in. Required.
+	Namespace string
+	// Pools resolves the pod's pool to its recycle policy and runtime
+	// reference. Required.
+	Pools poolReader
+	// Runtimes resolves the pool's runtime to its preConnect capability.
+	// Required.
+	Runtimes runtimeReader
+	// Now overrides the clock for the uptime computation; nil uses wall
+	// time.
+	Now func() time.Time
+}
+
+// NewPodInspector builds the `spec/06_warm-pod-model.md` §6.2 / §5.2 recycle pod inspector. Client,
+// Namespace, Pools, and Runtimes are required.
+func NewPodInspector(opts PodInspectorOptions) (leasecontrol.PodInspector, error) {
+	if opts.Client == nil {
+		return nil, errors.New("recycle: PodInspector Client is required")
+	}
+	if opts.Namespace == "" {
+		return nil, errors.New("recycle: PodInspector Namespace is required")
+	}
+	if opts.Pools == nil {
+		return nil, errors.New("recycle: PodInspector Pools is required")
+	}
+	if opts.Runtimes == nil {
+		return nil, errors.New("recycle: PodInspector Runtimes is required")
+	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
+	return &podInspector{
+		cl:        opts.Client,
+		namespace: opts.Namespace,
+		pools:     opts.Pools,
+		runtimes:  opts.Runtimes,
+		now:       now,
+	}, nil
+}
+
+// InspectForRecycle resolves the recycle policy and pod facts for podID at
+// the recycle boundary. found is false when the pod or its claim is gone (a
+// concurrent retirement or the §4.6.1 orphan GC reclaimed it), in which case
+// the disposition is skipped (nothing to recycle). The pod and the claim are
+// read up front so the common gone case is caught before any counter
+// advances; the residual TOCTOU window between this read and the disposition
+// write is absorbed by claimDispositionDriver, which treats a NotFound from
+// the binding-state writers as the same no-op. A missing or "false"
+// lenny.dev/host-schedulable label reads as unschedulable, fail-safe per
+// §6.2. spec: §6.2 (host-node schedulability read via Pods get), §5.2
+// (recycle policy resolution), §4.7 (skip when the pod or claim is
+// gone).
+func (i *podInspector) InspectForRecycle(ctx context.Context, podID string) (leasecontrol.PodRecyclePolicy, bool, error) {
+	var pod corev1.Pod
+	if err := i.cl.Get(ctx, client.ObjectKey{Namespace: i.namespace, Name: podID}, &pod); err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			// The pod is gone: nothing to recycle.
+			return leasecontrol.PodRecyclePolicy{}, false, nil
+		}
+		return leasecontrol.PodRecyclePolicy{}, false, fmt.Errorf("recycle: get pod %s: %w", podID, err)
+	}
+
+	// The claim can be reclaimed independently of the Pod object: a racing
+	// hold-expiry DELETE on a reserved claim, or the §4.6.1 orphan GC draining
+	// a `recycling` claim after a coordinator crash, removes the claim while
+	// the Pod still exists. A gone claim means there is nothing to recycle, so
+	// the disposition is skipped before any counter advances. The residual
+	// TOCTOU window between this read and the disposition write is absorbed by
+	// claimDispositionDriver, which treats a NotFound from the binding-state
+	// writers as the same no-op. spec: §4.6.1, §4.7 (skip when the claim
+	// is gone).
+	var claim lennyv1.SandboxClaim
+	if err := i.cl.Get(ctx, client.ObjectKey{Namespace: i.namespace, Name: podclaim.ClaimName(podID)}, &claim); err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			return leasecontrol.PodRecyclePolicy{}, false, nil
+		}
+		return leasecontrol.PodRecyclePolicy{}, false, fmt.Errorf("recycle: get claim for pod %s: %w", podID, err)
+	}
+
+	poolName := pod.Labels[warmpool.LabelPool]
+	if poolName == "" {
+		// A managed agent pod with no pool label cannot be evaluated against
+		// a recycle policy; fail closed rather than recycle against a guessed
+		// policy. spec: §4.6.1 (pool label), §5.2.
+		return leasecontrol.PodRecyclePolicy{}, false, fmt.Errorf("recycle: pod %s carries no %s label", podID, warmpool.LabelPool)
+	}
+	pool, err := i.pools.Get(ctx, poolName)
+	if err != nil {
+		if errors.Is(err, poolstore.ErrNotFound) {
+			// The pool was deleted: the pod is being retired with it, nothing
+			// to recycle into.
+			return leasecontrol.PodRecyclePolicy{}, false, nil
+		}
+		return leasecontrol.PodRecyclePolicy{}, false, fmt.Errorf("recycle: resolve pool %s for pod %s: %w", poolName, podID, err)
+	}
+
+	recycle := poolRecyclePolicy(pool)
+	if recycle == nil {
+		// A non-recycling pool reported a whole-pod scrub: the pod is not a
+		// recycle candidate (one-session-per-pod), so the disposition is a
+		// no-op and the pod retires on session end through the session path.
+		// spec: §5.2.
+		return leasecontrol.PodRecyclePolicy{}, false, nil
+	}
+
+	preConnect, runtimeProfile, err := i.resolveRuntime(ctx, pool.RuntimeRef)
+	if err != nil {
+		return leasecontrol.PodRecyclePolicy{}, false, err
+	}
+
+	return leasecontrol.PodRecyclePolicy{
+		PreConnect: preConnect,
+		// spec: spec/05 §5.2 step 7 — a vm-restart pool retires the pod at the
+		// recycle boundary and the warm pool provisions a fresh replacement (a
+		// fresh guest VM). The gateway routes on the profile it already holds in
+		// its runtime store, so the disposition retires rather than reusing the
+		// pod without a fresh guest (fail-open); the wire report stays binary.
+		VMRestart:         recycle.ScrubProfile == runtimestore.MicrovmScrubVMRestart,
+		OnScrubFailure:    onScrubFailure(recycle.OnScrubFailure),
+		MaxScrubFailures:  recycle.MaxScrubFailures,
+		MaxSessionsPerPod: recycle.MaxSessionsPerPod,
+		// MaxConcurrentSessions lets applyDisposition suppress the
+		// occupancy-zero session_count_limit counter for a concurrent
+		// non-vm-restart pool (the per-release SessionCountRetirer owns that
+		// emission). spec: §5.2 (per-release maxSessionsPerPod drain), §16.1.
+		MaxConcurrentSessions: int(poolMaxConcurrentSessions(pool)),
+		MaxPodUptimeSeconds:   int64(recycle.MaxPodUptimeSeconds),
+		HostSchedulable:       hostSchedulable(pod.Labels),
+		PodUptimeSeconds:      podUptimeSeconds(pod.CreationTimestamp.Time, i.now()),
+		Pool:                  poolName,
+		RuntimeClass:          runtimeClass(effectiveProfile(pool, runtimeProfile)),
+	}, true, nil
+}
+
+// resolveRuntime resolves the pool runtime's §5.1 capabilities.preConnect
+// flag and its §5.3 default isolation profile. A runtime that no longer
+// resolves (deleted between warm and recycle) is treated as non-preConnect
+// with an empty default profile: a non-preConnect recycle never re-warms, so
+// a stale resolution under-warms rather than reserving an SDK-cold pod, and
+// the empty default falls through to the pool's explicit profile (or an
+// empty runtime_class label) rather than guessing. spec: §6.2 (preConnect),
+// §5.3 (runtime default isolation profile).
+func (i *podInspector) resolveRuntime(ctx context.Context, runtimeRef string) (bool, isolation.Profile, error) {
+	if runtimeRef == "" {
+		return false, "", nil
+	}
+	rt, err := i.runtimes.Get(ctx, runtimeRef)
+	if err != nil {
+		if errors.Is(err, runtimestore.ErrNotFound) {
+			return false, "", nil
+		}
+		return false, "", fmt.Errorf("recycle: resolve runtime %s: %w", runtimeRef, err)
+	}
+	return rt.Capabilities != nil && rt.Capabilities.PreConnect, rt.IsolationProfile, nil
+}
+
+// poolRecyclePolicy returns the pool's §5.2 sessionPolicy.recycle when the
+// pool is a recycling session-mode pool, or nil otherwise (no
+// SessionPolicy, no Recycle block, or recycle.enabled: false).
+func poolRecyclePolicy(p poolstore.Pool) *runtimestore.RecyclePolicy {
+	if p.SessionPolicy == nil || p.SessionPolicy.Recycle == nil || !p.SessionPolicy.Recycle.Enabled {
+		return nil
+	}
+	return p.SessionPolicy.Recycle
+}
+
+// onScrubFailure maps the runtimestore disposition enum onto the
+// podscrub policy the disposition reads. An empty or unrecognized value
+// is treated as the warn default. spec: §5.2 (onScrubFailure).
+func onScrubFailure(d runtimestore.CleanupFailureDisposition) podscrub.CleanupFailurePolicy {
+	if d == runtimestore.CleanupFailureFail {
+		return podscrub.OnCleanupFail
+	}
+	return podscrub.OnCleanupWarn
+}
+
+// effectiveProfile resolves the pool's §5.3 isolation profile: the pool's
+// IsolationProfile override when set, falling back to the pool runtime's
+// default profile when the pool carries no override. poolstore.Pool.
+// IsolationProfile is documented as an override of the runtime default, so a
+// pool that did not set one resolves to the runtime default rather than the
+// zero profile. The §16.1 runtime_class label on the recycle metrics derives
+// from the result. spec: §5.3 (pool profile overrides the runtime default),
+// §16.1 (runtime_class label).
+func effectiveProfile(p poolstore.Pool, runtimeDefault isolation.Profile) isolation.Profile {
+	if p.IsolationProfile != "" {
+		return p.IsolationProfile
+	}
+	return runtimeDefault
+}
+
+// runtimeClass maps the §5.3 isolation profile to the Kubernetes
+// RuntimeClass label the §16.1 recycle metrics carry. An unrecognized
+// profile yields an empty label rather than a guess. spec: §5.3, §16.1.
+func runtimeClass(p isolation.Profile) string {
+	name, _ := isolation.RuntimeClassName(p)
+	return name
+}
+
+// hostSchedulable reads the §6.2 lenny.dev/host-schedulable pod label:
+// true only when the label reads exactly "true". An absent or any other
+// value is fail-safe-unschedulable. spec: §6.2.
+func hostSchedulable(labels map[string]string) bool {
+	return labels[warmpool.LabelHostSchedulable] == "true"
+}
+
+// podUptimeSeconds returns the pod's wall-clock uptime in whole seconds,
+// floored at zero. A zero or future creation time yields zero. spec: §6.2
+// (maxPodUptimeSeconds retire).
+func podUptimeSeconds(createdAt, now time.Time) int64 {
+	if createdAt.IsZero() {
+		return 0
+	}
+	d := now.Sub(createdAt)
+	if d < 0 {
+		return 0
+	}
+	return int64(d / time.Second)
+}
+
+// claimDispositionDriver applies a resolved recycle disposition to the
+// pod's SandboxClaim binding state via the podclaim binding-state writers.
+// On a recycle it stamps rewarmStartedAt on a preConnect pool (the
+// projection drives sdk_connecting and the §6.2 re-warm completes
+// asynchronously, after which a later WriteReservedStatus reserves the
+// pod) and patches a non-preConnect pool directly to reserved; on a retire
+// it writes the terminal disposition (released vs failed). On a warn-policy
+// scrub failure it stamps the §5.2 lenny.dev/scrub-warning annotation on the
+// agent Pod so the residual-state marker re-enters the pool with the pod and
+// persists through the §6.2 preConnect re-warm.
+type claimDispositionDriver struct {
+	cl        client.Client
+	namespace string
+	holdTTL   time.Duration
+	now       func() time.Time
+	log       *slog.Logger
+	// holds receives the reserved-hold token after a non-preConnect
+	// reserved patch so the coordinator arms the hold-TTL expiry timer. Nil
+	// disables the timer (the orphan GC still reclaims the reserved claim
+	// after holdExpiresAt plus a grace, §4.6.1), which keeps the disposition
+	// usable in unit tests that do not exercise the hold window.
+	holds HoldRegistrar
+	// boundary is signaled when a ReportPodScrub disposition resolves so the
+	// recycle-boundary coordinator cancels the pod's missing-report
+	// timeout and, on a preConnect recycle, begins the re-warm completion poll
+	// that drives the claim recycling → reserved. Nil leaves the missing-report
+	// timeout to fire (and, on preConnect pools, the re-warm completion to the
+	// orphan GC), which keeps the driver usable in unit tests that do not
+	// exercise the coordinator.
+	boundary recycleBoundarySignal
+}
+
+// recycleBoundarySignal is the seam the disposition driver notifies when
+// a ReportPodScrub resolves: the boundary coordinator cancels the pod's
+// missing-report timeout and, on a preConnect recycle, starts the re-warm
+// completion poll. *RecycleBoundaryCoordinator satisfies it.
+type recycleBoundarySignal interface {
+	// OnScrubReported cancels the missing-report timeout for podID and, when
+	// preConnect is true and the disposition recycled (rather than retired),
+	// begins the re-warm completion poll that reserves the claim once the SDK
+	// re-warm makes the pod Ready.
+	OnScrubReported(podID string, preConnect bool)
+}
+
+// ClaimDispositionDriverOptions configures the claim disposition driver.
+type ClaimDispositionDriverOptions struct {
+	// Client patches the SandboxClaim binding-state status subresource and
+	// the agent Pod's lenny.dev/scrub-warning annotation. Required.
+	Client client.Client
+	// Namespace is the agent namespace the claims live in. Required.
+	Namespace string
+	// HoldTTL is the §4.6.1 gateway.claimHoldTTLSeconds reserved-hold TTL
+	// stamped as holdExpiresAt at the reserved patch. A non-positive value
+	// falls back to DefaultClaimHoldTTL.
+	HoldTTL time.Duration
+	// Now overrides the clock for the binding-state transition stamps and the
+	// scrub-warning annotation; nil uses wall time.
+	Now func() time.Time
+	// Logger records the §5.2 audit-trail line on a FAILED retire (the failed
+	// pod's metadata is retained in the audit log for inspection). nil
+	// resolves to slog.Default().
+	Logger *slog.Logger
+	// Holds receives the reserved-hold token after a non-preConnect
+	// reserved patch so the HoldCoordinator arms the hold-TTL expiry timer.
+	// Nil leaves expiry to the §4.6.1 orphan GC (after holdExpiresAt plus a
+	// grace) and is the default in tests that do not exercise the hold window.
+	Holds HoldRegistrar
+	// Boundary is the recycle-boundary coordinator the driver notifies on
+	// every resolved ReportPodScrub so it cancels the pod's missing-report
+	// timeout and, on a preConnect recycle, drives the claim recycling →
+	// reserved once the SDK re-warm completes. Nil leaves the timeout to fire
+	// and the re-warm completion to the orphan GC.
+	Boundary recycleBoundarySignal
+}
+
+// NewClaimDispositionDriver builds the claim disposition driver.
+// Client and Namespace are required.
+func NewClaimDispositionDriver(opts ClaimDispositionDriverOptions) (leasecontrol.ClaimDispositionDriver, error) {
+	if opts.Client == nil {
+		return nil, errors.New("recycle: ClaimDispositionDriver Client is required")
+	}
+	if opts.Namespace == "" {
+		return nil, errors.New("recycle: ClaimDispositionDriver Namespace is required")
+	}
+	holdTTL := opts.HoldTTL
+	if holdTTL <= 0 {
+		holdTTL = DefaultClaimHoldTTL
+	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
+	log := opts.Logger
+	if log == nil {
+		log = slog.Default()
+	}
+	return &claimDispositionDriver{
+		cl:        opts.Client,
+		namespace: opts.Namespace,
+		holdTTL:   holdTTL,
+		now:       now,
+		log:       log,
+		holds:     opts.Holds,
+		boundary:  opts.Boundary,
+	}, nil
+}
+
+// claimGone reports whether a binding-state write failed because the
+// SandboxClaim no longer exists. The recycle disposition races a concurrent
+// reclaim of the claim: a hold-expiry DELETE on a reserved claim, or the
+// §4.6.1 orphan GC draining a `recycling` claim after a coordinator crash,
+// can remove the claim while the agent Pod object survives and the
+// ReportPodScrub disposition is still in flight. The §4.7 PodInspector
+// contract names this case ("found is false when the pod or its claim is
+// gone, in which case the disposition is skipped") and RecordPodScrub
+// absorbs it as a no-op, but the inspector's pre-write Pod check cannot close
+// the TOCTOU window between inspect and the status apply. The status-
+// subresource SSA in WriteReservedStatus/WriteDispositionStatus returns
+// NotFound (a status apply cannot create the object) and WriteRewarmStartedStatus
+// returns a wrapped NotFound from its get-first, so detecting NotFound here
+// makes a vanished claim "nothing left to recycle" rather than an error the
+// handler maps to Internal. spec: §4.6.1 (orphan-GC crash recovery), §4.7 (concurrent-retirement
+// gone), §4.6.1 (orphan-GC crash recovery), §4.7 (concurrent-retirement
+// no-op).
+func claimGone(err error) bool {
+	return apierrors.IsNotFound(err)
+}
+
+// Recycle drives the reuse disposition. A preConnect pool stamps
+// rewarmStartedAt on the recycling claim, anchoring the §6.2 re-warm
+// watchdog; the projection then enters sdk_connecting and the
+// recycle-boundary coordinator polls the pod readiness and patches the claim
+// recycling → reserved once the SDK re-warm makes the pod Ready. A
+// non-preConnect pool patches the claim directly to reserved. In both cases
+// the resolved ReportPodScrub cancels the pod's missing-report timeout
+// through the boundary coordinator. When scrubWarning is true (a warn-policy
+// scrub failure that reuses the pod) it stamps the §5.2 lenny.dev/scrub-warning
+// annotation on the agent Pod first, so the residual-state marker re-enters
+// the pool with the pod and persists through the re-warm (the SDK
+// re-initialization does not clear it). spec: §5.2 (warn policy returns the pod with a
+// completion drives recycling → reserved; ReportPodScrub cancels the
+// missing-report timeout), §5.2 (warn policy returns the pod with a
+// scrub_warning annotation), §6.2 (preConnect re-warm persists the
+// annotation).
+func (d *claimDispositionDriver) Recycle(ctx context.Context, podID string, preConnect, scrubWarning bool) error {
+	// Stamp the residual-state marker before the binding-state patch so the
+	// annotation is on the pod by the time the projection re-enters the pool.
+	// A stamp failure aborts the recycle so a warn-policy pod never re-enters
+	// the pool without its marker (fail closed). StampScrubWarning already
+	// tolerates a vanished pod (a NotFound patch is a no-op there), so a gone
+	// pod falls through to the gone-claim no-op below rather than erroring.
+	// spec: §5.2.
+	if scrubWarning {
+		if err := podclaim.StampScrubWarning(ctx, d.cl, d.namespace, podID, d.now()); err != nil {
+			return fmt.Errorf("recycle: stamp scrub-warning on pod %s: %w", podID, err)
+		}
+	}
+	claim := podclaim.ClaimName(podID)
+	if preConnect {
+		// The scrub_warning annotation stamped above persists through the
+		// re-warm; the rewarm stamp only anchors the watchdog. spec: §6.2
+		// (preConnect re-warm on scrub_warning).
+		if err := podclaim.WriteRewarmStartedStatus(ctx, d.cl, d.namespace, claim, d.now); err != nil {
+			if claimGone(err) {
+				return nil
+			}
+			return fmt.Errorf("recycle: stamp rewarm-started on claim %s: %w", claim, err)
+		}
+		// cancel the missing-report timeout (the report arrived) and
+		// start the re-warm completion poll that patches the claim
+		// recycling → reserved once the SDK re-warm makes the pod Ready.
+		// Nothing else produces that reserved patch on a preConnect pool.
+		d.signalBoundary(podID, true)
+		return nil
+	}
+	hold, err := podclaim.WriteReservedStatus(ctx, d.cl, d.namespace, claim, d.holdTTL, d.now)
+	if err != nil {
+		if claimGone(err) {
+			return nil
+		}
+		return fmt.Errorf("recycle: reserve claim %s: %w", claim, err)
+	}
+	// Hand the reserved-hold token to the coordinator so it arms the
+	// hold-TTL expiry timer (the precondition-guarded DELETE that returns the
+	// pod to idle). A nil registrar leaves the reserved claim for the §4.6.1
+	// orphan GC after holdExpiresAt plus a grace.
+	if d.holds != nil {
+		d.holds.Hold(podID, hold)
+	}
+	// the reserve happened synchronously here, so the boundary signal
+	// only cancels the missing-report timeout (no re-warm poll on a
+	// non-preConnect pool).
+	d.signalBoundary(podID, false)
+	return nil
+}
+
+// signalBoundary notifies the recycle-boundary coordinator that a
+// ReportPodScrub resolved for podID so it cancels the missing-report timeout
+// and, on a preConnect recycle, starts the re-warm completion poll. A nil
+// coordinator (unit tests, or a deployment without the cluster client) leaves
+// the timeout to fire and the re-warm completion to the orphan GC.
+func (d *claimDispositionDriver) signalBoundary(podID string, preConnect bool) {
+	if d.boundary != nil {
+		d.boundary.OnScrubReported(podID, preConnect)
+	}
+}
+
+// Retire writes the terminal §6.2 disposition on the claim so the
+// projection drains the pod. failed selects the claim's `failed` terminal
+// (the onScrubFailure: fail termination); every other retire is a drain to
+// `released` (the three lifecycle limits and the §6.2 cordon-drain). When
+// scrubWarning is true (the §6.2 cordon-drain-under-warn path) it stamps the
+// §5.2 lenny.dev/scrub-warning annotation on the agent Pod so the
+// residual-state marker is retained on the draining pod for the audit trail.
+// reason and detail are the observability metadata the §5.2 audit trail
+// retains for a FAILED outcome; the binding-state writer records the terminal
+// phase. A released retire (failed false) is logged at Info with the pod
+// identifier, the reason, and the pod's lifetime session count and uptime, so
+// a retire the §16.1 counter does not carry, such as runtime_not_live, is
+// still recorded. spec: §6.2 (retire disposition), §4.6.3 (released vs failed
+// terminals), §6.2 (cordon-drain retains the scrub_warning marker), §5.2
+// (the failed pod's metadata is retained in the audit log; Pod retirement
+// policy, Runtime not live).
+func (d *claimDispositionDriver) Retire(ctx context.Context, podID string, failed, scrubWarning bool, reason podscrub.RetireReason, lifetime leasecontrol.PodLifetime, detail string) error {
+	// The §6.2 cordon-drain-under-warn path retains the residual-state
+	// marker on the draining pod; stamp it before the terminal write so the
+	// audit trail sees the annotation on the pod. A stamp failure aborts the
+	// retire (fail closed). StampScrubWarning already tolerates a vanished pod
+	// (a NotFound patch is a no-op there), so a gone pod falls through to the
+	// gone-claim no-op below rather than erroring. spec: §6.2, §5.2.
+	if scrubWarning {
+		if err := podclaim.StampScrubWarning(ctx, d.cl, d.namespace, podID, d.now()); err != nil {
+			return fmt.Errorf("recycle: stamp scrub-warning on retiring pod %s: %w", podID, err)
+		}
+	}
+	claim := podclaim.ClaimName(podID)
+	disposition := claimstate.Released
+	if failed {
+		disposition = claimstate.Failed
+	}
+	if err := podclaim.WriteDispositionStatus(ctx, d.cl, d.namespace, claim, disposition, d.now); err != nil {
+		if claimGone(err) {
+			return nil
+		}
+		return fmt.Errorf("recycle: write %s disposition on claim %s: %w", disposition, claim, err)
+	}
+	// §6.2: the ReportPodScrub that drove this retire cancels the pod's
+	// missing-report timeout so the coordinator does not later re-retire a
+	// claim it already terminated. A retire never starts a re-warm poll.
+	d.signalBoundary(podID, false)
+	// §5.2: on a FAILED termination (onScrubFailure: fail), the failed pod's
+	// metadata is retained in the audit log for inspection. The terminal claim
+	// phase carries no detail string, so the reason and the adapter-supplied
+	// failure description are recorded here. detail may be empty; the reason is
+	// always present.
+	if failed {
+		d.log.LogAttrs(
+			ctx, slog.LevelWarn, "recycle: pod retired on failed whole-pod scrub",
+			slog.String("pod_id", podID),
+			slog.String("reason", string(reason)),
+			slog.String("detail", detail),
+		)
+		return nil
+	}
+	d.logReleasedRetire(ctx, podID, reason, lifetime)
+	return nil
+}
+
+// logReleasedRetire records a released (non-failed) recycle-boundary retire
+// at Info. The §16.1 retirement counter carries only the limit triggers, so
+// this record is where a non-counting retire such as runtime_not_live,
+// host_unschedulable, or vm_restart_reprovision is visible, with the pod's
+// lifetime session count and uptime to tell an early retire from a limit.
+// spec: §5.2 (Pod retirement policy, Runtime not live).
+func (d *claimDispositionDriver) logReleasedRetire(ctx context.Context, podID string, reason podscrub.RetireReason, lifetime leasecontrol.PodLifetime) {
+	d.log.LogAttrs(
+		ctx, slog.LevelInfo, "recycle: pod retired at the recycle boundary",
+		slog.String("pod_id", podID),
+		slog.String("reason", string(reason)),
+		slog.Int("sessions_served", lifetime.SessionsServed),
+		slog.Int64("uptime_seconds", lifetime.UptimeSeconds),
+	)
+}
+
+// RetirementMetricsSink records the §16.1 scrub-failure and retirement
+// metrics. *gatewaymetrics.Metrics satisfies it; the interface keeps this
+// package free of a direct gatewaymetrics dependency.
+type RetirementMetricsSink interface {
+	IncScrubFailureTotal(pool, runtimeClass string)
+	SetScrubFailureCount(podID, pool, runtimeClass string, count int)
+	IncRetirement(reason, pool, runtimeClass string)
+}
+
+// retirementMetrics adapts a RetirementMetricsSink onto the
+// leasecontrol.RetirementMetrics seam, mapping the typed RetireReason onto
+// the string label the metric sink records.
+type retirementMetrics struct {
+	sink RetirementMetricsSink
+}
+
+// NewRetirementMetrics wraps a gatewaymetrics sink as the §16.1 retirement
+// metrics seam. A nil sink returns nil so the ScrubReporter falls back to
+// its no-op metrics. spec: §16.1 (lenny_pod_scrub_failure_total,
+// lenny_pod_scrub_failure_count, lenny_gateway_pod_retirement_total).
+func NewRetirementMetrics(sink RetirementMetricsSink) leasecontrol.RetirementMetrics {
+	if sink == nil {
+		return nil
+	}
+	return &retirementMetrics{sink: sink}
+}
+
+func (m *retirementMetrics) IncScrubFailureTotal(pool, runtimeClass string) {
+	m.sink.IncScrubFailureTotal(pool, runtimeClass)
+}
+
+func (m *retirementMetrics) SetScrubFailureCount(podID, pool, runtimeClass string, count int) {
+	m.sink.SetScrubFailureCount(podID, pool, runtimeClass, count)
+}
+
+func (m *retirementMetrics) IncRetirement(reason podscrub.RetireReason, pool, runtimeClass string) {
+	m.sink.IncRetirement(string(reason), pool, runtimeClass)
+}
+
+// Compile-time assertions that the concrete seams satisfy the leasecontrol
+// consumer interfaces.
+var (
+	_ leasecontrol.RecycleCounterStore    = (*recycleCounterStore)(nil)
+	_ leasecontrol.DrainLedger            = (*drainLedger)(nil)
+	_ leasecontrol.SessionCountRetirer    = (*sessionCountRetirer)(nil)
+	_ leasecontrol.PodInspector           = (*podInspector)(nil)
+	_ leasecontrol.ClaimDispositionDriver = (*claimDispositionDriver)(nil)
+	_ leasecontrol.RetirementMetrics      = (*retirementMetrics)(nil)
+	_ recycleBoundarySignal               = (*RecycleBoundaryCoordinator)(nil)
+)

@@ -14,7 +14,7 @@ The build order is organized into the following bands.
 2. **Controllers, admission, and gateway core (Phase 3 through Phase 4.5).** The `PoolScalingController`, the `RuntimeUpgrade` state machine, the mTLS PKI, the admission webhooks that enforce CRD field ownership and pod-label immutability, the minimum-viable gateway binary with the Session API, and the admin API foundation with OIDC/OAuth 2.1 validation.
 3. **External APIs and credentials (Phase 5 through Phase 5.8).** The `ExternalAdapterRegistry`, the REST and MCP overlapping operations, etcd encryption at rest, basic credential leasing, the Token Service, the minimum-viable quota and authentication interceptors, and the LLM Proxy with the native `anthropic_direct` translator.
 4. **Interactive sessions, policy, and delegation (Phase 6 through Phase 10).** Interactive sessions and client SDKs, the full policy engine (idempotency, circuit breakers, audit hooks), checkpoint and resume, recursive delegation with `delegation-echo`, and the MCP fabric with the elicitation chain.
-5. **Hardening and compliance (Phase 11 through Phase 14.5).** Multi-provider translators, credential rotation and revocation, Token Service KMS hardening, OAuth connectors, `type: mcp` runtimes, concurrent execution modes, full audit and `lenny-backup`, comprehensive security hardening, and the post-hardening SLO re-validation.
+5. **Hardening and compliance (Phase 11 through Phase 14.5).** Multi-provider translators, credential rotation and revocation, Token Service KMS hardening, OAuth connectors, `type: mcp` runtimes, the `sessionPolicy` presets and service mode, full audit and `lenny-backup`, comprehensive security hardening, and the post-hardening SLO re-validation.
 6. **Extensibility and launch (Phase 15 through Phase 17b).** The Environment resource with RBAC and cross-environment delegation, experiment primitives integrated with the `PoolScalingController`, documentation and community launch, and the post-v1 surfaces (memory, semantic caching, and evaluation hooks).
 
 The load-test phases (Phase 6.5, Phase 9.5, Phase 11.5, Phase 13.5, Phase 14.5, and Phase 16.5) are explicit re-baselines. Each captures a Tier 7 baseline after a major capability lands and records the delta against the prior baseline, so regressions are visible before a subsequent phase consumes the same load envelope.
@@ -47,14 +47,14 @@ Three Helm feature flags gate admission webhooks and subsystem templates against
 | 6.5   | Incremental load test (streaming)                                      | —                                       | [§13.17](../TESTING.md#1317-phase-65--incremental-load-test-streaming)                                                                                      |
 | 7     | Policy engine (quotas, budgets, audit hooks)                           | —                                       | [§13.18](../TESTING.md#1318-phase-7--policy-engine-quotas-budgets-audit-hooks)                                                                              |
 | 8     | Checkpoint/resume + drain-readiness webhook                            | **Phase 3.5** (phase-stamp)             | [§13.19](../TESTING.md#1319-phase-8--checkpointresume--drain-readiness-webhook)                                                                             |
-| 9     | Delegation + `delegation-echo`                                         | **Phase 5.5** (`/v1/oauth/token`)       | [§13.20](../TESTING.md#1320-phase-9--delegation--delegation-echo)                                                                                           |
+| 9     | Delegation + `delegation-echo`                                         | —                                       | [§13.20](../TESTING.md#1320-phase-9--delegation--delegation-echo)                                                                                           |
 | 9.5   | Incremental load test (delegation)                                     | —                                       | [§13.21](../TESTING.md#1321-phase-95--incremental-load-test-delegation)                                                                                     |
 | 10    | MCP fabric (virtual child interfaces, elicitation chain)               | —                                       | [§13.22](../TESTING.md#1322-phase-10--mcp-fabric-virtual-child-interfaces-elicitation-chain)                                                                |
 | 11    | Advanced credentials + multi-provider translators + revocation         | —                                       | [§13.23](../TESTING.md#1323-phase-11--advanced-credentials--multi-provider-translators--revocation)                                                         |
 | 11.5  | Incremental load test (credential lifecycle)                           | —                                       | [§13.24](../TESTING.md#1324-phase-115--incremental-load-test-credential-lifecycle)                                                                          |
 | 12a   | Token Service hardening (KMS envelope + OAuth)                         | —                                       | [§13.25](../TESTING.md#1325-phase-12a--token-service-hardening-kms-envelope--oauth)                                                                         |
 | 12b   | `type: mcp` runtime support                                            | —                                       | [§13.26](../TESTING.md#1326-phase-12b--type-mcp-runtime-support)                                                                                            |
-| 12c   | Concurrent execution modes                                             | —                                       | [§13.27](../TESTING.md#1327-phase-12c--concurrent-execution-modes)                                                                                          |
+| 12c   | `sessionPolicy` presets and service mode                               | —                                       | [§13.27](../TESTING.md#1327-phase-12c--sessionpolicy-presets-and-service-mode)                                                                              |
 | 13    | Full observability + audit + `lenny-backup` + compliance webhooks      | **Phase 3.5 + 5** (phase-stamp, OpenAPI) | [§13.28](../TESTING.md#1328-phase-13--full-observability--audit--lenny-backup--compliance-webhooks)                                                        |
 | 13.5  | Pre-hardening full-system load baseline                                | —                           | [§13.29](../TESTING.md#1329-phase-135--pre-hardening-full-system-load-baseline)                                                                             |
 | 14    | Comprehensive security hardening                                       | —                           | [§13.30](../TESTING.md#1330-phase-14--comprehensive-security-hardening)                                                                                     |
@@ -89,7 +89,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 **Deliverables.**
 
 - Core domain types as Go packages: `Runtime`, `SandboxTemplate`, `SandboxWarmPool`, `Sandbox`, `SandboxClaim`, `TaskRecord`, `TaskResult`, and the session state machines (suspended-session state and input-required state).
-- Wire-contract artifacts under `schemas/`: `lenny-adapter.proto`, `lenny-adapter-jsonl.schema.json`, `outputpart.schema.json`, and `workspaceplan-v1.json`.
+- Wire-contract artifacts under `schemas/`: `lenny-adapter.proto`, `lenny-adapter-jsonl.schema.json`, `messagepart.schema.json`, and `workspaceplan-v1.json`.
 - Generated Go stubs from `lenny-adapter.proto`.
 - buf-driven schema breaking-change detection wired into CI.
 
@@ -123,9 +123,10 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 - Adapter binary protocol implementation against the Phase 1 wire contracts.
 - `make run` local dev mode launching the gateway against an in-memory store and the `echo` runtime.
 - `pkg/common/registry/resolver.go` (`ImageResolver` with override > url > default precedence and digest enforcement).
-- Adapter `SO_PEERCRED` startup self-test per [§4.7](04_system-components.md#47-runtime-adapter) (runs on every pod start before the READY signal; ships with `lenny_adapter_sopeercred_selftest_failed_total` and the `adapter.requireSoPeercred` flag).
+- Adapter `SO_PEERCRED` startup self-test per [§4.7](04_system-components.md#47-runtime-adapter) (runs on every pod start before the READY signal; ships with `lenny_adapter_sopeercred_selftest_failed_total` and the adapter binary's `--require-so-peercred` process flag, default `true`).
+- Runtime supervisor per [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.**: the static binary in its digest-pinned image, the `lenny-supervisor-stage` init container and its volume per [§13.1](13_security-model.md#131-pod-security), and the adapter's `CH-SUPERVISE` listener per [§28.5.3](28_communication-channels.md#2853-intra-pod).
 - Per-connection HMAC challenge-response (nonce handshake) for the adapter↔agent socket per [§4.7](04_system-components.md#47-runtime-adapter), plus the `lenny_adapter_sopeercred_disabled_total` counter for the nonce-only fallback path.
-- Startup-latency benchmark harness in `tests/tier7_load/scenarios/startup_latency` with a first baseline committed under `tests/tier7_load/baselines/startup_latency.json`.
+- Startup-latency benchmark harness in `tests/tier7b_load_kind/scenarios/startup_latency` with a first baseline committed under `tests/tier7b_load_kind/baselines/startup_latency.json`.
 - SQLite-dev-mode schema for `make run` use.
 - Checkpoint-duration baseline (best-effort; the consistent-quiescence rebaseline is deferred to Phase 8).
 - Runtime-author SDKs `runtime-sdk-go`, `lenny-runtime` (Python), and `@lennylabs/runtime-sdk` (TypeScript) per [§15.7](15_external-api-surface.md#157-runtime-author-sdks), built in lockstep with the adapter binary protocol so the SDKs and the protocol ship together.
@@ -161,8 +162,8 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 
 **Deliverables.**
 
-- `cmd/runtimes/streaming-echo` Full-level reference runtime, inheriting the Basic stdin/stdout protocol from `cmd/runtimes/echo` and adding a lifecycle-channel client over a Unix socket. The runtime handles `lifecycle_capabilities`, `lifecycle_support`, `checkpoint_request`, `checkpoint_ready`, `interrupt_request`, `interrupt_acknowledged`, `credentials_rotated`, `deadline_signal`, and `draining`.
-- `schemas/lifecycle-events.schema.json` (lifecycle-channel envelope) with example fixtures under `schemas/examples/lifecycle.*.json`.
+- `cmd/runtimes/streaming-echo` Full-level reference runtime, inheriting the Basic stdin/stdout protocol from `cmd/runtimes/echo` and adding a CH-RUNTIMEOPS client over a Unix socket. The runtime handles `lifecycle_capabilities`, `lifecycle_support`, `checkpoint_request`, `checkpoint_ready`, `interrupt_request`, `interrupt_acknowledged`, `credentials_rotated`, `deadline_signal`, and `draining`.
+- `schemas/runtime-ops-events.schema.json` (CH-RUNTIMEOPS envelope) with example fixtures under `schemas/examples/runtime-ops.*.json`.
 - `cmd/lenny-compliance --level full` battery (lifecycle handshake, checkpoint quiesce/resume, interrupt acknowledgement, `credentials_rotated`, and `deadline_signal`).
 
 **Prerequisites.** Phase 2.5 exit gate.
@@ -179,7 +180,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 - WarmPoolController write path that mirrors `Sandbox` CRD status into the Phase 1.5 `agent_pod_state` Postgres table on every state transition per [§4.6.1](04_system-components.md#46-pod-lifecycle-controllers), including the `lenny_agent_pod_state_mirror_lag_seconds` gauge and the `statusUpdateDeduplicationWindow` controller flag.
 - WarmPoolController cluster-CIDR drift detection per NET-022 ([§13.2](13_security-model.md#132-network-isolation)): re-reads cluster pod and service CIDRs every 5 minutes, compares against the rendered `egressCIDRs`, and fires the `NetworkPolicyCIDRDrift` alert on divergence. Phase 14 adds the preflight half (NET-065 cluster-CIDR/IMDS symmetry across all three egress surfaces).
 - `SDK-warm circuit breaker` surfaced on `SandboxWarmPool.status.sdkWarmCircuitBreaker.{openedAt,openedReason,minOpenUntil}` per [§4.6.3](04_system-components.md#46-pod-lifecycle-controllers) ownership matrix, with the PSC leader-failover persistence carve-out.
-- `SecurityDegradedMode=True` condition surfaced by the PSC on `SandboxTemplate` when the `requireSoPeercred` self-test or nonce-only fallback is active per [§4.7](04_system-components.md#47-runtime-adapter).
+- Nonce-only-mode activation vertical (controller side) per [§4.7](04_system-components.md#47-runtime-adapter): the `Runtime.spec.requireSoPeercred` CRD field with RuntimeReconciler validation (`Registered=False`/`InvalidRuntime` on an embedded runtime setting `requireSoPeercred: false`), the WarmPoolController podspec render of `--require-so-peercred=false` gated on the pool acknowledgment mirrored onto `SandboxTemplate.spec`, and the `SOPeercredDisabled=True` condition on each nonce-only `Sandbox` and `SecurityDegradedMode=True` on the `SandboxTemplate`, both written by the WarmPoolController per the [§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries) ownership table.
 - `RuntimeProvider` abstraction per [§5.3](05_runtime-registry-and-pool-model.md#53-isolation-profiles) (extension point for future backends; default implementation wraps `kubernetes-sigs/agent-sandbox`).
 - Adapter-side `DemoteSDK` and `ConfigureWorkspace` gRPC stubs per [§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like) and [§6.2](06_warm-pod-model.md#62-pod-state-machine); the gateway-side caller wires in Phase 8 alongside checkpoint quiescence.
 - mTLS PKI via cert-manager per [§10.3](10_gateway-internals.md#103-mtls-pki), including the documented CA rotation procedure with the 24-hour overlap window.
@@ -198,7 +199,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 - Default-deny NetworkPolicy per [§13.2](13_security-model.md#132-network-isolation).
 - gVisor RuntimeClass admission policies (RuntimeClass-aware enforcement per [§17.2](17_deployment-topology.md#172-namespace-layout)), including the integration test that validates gVisor's `SO_PEERCRED` semantics against the Phase 2 self-test.
 - Baseline admission webhooks under `templates/admission-policies/`: `lenny-label-immutability`, `lenny-tenant-label-immutability`, `lenny-sandboxclaim-guard`, `lenny-pool-config-validator`, `lenny-crd-conversion`, and `lenny-ephemeral-container-cred-guard`. Each webhook is a thin HTTP shim over its pure-decision package under `pkg/admission/`.
-- `pkg/admission/sandboxclaim_guard` (ADR-007 enforcement: CREATE rejection when a non-terminal `SandboxClaim` already exists; PATCH/PUT rejection when the referenced `Sandbox.status.phase` is not `claimed`).
+- `pkg/admission/sandboxclaim_guard` (ADR-007 enforcement: CREATE rejection when a non-terminal `SandboxClaim` already exists).
 - `pkg/admission/label_immutability` ([§17.2](17_deployment-topology.md#172-namespace-layout) item 5 and [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) NET-003).
 - `pkg/admission/tenant_label_immutability` ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) per-tenant pinning enforcement; rejects mutations of `lenny.dev/tenant-id` outside the allowed `unset → {tenant_id} → unassigned` transitions).
 - `pkg/admission/ownership` (the [§4.6.3](04_system-components.md#46-pod-lifecycle-controllers) CRD field-ownership matrix).
@@ -221,18 +222,18 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 
 - `pkg/api/v1/session` (the `State` enum and `IsTerminal`, the [§7.1](07_session-lifecycle.md#71-normal-flow) `FailureClass` enum, and the [§15.1](15_external-api-surface.md#151-rest-api) state-mutating endpoint precondition table as a Go-callable `Validate` function).
 - Pre-running state-lifetime watchdogs per [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation) and [§6.2](06_warm-pod-model.md#62-pod-state-machine): the four goroutines driven by `maxCreatedStateTimeoutSeconds`, `maxFinalizingTimeoutSeconds`, `maxReadyTimeoutSeconds`, and `maxStartingTimeoutSeconds` that force `created`, `finalizing`, `ready`, and `starting` to the `failed` state with explicit reasons (`CREATED_TIMEOUT`, `FINALIZE_TIMEOUT`, `READY_TIMEOUT`, `STARTING_TIMEOUT`) so abandoned setup flows cannot indefinitely pin a warm pod.
-- `pkg/gateway/sessionstore` (the [§4.2](04_system-components.md#42-session-manager) `SessionStore` interface with strict tenant isolation; cross-tenant reads return `ErrNotFound`).
-- `pkg/gateway/sessionstore/memstore` (in-memory implementation behind the same interface; the Postgres-backed implementation swaps in behind it in a later phase).
+- The gateway session store (the [§4.2](04_system-components.md#42-session-manager) `SessionStore` interface with strict tenant isolation; cross-tenant reads return `ErrNotFound`).
+- The in-memory session store implementation behind the same interface; the Postgres-backed implementation swaps in behind it in a later phase.
 - `StoreRouter` interface per [§12.6](12_storage-architecture.md#126-interface-design) build-phase table (request-scoped routing of every gateway call to a `tenant_id`-pinned store handle).
-- `pkg/gateway/sessionserver` ([§15.1](15_external-api-surface.md#151-rest-api) REST handler for `POST /v1/sessions`, `GET /v1/sessions/{id}`, `GET /v1/sessions`, `DELETE /v1/sessions/{id}`, and the five state-mutating endpoints `finalize`, `start`, `interrupt`, `terminate`, and `resume`).
+- The gateway session server ([§15.1](15_external-api-surface.md#151-rest-api) REST handler for `POST /v1/sessions`, `GET /v1/sessions/{id}`, `GET /v1/sessions`, `DELETE /v1/sessions/{id}`, and the five state-mutating endpoints `finalize`, `start`, `interrupt`, `terminate`, and `resume`).
 - `POST /v1/sessions/{id}/derive` endpoint per [§7.1](07_session-lifecycle.md#71-normal-flow): per-source advisory lock (`derive_lock:{source_session_id}`), workspace snapshot copy, `allowIsolationDowngrade` admin gate, monotonicity check, and the `persistDeriveFailureRows` audit-only `created → failed` write.
 - `GET /v1/sessions/{id}/workspace` workspace-snapshot tarball endpoint per [§15.1](15_external-api-surface.md#151-rest-api).
-- `GET /v1/blobs/{ref}` blob-dereference endpoint per [§15.1](15_external-api-surface.md#151-rest-api) (load-bearing for every OutputPart `ref` payload above the inline-size threshold).
+- `GET /v1/blobs/{ref}` blob-dereference endpoint per [§15.1](15_external-api-surface.md#151-rest-api) (load-bearing for every MessagePart `ref` payload above the inline-size threshold).
 - Session introspection endpoints `GET /v1/sessions/{id}/transcript`, `GET /v1/sessions/{id}/tree`, `GET /v1/sessions/{id}/webhook-events`, and `POST /v1/sessions/{id}/extend-retention` per [§15.1](15_external-api-surface.md#151-rest-api).
 - Upload Handler subsystem in the gateway per [§7.4](07_session-lifecycle.md#74-upload-safety) and [§13.4](13_security-model.md#134-upload-security): goroutine pool, circuit breaker, staging→validation→promotion pipeline, archive limits (256 MiB, 100:1 compression ratio, 10 000 entries, 64 MiB per entry, depth 32, 4096-byte path), symlink and device-entry rejection, post-promotion symlink re-validation, and the ten `UPLOAD_ARCHIVE_*` error subcodes.
 - `uploadToken` HMAC issuance, validation, single-use invalidation, the automatic 24-hour key rotation timer, and the 5-minute key-overlap window per [§7.1](07_session-lifecycle.md#71-normal-flow). The operator-initiated rotation admin surface ships in Phase 13.
 - `POST /v1/sessions/{id}/upload` and `POST /v1/sessions/{id}/upload-archive` request handlers per [§15.1](15_external-api-surface.md#151-rest-api).
-- Workspace plan source-type validators (`inlineFile`, `uploadFile`, `uploadArchive`, `mkdir`, `gitClone`) per [§14](14_workspace-plan-schema.md): mode-string validator, path-traversal rejection, setuid/setgid rejection, sticky-on-file rejection, archive-bomb guard, and the `WORKSPACE_PLAN_SCHEMA_UNSUPPORTED` consumer-side migration handling.
+- Workspace plan source-type validators (`inlineFile`, `uploadFile`, `uploadArchive`, `mkdir`, `gitClone`) per [§14](14_workspace-plan-schema.md): mode-string validator, path-traversal rejection, setuid/setgid rejection, sticky-on-file rejection, archive-bomb guard, and the `WORKSPACE_PLAN_SCHEMA_UNSUPPORTED` consumer-side migration handling. The plan materializes into the session's own slot tree under the uniform per-slot workspace layout per [§6.4](06_warm-pod-model.md#64-pod-filesystem-layout), which is the layout on every pod regardless of `sessionPolicy.maxConcurrentSessions`.
 - Callback URL SSRF mitigations per [§14](14_workspace-plan-schema.md): HTTPS-only, DNS pinning (cached resolution applied to `DialContext`), RFC1918 and cloud-metadata blocklist, dedicated callback goroutine pool, HMAC-signed CloudEvents webhooks with replay-window enforcement, and KMS-encrypted `callbackSecret` storage.
 - `cmd/lenny-gateway` minimal gateway binary that boots the handler against `memstore`, with no OIDC, Postgres, or Kubernetes dependencies, and reads the tenant from `X-Lenny-Tenant-ID` (defaulting to `default` per [§10.2](10_gateway-internals.md#102-authentication) single-tenant mode).
 - `CoordinatorFence` gRPC and `coordination_generation` CAS write per [§10.1](10_gateway-internals.md#101-horizontal-scaling) (5 s deadline; the `AdapterTerminating` gRPC message; the `agent_pod_state` mirror-staleness gauge consumer; the `lenny_orphan_session_reconciliations_total` counter).
@@ -257,6 +258,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 - `ConnectorDefinition` admin resource per [§9.3](09_mcp-integration.md#93-connector-definition-and-oauthoidc): `POST /v1/admin/connectors`, `GET`, `PUT`, `DELETE`, `pkg/connector` package, secret-ref resolver, and the registration-time validators.
 - OAuth/OIDC `state` and `code_verifier` storage with TTL in Redis per [§9.3](09_mcp-integration.md#93-connector-definition-and-oauthoidc), plus the `/v1/oauth/callback` handler.
 - `lenny-ctl policy audit-isolation` subcommand per [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease).
+- Nonce-only-mode acknowledgment gate (gateway side) per [§4.7](04_system-components.md#47-runtime-adapter): the `acknowledgeNonceOnlyAuth` pool configuration flag ([§5.3](05_runtime-registry-and-pool-model.md#53-isolation-profiles)) with the pool admission rejection at create and at update, plus the runtime registry column and CRD-to-store mirror of `requireSoPeercred` the gate evaluates.
 
 **Prerequisites.** Phase 4 exit gate.
 
@@ -339,7 +341,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 - SSE relay implementation for streaming responses.
 - Circuit breaker around the upstream LLM provider.
 - Lease-token validation on every proxy request.
-- `lenny-direct-mode-isolation` admission webhook per [§6.2](06_warm-pod-model.md#62-pod-state-machine), [§13.2](13_security-model.md#132-network-isolation), and [§4.9](04_system-components.md#49-credential-leasing-service): rejects (a) `deliveryMode: direct` combined with `isolationProfile: standard`, and (b) `deliveryMode: proxy` combined with `spiffeBinding: disabled` when `tenancy.mode: multi`, unless `allowProxyModeSpiffeBindingDisabled` is set.
+- `lenny-direct-mode-isolation` admission webhook per [§6.2](06_warm-pod-model.md#62-pod-state-machine), [§13.2](13_security-model.md#132-network-isolation), and [§4.9](04_system-components.md#49-credential-leasing-service): rejects (a) `deliveryMode: direct` combined with `isolationProfile: standard`, and (b) `deliveryMode: proxy` combined with `spiffeBinding: disabled` when `tenancy.mode: multi`. The `allowProxyModeSpiffeBindingDisabled` opt-in permits combination (b) only in single-tenant or development mode; it cannot be set in multi-tenant mode.
 - Helm feature flag `features.llmProxy` enabled (rendered as `true` for Phase 5.8+ deployments).
 - Phase-stamp ConfigMap entry recorded per [§17.2](17_deployment-topology.md#172-namespace-layout) downgrade-enforcement layer.
 
@@ -353,7 +355,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 
 - Interactive sessions: the `input_required` state in the session manager, message injection, and the elicitation surface per [§7.2](07_session-lifecycle.md#72-interactive-session-model).
 - Tool-use and elicitation REST endpoints per [§15.1](15_external-api-surface.md#151-rest-api): `POST /v1/sessions/{id}/tool-use/{tool_use_id}/approve`, `POST /v1/sessions/{id}/tool-use/{tool_use_id}/deny`, `POST /v1/sessions/{id}/elicitations/{elicitation_id}/respond`, `POST /v1/sessions/{id}/elicitations/{elicitation_id}/dismiss`. Each handler validates the `(session_id, user_id, elicitation_id|tool_use_id)` authorization triple.
-- Session inbox subsystem per [§7.2](07_session-lifecycle.md#72-interactive-session-model): the seven delivery paths, in-memory inbox, Redis-list durable inbox at `t:{tenant_id}:session:{session_id}:inbox`, `ForwardMessage` cross-replica gRPC, drain-on-resume, and the `session_dlq_archive` Postgres table for DLQ entries with TTL.
+- Session inbox subsystem per [§7.2](07_session-lifecycle.md#72-interactive-session-model): the seven delivery paths, in-memory inbox, Redis-list durable inbox at `t:{tenant_id}:session:{session_id}:inbox`, the `CH-HOLDERFORWARD` off-holder request forward ([§28.5.4](28_communication-channels.md#2854-inter-replica)), drain-on-resume, and the `session_dlq_archive` Postgres table for DLQ entries with TTL.
 - `POST /v1/sessions/{id}/messages` and `POST /v1/sessions/{id}/replay` REST handlers per [§15.1](15_external-api-surface.md#151-rest-api). `replay` validates `replayMode`, `allowIsolationDowngrade`, and `targetRuntime`.
 - Streaming reconnect with cursor.
 - Go client SDK per [§15.6](15_external-api-surface.md#156-client-sdks).
@@ -368,8 +370,8 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 
 **Deliverables.**
 
-- Streaming-reconnect load scenario in `tests/tier7_load/scenarios/streaming_reconnect.go`.
-- Phase 6.5 baseline JSON committed under `tests/tier7_load/baselines/`.
+- Streaming-reconnect load scenario in `tests/tier7b_load_kind/scenarios/streaming_reconnect.go`.
+- Phase 6.5 baseline JSON committed under `tests/tier7b_load_kind/baselines/`.
 
 **Prerequisites.** Phase 6 exit gate.
 
@@ -382,7 +384,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 - `pkg/circuitbreaker` ([§11.6](11_policy-and-controls.md#116-circuit-breakers) operator-managed circuit-breaker admission logic; the `State` enum `open` and `closed`; the `LimitTier` enum `runtime`, `pool`, `connector`, and `operation_type`; the `OperationType` enum `uploads`, `delegation_depth`, `session_creation`, and `message_injection`; per-tier `Scope` validator; `Match` keying on the (`LimitTier`, `Scope`) pair; `FirstMatch` and `ScopeMatches` enforcing the immutable-scope invariant when an operator reopens a previously-existing breaker).
 - `pkg/idempotency` ([§11.5](11_policy-and-controls.md#115-idempotency) primitives: 128-character `MaxKeyLength` cap, 24-hour `TTL`, tenant-scoped `Key.Validate` returning `*KeyTooLongError`, `HashBody` returning a 64-character SHA-256 hex digest, and `DetectReuse` returning `store_new`, `replay`, or `reject` with `*ReuseError` carrying the canonical `IDEMPOTENCY_KEY_REUSED` 422 envelope).
 - Quota enforcement at the gateway: the `storage_quota_reserve.lua` Redis script, the per-replica fail-open accounting goroutine, the cumulative fail-open timer (`quotaFailOpenCumulativeMaxSeconds`), and the [§11.2.1](11_policy-and-controls.md#112-budgets-and-quotas) billing event emitter.
-- User invalidation per [§11.4](11_policy-and-controls.md#114-user-invalidation): the three-level admin endpoint `POST /v1/admin/users/{user_id}/invalidate` with `soft_disable`, `hard_disable`, and `full_revoke` modes; session-termination RPC fan-out; cached-auth invalidation in Redis; lease revocation; and elicitation dismissal. (The `full_revoke` KMS-backed end-to-end wiring lands in Phase 12a alongside Token Service KMS hardening; Phase 7 ships the request path and the soft/hard tiers.)
+- User invalidation per [§11.4](11_policy-and-controls.md#114-user-invalidation): the three-level admin endpoint `POST /v1/admin/users/{user_id}/invalidate` with `soft_disable`, `hard_disable`, and `full_revoke` modes; session-termination RPC fan-out; issued-token revocation in the durable Postgres issued-token index with in-memory revocation-cache push and cross-replica fan-out; lease revocation; and elicitation dismissal. (The `full_revoke` KMS-backed end-to-end wiring lands in Phase 12a alongside Token Service KMS hardening; Phase 7 ships the request path and the soft/hard tiers.)
 - Interceptor `failPolicy` weakening cooldown per [§11.2.1](11_policy-and-controls.md#112-budgets-and-quotas) and SEC-013 ([§8.2](08_recursive-delegation.md#82-delegation-mechanism)): `gateway.interceptorWeakeningCooldownSeconds`, `INTERCEPTOR_WEAKENING_COOLDOWN` rejection during cooldown, the `delegation_policy.export_scan_weakened`/`strengthened` ratchet emission, and the SEC-013 admin-immutable `transition_ts` field protection (server-minted, not admin-API-writable).
 - External interceptor registration framework per [§4.8](04_system-components.md#48-gateway-policy-engine) and [§22.3](22_explicit-non-decisions.md): the `InterceptorService` gRPC contract that deployer-supplied interceptors implement, the registration-time validators (`INVALID_INTERCEPTOR_PRIORITY`, `INVALID_INTERCEPTOR_PHASE`), the priority-range admission gate, `interceptorFailOpenMaxConsecutive` cumulative-failure escalation, and the `interceptor.fail_open_escalated`/`interceptor.fail_open_restored` audit emissions.
 - Audit hooks plumbing per [§11.7](11_policy-and-controls.md#117-audit-logging) (the audit-log writer itself ships in Phase 13).
@@ -404,7 +406,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 - Gateway-side wire-in of the Phase 3 adapter `DemoteSDK` and `ConfigureWorkspace` RPCs for the SDK-warm transition path.
 - SIGSTOP/SIGCONT embedded-adapter path per [§4.4](04_system-components.md#44-event--checkpoint-store).
 - Eviction-fallback Postgres minimal-state record per [§4.4](04_system-components.md#44-event--checkpoint-store).
-- Gateway-side session-deadline emitter per [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation): the 5-minute pre-expiry timer that fires before `maxSessionAge`, the `session_expiring_soon` event sent to the client, and the `DEADLINE_APPROACHING` lifecycle-channel signal dispatched to the runtime (`streaming-echo` handled the runtime side in Phase 2.8; the gateway emitter lands here).
+- Gateway-side session-deadline emitter per [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation): the 5-minute pre-expiry timer that fires before `maxSessionAge`, the `session_expiring_soon` event sent to the client, and the `DEADLINE_APPROACHING` CH-RUNTIMEOPS signal dispatched to the runtime (`streaming-echo` handled the runtime side in Phase 2.8; the gateway emitter lands here).
 - `lenny-drain-readiness` admission webhook (pre-drain MinIO health check per [§12.5](12_storage-architecture.md#125-artifact-store) and [§13.2](13_security-model.md#132-network-isolation) NET-037).
 - Helm feature flag `features.drainReadiness` enabled and the corresponding phase-stamp entry.
 - Checkpoint-duration baseline re-captured with cooperative quiescence overhead.
@@ -427,7 +429,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 - `lenny/set_tracing_context` validators per [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease) and [§9.1](09_mcp-integration.md#91-where-mcp-is-used): `TRACING_CONTEXT_TOO_LARGE`, `TRACING_CONTEXT_SENSITIVE_KEY`, `TRACING_CONTEXT_URL_NOT_ALLOWED`, and propagation through delegation lineage.
 - `treeVisibility` enforcement per [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease) and [§8.5](08_recursive-delegation.md#85-delegation-tools): the three-mode `full` / `parent-and-self` / `self-only` scoping, the `TREE_VISIBILITY_INSUFFICIENT_FOR_MESSAGING_SCOPE` gate on `lenny/delegate_task` and `lenny/send_message`, and the tree-view filter applied to `lenny/get_task_tree` responses.
 - Approval-mode registration-time validation and runtime enforcement per [§8.4](08_recursive-delegation.md#84-approval-modes): the `policy` mode (auto-approve against lease constraints) and `deny` mode (reject delegation) are evaluated in the `PreDelegation` interceptor; the `approval` mode is post-v1.
-- Lease extension control plane per [§8.6](08_recursive-delegation.md#86-lease-extension): adapter↔gateway `ExtendLease` gRPC, `auto` and `elicitation` modes, serialized-per-tree elicitation queue, `rejectionCoolOffSeconds` cool-off timer, `autoModeRateLimit` budget, persistent `extension-denied` flag in the new `delegation_tree_budget` Postgres table, and the `DELETE /v1/admin/trees/{rootSessionId}/subtrees/{sessionId}/extension-denial` admin endpoint. Extension responses carry the `GRANTED`, `PARTIALLY_GRANTED`, `CEILING_REACHED`, or `REJECTED` status taxonomy.
+- Lease extension control plane per [§8.6](08_recursive-delegation.md#86-lease-extension): the gateway LLM Proxy in-process budget-exhaustion trigger dispatching `leasecontrol.ExtendLease`, `auto` and `elicitation` modes, serialized-per-tree elicitation queue, `rejectionCoolOffSeconds` cool-off timer, `autoModeRateLimit` budget, persistent `extension-denied` flag in the new `delegation_tree_budget` Postgres table, and the `DELETE /v1/admin/trees/{rootSessionId}/subtrees/{sessionId}/extension-denial` admin endpoint. Extension responses carry the `GRANTED`, `PARTIALLY_GRANTED`, `CEILING_REACHED`, or `REJECTED` status taxonomy.
 - Delegation-tree recovery per [§8.10](08_recursive-delegation.md#810-delegation-tree-recovery): the `session_tree_archive` Postgres table, bottom-up reattach traversal, `maxTreeRecoverySeconds` and `maxLevelRecoverySeconds` deadlines, the `children_reattached` event, the `cascadeOnFailure` policy, and the orphan-cleanup Job bounded by `maxOrphanTasksPerTenant`.
 - Subtree deadlock detector per [§8.8](08_recursive-delegation.md#88-taskrecord-and-taskresult-schema): `deadlock_detected` event, `DEADLOCK_TIMEOUT` error code, and the `maxDeadlockWaitSeconds` timer.
 - `PreDelegation`, `PreMessageDelivery`, and `PreExportMaterialization` interceptor phases per [§11.2.1](11_policy-and-controls.md#112-budgets-and-quotas), [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease), and [§8.7](08_recursive-delegation.md#87-file-export-model). `PreExportMaterialization` enforces `DelegationPolicy.contentPolicy.scanExportedFiles` with the `EXPORT_FILE_SCAN_REJECTED` rejection, and emits the `delegation_policy.export_scan_weakened` audit event per [§13.5](13_security-model.md#135-delegation-chain-content-security).
@@ -436,7 +438,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 - Redis-backed delegation budget counters (`budget_reserve.lua` and `budget_return.lua`).
 - `lenny-ctl policy audit-isolation` pool-registration audit per [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease) and the `pool.isolation_warning` proactive audit event emission.
 
-**Prerequisites.** Phase 8 exit gate. The Phase 5.5 `POST /v1/oauth/token` endpoint and `TokenIssuanceStore` are required for child-token minting at every delegation hop; see [§18.40](#1840-hard-prerequisite-chain).
+**Prerequisites.** Phase 8 exit gate.
 
 **Exit criteria.** Tier 4 `delegation_test` passes per [TESTING.md §13.20](../TESTING.md#1320-phase-9--delegation--delegation-echo).
 
@@ -444,8 +446,8 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 
 **Deliverables.**
 
-- Delegation fan-out load scenario in `tests/tier7_load/scenarios/delegation_fanout.go`.
-- Phase 9.5 baseline JSON committed under `tests/tier7_load/baselines/`.
+- Delegation fan-out load scenario in `tests/tier7b_load_kind/scenarios/delegation_fanout.go`.
+- Phase 9.5 baseline JSON committed under `tests/tier7b_load_kind/baselines/`.
 
 **Prerequisites.** Phase 9 exit gate.
 
@@ -490,8 +492,8 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 
 **Deliverables.**
 
-- Credential-rotation-under-load scenario in `tests/tier7_load/scenarios/credential_rotation_under_load.go`.
-- Phase 11.5 baseline JSON committed under `tests/tier7_load/baselines/`.
+- Credential-rotation-under-load scenario in `tests/tier7b_load_kind/scenarios/credential_rotation_under_load.go`.
+- Phase 11.5 baseline JSON committed under `tests/tier7b_load_kind/baselines/`.
 
 **Prerequisites.** Phase 11 exit gate.
 
@@ -523,17 +525,18 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 
 **Exit criteria.** Tier 4 `mcp_runtime_lifecycle_test` passes per [TESTING.md §13.26](../TESTING.md#1326-phase-12b--type-mcp-runtime-support).
 
-### 18.30 Phase 12c — Concurrent execution modes
+### 18.30 Phase 12c — `sessionPolicy` presets and service mode
 
 **Deliverables.**
 
-- Workspace-concurrent execution mode per [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes).
-- Stateless-concurrent execution mode per [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes).
-- Pod-level isolation enforcement when concurrent modes are active.
+- Pod recycling across whole sessions (`sessionPolicy.recycle`) per [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes): the per-session slot cleanup and whole-pod scrub split, the reserved-hold claim window, and the retirement limits (`maxSessionsPerPod`, `maxPodUptimeSeconds`, and `maxScrubFailures`), and the runtime-process lifetime `recycle.runtimeProcess` with the supervised recycle boundary and `lenny-ctl preflight supervisor` ([§24.2](24_lenny-ctl-command-reference.md#242-preflight)).
+- Concurrent session slots (`sessionPolicy.maxConcurrentSessions > 1`) per [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes): the Redis slot-counter capacity gate and the `acknowledgeProcessLevelIsolation` requirement.
+- Service execution mode (`executionMode: service`) per [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes): claimless tenant-affinity routing over the per-pod `maxConcurrent` slot bound, the `sessionIsolationLevel.conversationContinuity` contract field, and the registration-time warning for `multi_turn` runtimes on service-mode pools.
+- Pod-level isolation enforcement for multiplexed pods (`maxConcurrentSessions > 1` and service-mode pools).
 
 **Prerequisites.** Phase 12b exit gate.
 
-**Exit criteria.** Tier 4 `concurrent_workspace_test` and `concurrent_stateless_test` pass; Tier 5 `concurrent_modes_test` confirms admission webhooks and pod-level isolation hold per [TESTING.md §13.27](../TESTING.md#1327-phase-12c--concurrent-execution-modes).
+**Exit criteria.** Tier 4 `session_recycle_test`, `session_concurrency_test`, and `service_mode_test` pass; Tier 5 `execution_modes_test` confirms admission webhooks and pod-level isolation hold per [TESTING.md §13.27](../TESTING.md#1327-phase-12c--sessionpolicy-presets-and-service-mode).
 
 ### 18.31 Phase 13 — Full observability, audit, `lenny-backup`, compliance webhooks
 
@@ -544,7 +547,7 @@ Phase 13 is the consolidation pass that completes the v1 observability surface, 
 _Audit pipeline._
 
 - `pkg/audit` ([§11.7](11_policy-and-controls.md#117-audit-logging) audit-log enums: `ChainIntegrity` with `IsAlarming` mapped to `AuditChainGap`; `ComplianceProfile` with `RequiresSIEM`; `RetentionPreset` with `PresetDays`, `PresetWindow`, `CompatibleProfiles`, and `ValidatePairing`; and `OCSFTranslationState` with `IsTerminal`).
-- Hash-chain verifier and the OCSF translator binary, with the dead-letter PII redaction path that re-seals the chain.
+- Hash-chain verifier and the OCSF translator binary, with the dead-letter PII redaction path that produces the receipt-authorized `redacted_gdpr` chain discontinuity (the redaction rewrites only the payload columns, which feed the content hash, and leaves `prev_hash` and the row's identity columns untouched; the signed `RedactionReceipt` authorizes the resulting content-hash break, so no hash is re-sealed into any row's `prev_hash`).
 - EventBus publish-state machine for audit events; retranscribe worker.
 - Per-tenant advisory lock implementation per [§11.7](11_policy-and-controls.md#117-audit-logging).
 - `audit_redaction_receipts` Postgres table and the `RedactionReceipt` schema (KMS-signed records) per [§12.8](12_storage-architecture.md#128-compliance-interfaces).
@@ -576,10 +579,10 @@ _Backup and disaster recovery._
 
 _Gateway operability surface._
 
-- Platform Health API per [§25.3](25_agent-operability.md#253-gateway-side-ops-endpoints): `GET /v1/admin/health`, `GET /v1/admin/health/{component}`, and `GET /v1/admin/health/summary`. `pkg/gateway/health/service.go` with the `SuggestedAction` contract and `pkg/gateway/health/runbook_links.go` issue-to-runbook lookup.
+- Platform Health API per [§25.3](25_agent-operability.md#253-gateway-side-ops-endpoints): `GET /v1/admin/health`, `GET /v1/admin/health/{component}`, and `GET /v1/admin/health/summary`. The gateway health service with the `SuggestedAction` contract and the issue-to-runbook lookup.
 - Capacity Recommendations service per [§25.3](25_agent-operability.md#253-gateway-side-ops-endpoints): `GET /v1/admin/recommendations`, the per-replica ring-buffer aggregation, and the shared `pkg/recommendations/rules` catalog (the substrate shipped in Phase 2.5; the rule catalog is populated here).
 - Version and configuration introspection per [§25.3](25_agent-operability.md#253-gateway-side-ops-endpoints): `GET /v1/admin/platform/version`, `GET /v1/admin/platform/version/full`, `GET /v1/admin/platform/config`, `GET /v1/admin/platform/config/diff`, and `GET /v1/admin/platform/registry`.
-- Gateway event emitter per [§25.3](25_agent-operability.md#253-gateway-side-ops-endpoints): `pkg/gateway/events/emitter.go`, the in-process 500-event ring buffer (`EventBuffer`), and `GET /v1/admin/events/buffer` plus the headless `lenny-gateway-pods` Service for fan-out.
+- Gateway event emitter per [§25.3](25_agent-operability.md#253-gateway-side-ops-endpoints): the shared `EventEmitter` interface and event-type vocabulary in the neutral events package, the gateway-side in-process 500-event ring buffer (`EventBuffer`), and `GET /v1/admin/events/buffer` plus the headless `lenny-gateway-pods` Service for fan-out.
 - `GET /v1/admin/me`, `GET /v1/admin/me/authorized-tools`, `GET /v1/admin/me/operations`, and the unified `GET /v1/admin/operations` Operations Inventory per [§25.4](25_agent-operability.md#254-the-lenny-ops-service).
 
 _`lenny-ops` runtime surfaces._
@@ -600,7 +603,8 @@ _Operational coordination._
 
 _MCP management._
 
-- MCP Management Server per [§25.12](25_agent-operability.md#2512-mcp-management-server): the `ManagementMCPAdapter`, `POST /mcp/management`, the build-time `openapi-to-mcp` generator that emits one MCP tool per admin-API endpoint from the Phase 5 OpenAPI 3.1 document, capability negotiation, and the `x-lenny-mcp-tool`, `x-lenny-scope`, `x-lenny-required-role`, and `x-lenny-category` scope-and-RBAC enforcement.
+- Complete-document `lenny-ops`-schema merge: once the `lenny-ops` operability routes exist in Phase 13, their path schemas are merged into the single served OpenAPI 3.1 document so it covers the entire operability surface. The merge runs after the Phase 5 document generator and before the `openapi-to-mcp` generation below, so the generator runs over the complete document rather than the gateway-only Phase 5 document. Each merged `lenny-ops` path schema carries the `x-lenny-mcp-tool`, `x-lenny-scope`, `x-lenny-required-role`, and `x-lenny-category` extensions, with `x-lenny-mcp-tool` permitted to be null for a route not exposed as a tool.
+- MCP Management Server per [§25.12](25_agent-operability.md#2512-mcp-management-server): the `ManagementMCPAdapter`, `POST /mcp/management`, the build-time `openapi-to-mcp` generator that emits one MCP tool per admin-API endpoint and per `lenny-ops` operability route from the complete OpenAPI 3.1 document, capability negotiation, and the `x-lenny-mcp-tool`, `x-lenny-scope`, `x-lenny-required-role`, and `x-lenny-category` scope-and-RBAC enforcement.
 
 _Observability catalog and chart wiring._
 
@@ -610,7 +614,7 @@ _Observability catalog and chart wiring._
 - [§16.7](16_observability.md#167-section-25-audit-events) Section 25 audit events catalog: every audit event listed (e.g., `identity.discovered`, `compliance.profile_decommissioned`, `legal_hold.escrow_region_resolved`, `gdpr.erasure_deadletter_redacted`) is emitted by its phase-of-introduction subsystem and recorded in the hash chain.
 - [§16.8](16_observability.md#168-section-25-metrics) Section 25 metrics catalog: `lenny-ops` self-monitoring, audit, drift, backup, escalation, lock, and platform-lifecycle metrics are registered.
 - [§16.10](16_observability.md#1610-openslo-export) OpenSLO export rendered behind `monitoring.openslo.enabled`.
-- Two-tier billing failover pipeline per [§11.2.1](11_policy-and-controls.md#112-budgets-and-quotas): `t:{tenant_id}:billing:stream` Redis stream buffer, `billing-flusher` consumer group, `billingReclaimIntervalSeconds`, `billingStreamTTLSeconds`, write-ahead buffer, `XAUTOCLAIM` reclaim path, and per-tenant `billing_seq_{tenant_id}` sequence.
+- Two-tier billing failover pipeline per [§11.2.1](11_policy-and-controls.md#112-budgets-and-quotas): `t:{tenant_id}:billing:stream` Redis stream buffer, `billing-flusher` consumer group, `billingReclaimIntervalSeconds`, `billingStreamTTLSeconds`, write-ahead buffer, `XAUTOCLAIM` reclaim path, and the per-tenant billing sequence provisioned at tenant-creation time under the length-bounded safe-derived name defined in [§10.2](10_gateway-internals.md#102-authentication) (`billing_seq_` followed by a fixed 40-character hex digest of the `tenant_id`) rather than the raw `billing_seq_{tenant_id}` string.
 - R-03 `TestBillingAuditRoutedThroughStoreRouter` integration test per [§12.2](12_storage-architecture.md#122-storage-roles): asserts every billing and audit write routes through the Phase 4 `StoreRouter` rather than a direct pool handle.
 - Billing correction admin workflow per [§11.2.1](11_policy-and-controls.md#112-budgets-and-quotas): `POST /v1/admin/billing-corrections`, `.../approve`, `.../reject`, the `billing_correction_pending` state, `approver_notification_webhook`, and the `BillingCorrectionApprovalBacklog` alert.
 
@@ -618,7 +622,7 @@ _`lenny-ctl` operability extensions per [§25.14](25_agent-operability.md#2514-l
 
 - `lenny-ctl admin backup *`, `lenny-ctl admin restore *`, `lenny-ctl admin audit *`, `lenny-ctl admin drift *`, `lenny-ctl admin operations *`, `lenny-ctl admin events *`, `lenny-ctl admin diagnose *`, `lenny-ctl admin runbooks *`, `lenny-ctl admin me`, `lenny-ctl admin locks *`, `lenny-ctl admin escalations *`, `lenny-ctl admin logs *`, `lenny-ctl admin mcp-management *`, `lenny-ctl admin erasure-jobs *`, `lenny-ctl admin sessions *`, `lenny-ctl admin migrate *`, `lenny-ctl admin tenants force-delete`, `lenny-ctl pools *` (sync-status, resume-reconciliation, circuit-breaker, exit-bootstrap, drain), and `lenny-ctl external-adapters validate`.
 
-**Prerequisites.** Phase 12c exit gate. The Phase 3.5 phase-stamp ConfigMap and the Phase 5 OpenAPI generator are both required: the `features.compliance` flag is gated by the former, and the MCP Management Server's `openapi-to-mcp` tool inventory is gated by the latter. See [§18.40](#1840-hard-prerequisite-chain).
+**Prerequisites.** Phase 12c exit gate. The Phase 3.5 phase-stamp ConfigMap, the Phase 5 OpenAPI generator, and the Phase 13 `lenny-ops`-schema merge are required: the `features.compliance` flag is gated by the phase-stamp ConfigMap, and the MCP Management Server's `openapi-to-mcp` tool inventory is gated by both the Phase 5 document generator and the Phase 13 merge that completes the document with the `lenny-ops` operability routes. See [§18.40](#1840-hard-prerequisite-chain).
 
 **Exit criteria.** Tier 2 `event_store_test`, Tier 4 `audit_pipeline_test`, Tier 5 `admission_data_residency_test`, `admission_t4_node_isolation_test`, and `backup_restore_test` pass per [TESTING.md §13.28](../TESTING.md#1328-phase-13--full-observability--audit--lenny-backup--compliance-webhooks). The metrics, alert, audit-event, and operational-event catalog cross-checks pass against the rendered chart manifests.
 
@@ -627,7 +631,7 @@ _`lenny-ctl` operability extensions per [§25.14](25_agent-operability.md#2514-l
 **Deliverables.**
 
 - Tier 7 cloud load scenarios fully operational against the production-class environment.
-- Phase 13.5 baseline JSON committed under `tests/tier7_load/baselines/`.
+- Phase 13.5 baseline JSON committed under `tests/tier7b_load_kind/baselines/`.
 - Lenny-specific Postgres write-pattern benchmark and the calibrated `postgres.writeCeilingIops` per [§12.3](12_storage-architecture.md#123-postgres-ha-requirements).
 - Calibrated `PostgresWriteBurstIops` alert threshold per [§16.5](16_observability.md#165-alerting-rules-and-slos).
 - HPA and KEDA custom-metrics pipeline per [§10.1](10_gateway-internals.md#101-horizontal-scaling): the Prometheus Adapter wiring, the `lenny_gateway_request_queue_depth` and `lenny_gateway_rejection_rate` leading-indicator metrics, the KEDA `ScaledObject` Helm conditional, and the SCL-024 mutual-exclusion enforcement. KEDA is mandatory at Tier 3.
@@ -664,7 +668,7 @@ _Network and TLS posture._
 - Final default-deny + gateway-egress allowlist NetworkPolicy posture.
 - `lenny-preflight` NetworkPolicy selector-consistency and parity audits per [§13.2](13_security-model.md#132-network-isolation) and [§17.2](17_deployment-topology.md#172-namespace-layout): NET-047, NET-050, NET-067, and NET-068 canonical-selector parity; DNS `podSelector` parity; the `ipblock-family-parity` check; the NET-057 SSRF private-range `except` parity between `allow-gateway-egress-llm-upstream` and `lenny-ops-egress`; the NET-061 `ops-egress-selector-parity` two-selector enforcement; the NET-064 SPIFFE-trust-domain and SA-token-audience uniqueness checks; and the NET-065 cluster-CIDR/IMDS symmetry check extended across the three rendered egress surfaces.
 - CA rotation procedure executed end-to-end against the documented 24-hour overlap window, including the `TestRedisTLSEnforcement` and `TestPgBouncerTLSEnforcement` regression suite.
-- JWT signing-key rotation procedure per [§13.3](13_security-model.md#133-credential-flow): JWK Set publication endpoint, key-overlap window, rollover audit event emission (`platform.jwt_signing_key_rotated`), and the operator runbook.
+- JWT signing-key rotation procedure per [§10.2](10_gateway-internals.md#102-authentication) "Verifier key set and rotation": the three-rollout alias rotation, the bootstrap admin credential rotation in step 2, and the operator runbook.
 - seccomp profile validation.
 
 _Hardening validation._
@@ -681,7 +685,7 @@ _Hardening validation._
 **Deliverables.**
 
 - Re-run of every Phase 13.5 scenario with full security hardening in place.
-- Delta documentation recorded under `tests/tier7_load/baselines/`.
+- Delta documentation recorded under `tests/tier7b_load_kind/baselines/`.
 
 **Prerequisites.** Phase 14 exit gate.
 
@@ -719,7 +723,7 @@ _Hardening validation._
 
 **Deliverables.**
 
-- Phase 16.5 baseline JSON committed under `tests/tier7_load/baselines/`.
+- Phase 16.5 baseline JSON committed under `tests/tier7b_load_kind/baselines/`.
 - Experiment-active scenario re-baselined with PoolScalingController variant-pool sizing active.
 
 **Prerequisites.** Phase 16 exit gate.
@@ -759,7 +763,7 @@ _Installer and packaging._
 
 _Local development mode._
 
-- `lenny up` quick-start end-to-end per [§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev) plus the full Embedded Mode surface: embedded k3s, embedded Postgres, embedded Redis, soft-HSM, embedded OIDC, the `lenny down --purge` lifecycle command, and the production-warning banner. (`lenny image import`/`list`/`rm` and `lenny token print` substrate landed in Phase 2; Phase 17a wires them into the embedded-mode workflow.)
+- `lenny up` quick-start end-to-end per [§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev) plus the full Embedded Mode surface: the in-cluster control plane rendered from the production chart under a development profile and run as pods in the embedded k3s, on in-process in-memory stores inside the gateway pod, with the gateway dev-mode bearer-trust authentication path, the `lenny down --purge` lifecycle command, and the production-warning banner. (`lenny image import`/`list`/`rm` and `lenny token print` substrate landed in Phase 2; Phase 17a wires them into the embedded-mode workflow.)
 
 _Web playground._
 
@@ -771,7 +775,7 @@ _Web playground._
 
 _Benchmarks._
 
-- `tests/tier7_load/scenarios/tthw.go` time-to-hello-world benchmark validated against the < 5-minute target.
+- `tests/tier7b_load_kind/scenarios/tthw.go` time-to-hello-world benchmark validated against the < 5-minute target.
 
 **Prerequisites.** Phase 16.5 exit gate.
 
@@ -801,7 +805,6 @@ Most phases follow linear ordering: Phase N requires the Phase N−1 exit gate. 
 4. **Phase 3.5 → Phase 5.8 / Phase 8 / Phase 13 (phase-stamp ConfigMap).** The four-layer feature-flag downgrade enforcement per [§17.2](17_deployment-topology.md#172-namespace-layout) must be in place before any phase that flips a `features.*` Helm flag from `false` to `true` (`features.llmProxy` at Phase 5.8, `features.drainReadiness` at Phase 8, `features.compliance` at Phase 13). Each flip writes a phase-stamp entry; subsequent renders that attempt to set the flag back to `false` are rejected unless the operator sets the `acceptFeatureFlagDowngrade.<flag>` override.
 5. **Phase 5 → Phase 13 (OpenAPI generator).** The build-time OpenAPI generator and `x-lenny-*` extension validation must be in place before the Phase 13 MCP Management Server can render its tool inventory via `openapi-to-mcp`. The MCP tool surface is generated from the OpenAPI document at build time.
 6. **Phase 5.4 → Phase 5.5.** etcd encryption at rest must pass the Kind-tier `etcd_encryption_test` before basic credential leasing ships. The Token Service writes lease state to Kubernetes Secrets, whose underlying etcd storage must be encrypted before any production-grade credential is leased. Source: [TESTING.md §13.11](../TESTING.md#1311-phase-54--etcd-encryption-at-rest).
-7. **Phase 5.5 → Phase 9 (`/v1/oauth/token` endpoint).** The Token Service `POST /v1/oauth/token` endpoint and `TokenIssuanceStore` write-before-issue ordering must be in place before recursive delegation ships, because child-token minting at every delegation hop calls the token-exchange endpoint. The Phase 12a KMS envelope wrapping hardens the same endpoint; it is not itself a prerequisite for Phase 9.
-8. **Phase 5.75 → Phase 6 (real-credential testing).** The `AuthEvaluator` and `QuotaEvaluator` interceptors must be active before interactive sessions exercise real credentials. Real-credential testing requires the policy interceptors to enforce per-tenant rate and quota limits against authenticated calls. Source: [TESTING.md §13.14](../TESTING.md#1314-phase-575--minimum-viable-policy-enforcement).
+7. **Phase 5.75 → Phase 6 (real-credential testing).** The `AuthEvaluator` and `QuotaEvaluator` interceptors must be active before interactive sessions exercise real credentials. Real-credential testing requires the policy interceptors to enforce per-tenant rate and quota limits against authenticated calls. Source: [TESTING.md §13.14](../TESTING.md#1314-phase-575--minimum-viable-policy-enforcement).
 
 Additional sequencing constraints (Phase 5.6 → 5.75 ordering by review cadence, the feature-flag downgrade prohibition per [§17.2](17_deployment-topology.md#172-namespace-layout), and the Tier 1 → Tier 2 → Tier 3 capacity-tier promotion gates per [§4.1](04_system-components.md#41-edge-gateway-replicas) and [§17.8.3](17_deployment-topology.md#1783-tier-promotion-guide)) are documented in their own sections and are not duplicated here.

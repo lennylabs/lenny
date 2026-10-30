@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: MIT
+#
+# The entry names an identifier that a section outside the registers
+# cites and no register declares, so the run fails rather than writing
+# it.
+kind: reserved-phrase-senses
+version: 1
+entries:
+  - file: pkg/carrier/carrier.go
+    occurrence: 1
+    identifiers:
+      - CH-ELSEWHERE

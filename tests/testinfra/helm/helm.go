@@ -90,6 +90,20 @@ func Render(t testing.TB, opts Options) Manifests {
 	for _, kv := range opts.Set {
 		args = append(args, "--set", kv)
 	}
+	// §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required
+	// chart value with no default. Inject a placeholder so a caller that
+	// does not supply one still renders; a caller's own --set override
+	// takes precedence.
+	hasSpiffe := false
+	for _, kv := range opts.Set {
+		if strings.Contains(kv, "spiffeTrustDomain") {
+			hasSpiffe = true
+			break
+		}
+	}
+	if !hasSpiffe {
+		args = append(args, "--set", "global.spiffeTrustDomain=lenny-test")
+	}
 	cmd := exec.Command(binary(), args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

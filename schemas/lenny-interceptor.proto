@@ -1,0 +1,102 @@
+// Gateway → external interceptor SPI. This is the gRPC contract a
+// deployer-supplied RequestInterceptor service implements so the gateway
+// can run it inside a phase chain alongside the built-in interceptors.
+// External interceptors are invoked the same way Kubernetes admission
+// webhooks are: the gateway is the client, the interceptor is the server.
+//
+// The gateway-facing surface for a pod's adapter is a separate contract
+// (lenny-adapter.proto); this proto covers only the §4 RequestInterceptor
+// extension point.
+//
+// See spec/04_system-components.md §4.8 (the RequestInterceptor extension
+// point) and spec/08_recursive-delegation.md §8.7 (the PreExportMaterialization
+// phase that runs this contract over delegation-exported files).
+
+syntax = "proto3";
+
+package lenny.interceptor.v1;
+
+option go_package = "github.com/lennylabs/lenny/pkg/proto/interceptor/v1;interceptorv1";
+
+// =====================================================================
+// Service
+// =====================================================================
+
+// RequestInterceptor is the gRPC service a deployer implements to plug a
+// custom policy hook into a gateway phase chain. The gateway connects to
+// the configured endpoint and calls Intercept once per request at each
+// phase the interceptor is registered for. Any language with gRPC code
+// generation can implement it.
+//
+// An external interceptor runs in the same per-phase chain as the
+// built-in interceptors, subject to the same priority ordering and the
+// same fail-policy. It must register at a priority above the reserved
+// built-in ceiling (priorities 1–100 are reserved) and may not register
+// for the PreAuth phase.
+service RequestInterceptor {
+  // Intercept evaluates one request at one phase and returns the
+  // interceptor's decision. The gateway applies a per-interceptor
+  // deadline; a timeout or transport error is resolved by the
+  // interceptor's configured fail-policy.
+  rpc Intercept(InterceptRequest) returns (InterceptResponse) {}
+}
+
+// =====================================================================
+// Messages
+// =====================================================================
+
+// InterceptRequest is the payload the gateway sends to an external
+// interceptor. The field numbers match the §4.8 protobuf definition.
+message InterceptRequest {
+  // phase names the gateway interception point, e.g. "PreDelegation",
+  // "PreExportMaterialization", or "PostAgentOutput".
+  string phase = 1;
+
+  // session_id is the session the request belongs to.
+  string session_id = 2;
+
+  // tenant_id is the session's tenant.
+  string tenant_id = 3;
+
+  // content is the phase-dependent payload. For PreDelegation it is the
+  // serialized TaskSpec.input; for PreExportMaterialization it is the
+  // serialized exported-file record.
+  bytes content = 4;
+
+  // metadata carries phase-dependent context. For external interceptors
+  // (priority > 100) it always includes the authenticated identity
+  // populated by AuthEvaluator.
+  map<string, string> metadata = 5;
+}
+
+// InterceptResponse is the interceptor's decision on a request.
+message InterceptResponse {
+  // Action is the interceptor's decision. The §4.8 protobuf definition
+  // fixes the value names (ALLOW, REJECT, MODIFY) and numbers, so the
+  // enum-value naming-convention lint rules are suppressed here. The
+  // values match the in-process interceptor.Action enum in
+  // pkg/gateway/interceptor.
+  //
+  // buf:lint:ignore ENUM_ZERO_VALUE_SUFFIX
+  // buf:lint:ignore ENUM_VALUE_PREFIX
+  enum Action {
+    // ALLOW passes the request through unchanged.
+    ALLOW = 0;
+    // REJECT blocks the request and short-circuits the chain.
+    REJECT = 1;
+    // MODIFY rewrites the payload; the rewritten bytes are returned in
+    // modified_content.
+    MODIFY = 2;
+  }
+
+  // action is the decision the gateway applies.
+  Action action = 1;
+
+  // reason is the human-readable cause. On REJECT it is logged and
+  // returned to the caller.
+  string reason = 2;
+
+  // modified_content carries the rewritten payload. It is read only when
+  // action is MODIFY.
+  bytes modified_content = 3;
+}

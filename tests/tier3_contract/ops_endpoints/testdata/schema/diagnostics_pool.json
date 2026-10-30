@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lenny.test/schemas/diagnostics_pool.json",
+  "title": "PoolDiagnosis response body (spec 25.6)",
+  "description": "The GET /v1/admin/diagnostics/pools/{name} response. Pins the PoolDiagnosis struct: the pool identity and status, the pod-count breakdown, the config summary, the crd-sync status, the suggestedActions array, and the optional classified bottleneck and canonical degradation envelope. additionalProperties is false so a renamed or dropped field fails the contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["pool", "status", "podCounts", "config", "suggestedActions", "crdSyncStatus"],
+  "properties": {
+    "pool": { "type": "string" },
+    "status": { "type": "string" },
+    "podCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idle", "warming", "claimed", "failed"],
+      "properties": {
+        "idle": { "type": "integer" },
+        "warming": { "type": "integer" },
+        "claimed": { "type": "integer" },
+        "failed": { "type": "integer" }
+      }
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minWarm"],
+      "properties": {
+        "minWarm": { "type": "integer" },
+        "maxWarm": { "type": "integer" },
+        "maxPods": { "type": "integer" },
+        "image": { "type": "string" },
+        "runtime": { "type": "string" }
+      }
+    },
+    "crdSyncStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["synced"],
+      "properties": {
+        "synced": { "type": "boolean" },
+        "detail": { "type": "string" }
+      }
+    },
+    "bottleneck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "summary"],
+      "properties": {
+        "category": { "type": "string", "minLength": 1 },
+        "details": {},
+        "summary": { "type": "string" }
+      }
+    },
+    "suggestedActions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/suggestedAction" }
+    },
+    "degradation": { "$ref": "#/$defs/degradation" }
+  },
+  "$defs": {
+    "suggestedAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "endpoint", "reasoning"],
+      "properties": {
+        "action": { "type": "string" },
+        "endpoint": { "type": "string" },
+        "body": {},
+        "reasoning": { "type": "string" },
+        "runbook": { "type": "string" },
+        "confidence": { "type": "number" },
+        "risk": { "type": "string" }
+      }
+    },
+    "degradation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level"],
+      "properties": {
+        "level": { "type": "string", "enum": ["healthy", "degraded", "failed"] },
+        "primarySource": { "type": "string" },
+        "actualSource": { "type": "string" },
+        "fallbackPath": { "type": "array", "items": { "type": "string" } },
+        "confidence": { "type": "number" },
+        "unavailableFields": { "type": "array", "items": { "type": "string" } },
+        "thresholdSource": { "type": "string", "enum": ["operator-customized", "compiled-in-defaults"] },
+        "warnings": { "type": "array", "items": { "type": "string" } },
+        "since": { "type": "string" }
+      }
+    }
+  }
+}

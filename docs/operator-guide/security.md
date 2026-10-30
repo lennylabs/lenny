@@ -45,6 +45,7 @@ Each gateway replica has a **distinct mTLS identity**:
 - Compromise of one replica is attributable and revocable independently
 - Certificates are scoped to the replica's ServiceAccount
 - The Token Service validates per-replica identity on every credential request
+- Replicas forward session requests to each other over mutual TLS on port 50054 (`gateway.holderForwardPort`). Each replica presents its gateway certificate and accepts only a peer that presents the gateway certificate. The receiving replica re-checks the client's credential on the forwarded request. A forwarded platform tool call from an agent carries no client credential, so the receiving replica runs it as the calling session that the forwarding replica names. In the `lenny-system` namespace, the `allow-gateway-ingress` and `allow-gateway-egress` policies admit only gateway pods on port 50054.
 
 ### SPIFFE Trust Domain
 
@@ -81,15 +82,15 @@ auth:
 
 | Configuration | Behavior |
 |---|---|
-| Single-tenant mode | `tenantIdClaim` is ignored; all requests use the `default` tenant |
-| Multi-tenant mode | Gateway reads `tenantIdClaim` from the validated OIDC ID token |
+| Single-tenant mode (`auth.multiTenant: false`, the default) | `tenantIdClaim` is ignored; all requests use the `default` tenant |
+| Multi-tenant mode (`auth.multiTenant: true` with `tenancy.mode: multi`) | Gateway reads `tenantIdClaim` from a validated OIDC ID token and `tenant_id` from a gateway-issued token |
 
 **Rejection conditions:**
 
 | Condition | Response |
 |---|---|
 | Claim absent or empty string | `401 Unauthorized` with error code `TENANT_CLAIM_MISSING` |
-| Claim value doesn't match any tenant | `403 Forbidden` with error code `TENANT_NOT_FOUND` |
+| Claim value names no registered tenant, or names a tenant in the `deleting` or `deleted` state | `403 Forbidden` with error code `TENANT_NOT_FOUND` |
 
 Both rejection reasons are logged (INFO level, with `user_id` and `jti`) and emitted as `auth_failure` audit events.
 
@@ -105,13 +106,13 @@ The Token Service runs as a **separate process** with its own ServiceAccount and
 - Gateway replicas call the Token Service over mTLS
 - Gateway replicas receive short-lived access tokens, never refresh tokens or KMS keys
 - 2+ replicas with `PodDisruptionBudget` (`minAvailable: 1`)
-- Serves the canonical `POST /v1/oauth/token` endpoint (RFC 6749 + RFC 8693 token exchange) for all bearer-token minting
+- Serves the canonical `POST /v1/oauth/token` endpoint (RFC 6749 + RFC 8693 token exchange) for bearer-token minting. The gateway mints a fixed set of tokens in process instead (see below), and both components sign with the same ES256 key
 
 ### What It Manages
 
 1. **Connector credentials** -- OAuth tokens for external tools and agents (GitHub, Jira, etc.) accessed via registered connectors
 2. **LLM provider credentials** -- API keys, cloud IAM roles for backing LLMs
-3. **Bearer tokens** -- admin tokens, session tokens, delegation child tokens, credential-lease tokens, agent-operability scoped tokens. Every token minted by Lenny flows through the RFC 8693 token-exchange path, either by direct caller request (admin rotation via `lenny-ctl`) or by internal Token Service calls (credential leasing, delegation minting). RFC 8693 semantic preservation is enforced: scope may only narrow, `delegation_depth` may only increase, audience may not broaden, `caller_type` may not elevate.
+3. **Bearer tokens** -- admin tokens, `a2a_delegation` child tokens, credential-lease tokens, agent-operability scoped tokens. Most tokens minted by Lenny flow through the RFC 8693 token-exchange path, either by direct caller request (self and service-principal rotation) or by internal Token Service calls (credential leasing). RFC 8693 semantic preservation is enforced: scope may only narrow, `delegation_depth` may only increase, audience may not broaden, `caller_type` may not elevate. The gateway mints the following tokens in process, without going through `/v1/oauth/token`: the bootstrap admin credential (`lenny-ctl admin users rotate-token --user lenny-admin` calls the dedicated `POST /v1/admin/users/{user}/rotate-token` route, and the gateway mints the new admin token and patches the `lenny-admin-token` Secret), platform-admin impersonation bearers, and web playground bearers. A token that either component signs verifies on every gateway replica, every Token Service replica, and `lenny-ops`. The gateway records each platform-admin impersonation bearer in the issued-token index, so the bearer can be revoked like any other recorded token. The bearer is revoked when an administrator ends the impersonation session with `DELETE /v1/admin/impersonation/{id}`, when the target user is fully revoked, or when the bearer is revoked by its token id. An impersonation bearer cannot create a session; the refusal is audited. Every gateway replica refuses a revoked bearer, and `lenny-ops` refuses it after its next successful revocation-set read from Postgres, which it attempts every 30 seconds. Any gateway replica can list or end an impersonation session.
 
 ### Token Storage
 
@@ -151,8 +152,9 @@ Lenny uses envelope encryption for sensitive data:
 |---|---|
 | AWS KMS | JWT signing, DEK wrapping, etcd Secret encryption (EKS) |
 | GCP Cloud KMS | JWT signing, DEK wrapping, etcd Secret encryption (GKE) |
-| HashiCorp Vault Transit | JWT signing, DEK wrapping |
-| Azure Key Vault | etcd Secret encryption (AKS) |
+| Azure Key Vault | JWT signing, DEK wrapping, etcd Secret encryption (AKS) |
+
+All three cloud providers sign Lenny-issued JWTs with ES256 (ECDSA over P-256 with SHA-256): AWS KMS with key spec `ECC_NIST_P256`, GCP Cloud KMS with algorithm `EC_SIGN_P256_SHA256`, and Azure Key Vault with algorithm `ES256`. The private signing key stays in the KMS; the gateway and the Token Service send the digest to the KMS `Sign` operation and receive the signature. The `kms.provider: local` setting derives the keys from a master key for development and is refused in a production deployment.
 
 ### What Gets Encrypted
 
@@ -194,9 +196,9 @@ credentialPools:
 
 **Direct mode** (default for single-tenant; permitted in multi-tenant only with `sandboxed` or `microvm` isolation):
 
-1. Gateway writes the API key to `/run/lenny/credentials.json` on the pod
+1. Gateway writes the API key to the session's credential file at `/run/lenny/slots/{sessionId}/credentials.json` on the pod
 2. Pod contacts the LLM provider directly
-3. Credential file is removed on session end or between tasks
+3. Credential file is removed on session end, and re-leased per session on a recycling pod
 
 The combination of `deliveryMode: direct` + `isolationProfile: standard` (runc) is **blocked by admission control** in multi-tenant mode — a container escape under runc would expose materialized credential material across tenants. Pool registration returns `DirectModeStandardIsolationMultiTenantRejected`.
 
@@ -267,8 +269,8 @@ Every agent pod runs with:
 | Capabilities | All dropped |
 | Root filesystem | Read-only |
 | Writable paths | tmpfs (`/tmp`), workspace, sessions, artifacts |
-| Credentials | No standing credentials; short-lived lease only |
-| File delivery | Gateway-mediated only |
+| Credentials | No standing credentials; short-lived lease only. Object-store access is granted as a gateway-minted presigned capability (single key, single method, exact `Content-Length` on a `PUT`, short expiry), never as an object-store credential. |
+| File delivery | Gateway-mediated for all session inputs and outputs. Checkpoint chunk objects are the one exception: the agent pod `PUT`s them to, and on resume and at a derived or replayed session's first bind `GET`s them from, object storage against gateway-minted presigned capabilities. The gateway remains the sole authority that resolves the key, validates the tenant prefix, and signs. No shared storage mounts. |
 
 ### Adapter-Agent Boundary
 
@@ -277,7 +279,18 @@ The adapter-agent connection within a pod is secured via:
 - **Primary:** `SO_PEERCRED` UID check + manifest nonce
 - **Fallback (gVisor):** Nonce + per-connection HMAC challenge-response
 
-If `SO_PEERCRED` is unavailable (gVisor divergence), the pool is marked with `SecurityDegradedMode=True` and an alert fires.
+Nonce-only mode is an operator opt-in for a confirmed gVisor `SO_PEERCRED` divergence, rather than an automatic reaction. After confirming the divergence (the Phase 3.5 `SO_PEERCRED` integration tests), the operator sets `Runtime.spec.requireSoPeercred: false` on the affected runtime, and the pool that references it must carry `acknowledgeNonceOnlyAuth: true`. A pool referencing a nonce-only runtime without the acknowledgment is rejected by the gateway pool admission path. When an acknowledged pool renders nonce-only pods, the platform surfaces the state: the WarmPoolController sets `SOPeercredDisabled=True` on each `Sandbox` and `SecurityDegradedMode=True` on the `SandboxTemplate`, and the bundled `PoolSecurityDegraded` alert fires on the `lenny_pool_security_degraded` gauge. The setting returns to `requireSoPeercred: true` when the divergence is fixed, and is re-evaluated when the container runtime version changes. See [nonce-only-mode](../runbooks/nonce-only-mode.md).
+
+### Runtime Supervisor
+
+On every sidecar pod of a `type: agent` runtime, the first process of the runtime container is the runtime supervisor, a platform binary that launches and ends the runtime process at the adapter's request over the intra-pod `CH-SUPERVISE` socket ([Pod Lifecycle](../runtime-author-guide/lifecycle.md#runtime-supervisor)).
+
+- **Trust basis.** The supervisor runs at the agent UID, on the untrusted side of the adapter-agent boundary. The adapter sends every request, the supervisor sends only its `ready` report, replies, and exit reports, and no byte a runtime writes crosses the socket. Each end checks the other's UID with `SO_PEERCRED`. The connection is made before any runtime code exists in the pod, because the supervisor is the runtime container's first process and launches nothing before the adapter asks it to; in nonce-only mode that ordering alone identifies both ends. The supervisor is a static binary with no program interpreter that loads no library, clears its environment first, opens only `/proc` and platform volumes without following symbolic links, and marks itself non-dumpable, so runtime code with every capability dropped cannot attach to it or read its memory. Work that reads runtime-controlled data, and every `cleanupCommands` command, runs in a forked worker that holds no connection to the adapter. The binary runs from a read-only mount that an init container fills from the supervisor's own digest-pinned image.
+- **Signals.** A fault signal (SIGSEGV, SIGBUS, SIGFPE, or SIGILL) that a runtime sends the supervisor is blocked and has no effect, while a fault in the supervisor itself ends it. Every other catchable signal a runtime sends it is ignored. A runtime can kill or freeze its own pod's supervisor with SIGKILL or SIGSTOP where the container runtime does not make the init of a process namespace immune to them. The effect is confined to that pod: a killed or frozen supervisor ends the adapter's link to it, and the pod retires.
+- **What rests on it.** A `restart` pod's decision to give a later session a newly launched runtime process rests on the supervisor's attested end and sweep. Tenant isolation does not rest on it, because the tenant pin applies on every pool.
+- **Property self-test.** At startup the supervisor tests that its non-dumpable mark resists same-UID inspection, that its kill reaches a double-forked descendant, and whether it is immune as the namespace init to SIGKILL and SIGSTOP. The adapter logs each failed property. A failed non-dumpable mark or kill reach keeps a `restart` pod from becoming ready; no property gates a `keep` pod. Run the same self-test against a RuntimeClass with `lenny-ctl preflight supervisor --runtime-class <name> --config <values.yaml>`, and run it again when the container runtime version changes.
+- **Image signing.** Set `controller.supervisorImage` to the supervisor image pinned by digest from the release registry. The cosign webhook verifies its signature as it verifies every other agent-pod image (see [Cosign Image Verification](#cosign-image-verification)), and the controller creates no pod for a sidecar `type: agent` pool while the value is empty.
+- **Process limits.** On runc without user namespaces, a runtime that fork-bombs its container exhausts process IDs shared with the node. Set a pod PID limit (the kubelet's `podPidsLimit`) and a node-level process limit to bound it.
 
 ---
 
@@ -381,9 +394,10 @@ The `DedicatedDNSUnavailable` critical alert fires when all dedicated CoreDNS re
 
 | ServiceAccount | Namespace | Purpose | Key Permissions |
 |---|---|---|---|
-| `lenny-gateway` | `lenny-system` | Gateway replicas | Read/write Sandbox CRDs, read Secrets |
+| `lenny-gateway` | `lenny-system` | Gateway replicas | Read/write Sandbox CRDs, read Secrets; KMS `Sign` and `GetPublicKey` on every key that `platform:jwt-signing` or `platform:jwt-verify` names |
 | `lenny-controller` | `lenny-system` | Warm Pool Controller | Full Sandbox CRD management |
-| `lenny-token-service` | `lenny-system` | Token Service | KMS decrypt, Secret read |
+| `lenny-token-service` | `lenny-system` | Token Service | KMS decrypt, Secret read; KMS `Sign` and `GetPublicKey` on every key that `platform:jwt-signing` or `platform:jwt-verify` names |
+| `lenny-ops-sa` | `lenny-system` | `lenny-ops` | KMS `GetPublicKey` on every key that `platform:jwt-signing` or `platform:jwt-verify` names; no `Sign` |
 
 ---
 
@@ -425,7 +439,7 @@ Audit events use a hash chain for tamper detection:
 | `hipaa` | SIEM required; 6-year audit retention; 6-year billing retention |
 | `none` | No additional requirements (default) |
 
-**Downgrade ratchet.** `complianceProfile` is subject to a strict one-way ratchet ordered `none < soc2 < fedramp < hipaa`. In-place lowering via `PUT /v1/admin/tenants/{id}` is rejected with `422 COMPLIANCE_PROFILE_DOWNGRADE_PROHIBITED` -- the profile may be tightened but never silently loosened. This mirrors the `workspaceTier` stricter-only rule (see Data Classification below). Legitimate wind-down (e.g., contract end-of-life, tenant migration, data-surface fully remediated) uses the dedicated `POST /v1/admin/tenants/{id}/compliance-profile/decommission` endpoint: `platform-admin` scope only, with `acknowledgeDataRemediation: true` and a required `justification`, plus a free-text `remediationAttestations` list describing the data-surface steps taken (e.g., "BAA-held PHI separately erased via /v1/admin/users/{user_id}/erase jobs J-1, J-2"). The endpoint emits the critical `compliance.profile_decommissioned` audit event and raises the `CompliancePostureDecommissioned` warning alert so SIEM rules can distinguish this transition from generic tenant-update diffs.
+**Downgrade ratchet.** `complianceProfile` is subject to a strict one-way ratchet ordered `none < soc2 < fedramp < hipaa`. In-place lowering via `PUT /v1/admin/tenants/{id}` is rejected with `422 COMPLIANCE_PROFILE_DOWNGRADE_PROHIBITED` -- the profile may be tightened but never silently loosened. This mirrors the `workspaceTier` stricter-only rule (see Data Classification below). Legitimate wind-down (e.g., contract end-of-life, tenant migration, data-surface fully remediated) uses the dedicated `POST /v1/admin/tenants/{id}/compliance-profile/decommission` endpoint: `platform-admin` scope only, with `acknowledgeDataRemediation: true` and a required `justification`, plus a free-text `remediationAttestations` list describing the data-surface steps taken (e.g., "BAA-held PHI separately erased via /v1/admin/users/{userId}/erase jobs J-1, J-2"). The endpoint emits the critical `compliance.profile_decommissioned` audit event and raises the `CompliancePostureDecommissioned` warning alert so SIEM rules can distinguish this transition from generic tenant-update diffs.
 
 ### pgaudit Requirement
 
@@ -443,6 +457,8 @@ pgaudit captures any `GRANT`, `REVOKE`, or DDL statement on audit tables -- incl
 ### Cosign Image Verification
 
 Container image signing is verified via a cosign `ValidatingAdmissionWebhook` configured as **fail-closed** (`failurePolicy: Fail`). If the webhook is unavailable, pod admission is blocked for agent namespaces -- no new pods can be scheduled, halting warm pool replenishment.
+
+The verified agent-pod images include the runtime supervisor image (`controller.supervisorImage`), which an init container of every sidecar pod of a `type: agent` runtime runs.
 
 The `CosignWebhookUnavailable` critical alert fires when the cosign webhook endpoint returns errors for > 60 seconds. See the admission webhook outage runbook for recovery steps.
 
@@ -486,6 +502,7 @@ Lenny implements a 19-step `DeleteByUser` sequence that covers all storage layer
 ### Erasure Process
 
 - **Processing restriction (Article 18):** Before full deletion, a `processing_restricted` flag can be set on a user, blocking all new session creation while the erasure job runs.
+- **Session drain:** Before any data is deleted, the erasure job force-terminates the user's running sessions. When it cannot terminate them, the job fails and the processing restriction stays set.
 - **Erasure SLA:** 72 hours for T3 data, 1 hour for T4 data.
 - **Billing pseudonymization:** Configurable per-tenant via `billingErasurePolicy`:
   - `default` -- billing events are pseudonymized using a per-tenant `erasure_salt` (salt is deleted immediately after pseudonymization for GDPR Recital 26 compliance)

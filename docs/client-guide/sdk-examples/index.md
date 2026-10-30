@@ -8,48 +8,55 @@ has_children: true
 
 # Client SDK Examples
 
-Runnable code examples for interacting with the Lenny API. Each example demonstrates the full session lifecycle:
+Usage guides for the Lenny client SDKs and the raw protocols.
 
-1. **Authenticate:** obtain an access token
-2. **Create session:** specify a runtime and pool
-3. **Upload files:** send workspace files to the session
-4. **Start session:** launch the agent runtime
-5. **Send message:** deliver a prompt to the agent
-6. **Stream output:** receive real-time agent output
-7. **Retrieve artifacts:** download results and transcripts
-8. **Terminate:** cleanly end the session
+Lenny ships an official client SDK for Go, TypeScript, and Python. Each SDK
+wraps the gateway REST session API: the session lifecycle (create, get, list,
+delete, finalize, start, interrupt, terminate, resume), the typed error
+envelope with retryable-error backoff, per-request idempotency keys,
+pluggable authentication, and an HMAC-SHA256 webhook signature verifier. The
+SDK pages cover installation, constructing a client, running a session, and
+verifying a webhook.
 
----
-
-## Which Example to Use
-
-| Example | Language | HTTP Client | Best For |
-|---|---|---|---|
-| [Python](python.html) | Python 3.10+ | httpx (async) + requests (sync) | Data pipelines, backend services, scripting |
-| [TypeScript](typescript.html) | TypeScript / Node.js | fetch | Web backends, serverless functions, full-stack apps |
-| [Go](go.html) | Go 1.21+ | net/http | High-performance services, CLI tools, infrastructure |
-| [curl](curl.html) | Bash | curl | Quick testing, shell scripts, CI/CD pipelines |
-| [MCP SDK](mcp-sdk.html) | TypeScript + Python | MCP SDK | Interactive streaming, delegation, elicitation |
+The curl and MCP SDK pages cover the same gateway from the raw protocols. The
+curl page is a command reference for the REST endpoints. The MCP SDK page
+covers the Model Context Protocol surface.
 
 ---
 
-## REST API vs. MCP SDK
+## Which page to use
 
-The **REST API** examples (Python, TypeScript, Go, curl) use standard HTTP requests. They work with any HTTP client.
-
-The **MCP SDK** examples use the Model Context Protocol SDK for interactive streaming sessions. Use MCP when you need:
-
-- Bidirectional streaming with real-time output
-- Delegation tree management
-- Elicitation (human-in-the-loop prompts)
-- MCP-native clients
-
-For most automation, CI/CD, and backend use cases, the REST API is sufficient.
+| Page | Language | Covers |
+|---|---|---|
+| [Go](go.html) | Go 1.25+ | The Go client SDK. |
+| [TypeScript](typescript.html) | TypeScript, Node.js 18+ | The TypeScript client SDK. |
+| [Python](python.html) | Python 3.10+ | The Python client SDK. |
+| [curl](curl.html) | Bash | A curl command reference for every REST endpoint. |
+| [MCP SDK](mcp-sdk.html) | TypeScript and Python | The Model Context Protocol surface. |
 
 ---
 
-## API Base URL
+## SDK scope
 
-All examples use a configurable base URL. Replace `https://lenny.example.com` with your deployment's gateway URL.
+The Go, TypeScript, and Python SDKs wrap the REST session lifecycle and the
+webhook signature verifier. They cover automation, backend services, CI
+pipelines, and any code that drives sessions through the gateway REST API.
 
-The OpenAPI specification is available at `GET /openapi.yaml` (or `/openapi.json`) on any Lenny gateway; use it to generate type-safe clients for your language of choice.
+The SDKs do not yet implement the streaming and MCP-client surfaces. For
+bidirectional streaming, delegation tree management, and mid-session prompts,
+use the [MCP SDK](mcp-sdk.html). For live log output over Server-Sent Events,
+call `GET /v1/sessions/{id}/logs` with `Accept: text/event-stream` directly;
+see [Streaming](../streaming.html).
+
+---
+
+## Gateway base URL
+
+Each SDK is constructed with a gateway base URL. The base URL is the gateway
+origin, for example `https://gateway.acme.com`; the SDK appends the `/v1`
+path prefix. Replace the example origin with the URL of your deployment's
+gateway.
+
+The OpenAPI description is served at `GET /openapi.yaml` (or `/openapi.json`)
+on any Lenny gateway. Use it to generate a typed client for a language without
+an official SDK.

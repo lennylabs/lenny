@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: MIT
+#
+# The occurrence is a genuine reference to the runtime-ops channel, so
+# the pass rewrites it and the gate refuses to excuse it.
+kind: identifier-senses
+version: 1
+entries:
+  - file: TESTING.md
+    occurrence: 1
+    channel: CH-RUNTIMEOPS

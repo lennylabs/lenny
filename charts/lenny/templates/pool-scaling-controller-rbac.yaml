@@ -1,0 +1,88 @@
+{{- /*
+RBAC for the lenny-pool-scaling-controller ServiceAccount (§4.6.2,
+§4.6.3). The PoolScalingController reconciles Postgres pool definitions
+into the SandboxTemplate and SandboxWarmPool CRD pair. Per the §4.6.3
+ownership table it owns the SandboxTemplate spec and the
+PoolScalingController-owned SandboxWarmPool spec fields, plus the
+status.sdkWarmCircuitBreaker carve-out on SandboxWarmPool. It has no
+access to Sandbox resources (those are WarmPoolController-owned).
+
+The ServiceAccount name is fixed: the §4.6.3 pool-config-validator
+rule-set-2 authorizes derived-spec writes only from the literal identity
+system:serviceaccount:lenny-system:lenny-pool-scaling-controller, so the
+controller must run under exactly this ServiceAccount for its writes to
+be admitted.
+*/ -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lenny-pool-scaling-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lenny-pool-scaling-controller
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+rules:
+  # SandboxTemplate and SandboxWarmPool: the §4.6.3 ownership table
+  # assigns the PSC create/update/delete on both CRDs (it reconciles the
+  # full derived spec from Postgres).
+  - apiGroups: ["lenny.dev"]
+    resources: ["sandboxtemplates", "sandboxwarmpools"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+  # SandboxWarmPool status: SSA writes to the PSC-owned
+  # status.sdkWarmCircuitBreaker carve-out require get (read current) and
+  # patch (apply partial).
+  - apiGroups: ["lenny.dev"]
+    resources: ["sandboxwarmpools/status"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: lenny-pool-scaling-controller
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lenny-pool-scaling-controller
+subjects:
+  - kind: ServiceAccount
+    name: lenny-pool-scaling-controller
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lenny-pool-scaling-controller-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lenny-pool-scaling-controller-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: lenny-pool-scaling-controller-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: lenny-pool-scaling-controller
+    namespace: {{ .Release.Namespace }}

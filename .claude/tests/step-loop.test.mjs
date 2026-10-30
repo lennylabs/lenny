@@ -1,0 +1,898 @@
+// Layer 2: the per-step build loop, after the conformance-before-tests
+// restructure, plus the deterministic diff classifier it depends on.
+//
+// Run: node .claude/tests/step-loop.test.mjs
+
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { runWorkflow, suite, matching, never, firstIndex, ordered, labels, REPO } from "./harness.mjs";
+import { classify } from "../tools/classify-diff.mjs";
+
+const t = suite("step loop");
+const WF = ".claude/workflows/implement-proposal-build.js";
+const STEP = {
+  id: "S1", title: "the counter", work: "emit it", targets: ["pkg/example"],
+  tiers: ["unit", "component"], specRefs: ["N.M"], checklistStep: "S1", dependsOn: [],
+};
+const ARGS = (over = {}) => ({
+  proposalPath: "proposals/0081_fix_x", repoRoot: "/repo", date: "2026-08-31",
+  plan: { blastRadius: [], steps: [STEP] }, maxStepAttempts: 8, ...over,
+});
+const FINDING = [{ title: "F1", where: "pkg/a.go:1", divergence: "d", fix: "f" }];
+
+const base = (over = {}) => ({
+  "checklist-ticks": { ticked: [] },
+  "baseline": { sha: "base0" },
+  "build:S1:base": { sha: "base0" },
+  "compile:*": { compiles: true, errors: [] },
+  "lease-check:*": { leaseHeld: false },
+  "build:*": { implemented: true, testsPassed: true, tiersRun: ["unit"], commit: "c1", filesChanged: ["pkg/a.go"], testsAddedOrModified: [] },
+  "review:*": { findings: [] },
+  "verify:*": { green: true, tiersRun: ["unit"], failures: [] },
+  "tick:*": "DONE",
+  "compile-guard:*": { clean: true, compiles: true },
+  "proposal-edit-audit": { edited: false, commits: [] },
+  default: {},
+  ...over,
+});
+
+t.section("C3. conformance runs before any test, and a finding stops the tests");
+{
+  let n = 0;
+  const { calls } = await runWorkflow(WF, ARGS(), base({
+    "review:*": () => (++n <= 2 ? { findings: FINDING } : { findings: [] }),
+  }));
+  const firstReview = firstIndex(calls, "review:S1");
+  const firstVerify = firstIndex(calls, "verify:S1");
+  t.check("the review runs before the first verify", firstReview >= 0 && firstReview < firstVerify, "review@" + firstReview + " verify@" + firstVerify);
+  t.check("a compile gate runs before the review", firstIndex(calls, "compile:S1") < firstReview);
+  const r1Verify = calls.filter((c) => c.label === "verify:S1:r1");
+  t.check("no tests run on the round the review found something", r1Verify.length === 0, String(r1Verify.length));
+}
+{
+  // With findings on every round the tests never run at all.
+  const { result, calls, logs } = await runWorkflow(WF, ARGS({ maxStepAttempts: 3 }), base({
+    "review:*": { findings: FINDING },
+  }));
+  t.check("no verify agent ever runs", never(calls, "verify:S1:r"), labels(calls).filter((l) => /verify/.test(l)).join(","));
+  t.check("the step aborts on conformance, not on tests", result.status === "step-stuck");
+  t.check("and says the tests never ran", logs.some((l) => /the tests never ran: the step never got past conformance/.test(l)));
+}
+
+t.section("C4. a test failure returns through conformance before the tests re-run");
+{
+  let v = 0;
+  const { calls } = await runWorkflow(WF, ARGS(), base({
+    "verify:*": ({ label }) => (label.endsWith(":final") ? { green: true, tiersRun: ["unit"], failures: [] } : (++v === 1 ? { green: false, tiersRun: ["unit"], failures: ["TestX failed"] } : { green: true, tiersRun: ["unit"], failures: [] })),
+  }));
+  const seq = labels(calls).filter((l) => /^(review|verify):S1/.test(l));
+  t.check("the sequence is review, verify, review, verify", /^review.*verify.*review.*verify/s.test(seq.join(" ")), seq.join(" "));
+  t.check("a failing test round is followed by a conformance re-check", seq.filter((l) => l.startsWith("review")).length >= 2);
+}
+
+t.section("C6s. a final gate after the step's first one scopes to the commits since the last");
+// The first final gate of a step runs every tier. A later one re-runs the tiers
+// the previous gate failed and the tiers the commits since it can reach, and
+// carries the rest forward, because a full pass after a one-file fix re-proves
+// tiers nothing touched.
+{
+  const finalsFailing = (k) => {
+    let n = 0;
+    let f = 0;
+    let b = 0;
+    return base({
+      "build:*": ({ label }) =>
+        label === "build:S1:base"
+          ? { sha: "base0" }
+          : { implemented: true, testsPassed: true, tiersRun: ["unit"], commit: "c" + ++b, filesChanged: ["pkg/a.go"], testsAddedOrModified: [] },
+      "review:*": () => (++n <= 1 ? { findings: FINDING } : { findings: [] }),
+      "verify:*": ({ label }) => {
+        if (label.endsWith(":final")) {
+          return ++f <= k
+            ? { green: false, tiersRun: ["unit", "component"], failures: ["gate failure " + f] }
+            : { green: true, tiersRun: ["unit"], skipped: [{ tier: "component", why: "carried forward" }], failures: [] };
+        }
+        return { green: true, tiersRun: ["unit"], failures: [] };
+      },
+    });
+  };
+  const finals = (calls) => matching(calls, "verify:S1:final");
+  const isFull = (c) => /^Run the FULL test set/.test(c.prompt);
+  {
+    const { calls, logs, result } = await runWorkflow(WF, ARGS(), finalsFailing(2));
+    const g = finals(calls);
+    t.check("three final gates ran", g.length === 3, String(g.length));
+    t.check("the first final gate is full", g[0] && isFull(g[0]));
+    t.check("the second final gate is scoped", g[1] && !isFull(g[1]) && /Run ONLY what the fix warrants/.test(g[1].prompt));
+    const firstCommit = (/covered commit (c\d+)/.exec(g[1] ? g[1].prompt : "") || [])[1];
+    t.check("it scopes against the commit the first gate covered", !!firstCommit && g[1].prompt.includes("classify-diff.mjs " + firstCommit + "..HEAD"), firstCommit);
+    t.check("it carries the first gate's failures to re-run by name", g[1] && g[1].prompt.includes("gate failure 1"));
+    t.check("it checks the earlier commit is an ancestor of HEAD", g[1] && /merge-base --is-ancestor/.test(g[1].prompt));
+    t.check("the third gate scopes against the second gate's commit and failures", g[2] && !isFull(g[2]) && g[2].prompt.includes("gate failure 2") && !g[2].prompt.includes("gate failure 1"));
+    t.check("the step's tiers and tiers 0 and 1 are the reached set", g[1] && g[1].prompt.includes("(0, 1, unit, component)"));
+    t.check("a scoped gate is logged", logs.some((l) => /final gate scoped to the changes since c\d+/.test(l)));
+    t.check("a scoped green gate ticks the step", ordered(calls, "verify:S1:final", "tick:") && result.status !== "step-stuck", result.status);
+  }
+  {
+    const { calls } = await runWorkflow(WF, ARGS({ fullFinalPassesBeforeScoping: 2 }), finalsFailing(2));
+    const g = finals(calls);
+    t.check("fullFinalPassesBeforeScoping keeps the first N gates full", g.length === 3 && isFull(g[0]) && isFull(g[1]), String(g.length));
+    t.check("and scopes the gate after them", g[2] && !isFull(g[2]) && g[2].prompt.includes("gate failure 2"));
+  }
+  {
+    // The full prompt is byte-identical to the one issued before scoping
+    // existed, so a resumed run replays its cached gates.
+    const { calls } = await runWorkflow(WF, ARGS({ fullFinalPassesBeforeScoping: 99 }), finalsFailing(1));
+    const g = finals(calls);
+    t.check("a legacy full gate keeps its exact wording", g[1] && isFull(g[1]) &&
+      g[1].prompt.includes("Earlier rounds ran only the tiers each fix could affect, so no single run has covered the tree as it now stands.") &&
+      g[1].prompt.includes("Skip none of them except a tier that genuinely needs a cloud-only resource, which you name."));
+  }
+  {
+    // With no commit to anchor the earlier gate to, nothing is certified.
+    let n = 0;
+    let f = 0;
+    const { calls } = await runWorkflow(WF, ARGS(), base({
+      "build:*": ({ label }) =>
+        label === "build:S1:base" ? { sha: "base0" } : { implemented: true, testsPassed: true, tiersRun: ["unit"], commit: "", filesChanged: ["pkg/a.go"], testsAddedOrModified: [] },
+      "review:*": () => (++n <= 1 ? { findings: FINDING } : { findings: [] }),
+      "verify:*": ({ label }) =>
+        label.endsWith(":final")
+          ? (++f === 1 ? { green: false, tiersRun: ["unit"], failures: ["x"] } : { green: true, tiersRun: ["unit"], failures: [] })
+          : { green: true, tiersRun: ["unit"], failures: [] },
+    }));
+    const g = finals(calls);
+    t.check("a gate with no recorded commit stays full", g.length === 2 && isFull(g[1]), String(g.length));
+  }
+}
+
+t.section("C6. the final gate runs over the finished tree, and its failures route back");
+// The gate exists because a step that took several rounds reached its final
+// state through SCOPED runs, so no single pass has covered the tree as it now
+// stands. A step whose first attempt was clean already ran the full set, and
+// correctly gets no second one.
+{
+  const { calls } = await runWorkflow(WF, ARGS(), base());
+  t.check("a first-try clean step needs no extra gate", never(calls, "verify:S1:final"));
+}
+{
+  // One conformance finding forces attempt 2, whose verify is scoped, so the
+  // gate is owed.
+  let n = 0;
+  let f = 0;
+  const { calls, logs } = await runWorkflow(WF, ARGS(), base({
+    "review:*": () => (++n <= 1 ? { findings: FINDING } : { findings: [] }),
+    "verify:*": ({ label }) => {
+      if (label.endsWith(":final")) {
+        return ++f === 1
+          ? { green: false, tiersRun: ["unit", "component"], failures: ["component tier broke"] }
+          : { green: true, tiersRun: ["unit", "component"], failures: [] };
+      }
+      return { green: true, tiersRun: ["unit"], failures: [] };
+    },
+  }));
+  t.check("a scoped step owes a final gate", matching(calls, "verify:S1:final").length >= 1, String(matching(calls, "verify:S1:final").length));
+  t.check("a failing gate is followed by another attempt and another gate", matching(calls, "verify:S1:final").length === 2, String(matching(calls, "verify:S1:final").length));
+  t.check("its failures reach the next fixer", calls.some((c) => /^build:S1/.test(c.label) && /component tier broke/.test(c.prompt)));
+  t.check("it is named a scoping miss", logs.some((l) => /Every one of these is a scoping miss and is recorded/.test(l)));
+  t.check("and the step ticks only after a passing gate", ordered(calls, "verify:S1:final", "tick:"));
+}
+{
+  let n = 0;
+  const { result } = await runWorkflow(WF, ARGS({ maxStepAttempts: 4 }), base({
+    "review:*": () => (++n <= 1 ? { findings: FINDING } : { findings: [] }),
+    "verify:*": ({ label }) =>
+      label.endsWith(":final")
+        ? { green: false, tiersRun: ["unit"], failures: ["still broken"] }
+        : { green: true, tiersRun: ["unit"], failures: [] },
+  }));
+  t.check("a gate that never passes records its misses", (result.gateMisses || []).length > 0, String((result.gateMisses || []).length));
+  t.check("each miss names the failures", (result.gateMisses || [])[0] && (result.gateMisses[0].failures || []).join().includes("still broken"));
+  t.check("each miss names its step and attempt", (result.gateMisses || [])[0] && result.gateMisses[0].step === "S1" && typeof result.gateMisses[0].attempt === "number");
+  t.check("and the step never ticks", result.status === "step-stuck", result.status);
+}
+{
+  // A recorded miss is evidence about the class table only if it names the
+  // class the scoped run assigned and the skip it made on that basis.
+  let n = 0;
+  const { calls, result } = await runWorkflow(WF, ARGS({ maxStepAttempts: 4 }), base({
+    "review:*": () => (++n <= 1 ? { findings: FINDING } : { findings: [] }),
+    "verify:*": ({ label }) =>
+      label.endsWith(":final")
+        ? { green: false, tiersRun: ["unit"], failures: ["component tier broke"] }
+        : { green: true, tiersRun: ["unit"], failures: [], classification: "logic",
+            skipped: [{ tier: "component", why: "no envtest subject in the diff" }] },
+  }));
+  const miss = (result.gateMisses || [])[0];
+  t.check("a miss names the class the scoped run assigned", miss && miss.classification === "logic", String(miss && miss.classification));
+  t.check("and the skip that justified it", miss && (miss.whatWasSkippedAndWhy || []).some((s) => s.tier === "component" && /envtest/.test(s.why)));
+  const scoped = calls.filter((c) => /^verify:S1:r/.test(c.label));
+  const props = scoped[0] && scoped[0].opts.schema.properties;
+  t.check("the scoped verify has somewhere to return the verdict", !!(props && props.classification && props.skipped), Object.keys(props || {}).sort().join("+"));
+}
+
+t.section("C7. the scoping block is grounded in a real diff and a cost ledger");
+{
+  let n = 0;
+  const { calls } = await runWorkflow(WF, ARGS(), base({
+    "review:*": () => (++n <= 1 ? { findings: FINDING } : { findings: [] }),
+  }));
+  const scoped = calls.filter((c) => /^verify:S1:r/.test(c.label) && /ONLY the tiers this fix warrants/.test(c.prompt));
+  t.check("a fix round is scoped", scoped.length > 0, String(scoped.length));
+  const p = scoped[0].prompt;
+  t.check("it runs the classifier over a real range", /classify-diff\.mjs HEAD~1\.\.HEAD/.test(p));
+  t.check("and reads the diff itself", /read `git diff HEAD~1\.\.HEAD` YOURSELF/.test(p));
+  t.check("the fixer's report is adversarial, not the subject", /the diff wins/.test(p));
+  t.check("a disagreement is reportable on its own", /a fixer that changed more than it said is worth\s+knowing about/.test(p));
+  t.check("the script is authoritative where it fires", /AUTHORITATIVE where it\s+fires/.test(p));
+  t.check("the class table is carried", /comment-only \| 0/.test(p) && /security \(auth, isolation, egress, credentials\) \| \+ 9/.test(p));
+  t.check("going below the table is limited to three classes", /only for comment-only, doc-only, and rename-local/.test(p));
+  t.check("an expensive tier needs a named hunk", /No named hunk, no run/.test(p));
+  t.check("the ledger is read before deciding", /scratchpad\/test-times/.test(p));
+  t.check("and written after each tier, by this same agent", /Do not spawn a separate step for that/.test(p));
+  t.check("skips are recorded with reasons", /one\s+entry per tier you skipped in `skipped`, each naming the `tier` and the `why`/.test(p));
+}
+
+t.section("C5. the detectors wake the judges and do not stop the step");
+{
+  const { calls, logs } = await runWorkflow(WF, ARGS({ maxStepAttempts: 12, introspectEvery: 3 }), base({
+    "review:*": { findings: FINDING },
+    "stuck:*": { verdict: "resolvable", confidence: "high", reasoning: "converging" },
+  }));
+  t.check("the judges are woken", !never(calls, "stuck:"));
+  t.check("a resolvable verdict does not stop the step", logs.some((l) => /the loop continues/.test(l)));
+  t.check("the step runs to its attempt cap, not to a detector", logs.some((l) => /after 12 attempt\(s\)/.test(l)));
+}
+{
+  const { result, calls } = await runWorkflow(WF, ARGS({ maxStepAttempts: 12, introspectEvery: 3 }), base({
+    "review:*": { findings: FINDING },
+    "stuck:*": { verdict: "unresolvable", confidence: "high", findingTitle: "F1", whyCodeIsRight: "it is", whyProposalIsWrong: "it is not", roundsMovedIt: "none", reasoning: "r" },
+  }));
+  t.check("an unresolvable finding is set aside, not a stop", (result.stuckFindings || []).some((f) => f.kind === "unresolvable"));
+  t.check("and the next fixer is told to leave it alone", calls.some((c) => /^build:S1/.test(c.label) && /ALREADY JUDGED UNRESOLVABLE/.test(c.prompt)));
+}
+
+t.section("C2b. a code step refuses to run while a spec lease is held");
+{
+  const { result, calls } = await runWorkflow(WF, ARGS(), base({
+    "lease-check:*": { leaseHeld: true },
+  }));
+  t.check("the run stops", result.status === "lease-leaked", result.status);
+  t.check("it names the step", (result.reason || "").includes("S1"));
+  t.check("and says spec/ is writable", /spec\/ is writable/.test(result.reason || ""));
+  t.check("no implementer ran under the leak", never(calls, "build:S1"), labels(calls).join(","));
+  t.check("nothing but the gate ran at all", never(calls, "compile:S1") && never(calls, "review:S1") && never(calls, "verify:S1"));
+  t.check("and nothing was committed", (result.commits || []).length === 0);
+}
+
+t.section("C2c. an unanswered lease check stops the run rather than assuming spec/ is locked");
+{
+  const dead = await runWorkflow(WF, ARGS(), base({ "lease-check:*": null }));
+  t.check("a dead gate stops the run", dead.result.status === "lease-leaked", dead.result.status);
+  t.check("and no implementer ran", never(dead.calls, "build:S1"));
+  const omitted = await runWorkflow(WF, ARGS(), base({ "lease-check:*": {} }));
+  t.check("an omitted leaseHeld stops the run too", omitted.result.status === "lease-leaked", omitted.result.status);
+  t.check("and no implementer ran", never(omitted.calls, "build:S1"));
+  const clear = await runWorkflow(WF, ARGS(), base());
+  t.check("an explicit false lets the step run", !never(clear.calls, "build:S1") && clear.result.status !== "lease-leaked");
+}
+
+t.section("C0. a step that does not compile is not reviewed");
+{
+  let c = 0;
+  const { calls } = await runWorkflow(WF, ARGS(), base({
+    "compile:*": () => (++c === 1 ? { compiles: false, errors: ["pkg/a.go:3: undefined x"] } : { compiles: true, errors: [] }),
+  }));
+  t.check("no reviewer sees the broken tree", firstIndex(calls, "review:S1") > firstIndex(calls, "compile:S1:r2"));
+  t.check("the build error reaches the next fixer", calls.some((x) => /^build:S1/.test(x.label) && /undefined x/.test(x.prompt)));
+}
+
+// ---- T7-T9: the classifier, executed --------------------------------------
+
+const mk = (f, adds, dels = []) =>
+  "diff --git a/" + f + " b/" + f + "\n--- a/" + f + "\n+++ b/" + f + "\n" +
+  adds.map((l) => "+" + l).join("\n") + (dels.length ? "\n" + dels.map((l) => "-" + l).join("\n") : "");
+
+t.section("T7. comment-only, including block comments and code-like comment text");
+t.check("line comments", classify(mk("pkg/a.go", ["// a note", "", "// another"])).classes.includes("comment-only"));
+t.check("block comments", classify(mk("pkg/a.go", ["/* multi", "   line */"])).classes.includes("comment-only"));
+t.check("a comment containing code text is still a comment", classify(mk("pkg/a.go", ["// x := 1 is what we used to do"])).classes.includes("comment-only"));
+t.check("a removed comment counts too", classify(mk("pkg/a.go", [], ["// gone"])).classes.includes("comment-only"));
+
+t.section("T8. one logic line alongside a comment edit is NOT comment-only");
+t.check("the case this exists for", !classify(mk("pkg/a.go", ["// a note", "x := 1"])).classes.includes("comment-only"));
+t.check("trailing code after a block comment close", !classify(mk("pkg/a.go", ["/* c */ x := 1"])).classes.includes("comment-only"));
+t.check("a bare statement", !classify(mk("pkg/a.go", ["return nil"])).classes.includes("comment-only"));
+t.check("and it says so", /none of comment-only/.test(classify(mk("pkg/a.go", ["return nil"])).reason));
+
+t.section("T9. doc-only and test-only are decided by path; a mixed diff falls through");
+t.check("prose", classify(mk("docs/a.md", ["p"])).classes.includes("doc-only"));
+t.check("an operator page is separated", classify(mk("docs/runbooks/a.md", ["p"])).classes.includes("doc-only-operator"));
+t.check("a Go test", classify(mk("tests/tier1/a_test.go", ["x := 1"])).classes.includes("test-only"));
+t.check("a mixed code+doc diff claims no cheap class", classify(mk("pkg/a.go", ["// c"]) + "\n" + mk("docs/b.md", ["p"])).classes.length === 0);
+t.check("an empty diff is its own answer", classify("").classes.includes("empty"));
+
+t.section("T7b. a line that looks like a file header inside a hunk is body, not header");
+// A removed SQL comment reaches the classifier as "--- drop the old index".
+const sqlDel =
+  "diff --git a/migrations/a.sql b/migrations/a.sql\n" +
+  "--- a/migrations/a.sql\n+++ b/migrations/a.sql\n@@ -1,2 +1,0 @@\n" +
+  "--- drop the old index\n--- it was never used\n";
+t.check("a removed \"--\" line is counted", classify(sqlDel).addedRemoved === 2);
+t.check("so a migration deleting only \"--\" lines is not comment-only",
+  !classify(sqlDel).classes.includes("comment-only"));
+
+const fakeHeader =
+  "diff --git a/x.md b/x.md\n--- a/x.md\n+++ b/x.md\n@@ -0,0 +1 @@\n+++ b/pkg/evil.go\n";
+t.check("an added line reading \"+++ b/...\" invents no second file",
+  classify(fakeHeader).files.length === 1 && classify(fakeHeader).files[0] === "x.md");
+t.check("and the prose diff is still doc-only",
+  classify(fakeHeader).classes.includes("doc-only"));
+
+const deleted =
+  "diff --git a/pkg/a.go b/pkg/a.go\ndeleted file mode 100644\n" +
+  "--- a/pkg/a.go\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-// c\n-x := 1\n";
+t.check("a deleted file is named from the diff --git line and its body still read",
+  classify(deleted).files.join() === "pkg/a.go" && classify(deleted).addedRemoved === 2 &&
+  !classify(deleted).classes.includes("comment-only"));
+
+
+
+// ---- Phase 9: deviations ---------------------------------------------------
+
+t.section("C10. an unresolvable verdict writes an accepted deviation");
+{
+  const { calls, result } = await runWorkflow(WF, ARGS({ maxStepAttempts: 12, introspectEvery: 3 }), base({
+    "review:*": { findings: FINDING },
+    "stuck:*": { verdict: "unresolvable", confidence: "high", findingTitle: "F1", whyCodeIsRight: "the gate fires", whyProposalIsWrong: "it says otherwise", roundsMovedIt: "none", reasoning: "r" },
+  }));
+  const dev = calls.find((c) => c.label.startsWith("deviation:"));
+  t.check("a deviation agent runs", !!dev);
+  t.check("it may edit only the deviations file", /only file you may edit is .*deviations\.md/.test(dev.prompt));
+  t.check("it writes an accepted entry", /\*\*Status:\*\* accepted/.test(dev.prompt));
+  t.check("it carries the judges' reasoning", /the gate fires/.test(dev.prompt));
+  t.check("it asks for a suggested next step", /Suggested next step/.test(dev.prompt));
+  t.check("and never edits the proposal", /Never edit the proposal itself/.test(dev.prompt));
+  t.check("the run reports where the file is", !!result.deviationsFile && /deviations\.md$/.test(result.deviationsFile));
+}
+
+t.section("C10b. a departure the step reports about itself is written down too");
+{
+  // It was reaching the result object and nowhere else, and the result object
+  // is a task return nobody keeps: on two measured runs the deviations file
+  // said there were none while the run had returned several, so the one
+  // artifact a human reads to decide whether the proposal or the code was
+  // wrong was the one that lost them.
+  const DEV = {
+    proposalSays: "TEST-1(a) says the comment is restated and says nothing about the signature",
+    implementedInstead: "the return type was narrowed from map[string]string to map[string]bool",
+    why: "the declaring service was read only by the gate this step retires",
+  };
+  const { calls, logs } = await runWorkflow(WF, ARGS(), base({
+    "build:*": { implemented: true, testsPassed: true, tiersRun: ["unit"], commit: "c1", filesChanged: ["pkg/a.go"], testsAddedOrModified: [], deviations: [DEV] },
+  }));
+  const dev = calls.find((c) => c.label.startsWith("deviation:proposed:"));
+  t.check("a writer runs for it", !!dev, calls.map((c) => c.label).join(","));
+  t.check("it may edit only the deviations file", /only file you may edit is .*deviations\.md/.test(dev.prompt));
+  t.check("it carries what the step reported", /narrowed from map\[string\]string/.test(dev.prompt));
+  // `proposed` rather than `accepted`: nobody adjudicated this, and the
+  // vocabulary already distinguishes them.
+  t.check("it writes a proposed entry", /\*\*Status:\*\* proposed/.test(dev.prompt) || /Status:\*\* proposed/.test(dev.prompt));
+  t.check("and is told not to write accepted", /Do not write `accepted`/.test(dev.prompt));
+  t.check("it appends rather than rewriting", /Append only; never rewrite or remove an entry/.test(dev.prompt));
+  t.check("the run says it recorded them", logs.some((l) => /recorded 1 proposed deviation\(s\)/.test(l)), logs.filter((l) => /deviation/.test(l)).join(" | "));
+}
+{
+  // A step that reported none must not spend an agent saying so.
+  const { calls } = await runWorkflow(WF, ARGS(), base());
+  t.check("a step with no departures writes nothing", !calls.some((c) => c.label.startsWith("deviation:proposed:")), "a writer ran for an empty list");
+}
+{
+  // Writing here must not buy the step's own claim immunity from the next
+  // round's review: the reviewers' suppression list is built from the stuck
+  // judges' verdicts in memory, never by reading this file.
+  const { readFileSync } = await import("fs");
+  const { resolve } = await import("path");
+  const { REPO: R } = await import("./harness.mjs");
+  const src = readFileSync(resolve(R, ".claude/workflows/implement-proposal-build.js"), "utf8");
+  const from = src.indexOf("const adjudicated = stuckFindings");
+  t.check(
+    "the immunity list is built from the judges rather than from the file",
+    from > 0 && !/readFile|P\.deviations/.test(src.slice(from, from + 300)),
+    src.slice(from, from + 160),
+  );
+}
+
+t.section("C11. reviewers are told about accepted deviations, and leaks are dropped");
+{
+  const { calls } = await runWorkflow(WF, ARGS(), base());
+  const reviewers = matching(calls, "review:S1");
+  t.check("every reviewer is given the file", reviewers.every((c) => /DEVIATIONS ALREADY ACCEPTED/.test(c.prompt)));
+  t.check("and told not to re-raise one", reviewers.every((c) => /do not report a rephrasing or a near neighbour of it/.test(c.prompt)));
+  t.check("a proposed entry is explicitly still fair game", reviewers.every((c) => /`proposed` is not adjudicated and is fair game/.test(c.prompt)));
+}
+{
+  // A reviewer that re-raises an adjudicated finding anyway has it dropped by
+  // the script: prompt suppression alone has been observed to leak.
+  const { logs, result } = await runWorkflow(WF, ARGS({ maxStepAttempts: 12, introspectEvery: 3 }), base({
+    "review:*": { findings: [{ title: "F1 the gate is missing", where: "w", divergence: "d", fix: "f" }] },
+    "stuck:*": { verdict: "unresolvable", confidence: "high", findingTitle: "F1 the gate is missing", whyCodeIsRight: "c", whyProposalIsWrong: "p", roundsMovedIt: "none", reasoning: "r" },
+  }));
+  t.check("the leak is dropped by the script", logs.some((l) => /dropped \d+ finding\(s\) already adjudicated as deviations/.test(l)));
+  t.check("and the step then finishes", result.status !== "step-stuck", result.status);
+}
+{
+  // acceptedDivergences supplied by the caller feed the same filter, so the two
+  // mechanisms are one mechanism.
+  const { logs } = await runWorkflow(
+    WF,
+    ARGS({ acceptedDivergences: ["F1 the gate is missing"] }),
+    base({ "review:*": { findings: [{ title: "F1 the gate is missing", where: "w", divergence: "d", fix: "f" }] } }),
+  );
+  t.check("a caller-supplied divergence is filtered the same way", logs.some((l) => /already adjudicated as deviations/.test(l)));
+}
+
+t.section("C12. an unproductive verdict stops the step and writes NO deviation");
+{
+  const { result, calls } = await runWorkflow(WF, ARGS({ maxStepAttempts: 20, introspectEvery: 2, minUnproductiveRounds: 1 }), base({
+    "review:*": { findings: FINDING },
+    "stuck:*": { verdict: "unproductive", confidence: "high", findingTitle: "F1", outstandingWork: "write the tier-3 case", roundsMovedIt: "none", reasoning: "r" },
+  }));
+  t.check("the step stops", result.status === "step-stuck", result.status);
+  t.check("recorded as unproductive", (result.stuckFindings || []).some((f) => f.kind === "unproductive"));
+  t.check("NO deviation is written for it", never(calls, "deviation:"));
+  t.check("the outstanding work is carried out", JSON.stringify(result.stuckFindings).includes("tier-3 case"));
+}
+
+
+
+// ---- Phase 8b: one execution sequence ------------------------------------
+
+const SPEC_STEP = { id: "S1", lane: "spec", title: "the example row", work: "SPEC-1", targets: ["spec/example.md"], tiers: ["static"], checklistStep: "S1", dependsOn: [] };
+const CODE_STEP = { ...STEP, id: "S2", lane: "code", checklistStep: "S2", dependsOn: ["S1"] };
+
+const specBase = (over = {}) => base({
+  "spec-targets:*": { files: ["spec/example-section.md"] },
+  "lease-open:*": "{}",
+  "lease-release:*": "{}",
+  "apply:*": { applied: ["SPEC-1"], unappliable: [], deviations: [] },
+  "verify:S1:spec": { discrepancies: [] },
+  "commit-spec:*": "committed",
+  ...over,
+});
+
+t.section("C16. spec and code steps run in one sequence, in checklist order");
+{
+  const { calls, result } = await runWorkflow(
+    WF, ARGS({ plan: { blastRadius: [], steps: [SPEC_STEP, CODE_STEP] } }), specBase(),
+  );
+  t.check("the spec step applies its staged edits", !never(calls, "apply:S1"));
+  t.check("before the code step builds", firstIndex(calls, "apply:S1") < firstIndex(calls, "build:S2"));
+  t.check("the spec step ticks its own box", calls.some((c) => c.label === "tick:S1"));
+  t.check("and both steps are recorded", (result.steps || []).length === 2, String((result.steps || []).length));
+  t.check("the spec step records the files it wrote", (result.steps || [])[0].specFiles.join().includes("spec/example"));
+}
+
+t.section("C17. the lease is per spec step, scoped to its files, and no code step holds one");
+{
+  const { calls } = await runWorkflow(
+    WF, ARGS({ plan: { blastRadius: [], steps: [SPEC_STEP, CODE_STEP] } }), specBase(),
+  );
+  const open = calls.filter((c) => c.label.startsWith("lease-open:"));
+  t.check("exactly one lease is opened", open.length === 1, String(open.length));
+  t.check("it belongs to the spec step", open[0].label === "lease-open:S1");
+  t.check("its allow list is that step's files only", /--allow 'spec\/example-section\.md'/.test(open[0].prompt));
+  t.check("it is a dedicated one-command haiku agent", open[0].opts.model === "haiku" && /Do nothing else/.test(open[0].prompt));
+  t.check("it is released", !never(calls, "lease-release:S1"));
+  t.check("before the code step runs", firstIndex(calls, "lease-release:S1") < firstIndex(calls, "build:S2"));
+  t.check("the code step opens none", open.every((c) => c.label !== "lease-open:S2"));
+}
+
+t.section("C21. a failing spec step still releases its lease");
+{
+  const { calls, result } = await runWorkflow(
+    WF, ARGS({ plan: { blastRadius: [], steps: [SPEC_STEP, CODE_STEP] } }),
+    specBase({ "apply:*": { applied: [], unappliable: [{ id: "SPEC-1", reason: "the anchor drifted" }], deviations: [] } }),
+  );
+  t.check("the run stops", result.status === "spec-step-failed", result.status);
+  t.check("it names why", /anchor drifted/.test(result.reason || ""));
+  t.check("the lease is released anyway", !never(calls, "lease-release:S1"));
+  t.check("and the code step never runs", never(calls, "build:S2"));
+}
+{
+  const { calls, result } = await runWorkflow(
+    WF, ARGS({ plan: { blastRadius: [], steps: [SPEC_STEP] } }),
+    specBase({ "verify:S1:spec": { discrepancies: [{ title: "d", file: "spec/example.md", where: "w", expected: "e", observed: "o", fix: "f" }] } }),
+  );
+  t.check("a verification discrepancy stops the step", result.status === "spec-step-failed");
+  t.check("the discrepancies are carried out", (result.discrepancies || []).length === 1);
+  t.check("nothing is committed", never(calls, "commit-spec"));
+  t.check("the lease is still released", !never(calls, "lease-release:S1"));
+}
+
+t.section("C20. a lane that selects no handler is an error, not a guess");
+{
+  const { result } = await runWorkflow(
+    WF, ARGS({ plan: { blastRadius: [], steps: [{ ...CODE_STEP, id: "SX", lane: "everything" }] } }), specBase(),
+  );
+  t.check("the run stops", result.status === "bad-lane", result.status);
+  t.check("it names the step and the lane", /SX/.test(result.reason) && /everything/.test(result.reason));
+}
+
+t.section("specReviewFocus survives as a per-spec-step reviewer");
+{
+  const { calls, logs } = await runWorkflow(
+    WF,
+    ARGS({ plan: { blastRadius: [], steps: [SPEC_STEP] }, specReviewFocus: ["the slotId rename"] }),
+    specBase({ "verify:S1:spec:focus": { discrepancies: [] } }),
+  );
+  t.check("a focused reviewer runs beside the normal one", !never(calls, "verify:S1:spec:focus"));
+  t.check("it carries the areas", /the slotId rename/.test(calls.find((c) => c.label === "verify:S1:spec:focus").prompt));
+  t.check("the normal reviewer does not", !/the slotId rename/.test(calls.find((c) => c.label === "verify:S1:spec").prompt));
+  t.check("and it is logged", logs.some((l) => /Spec review focus: 1 area/.test(l)));
+}
+
+t.section("C22. the plan critique runs maxPlanRounds rounds");
+{
+  const PLAN_ARGS = (over = {}) => ({
+    proposalPath: "proposals/0081_fix_x", repoRoot: "/repo", date: "2026-08-31",
+    maxStepAttempts: 1, ...over,
+  });
+  const planStubs = (over = {}) => base({
+    "plan": { blastRadius: [], steps: [STEP] },
+    "plan-critique:*": { complete: false, gaps: ["a removal step is missing"] },
+    "plan-revise:*": { blastRadius: [], steps: [STEP] },
+    ...over,
+  });
+  const two = await runWorkflow(WF, PLAN_ARGS(), planStubs());
+  t.check("the default buys two critique rounds", matching(two.calls, "plan-critique:").length === 2,
+    String(matching(two.calls, "plan-critique:").length));
+  const one = await runWorkflow(WF, PLAN_ARGS({ maxPlanRounds: 1 }), planStubs());
+  t.check("maxPlanRounds 1 still critiques once", matching(one.calls, "plan-critique:").length === 1,
+    String(matching(one.calls, "plan-critique:").length));
+  const three = await runWorkflow(WF, PLAN_ARGS({ maxPlanRounds: 3 }), planStubs());
+  t.check("and three buys three", matching(three.calls, "plan-critique:").length === 3);
+  const clean = await runWorkflow(WF, PLAN_ARGS(), planStubs({ "plan-critique:*": { complete: true, gaps: [] } }));
+  t.check("a complete plan stops after one", matching(clean.calls, "plan-critique:").length === 1);
+  t.check("and is not revised", never(clean.calls, "plan-revise:"));
+}
+
+t.section("C23. the loop carries no write-only phase state");
+{
+  const src = readFileSync(resolve(REPO, ".claude/workflows/implement-proposal-build.js"), "utf8");
+  for (const id of ["phaseOfAttempt", "icRounds"]) {
+    t.check(id + " is gone (stepRounds carries the phase)", !new RegExp("\\b" + id + "\\b").test(src));
+  }
+}
+
+t.section("SO1. a spec-only run reports the subworkflow's own failure, not a clean stop");
+{
+  // The spec-only fix collapsed every status that was not spec-only-incomplete
+  // into spec-only, so a step that would not apply, a leaked lease and a step
+  // on the wrong lane all reported success. The skill and the build loop are
+  // both told to STOP on those, so the loop went on to build code against spec
+  // text that had never landed.
+  const PARENT = ".claude/workflows/implement-proposal.js";
+  const planStub = {
+    approved: true,
+    alreadyApplied: false,
+    statusLine: "Approved",
+    steps: [{ id: "S1", lane: "spec" }],
+    findingIds: [],
+    specEdits: [],
+    filesTouched: [],
+    nonSpecStaged: false,
+  };
+  const run = async (childStatus) => {
+    const { result } = await runWorkflow(
+      PARENT,
+      { proposalPath: "proposals/0099_fix_demo", repoRoot: "/repo", date: "2026-09-02", implementCode: false },
+      { plan: planStub, default: {} },
+      { subworkflows: { "implement-proposal-build": { status: childStatus, steps: [], commits: [] } } },
+    );
+    return result && result.status;
+  };
+  t.check("a clean spec prefix still reports spec-only", (await run("spec-only")) === "spec-only");
+  t.check(
+    "an incomplete prefix still reports itself",
+    (await run("spec-only-incomplete")) === "spec-only-incomplete",
+  );
+  t.check("a leaked lease is NOT reported as success", (await run("lease-leaked")) === "lease-leaked");
+  t.check("a failed spec step is NOT reported as success", (await run("spec-step-failed")) === "spec-step-failed");
+  t.check("a bad lane is NOT reported as success", (await run("bad-lane")) === "bad-lane");
+}
+
+t.section("SO2. a spec-only stop still checks the lease it may be leaking");
+{
+  // The early return that ends the leading spec prefix sits BEFORE the
+  // lease-leak guard a non-spec step runs, so without its own check a spec step
+  // whose best-effort release failed left spec/ writable and the run still
+  // reported a clean spec-only stop.
+  const twoLane = {
+    blastRadius: [],
+    steps: [
+      { ...STEP, id: "S1", lane: "spec", checklistStep: "S1" },
+      { ...STEP, id: "S2", lane: "code", checklistStep: "S2" },
+    ],
+  };
+  const specArgs = ARGS({ specOnly: true, plan: twoLane });
+  const withLease = (over) =>
+    base({
+      plan: twoLane,
+      "spec-targets:*": { files: ["spec/example-section.md"], why: "SPEC-1 lands there" },
+      "lease-open:*": "DONE",
+      "apply:*": { applied: ["SPEC-1"], unappliable: [], deviations: [] },
+      "verify:*": { discrepancies: [], green: true, tiersRun: ["unit"], failures: [] },
+      "commit-spec:*": "c-spec",
+      "lease-release:*": "DONE",
+      ...over,
+    });
+
+  const clean = await runWorkflow(WF, specArgs, withLease({ "lease-check:*": { leaseHeld: false } }));
+  t.check(
+    "a released lease lets the prefix stop cleanly",
+    clean.result && clean.result.status === "spec-only",
+    String(clean.result && clean.result.status) + " " + String(clean.error || ""),
+  );
+  t.check("and the exit check ran", !never(clean.calls, "lease-check:spec-only-exit"));
+
+  const leaked = await runWorkflow(WF, specArgs, withLease({ "lease-check:*": { leaseHeld: true } }));
+  t.check(
+    "a held lease is reported as a leak rather than a clean stop",
+    leaked.result && leaked.result.status === "lease-leaked",
+    String(leaked.result && leaked.result.status),
+  );
+
+  const dead = await runWorkflow(WF, specArgs, withLease({ "lease-check:*": null }));
+  t.check(
+    "and a dead lease check fails closed",
+    dead.result && dead.result.status === "lease-leaked",
+    String(dead.result && dead.result.status),
+  );
+}
+
+t.section("D1. a verify that covered the full tier set on the gated tree stands in for the final gate");
+// The final gate re-ran tiers a verify had just passed on the same commit. A
+// scoped verify that ran the whole set green, recorded the tree before and
+// after, and finds the same tree just before the gate is that gate. Every
+// missing or differing input runs the gate as before.
+{
+  const FULL = { green: true, tiersRun: ["0", "1", "unit", "component"], fullSet: true, treeHash: "t1", failures: [] };
+  // One conformance finding forces attempt 2, whose verify is scoped.
+  const reuse = (verifyR2, tree, stepOver) => {
+    let n = 0;
+    return runWorkflow(WF, stepOver ? ARGS({ plan: { blastRadius: [], steps: [{ ...STEP, ...stepOver }] } }) : ARGS(), base({
+      "review:*": () => (++n <= 1 ? { findings: FINDING } : { findings: [] }),
+      "verify:*": ({ label }) =>
+        label === "verify:S1:r2" ? verifyR2 : label.endsWith(":final") ? { green: true, tiersRun: ["unit", "component"], failures: [] } : { green: true, tiersRun: ["unit"], failures: [] },
+      "tree:*": tree,
+    }));
+  };
+  {
+    const { calls, logs, result } = await reuse(FULL, { treeHash: "t1", clean: true });
+    t.check("a matching tree hash skips the final gate", never(calls, "verify:S1:final"), labels(calls).join(","));
+    t.check("the tree is read after the verify and before the tick", ordered(calls, "verify:S1:r2", "tree:S1:r2") && ordered(calls, "tree:S1:r2", "tick:"));
+    t.check("the reuse is logged with the hash", logs.some((l) => /reusing its result instead of running the gate/.test(l) && /t1/.test(l)));
+    t.check("and the step ticks", result.status !== "step-stuck" && !never(calls, "tick:"), result.status);
+    const tree = calls.find((c) => c.label === "tree:S1:r2");
+    t.check("the tree read is a cheap mechanical agent", tree && tree.opts.model === "haiku" && /HEAD\^\{tree\}/.test(tree.prompt) && /git status --porcelain/.test(tree.prompt));
+  }
+  {
+    const { calls, logs } = await reuse(FULL, { treeHash: "t2", clean: true });
+    t.check("a mismatched tree hash runs the final gate", matching(calls, "verify:S1:final").length === 1, labels(calls).join(","));
+    t.check("and says why", logs.some((l) => /the tree now reads t2 against t1; running the final gate/.test(l)));
+  }
+  {
+    const { calls } = await reuse({ ...FULL, treeHash: "" }, { treeHash: "t1", clean: true });
+    t.check("an unknown verify hash runs the final gate", matching(calls, "verify:S1:final").length === 1);
+    t.check("without reading the tree at all", never(calls, "tree:"));
+  }
+  {
+    const { calls } = await reuse(FULL, null);
+    t.check("a dead tree read runs the final gate", matching(calls, "verify:S1:final").length === 1);
+  }
+  {
+    const { calls } = await reuse(FULL, { treeHash: "t1", clean: false });
+    t.check("an unclean working tree runs the final gate", matching(calls, "verify:S1:final").length === 1);
+  }
+  {
+    const { calls } = await reuse(FULL, {});
+    t.check("an empty tree answer runs the final gate", matching(calls, "verify:S1:final").length === 1);
+  }
+  {
+    const { calls } = await reuse({ ...FULL, fullSet: false }, { treeHash: "t1", clean: true });
+    t.check("a verify that says it did not cover the set runs the gate", matching(calls, "verify:S1:final").length === 1 && never(calls, "tree:"));
+  }
+  {
+    const { calls } = await reuse({ ...FULL, tiersRun: ["0", "1", "unit"] }, { treeHash: "t1", clean: true });
+    t.check("a verify missing one of the step's tiers runs the gate, whatever fullSet says", matching(calls, "verify:S1:final").length === 1 && never(calls, "tree:"));
+  }
+  {
+    const { calls } = await reuse({ ...FULL, skipped: [{ tier: "component", why: "no envtest subject" }] }, { treeHash: "t1", clean: true });
+    t.check("a verify that skipped a required tier runs the gate", matching(calls, "verify:S1:final").length === 1);
+  }
+  {
+    const { calls } = await reuse({ ...FULL, green: false, failures: ["x"] }, { treeHash: "t1", clean: true });
+    t.check("a red verify never stands in for the gate", never(calls, "tree:S1:r2"));
+  }
+  {
+    // Spellings differ between a checklist and a verifier's report.
+    const { calls } = await reuse({ ...FULL, tiersRun: ["tier 0 (static)", "tier 1", "Tier 2"] }, { treeHash: "t1", clean: true });
+    t.check("tier names and numbers are compared on one key", never(calls, "verify:S1:final"), labels(calls).join(","));
+  }
+  {
+    // The gate itself skips a cloud-only tier, so a verifier that did is covered.
+    const { calls } = await reuse(
+      { green: true, tiersRun: ["0", "1"], skipped: [{ tier: "6", why: "needs a managed cluster" }], fullSet: true, treeHash: "t1", failures: [] },
+      { treeHash: "t1", clean: true }, { tiers: ["0", "1", "6"] },
+    );
+    t.check("a skipped cloud-only tier still counts as covered", never(calls, "verify:S1:final"), labels(calls).join(","));
+  }
+  {
+    // An unrecognised spelling matches only itself, so it fails closed.
+    const { calls } = await reuse({ ...FULL, tiersRun: ["0", "1", "unit", "the component one"] }, { treeHash: "t1", clean: true });
+    t.check("an unrecognised tier spelling runs the gate", matching(calls, "verify:S1:final").length === 1);
+  }
+  {
+    const { calls } = await reuse(FULL, { treeHash: "t1", clean: true });
+    const v = calls.find((c) => c.label === "verify:S1:r2");
+    t.check("the verifier is asked to record the tree before and after", v && /TREE RECORD/.test(v.prompt) && /HEAD\^\{tree\}/.test(v.prompt) && /After the last tier, run both again/.test(v.prompt));
+    const props = v && v.opts.schema.properties;
+    t.check("and has fields to return it in", !!(props && props.treeHash && props.fullSet));
+    const fg = calls.find((c) => c.label === "verify");
+    t.check("the proposal-wide Verify schema is unchanged", fg && !fg.opts.schema.properties.treeHash && !fg.opts.schema.properties.fullSet);
+  }
+  {
+    // After a failed gate, the next gate still scopes as before when no verify
+    // qualifies to stand in for it.
+    let n = 0;
+    let f = 0;
+    let b = 0;
+    const { calls } = await runWorkflow(WF, ARGS(), base({
+      "build:*": ({ label }) => label === "build:S1:base" ? { sha: "base0" } : { implemented: true, testsPassed: true, tiersRun: ["unit"], commit: "c" + ++b, filesChanged: ["pkg/a.go"], testsAddedOrModified: [] },
+      "review:*": () => (++n <= 1 ? { findings: FINDING } : { findings: [] }),
+      "verify:*": ({ label }) => label.endsWith(":final")
+        ? (++f === 1 ? { green: false, tiersRun: ["unit"], failures: ["gate failure 1"] } : { green: true, tiersRun: ["unit"], failures: [] })
+        : { green: true, tiersRun: ["unit"], failures: [] },
+    }));
+    const g = matching(calls, "verify:S1:final");
+    t.check("a gate after a failed one is still scoped", g.length === 2 && /Run ONLY what the fix warrants/.test(g[1].prompt), String(g.length));
+  }
+  {
+    // ... and a verify that does qualify after a failed gate stands in for the next one.
+    let n = 0;
+    let f = 0;
+    let r = 0;
+    const { calls } = await runWorkflow(WF, ARGS(), base({
+      "review:*": () => (++n <= 1 ? { findings: FINDING } : { findings: [] }),
+      "verify:*": ({ label }) => label.endsWith(":final")
+        ? (++f === 1 ? { green: false, tiersRun: ["unit"], failures: ["gate failure 1"] } : { green: true, tiersRun: ["unit"], failures: [] })
+        : (++r >= 2 ? FULL : { green: true, tiersRun: ["unit"], failures: [] }),
+      "tree:*": { treeHash: "t1", clean: true },
+    }));
+    t.check("one gate ran, then a qualifying verify stood in for the second", matching(calls, "verify:S1:final").length === 1 && !never(calls, "tick:"), labels(calls).join(","));
+  }
+}
+
+t.section("D2. the implementer runs a smoke check and leaves tier 2 and above to the verifier");
+{
+  let n = 0;
+  const { calls } = await runWorkflow(WF, ARGS(), base({
+    "review:*": () => (++n <= 1 ? { findings: FINDING } : { findings: [] }),
+  }));
+  const first = calls.find((c) => c.label === "build:S1");
+  const fix = calls.find((c) => /^build:S1:fix/.test(c.label));
+  for (const [name, c] of [["the implementer", first], ["the fixer", fix]]) {
+    t.check(name + " still writes tests for every tier", c && /Write or update the tests for EVERY tier this step reaches/.test(c.prompt));
+    t.check(name + " runs tier 0 checks and tier 1 only", c && /Do NOT run tier 2 or above/.test(c.prompt) && /go test \.\/<changed-pkg>\/\.\.\./.test(c.prompt));
+    t.check(name + " runs the same static checks as the compile gate", c && /gofumpt -l/.test(c.prompt) && /validate-maps/.test(c.prompt));
+  }
+  t.check("the implementer no longer brings infrastructure up", first && !/lenny-test infra up/.test(first.prompt));
+  t.check("the fixer no longer picks higher tiers itself", fix && !/whose subject this fix actually changes/.test(fix.prompt));
+  const tiers = first && first.opts.schema.properties.tiersRun;
+  t.check("the schema says what tiersRun now holds", tiers && /never tier 2 or above/.test(tiers.description || ""));
+}
+
+t.section("D3. the compile gate runs the cheap tier 0 checks, and a failure goes back to the fixer");
+{
+  let c = 0;
+  const { calls, logs } = await runWorkflow(WF, ARGS(), base({
+    "compile:*": () => (++c === 1
+      ? { compiles: true, staticClean: false, errors: ["gofumpt: pkg/a.go", "validate-maps: tests/tier2_component/x_test.go not in change-graph"] }
+      : { compiles: true, staticClean: true, errors: [] }),
+  }));
+  const g = calls.find((x) => x.label === "compile:S1:r1");
+  t.check("formatting and import order on the changed Go files", g && /gofumpt -l <files>/.test(g.prompt) && /goimports -l -local github\.com\/lennylabs\/lenny <files>/.test(g.prompt));
+  t.check("go vet on the changed packages", g && /go vet \.\/<pkg>\/\.\.\./.test(g.prompt) && /-tags=contract/.test(g.prompt));
+  t.check("map completeness with tier 0's own command", g && /go run \.\/cmd\/lenny-test validate-maps/.test(g.prompt));
+  t.check("and not the expensive rest of tier 0", g && /no golangci-lint/.test(g.prompt));
+  t.check("the schema carries the static verdict", g && g.opts.schema.required.includes("staticClean"));
+  t.check("no reviewer sees a tree that fails them", firstIndex(calls, "review:S1") > firstIndex(calls, "compile:S1:r2"));
+  t.check("the failures reach the next fixer", calls.some((x) => /^build:S1:fix/.test(x.label) && /not in change-graph/.test(x.prompt) && /gofumpt: pkg\/a\.go/.test(x.prompt)));
+  t.check("the log names the static checks", logs.some((l) => /fails the compile gate's static checks/.test(l)));
+}
+{
+  const { calls } = await runWorkflow(WF, ARGS(), base({
+    "compile:*": { compiles: false, staticClean: false, errors: ["pkg/a.go:3: undefined x"] },
+  }));
+  t.check("a build failure still reads as a build failure", calls.some((x) => /^build:S1:fix/.test(x.label) && /do not compile/.test(x.prompt)));
+}
+
+t.section("D4. a mechanical fix round gets the conformance lens alone");
+{
+  const CONF = [{ title: "label leak", where: "pkg/a_test.go:1", divergence: "d", fix: "f" }];
+  // r1: conformance finds something, invariants is clean on c1.
+  const run = (classify, over = {}) => {
+    let b = 0;
+    return runWorkflow(WF, ARGS(), base({
+      "build:*": ({ label }) => label === "build:S1:base" ? { sha: "base0" } : { implemented: true, testsPassed: true, tiersRun: ["unit"], commit: "c" + ++b, filesChanged: ["pkg/a_test.go"], testsAddedOrModified: [] },
+      "review:*": ({ label }) => (label === "review:S1:conformance:r1" ? { findings: CONF } : { findings: [] }),
+      "classify:*": classify,
+      ...over,
+    }));
+  };
+  {
+    const { calls, logs } = await run({ classes: ["test-only"] });
+    const r2 = calls.filter((c) => /^review:S1:.*:r2$/.test(c.label)).map((c) => c.label);
+    t.check("a test-only fix is reviewed by conformance alone", r2.length === 1 && r2[0] === "review:S1:conformance:r2", r2.join(","));
+    const cl = calls.find((c) => c.label === "classify:S1:r2");
+    t.check("the class comes from classify-diff.mjs over the range since the invariants pass", cl && cl.prompt.includes("classify-diff.mjs c1..HEAD"));
+    t.check("the classifier is a cheap mechanical agent", cl && cl.opts.model === "haiku");
+    t.check("the lighter review is logged", logs.some((l) => /only the conformance lens reviews/.test(l)));
+    t.check("and the step still ticks", !never(calls, "tick:"));
+  }
+  for (const cls of [["comment-only"], ["doc-only"]]) {
+    const { calls } = await run({ classes: cls });
+    t.check(cls[0] + " is mechanical too", never(calls, "review:S1:invariants:r2"));
+  }
+  {
+    const { calls } = await run({ classes: [] });
+    t.check("a logic fix gets both lenses", !never(calls, "review:S1:invariants:r2") && !never(calls, "review:S1:conformance:r2"));
+  }
+  {
+    const { calls } = await run({ classes: ["empty"] });
+    t.check("an empty range gets both lenses", !never(calls, "review:S1:invariants:r2"));
+  }
+  {
+    const { calls } = await run({ classes: ["doc-only-operator"] });
+    t.check("an operator doc change gets both lenses", !never(calls, "review:S1:invariants:r2"));
+  }
+  {
+    const { calls } = await run(null);
+    t.check("a dead classifier gets both lenses", !never(calls, "review:S1:invariants:r2"));
+  }
+  {
+    // The invariants lens itself found something, so it must look again.
+    const { calls } = await run({ classes: ["test-only"] }, {
+      "review:*": ({ label }) => (/:r1$/.test(label) ? { findings: CONF } : { findings: [] }),
+    });
+    t.check("after an invariants finding both lenses run", !never(calls, "review:S1:invariants:r2"));
+    t.check("and nothing is classified", never(calls, "classify:S1:r2"));
+  }
+  {
+    // A dead invariants reviewer is not a pass.
+    const { calls } = await run({ classes: ["test-only"] }, {
+      "review:*": ({ label }) => (label === "review:S1:conformance:r1" ? { findings: CONF } : label === "review:S1:invariants:r1" ? null : { findings: [] }),
+    });
+    t.check("after a dead invariants reviewer both lenses run", !never(calls, "review:S1:invariants:r2") && never(calls, "classify:S1:r2"));
+  }
+  {
+    // r2 stops at the compile gate after a logic commit; r3's range must start
+    // at c1, the last commit the invariants lens passed, so the logic change is
+    // inside it.
+    let c = 0;
+    const { calls } = await run({ classes: [] }, {
+      "compile:*": () => (++c === 2 ? { compiles: false, errors: ["x"] } : { compiles: true, staticClean: true, errors: [] }),
+    });
+    const cl = calls.find((x) => x.label === "classify:S1:r3");
+    t.check("a round that skipped review stays inside the next range", cl && cl.prompt.includes("classify-diff.mjs c1..HEAD"), String(cl && cl.label));
+    t.check("so its logic change gets both lenses", !never(calls, "review:S1:invariants:r3"));
+  }
+  {
+    // A first implementation is never a fix round.
+    const { calls } = await runWorkflow(WF, ARGS(), base());
+    t.check("the first attempt is never classified", never(calls, "classify:"));
+  }
+}
+
+t.done();

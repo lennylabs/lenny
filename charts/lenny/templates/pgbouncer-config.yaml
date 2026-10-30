@@ -1,0 +1,70 @@
+{{/*
+The §12.3 PgBouncer configuration ConfigMap, carrying the §4.2
+connect_query sentinel.
+
+It holds a complete pgbouncer.ini. The [pgbouncer] section listens on TCP
+at pgbouncer.port on every address (PgBouncer listens on no TCP address
+unless listen_addr is set), disables the Unix socket so the pooler runs
+on a read-only root filesystem, sets the §12.3 pool mode, and reads its
+credentials from the auth file the PgBouncer image writes from
+DATABASE_URL. The [databases] section routes every database name to the
+upstream Postgres and carries the connect_query, because PgBouncer
+accepts connect_query only on a database entry and refuses to start when
+it appears under [pgbouncer].
+
+The upstream is pgbouncer.upstream.host, or the CloudNativePG
+lenny-postgres-rw Service when postgres.deploy is true. With neither, the
+[databases] entry is rendered as a comment that an operator who runs
+their own PgBouncer completes with their Postgres host.
+
+With pgbouncer.deploy the chart runs PgBouncer on this ConfigMap
+(pgbouncer-deployment.yaml). Rendering is gated on `pgbouncer.enabled`
+(default true); operators who manage their pooler's configuration
+entirely out-of-band set it false to suppress the ConfigMap.
+
+spec: §4.2
+spec: §12.3 (transaction-mode pooler leak prevention)
+spec: §13.2 (PgBouncer clients connect on TCP 5432)
+*/}}
+{{- if .Values.pgbouncer.enabled }}
+{{- $pb := .Values.pgbouncer }}
+{{- $host := include "lenny.pgbouncer.upstreamHost" . }}
+{{- $upPort := (($pb.upstream | default dict).port | default 5432) }}
+{{- $connectQuery := $pb.connectQuery | replace "'" "''" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $pb.configMapName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: pgbouncer
+    lenny.dev/component: pgbouncer
+data:
+  # The §12.3 pgbouncer.ini. The deployed PgBouncer copies it into its
+  # writable config directory; operators who run their own PgBouncer
+  # mount it at /etc/pgbouncer/pgbouncer.ini.
+  pgbouncer.ini: |
+    [databases]
+    # spec: §4.2 — every fresh server connection begins with the
+    # SET sentinel so an unclaimed pooled connection is rejected by
+    # the lenny_tenant_guard trigger and by RLS before tenant data
+    # could leak. The connection-string parser takes a single-quoted
+    # value and a doubled embedded single quote, so `'` becomes `''`
+    # from the values.yaml literal here.
+    {{- if $host }}
+    * = host={{ $host }} port={{ $upPort }} connect_query='{{ $connectQuery }}'
+    {{- else }}
+    ; * = host=<postgres-host> port={{ $upPort }} connect_query='{{ $connectQuery }}'
+    {{- end }}
+
+    [pgbouncer]
+    listen_addr = 0.0.0.0
+    listen_port = {{ $pb.port }}
+    unix_socket_dir =
+    auth_type = {{ $pb.authType }}
+    auth_file = /etc/pgbouncer/userlist.txt
+    pool_mode = {{ $pb.poolMode }}
+    ignore_startup_parameters = extra_float_digits
+{{- end }}

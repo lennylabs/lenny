@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package sbom generates and verifies §12.9.11 SBOM artifacts. The
+// Package sbom generates and verifies TESTING.md §12.9.11 SBOM artifacts. The
 // canonical SBOM format is CycloneDX JSON; production images ship
 // an attestation alongside the image so the SBOM is verifiable.
 //

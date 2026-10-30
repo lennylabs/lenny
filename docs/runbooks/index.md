@@ -17,6 +17,9 @@ If you are responding to an alert right now, start with the alert-to-runbook map
 {: .note }
 > **Thresholds are deployer-configurable.** Runbooks describe *what* the alert watches and the qualitative direction of the symptom ("elevated", "approaching limit", "non-zero sustained"). The numeric thresholds, burn rates, and evaluation windows ship with defaults but are tuned per deployment — the canonical values for your cluster live in your rendered `PrometheusRule` objects and in [Metrics Reference § Alert rules](../reference/metrics.html#alert-rules). Do not hard-code thresholds from prose into automation; always read the alert expression.
 
+{: .note }
+> **`runbook_url` annotation convention.** Every Prometheus alert rule rendered by Lenny carries a `runbook_url` annotation of the form `https://docs.lenny.dev/runbooks/<slug>`. The `<slug>` is the on-disk filename in `docs/runbooks/<slug>.md` (the `.md` extension is dropped, the docs site renders the file at `<slug>.html`). The URL convention is set by `runbook()` in `pkg/alerting/rules/rules.go`; operators serving the docs at a different host can rewrite the annotation in their alerting pipeline by stripping the host prefix and resolving the slug against their own documentation root. The spec ([§17.7](https://docs.lenny.dev/spec/17_deployment-topology.html)) version-controls the runbook source files; this URL is the rendered-site convention layered on top.
+
 ---
 
 ## Alert → runbook map
@@ -46,6 +49,7 @@ Every alert listed in [Metrics Reference §Alert rules](../reference/metrics.htm
 | `DualStoreUnavailable` | [dual-store-unavailable](dual-store-unavailable.html) | `postgres`, `redis` |
 | `DataResidencyWebhookUnavailable` | [admission-webhook-outage](admission-webhook-outage.html) | `admission` |
 | `DataResidencyViolationAttempt` | [data-residency-violation](data-residency-violation.html) | `gateway` |
+| `ArtifactReplicationResidencyViolation` | [data-residency-violation](data-residency-violation.html) | `gateway`, `objectStore` |
 | `ElicitationContentTamperDetected` | [elicitation-content-tamper-detected](elicitation-content-tamper-detected.html) | `gateway` |
 | `PgBouncerAllReplicasDown` | [pgbouncer-saturation](pgbouncer-saturation.html) | `postgres` |
 | `SessionEvictionTotalLoss` | [session-eviction-loss](session-eviction-loss.html) | `postgres`, `objectStore` |
@@ -53,6 +57,8 @@ Every alert listed in [Metrics Reference §Alert rules](../reference/metrics.htm
 | `BillingStreamEntryAgeHigh` | [billing-stream-backlog](billing-stream-backlog.html) | `billing` |
 | `TokenStoreUnavailable` | [token-store-unavailable](token-store-unavailable.html) | `tokenService` |
 | `LLMUpstreamEgressAnomaly` | [llm-egress-anomaly](llm-egress-anomaly.html) | `gateway` |
+| `BackupReconcileBlocked` | [backup-reconcile-blocked](backup-reconcile-blocked.html) | `backup`, `compliance` |
+| `MinIOArtifactReplicationLagCritical` | [minio-replication-lag](minio-replication-lag.html) | `objectStore` |
 
 ### Warning alerts
 
@@ -78,11 +84,12 @@ Every alert listed in [Metrics Reference §Alert rules](../reference/metrics.htm
 | `GatewaySubsystemCircuitOpen` | [circuit-breaker-open](circuit-breaker-open.html) | `gateway` |
 | `LLMTranslationLatencyHigh` | [llm-translation-degraded](llm-translation-degraded.html) | `gateway` |
 | `LLMTranslationSchemaDrift` | [llm-translation-degraded](llm-translation-degraded.html) | `gateway` |
+| `TokenUsageAnomaly` | [token-usage-anomaly](token-usage-anomaly.html) | `gateway` |
 | `PoolConfigDrift` | [pool-config-drift](pool-config-drift.html) | `warmPools` |
 | `WarmPoolReplenishmentSlow` | [warm-pool-exhaustion](warm-pool-exhaustion.html) | `warmPools` |
 | `WarmPoolReplenishmentFailing` | [warm-pool-exhaustion](warm-pool-exhaustion.html) | `warmPools` |
 | `SDKConnectTimeout` | [sdk-connect-timeout](sdk-connect-timeout.html) | `warmPools` |
-| `RuntimeUpgradeStuck` | [runtime-upgrade-stuck](runtime-upgrade-stuck.html) | `controllers` |
+| `RuntimeUpgradeStuck` | [runtime-upgrade-stuck](runtime-upgrade-stuck.html) | `gateway` |
 | `CircuitBreakerActive` | [circuit-breaker-open](circuit-breaker-open.html) | `gateway` |
 | `WorkspaceSealStuck` | [workspace-seal-stuck](workspace-seal-stuck.html) | `gateway` |
 | `CoordinatorHandoffSlow` | [coordinator-handoff-slow](coordinator-handoff-slow.html) | `gateway` |
@@ -93,11 +100,21 @@ Every alert listed in [Metrics Reference §Alert rules](../reference/metrics.htm
 | `BillingStreamBackpressure` | [billing-stream-backlog](billing-stream-backlog.html) | `billing` |
 | `PoolBootstrapMode` | [pool-bootstrap-mode](pool-bootstrap-mode.html) | `warmPools` |
 | `EventBusPublishDropped` | [audit-pipeline-degraded](audit-pipeline-degraded.html) | `audit` |
+| `AuditChainGap` | [audit-chain-gap](audit-chain-gap.html) | `audit` |
+| `AuditSIEMNotConfigured` | [audit-pipeline-degraded](audit-pipeline-degraded.html) | `audit` |
 | `GatewayRateLimitStorm` | [gateway-rate-limit-storm](gateway-rate-limit-storm.html) | `gateway` |
 | `GatewayClockDrift` | [gateway-clock-drift](gateway-clock-drift.html) | `gateway` |
+| `OpsClockSkewExceeded` | [ops-clock-skew](ops-clock-skew.html) | `ops`, `postgres`, `redis` |
+| `KMSSignQuotaApproaching` | [jwt-key-rotation](jwt-key-rotation.html#kms-sign-quota) | `gateway`, `tokenService` |
 | `FinalizerStuck` | [stuck-finalizer](stuck-finalizer.html) | `controllers` |
 | `EphemeralContainerCredGuardUnavailable` | [ephemeral-container-cred-guard-unavailable](ephemeral-container-cred-guard-unavailable.html) | `admission` |
 | `AdmissionPlaneFeatureFlagDowngrade` | [admission-plane-feature-flag-downgrade](admission-plane-feature-flag-downgrade.html) | `admission` |
+| `BackupOverdue` | [backup-overdue](backup-overdue.html) | `backup` |
+| `BackupFailed` | [backup-failed](backup-failed.html) | `backup` |
+| `BackupStorageHigh` | [backup-storage-high](backup-storage-high.html) | `backup`, `objectStore` |
+| `MinIOArtifactReplicationLagHigh` | [minio-replication-lag](minio-replication-lag.html) | `objectStore` |
+| `MinIOArtifactReplicationFailed` | [minio-replication-lag](minio-replication-lag.html) | `objectStore` |
+| `PoolSecurityDegraded` | [nonce-only-mode](nonce-only-mode.html) | `warmPools`, `runtimes` |
 
 ### SLO burn-rate alerts
 
@@ -123,17 +140,18 @@ When the health API (`GET /v1/admin/health`) returns `degraded` or `unhealthy` f
 | `warmPools` | [warm-pool-exhaustion](warm-pool-exhaustion.html), [sdk-connect-timeout](sdk-connect-timeout.html), [pool-config-drift](pool-config-drift.html), [pool-bootstrap-mode](pool-bootstrap-mode.html) |
 | `postgres` | [postgres-failover](postgres-failover.html), [pgbouncer-saturation](pgbouncer-saturation.html) |
 | `redis` | [redis-failure](redis-failure.html), [delegation-budget-recovery](delegation-budget-recovery.html) |
-| `objectStore` | [minio-failure](minio-failure.html), [storage-quota-high](storage-quota-high.html) |
-| `gateway` | [gateway-replica-failure](gateway-replica-failure.html), [gateway-capacity](gateway-capacity.html), [circuit-breaker-open](circuit-breaker-open.html), [gateway-rate-limit-storm](gateway-rate-limit-storm.html), [gateway-clock-drift](gateway-clock-drift.html) |
+| `objectStore` | [minio-failure](minio-failure.html), [storage-quota-high](storage-quota-high.html), [minio-replication-lag](minio-replication-lag.html) |
+| `backup` | [backup-overdue](backup-overdue.html), [backup-failed](backup-failed.html), [backup-storage-high](backup-storage-high.html), [restore-execute](restore-execute.html), [restore-failure-recovery](restore-failure-recovery.html), [pre-restore-backup-retention](pre-restore-backup-retention.html), [backup-reconcile-blocked](backup-reconcile-blocked.html) |
+| `gateway` | [gateway-replica-failure](gateway-replica-failure.html), [gateway-capacity](gateway-capacity.html), [circuit-breaker-open](circuit-breaker-open.html), [gateway-rate-limit-storm](gateway-rate-limit-storm.html), [gateway-clock-drift](gateway-clock-drift.html), [runtime-upgrade-stuck](runtime-upgrade-stuck.html) |
 | `certManager` | [cert-manager-outage](cert-manager-outage.html) |
 | `credentialPools` | [credential-pool-exhaustion](credential-pool-exhaustion.html), [credential-revocation](credential-revocation.html) |
 | `tokenService` | [token-service-outage](token-service-outage.html), [token-store-unavailable](token-store-unavailable.html) |
-| `controllers` | [stuck-finalizer](stuck-finalizer.html), [controller-leader-election](controller-leader-election.html), [runtime-upgrade-stuck](runtime-upgrade-stuck.html) |
+| `controllers` | [stuck-finalizer](stuck-finalizer.html), [controller-leader-election](controller-leader-election.html) |
 | `admission` | [admission-webhook-outage](admission-webhook-outage.html) |
 | `audit` | [audit-pipeline-degraded](audit-pipeline-degraded.html), [audit-grant-drift](audit-grant-drift.html) |
 | `billing` | [billing-stream-backlog](billing-stream-backlog.html) |
 | `compliance` | [erasure-job-failed](erasure-job-failed.html), [tenant-deletion-overdue](tenant-deletion-overdue.html), [data-residency-violation](data-residency-violation.html), [legal-hold-quota-pressure](legal-hold-quota-pressure.html) |
-| `controlPlane` | [etcd-operations](etcd-operations.html) |
+| `controlPlane` | [etcd-operations](etcd-operations.html), [etcd-key-rotation](etcd-key-rotation.html) |
 | `cluster` | [dns-outage](dns-outage.html), [network-policy-drift](network-policy-drift.html) |
 
 The health API's `issueRunbooks` lookup returns the same mapping; `lenny-ops` populates it from this catalog.
@@ -233,6 +251,7 @@ Prefer the alert → runbook map above at page-time; this section exists to brow
 
 **Session data plane — warm pools, pods, pool scaling**
 - [checkpoint-stale](checkpoint-stale.html)
+- [nonce-only-mode](nonce-only-mode.html)
 - [pool-bootstrap-mode](pool-bootstrap-mode.html)
 - [pool-config-drift](pool-config-drift.html)
 - [sdk-connect-timeout](sdk-connect-timeout.html)
@@ -252,11 +271,13 @@ Prefer the alert → runbook map above at page-time; this section exists to brow
 - [gateway-subsystem-extraction](gateway-subsystem-extraction.html)
 - [llm-egress-anomaly](llm-egress-anomaly.html)
 - [llm-translation-degraded](llm-translation-degraded.html)
+- [token-usage-anomaly](token-usage-anomaly.html)
 - [workspace-seal-stuck](workspace-seal-stuck.html)
 
 **Credentials and tokens**
 - [credential-pool-exhaustion](credential-pool-exhaustion.html)
 - [credential-revocation](credential-revocation.html)
+- [jwt-key-rotation](jwt-key-rotation.html)
 - [token-service-outage](token-service-outage.html)
 - [token-store-unavailable](token-store-unavailable.html)
 
@@ -265,8 +286,10 @@ Prefer the alert → runbook map above at page-time; this section exists to brow
 - [delegation-budget-recovery](delegation-budget-recovery.html)
 - [dns-outage](dns-outage.html)
 - [dual-store-unavailable](dual-store-unavailable.html)
+- [etcd-key-rotation](etcd-key-rotation.html)
 - [etcd-operations](etcd-operations.html)
 - [minio-failure](minio-failure.html)
+- [ops-clock-skew](ops-clock-skew.html)
 - [pgbouncer-saturation](pgbouncer-saturation.html)
 - [postgres-failover](postgres-failover.html)
 - [redis-failure](redis-failure.html)

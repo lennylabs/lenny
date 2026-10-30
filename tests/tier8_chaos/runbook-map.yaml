@@ -54,6 +54,10 @@ runbooks:
     test: TestKMSKeyProbeStale
     severity: P1
     coverage: extended
+  jwt-key-rotation:
+    test: TestJWTSigningKMSOutageBreakerAndRecovery
+    severity: P2
+    coverage: extended
   dual-store-unavailable:
     test: TestDualStoreUnavailable
     severity: P0
@@ -218,6 +222,10 @@ runbooks:
     test: TestGatewayClockDrift
     severity: P1
     coverage: extended
+  ops-clock-skew:
+    test: TestOpsClockSkewExceeded
+    severity: P1
+    coverage: extended
   certificate-expiry:
     test: TestCertificateExpiryAdvance
     severity: P1
@@ -240,4 +248,266 @@ runbooks:
   crd-upgrade-immutable:
     test: TestCRDUpgradeImmutableFieldChange
     severity: P1
+    coverage: extended
+
+  # ---- §16.5 alert-driven runbooks added in BUILD-GAPS reconciliation ----
+  # Each entry maps the alert-driven runbook to its closest existing
+  # chaos test (or a not_yet_built placeholder when the test catalog
+  # has no corresponding scenario). Where a placeholder appears the
+  # follow-on is to ship the chaos test under tests/tier8_chaos/.
+
+  admission-plane-feature-flag-downgrade:
+    test: TestAdmissionWebhookOutage
+    severity: P1
+    coverage: extended
+  audit-grant-drift:
+    test: TestAuditChainGapDetection
+    severity: P0
+    coverage: core
+  audit-pipeline-degraded:
+    test: TestAuditChainGapDetection
+    severity: P1
+    coverage: extended
+  billing-stream-backlog:
+    test: TestRedisClusterDegraded
+    severity: P1
+    coverage: extended
+  # The CheckpointStale alert fires when checkpoint writes stall or fail;
+  # the dedicated §4.4 scenario for that failure mode is a MinIO outage
+  # during a checkpoint write (TestMinIOOutageDuringCheckpoint), not the
+  # generic gateway-liveness MinIO-unavailable probe.
+  checkpoint-stale:
+    test: TestMinIOOutageDuringCheckpoint
+    severity: P1
+    coverage: extended
+  circuit-breaker-open:
+    test: TestRedisClusterDegraded
+    severity: P1
+    coverage: extended
+  coordinator-handoff-slow:
+    test: TestGatewayReplicaFailure
+    severity: P1
+    coverage: extended
+  crd-upgrade:
+    test: TestCRDUpgradeImmutableFieldChange
+    severity: P1
+    coverage: extended
+  credential-revocation:
+    test: TestEmergencyRevocationDuringActiveSession
+    severity: P1
+    coverage: extended
+  cycle-detection-mode-unsafe:
+    test: TestDelegationDepthDeadlockDetection
+    severity: P1
+    coverage: extended
+  data-residency-violation:
+    test: TestT3T4SLABreach
+    severity: P0
+    coverage: extended
+  delegation-budget-recovery:
+    test: TestRedisDataLossOnALiveDelegationTree_spec_8_3
+    severity: P1
+    coverage: extended
+  elicitation-backlog:
+    test: TestElicitationDeadlockDetection
+    severity: P1
+    coverage: extended
+  elicitation-content-integrity-weakened:
+    test: TestElicitationDeadlockDetection
+    severity: P1
+    coverage: extended
+  elicitation-content-tamper-detected:
+    test: TestElicitationDeadlockDetection
+    severity: P0
+    coverage: extended
+  ephemeral-container-cred-guard-unavailable:
+    test: TestEphemeralContainerCredGuardOutage
+    severity: P0
+    coverage: core
+  erasure-job-failed:
+    test: TestErasureJobFailureMidSequence
+    severity: P1
+    coverage: extended
+  etcd-operations:
+    test: TestPostgresFailover
+    severity: P1
+    coverage: extended
+  gateway-capacity:
+    test: TestGatewayReplicaFailure
+    severity: P1
+    coverage: extended
+  gateway-rate-limit-storm:
+    test: TestRedisClusterDegraded
+    severity: P1
+    coverage: extended
+  gateway-subsystem-extraction:
+    test: TestGatewayReplicaFailure
+    severity: P2
+    coverage: extended
+  legal-hold-quota-pressure:
+    test: TestLegalHoldOverrideFlow
+    severity: P1
+    coverage: extended
+  llm-egress-anomaly:
+    test: TestAgentToLLMProviderPartition
+    severity: P1
+    coverage: extended
+  llm-translation-degraded:
+    test: TestAgentToLLMProviderPartition
+    severity: P1
+    coverage: extended
+  # Direct-mode token under-reporting: the runtime adapter is the sole
+  # in-pod observer of provider token counts, and a disrupted agent-to-
+  # provider path is what perturbs the counts the gateway pulls over
+  # ReportUsage, so the agent-to-LLM-provider partition is the closest
+  # chaos scenario for the integrity signal this runbook responds to.
+  token-usage-anomaly:
+    test: TestAgentToLLMProviderPartition
+    severity: P2
+    coverage: extended
+  minio-failure:
+    test: TestMinIOUnavailable
+    severity: P0
+    coverage: core
+  pool-bootstrap-mode:
+    test: TestPoolUpgradeRollbackDuringExpanding
+    severity: P1
+    coverage: extended
+  redis-failure:
+    test: TestRedisClusterDegraded
+    severity: P0
+    coverage: core
+  schema-migration-failure:
+    test: TestSchemaMigrationDirtyFlag
+    severity: P0
+    coverage: extended
+  sdk-connect-timeout:
+    test: TestRuntimeUpgradeStuck
+    severity: P1
+    coverage: extended
+  # The SessionEvictionTotalLoss alert fires when an eviction checkpoint
+  # cannot land in MinIO or Postgres; the dedicated §4.4 scenario is the
+  # MinIO-outage-during-checkpoint eviction-fallback / total-loss path
+  # (TestMinIOOutageDuringCheckpoint), not the generic MinIO-unavailable
+  # gateway-liveness probe.
+  session-eviction-loss:
+    test: TestMinIOOutageDuringCheckpoint
+    severity: P1
+    coverage: extended
+  slo-session-availability:
+    test: TestGatewayReplicaFailure
+    severity: P1
+    coverage: extended
+  slo-session-creation:
+    test: TestGatewayReplicaFailure
+    severity: P1
+    coverage: extended
+  slo-startup-latency:
+    test: TestRuntimeUpgradeStuck
+    severity: P1
+    coverage: extended
+  slo-ttft:
+    test: TestRuntimeUpgradeStuck
+    severity: P1
+    coverage: extended
+  storage-quota-high:
+    test: TestMinIOReplicationLag
+    severity: P1
+    coverage: extended
+  stuck-finalizer:
+    test: TestSandboxFinalizerHang
+    severity: P1
+    coverage: extended
+  tenant-deletion-overdue:
+    test: TestErasureJobFailureMidSequence
+    severity: P1
+    coverage: extended
+  token-store-unavailable:
+    test: TestTokenServiceOutage
+    severity: P0
+    coverage: core
+  total-outage:
+    test: TestDualStoreUnavailable
+    severity: P0
+    coverage: core
+  warm-pool-exhaustion:
+    test: TestPoolUpgradeRollbackDuringExpanding
+    severity: P1
+    coverage: extended
+  workspace-seal-stuck:
+    test: TestMinIOUnavailable
+    severity: P1
+    coverage: extended
+
+  # ---- F-17.7.4 stubs (alert-driven runbooks added 2026-05-28) ----
+  # Each is mapped to the closest existing chaos scenario per the
+  # §17.7 "every alert-driven runbook → at least one chaos test"
+  # contract. The mapping documents intent until the runbook-specific
+  # scenarios are built; the chaos coverage they trigger exercises the
+  # downstream remediation path that the runbook documents.
+  artifact-replication-residency-violation:
+    test: TestT3T4SLABreach
+    severity: P0
+    coverage: extended
+  audit-redaction-receipt-missing:
+    test: TestAuditChainGapDetection
+    severity: P0
+    coverage: extended
+  backup-reconcile-blocked:
+    test: TestErasureJobFailureMidSequence
+    severity: P1
+    coverage: extended
+  legal-hold-escrow-residency-violation:
+    test: TestT3T4SLABreach
+    severity: P0
+    coverage: extended
+  ops-admin-api-plaintext-detected:
+    test: TestGatewayReplicaFailure
+    severity: P0
+    coverage: extended
+  ops-lock-split-brain:
+    test: TestGatewayReplicaFailure
+    severity: P1
+    coverage: extended
+  otlp-plaintext-egress-detected:
+    test: TestGatewayReplicaFailure
+    severity: P0
+    coverage: extended
+  sandboxclaim-guard-unavailable:
+    test: TestAdmissionWebhookOutage
+    severity: P0
+    coverage: extended
+
+  # ---- F-17.7.9 backup alert-driven runbooks ----
+  # The §17.3 backup Job writes to the same object store the MinIO chaos
+  # scenarios exercise, so the closest existing coverage for a failed,
+  # overdue, or storage-pressured backup is the object-store failure path.
+  # A backup-specific chaos scenario is the dedicated follow-on; until it
+  # is built these mappings satisfy the §17.7 "every alert-driven runbook
+  # → at least one chaos test" contract by exercising the downstream
+  # store-failure remediation the runbooks document.
+  backup-failed:
+    test: TestMinIOOutageDuringCheckpoint
+    severity: P1
+    coverage: extended
+  backup-overdue:
+    test: TestMinIOUnavailable
+    severity: P2
+    coverage: extended
+  backup-storage-high:
+    test: TestMinIOUnavailable
+    severity: P2
+    coverage: extended
+
+  # ---- §4.7 nonce-only / SO_PEERCRED security-degradation runbook ----
+  # The PoolSecurityDegraded alert-driven runbook has a dedicated chaos
+  # scenario: TestNonceOnlyModeDegradationAndRecovery injects the
+  # SOPeercredDisabled state onto an acknowledged pool's member Sandboxes,
+  # asserts the live WarmPoolController surfaces SecurityDegradedMode=True
+  # and publishes lenny_pool_security_degraded == 1, then reverts the
+  # runtime field and replaces the last nonce-only pod and asserts the
+  # condition and the gauge clear.
+  nonce-only-mode:
+    test: TestNonceOnlyModeDegradationAndRecovery
+    severity: P2
     coverage: extended

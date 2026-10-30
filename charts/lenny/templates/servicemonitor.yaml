@@ -1,0 +1,109 @@
+{{- /*
+ServiceMonitor for the §16.9 / §16.1 Lenny metrics scrape targets. The
+Prometheus Operator turns these CRDs into scrape configs that discover
+the gateway, controller, and Token Service metrics endpoints by their
+Services and scrape the metrics port on each. lenny-ops is scraped by
+the companion podmonitor.yaml because §16.9 routes it through Pod-level
+label selection.
+
+Two ServiceMonitors are rendered so the gateway can scrape faster than
+the rest of the control plane: spec/10_gateway-internals.md §10.1.6
+requires the gateway scrape interval reduced to 10s
+(`scrapeInterval: 10s`) so the custom-metric pipeline lag the HPA reads
+stays near the §10.1 budget at Tier 2/3, while the controller and Token
+Service stay on the slower monitoring.serviceMonitor.interval default.
+A ServiceMonitor endpoint applies one interval to every Service it
+selects, so the only way to give the gateway its own interval is a
+separate ServiceMonitor with a gateway-only selector.
+
+  - lenny-gateway:       component=gateway,        interval=gatewayInterval (10s)
+  - lenny-control-plane: component in {controller, token-service}, interval=interval (30s)
+
+Gated by lenny.monitoring.renderMonitors (F-16.9.6): rendered when the
+Prometheus Operator CRDs are present AND either monitoring.format selects
+the operator CRDs (prometheusrule/both) or monitoring.serviceMonitor.-
+enabled forces them on. The operator-presence check (F-16.9.4) fails
+closed when monitoring.coreos.com is absent, so a cluster without the
+operator never renders a ServiceMonitor that would fail kubectl apply.
+The §13.2 NET-045 metrics-scrape NetworkPolicies (rendered by
+system-network-policies.yaml) admit the scrape traffic these
+ServiceMonitors configure.
+
+Operator discovery: the labels under monitoring.prometheusRule.-
+additionalLabels are applied so the Prometheus Operator's
+serviceMonitorSelector can match these objects (§16.9).
+
+The §16.9 canonical scrape-target set is the gateway, controller, Token
+Service, and lenny-ops. The dedicated CoreDNS pod (lenny-system, TCP
+9153) is scrapeable through the §13.2 NET-045 NetworkPolicy but is
+outside the §16.9 operator-managed set, so a deployer who wants CoreDNS
+metrics adds their own scrape config for it. F-16.9.9.
+*/ -}}
+{{- if eq (include "lenny.monitoring.renderMonitors" .) "true" }}
+{{- $root := . }}
+{{- $sm := .Values.monitoring.serviceMonitor }}
+{{- $smNS := $sm.namespace | default .Values.monitoring.namespace }}
+{{- $targets := list
+    (dict "name" "lenny-gateway" "components" (list "gateway") "interval" (default "10s" $sm.gatewayInterval))
+    (dict "name" "lenny-control-plane" "components" (list "controller" "token-service") "interval" $sm.interval)
+}}
+{{- range $i, $t := $targets }}
+{{- if $i }}
+---
+{{- end }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ $t.name }}
+  namespace: {{ $smNS }}
+  labels:
+    {{- include "lenny.labels" $root | nindent 4 }}
+    lenny.dev/component: metrics
+    {{- with $root.Values.monitoring.prometheusRule.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ $root.Release.Namespace }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $root.Chart.Name }}
+    matchExpressions:
+      - key: lenny.dev/component
+        operator: In
+        values:
+          {{- range $t.components }}
+          - {{ . }}
+          {{- end }}
+  endpoints:
+    - port: metrics
+      interval: {{ $t.interval | quote }}
+      scrapeTimeout: {{ $sm.scrapeTimeout | quote }}
+      path: {{ $sm.path | default "/metrics" | quote }}
+      {{- with $root.Values.global.deploymentTier }}
+      # spec: §16.1.1 / §16.9 — inject the static deployment_tier label
+      # onto every scraped series so tier-conditioned alerts
+      # (Tier3GCPressureHigh) and the §16.10 OpenSLO export resolve it
+      # without per-metric instrumentation. The operator-managed
+      # Prometheus CR external_labels is out of chart scope; this
+      # ServiceMonitor relabel is the §16.9 supported substitute. F-16.9.5.
+      metricRelabelings:
+        - targetLabel: deployment_tier
+          replacement: {{ . | quote }}
+          action: replace
+      {{- end }}
+      {{- $smScheme := $sm.scheme | default "http" }}
+      {{- if ne $smScheme "http" }}
+      # spec: F-16.9.12 — operators fronting /metrics with TLS
+      # (kube-rbac-proxy or an in-process mTLS listener) opt in to a
+      # non-plaintext scrape via monitoring.serviceMonitor.scheme +
+      # tlsConfig. The chart renders both verbatim.
+      scheme: {{ $smScheme | quote }}
+      {{- with $sm.tlsConfig }}
+      tlsConfig:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
+{{- end }}
+{{- end }}

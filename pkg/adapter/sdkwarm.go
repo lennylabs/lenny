@@ -1,0 +1,464 @@
+// SPDX-License-Identifier: MIT
+
+package adapter
+
+import (
+	"context"
+	"log/slog"
+	"os"
+	"strconv"
+	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+)
+
+// CapabilityPreConnect is the §4.7 / §6.1 capability token an SDK-warm
+// adapter advertises during version negotiation. The gateway uses it to
+// drive the pod through ConfigureWorkspace rather than StartSession.
+const CapabilityPreConnect = "preConnect"
+
+// DefaultDemoteTimeout is the §6.1 default bound (5s) the adapter
+// applies to its SIGTERM-time DemoteSDK teardown before it force-terminates
+// the SDK process. The deployer overrides it via LENNY_DEMOTE_TIMEOUT_SECONDS.
+// spec: §6.1.
+const DefaultDemoteTimeout = 5 * time.Second
+
+// demoteTimeoutEnvVar is the §6.1 environment variable that bounds
+// the SIGTERM-time DemoteSDK teardown.
+const demoteTimeoutEnvVar = "LENNY_DEMOTE_TIMEOUT_SECONDS"
+
+// ForceTerminator is the optional capability an SDKWarmRuntime implements so
+// the adapter can hard-stop the SDK process when the §6.1 bounded
+// DemoteSDK teardown overruns its timeout. A runtime that does not implement
+// it relies on adapter-process exit to reap the SDK. spec: §6.1.
+type ForceTerminator interface {
+	// ForceTerminate hard-stops the SDK process immediately, without waiting
+	// for a graceful teardown. The adapter calls it only after a DemoteSDK
+	// teardown has exceeded its bounded timeout, so an abandoned SDK process
+	// cannot leak credentials or hold provider connections open.
+	ForceTerminate()
+}
+
+// DemoteTimeoutFromEnv resolves the §6.1 bounded DemoteSDK timeout
+// from LENNY_DEMOTE_TIMEOUT_SECONDS, falling back to DefaultDemoteTimeout
+// when the variable is unset or not a positive integer. spec: §6.1.
+func DemoteTimeoutFromEnv() time.Duration {
+	v := os.Getenv(demoteTimeoutEnvVar)
+	if v == "" {
+		return DefaultDemoteTimeout
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return DefaultDemoteTimeout
+	}
+	return time.Duration(n) * time.Second
+}
+
+// ShutdownDemoteSDK runs the §6.1 SIGTERM-during-sdk_connecting
+// teardown. For an SDK-warm pod whose SDK has been pre-connected it calls
+// DemoteSDK bounded by timeout so the in-progress SDK connection is torn
+// down cleanly; if DemoteSDK does not return within the bound it
+// force-terminates the SDK process so it is not abandoned mid-connection and
+// cannot leak credentials or hold provider connections open. It is a no-op
+// for a pod-warm pod (no SDK to tear down) or an SDK-warm pod that never
+// pre-connected, so a SIGTERM handler may call it unconditionally before
+// GracefulStop. A non-positive timeout falls back to DefaultDemoteTimeout.
+// spec: §6.1.
+//
+// While a session is registered it returns without demoting, so the
+// session's runtime process and slot tree survive the start of the drain for
+// the preStop eviction checkpoint; it demotes only an empty registry, through
+// demoteIdleSDK. The rule is the same in the sidecar and the embedded model.
+// spec: §6.1 (Adapter SIGTERM behavior during sdk_connecting); §4.6.1.
+func (s *Server) ShutdownDemoteSDK(timeout time.Duration) {
+	sw, ok := s.sdkWarmRuntime()
+	if !ok {
+		return // pod-warm: there is no pre-connected SDK to tear down.
+	}
+	s.mu.Lock()
+	connected := s.sdkConnected
+	registered := len(s.slots) > 0
+	s.mu.Unlock()
+	if !connected || registered {
+		return // never pre-connected, already demoted, or a session is registered.
+	}
+	if timeout <= 0 {
+		timeout = DefaultDemoteTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// demoteIdleSDK clears sdkConnected on success.
+		_, _ = s.demoteIdleSDK(ctx, sw)
+	}()
+	select {
+	case <-done:
+		// Clean teardown (or a runtime error); either way the SDK is no
+		// longer mid-connection.
+		return
+	case <-ctx.Done():
+		// §6.1 step 2 — the bounded DemoteSDK overran; force-terminate
+		// the SDK process so it is not abandoned mid-connection. The DemoteSDK
+		// goroutine is left to exit as the adapter process terminates.
+		if ft, ok := sw.(ForceTerminator); ok {
+			ft.ForceTerminate()
+		}
+		s.mu.Lock()
+		s.sdkConnected = false
+		s.mu.Unlock()
+	}
+}
+
+// SDKWarmRuntime is implemented by a RuntimeProcess that supports the
+// §6.1 SDK-warm fast path. Such a runtime declares
+// capabilities.preConnect: true and pre-connects its agent SDK at warm
+// time, before session assignment. Rather than starting the runtime fresh
+// (StartSession), the adapter points the already-connected SDK at the
+// finalized workspace with ConfigureWorkspace, and tears it down with
+// DemoteSDK when the gateway falls back to pod-warm. A RuntimeProcess that
+// does not implement this interface is pod-warm only, and the adapter's
+// ConfigureWorkspace / DemoteSDK RPCs return Unimplemented per the §4.7
+// contract for non-preConnect pods.
+type SDKWarmRuntime interface {
+	RuntimeProcess
+	// PreConnect starts the agent SDK at warm time, before any session is
+	// assigned, leaving it connected and waiting for its first prompt
+	// (§6.1). The adapter calls it once during startup for a
+	// preConnect runtime. It MUST be idempotent: a repeat call while the
+	// SDK is already connected is a no-op success.
+	PreConnect(ctx context.Context) error
+	// ConfigureWorkspace points the pre-connected SDK session at cwd and
+	// binds it to sessionID. It MUST be idempotent: a repeat call with the
+	// same cwd is a no-op success (§4.7, the gateway bounds it at 10s).
+	ConfigureWorkspace(ctx context.Context, sessionID, cwd string) error
+	// DemoteSDK tears down the pre-connected SDK process so the pod falls
+	// back to pod-warm materialization (§4.7, the gateway bounds it at 5s).
+	// After it returns, a StartSession makes the runtime live.
+	DemoteSDK(ctx context.Context) error
+}
+
+// sdkWarmRuntime returns the runtime as an SDKWarmRuntime when it supports
+// the §4.7 SDK-warm fast path, reporting false for a pod-warm runtime.
+func (s *Server) sdkWarmRuntime() (SDKWarmRuntime, bool) {
+	sw, ok := s.Runtime.(SDKWarmRuntime)
+	return sw, ok
+}
+
+// PreConnect runs the §6.1 SDK-warm pre-connect: for a preConnect
+// runtime it starts the agent SDK at warm time so a later
+// ConfigureWorkspace points the already-connected SDK at the workspace
+// rather than starting a runtime from cold. It is a no-op success for a
+// pod-warm runtime (there is no SDK to pre-connect) and idempotent for an
+// already-connected SDK. The adapter calls it once during startup; on
+// failure the pod stays pod-warm and the gateway uses StartSession.
+func (s *Server) PreConnect(ctx context.Context) error {
+	sw, ok := s.sdkWarmRuntime()
+	if !ok {
+		return nil
+	}
+	s.mu.Lock()
+	already := s.sdkConnected
+	s.mu.Unlock()
+	if already {
+		return nil
+	}
+	if err := sw.PreConnect(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.sdkConnected = true
+	s.mu.Unlock()
+	return nil
+}
+
+// SDKWarmReady reports whether this pod is SDK-warm and its SDK has
+// completed pre-connection. It is false for a pod-warm runtime (which has
+// no SDK to pre-connect) and false for an SDK-warm pod whose PreConnect has
+// not yet completed or that was demoted. A readiness probe consumes it so
+// the §6.1 readiness gate can hold the pod un-claimable until the SDK is
+// connected.
+func (s *Server) SDKWarmReady() bool {
+	if _, ok := s.sdkWarmRuntime(); !ok {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sdkConnected
+}
+
+// ConfigureWorkspace is the §4.7 SDK-warm counterpart of StartSession: it
+// points a pre-connected SDK session at the finalized working directory
+// instead of starting a runtime fresh. It applies only to runtimes that
+// declare capabilities.preConnect: true; a pod-warm adapter returns
+// Unimplemented.
+//
+// The call is idempotent (spec §4.7): a repeat for the same session
+// re-points the runtime at cwd without rewriting the manifest or
+// restarting the platform MCP server, so the §15.4.3 nonce the runtime
+// already authenticated with stays valid. A different session on an
+// already-claimed pod is Unavailable. A runtime that cannot accept the
+// workspace is reported as a gRPC error so the gateway runs the DemoteSDK
+// fallback.
+func (s *Server) ConfigureWorkspace(ctx context.Context, req *adapterv1.ConfigureWorkspaceRequest) (*adapterv1.ConfigureWorkspaceResponse, error) {
+	sessionID := req.GetSessionId().GetValue()
+	if sessionID == "" {
+		return nil, status.Error(codes.InvalidArgument, "ConfigureWorkspace requires a session id")
+	}
+	cwd := req.GetCwd()
+	if cwd == "" {
+		return nil, status.Error(codes.InvalidArgument, "ConfigureWorkspace requires a cwd")
+	}
+	if s.Runtime == nil {
+		return nil, status.Error(codes.FailedPrecondition, "adapter is not configured with a runtime")
+	}
+	sw, ok := s.sdkWarmRuntime()
+	if !ok {
+		return nil, status.Error(codes.Unimplemented,
+			"ConfigureWorkspace applies only to SDK-warm pods that declare capabilities.preConnect: true; this is a pod-warm adapter")
+	}
+
+	// ConfigureWorkspace carries no bind attempt token (§4.7.1), and its
+	// idempotent repeat is the one started-session resolve rule 6 exempts,
+	// so allowStarted and idempotentRepeat are set from the same value.
+	const idempotentRepeat = true
+	claim, err := s.claimSessionSlot(sessionID, slotResolve{
+		allowCreate:  true,
+		allowStarted: idempotentRepeat,
+	}, true, idempotentRepeat)
+	if err != nil {
+		return nil, err
+	}
+	fresh, startMCP := claim.fresh, claim.startMCP
+	var in manifestInputs
+	if fresh {
+		// §9.3: resolve the session's permitted connectors so the
+		// pre-connected runtime gets one per-connector MCP server per
+		// connector its policy admits. Best-effort.
+		connectors := s.sessionConnectors(ctx, sessionID)
+		// §15.4: write the adapter manifest the pre-connected runtime
+		// re-reads when pointed at the workspace, and start the platform
+		// MCP server keyed on the freshly written nonce.
+		in = manifestInputs{
+			experimentContext: req.GetExperimentContext(),
+			tracingContext:    req.GetTracingContext(),
+			connectors:        connectors,
+		}
+		nonce, err := s.writeSessionManifest(in)
+		if err != nil {
+			s.releaseClaimedSlot(ctx, sessionID, claim)
+			return nil, status.Errorf(codes.Internal, "write adapter manifest: %v", err)
+		}
+		if s.RuntimeKind != RuntimeKindMCP && startMCP {
+			if err := s.startClaimedPlatformMCP(claim, nonce); err != nil {
+				s.releaseClaimedSlot(ctx, sessionID, claim)
+				return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
+			}
+			// §9.3: open the per-connector MCP servers. F-9.1.2.
+			s.startConnectorMCPServers(sessionID, nonce, connectors)
+		}
+	}
+
+	if err := sw.ConfigureWorkspace(ctx, sessionID, cwd); err != nil {
+		if fresh {
+			s.releaseClaimedSlot(ctx, sessionID, claim)
+		}
+		return nil, status.Errorf(codes.Internal, "configure SDK-warm workspace: %v", err)
+	}
+	// The §6.1 SDK-warm start gives the session to the pod's shared
+	// runtime process through a call that is not spelled Runtime.Start:
+	// SDKWarmInProcessRuntime.ConfigureWorkspace is r.Start. The open
+	// sequence runs on the freshness arm only, because the RPC is
+	// idempotent under the §4.7 table: its repeat for a session already
+	// started makes no confirmation, takes no record and writes no frame,
+	// and an unguarded site would count one session twice.
+	if !fresh {
+		return &adapterv1.ConfigureWorkspaceResponse{}, nil
+	}
+	// spec: §28.5.3 (CH-MSGSOCK, Session frame writes) — the SDK-warm start
+	// writes session_start inside the open sequence.
+	confirmed, err := s.openRuntimeSession(ctx, sessionID, claim, in, false)
+	if err != nil {
+		// The session is not running, so the gateway's DemoteSDK fallback
+		// that follows this failure writes no session_end.
+		s.releaseClaimedSlot(ctx, sessionID, claim)
+		return nil, status.Errorf(codes.Internal, "open runtime session: %v", err)
+	}
+	if !confirmed {
+		// A session_end owed by a refused second confirmation was written
+		// inside the open sequence, ahead of the demotion below.
+		return nil, s.refuseUnconfirmedSDKWarmStart(ctx, sw, sessionID)
+	}
+	return &adapterv1.ConfigureWorkspaceResponse{}, nil
+}
+
+// refuseUnconfirmedSDKWarmStart is the SDK-warm start's arm when
+// noteRuntimeStarted refuses: the entry the claim was admitted against left
+// the registry, or was replaced, while the pre-connected SDK was being
+// pointed at the workspace. It takes the runtime half of the §6.1 demotion
+// and nothing else: SDKWarmRuntime.DemoteSDK is the in-process runtime's
+// close and is what clears the pre-connected SDK, and sdkConnected is
+// cleared with it, which a bare Runtime.Close would leave true.
+//
+// It removes no registry entry and no slot tree, so it routes neither
+// through releaseSessionSlot nor through the DemoteSDK RPC handler. Both
+// deregister the entry and remove the tree, which rule 8 bars on a refused
+// confirmation, and a release keyed on the session identifier alone would
+// take a successor's entry. The refusal is codes.Aborted rather than the
+// codes.Internal the handler's other failure arms answer, because rule 8
+// answers a refused confirmation on the transient code.
+//
+// spec: §4.7.1 (role and gateway RPC contract), rule 8 (the
+// start-confirmation rule); §6.1; §7.1 (normal flow).
+func (s *Server) refuseUnconfirmedSDKWarmStart(ctx context.Context, sw SDKWarmRuntime, sessionID string) error {
+	if err := sw.DemoteSDK(ctx); err != nil {
+		slog.Warn("sdk_warm_unconfirmed_start_demote_failed", "session_id", sessionID, "error", err)
+	}
+	s.mu.Lock()
+	s.sdkConnected = false
+	s.mu.Unlock()
+	return status.Errorf(codes.Aborted,
+		"session %s slot was reclaimed while the SDK-warm start was in flight", sessionID)
+}
+
+// DemoteSDK is the §4.7 SDK-warm demotion RPC. The gateway calls it to
+// tear down a pre-connected SDK session and return the pod to pod-warm
+// state, either proactively (the incoming WorkspacePlan matches the
+// runtime's sdkWarmBlockingPaths) or as the ConfigureWorkspace failure
+// fallback. It applies only to pods whose runtime declares
+// capabilities.preConnect: true; a pod-warm adapter returns Unimplemented
+// as the §4.7 contract specifies. After it returns, the pod is idle and a
+// StartSession makes the runtime live.
+//
+// The request carries no session identifier, so the handler names the
+// registry's single entry, which is well defined on this pod class: §6.1
+// admits preConnect only at maxConcurrentSessions: 1. With an entry
+// standing, the handler takes the slot's per-slot guard, the §5.2 slot
+// serialization, before it decides anything, and decides the session_end
+// write on the rule-8 record under that guard while the entry stands. The
+// session_end is written under that guard before the runtime's DemoteSDK
+// runs, because that call takes the session's process away. On a supervised
+// pod it ends the live process through CH-SUPERVISE end with the endDemote
+// disposition and rebinds the listeners, so the session's next start
+// launches a new process (§4.7.10, Runtime supervisor, SDK-warm; Runtime
+// supervisor, End). On the embedded model it closes the in-process runtime.
+//
+// The handler fails closed when the guard is not acquired before the
+// request's deadline: it writes no session_end, tears nothing down, leaves
+// the entry and sdkConnected as they are, and answers DeadlineExceeded.
+// Unlike releaseSessionSlot it does not proceed unguarded, because a
+// session_end decided outside the serialization could reach the runtime
+// after a later start's session_start. The gateway caller then takes its
+// DemoteSDK-failure branch, and the SIGTERM path force-terminates the SDK
+// process; either ends the connection that carries the session.
+//
+// spec: §4.7; §6.1; §28.5.3 (CH-MSGSOCK, Session frame writes); §5.2
+// (slot-identifier reclaim hold); §4.7.1 (role and gateway RPC contract),
+// rule 8.
+func (s *Server) DemoteSDK(ctx context.Context, _ *adapterv1.DemoteSDKRequest) (*adapterv1.DemoteSDKResponse, error) {
+	sw, ok := s.sdkWarmRuntime()
+	if !ok {
+		return nil, status.Error(codes.Unimplemented,
+			"DemoteSDK applies only to SDK-warm pods that declare capabilities.preConnect: true; this is a pod-warm adapter")
+	}
+	sessionID := s.anyRegisteredSession()
+	if sessionID == "" {
+		return s.demoteIdleSDK(ctx, sw)
+	}
+	unlock, guarded := s.lockSlotGuard(ctx, sessionID)
+	defer unlock()
+	if !guarded {
+		warnSlotGuardNotAcquired(sessionID, "DemoteSDK")
+		return nil, status.Errorf(codes.DeadlineExceeded,
+			"demote SDK: slot serialization for session %s not acquired before the request deadline", sessionID)
+	}
+	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages) — the demotion releases the
+	// entry's acknowledgement gate under the slot serialization and before
+	// its session_end decision, because it writes that session_end before
+	// the release below deregisters the entry. A session-scoped sender
+	// waiting on the gate returns without writing a frame for a session the
+	// runtime is about to release.
+	s.mu.Lock()
+	entry, ok := s.slots[sessionID]
+	if ok {
+		entry.ack.release()
+	}
+	running := s.runtimeHoldsLocked(sessionID)
+	s.mu.Unlock()
+	// spec: §28.5.3 (CH-MSGSOCK, Session frame writes) — DemoteSDK while
+	// the session is running writes its session_end before the
+	// pre-connected SDK is torn down and the entry is removed. The write
+	// stops the entry's heartbeat monitor first, so no heartbeat follows the
+	// session_end even when the demotion fails and the entry stays.
+	if running {
+		s.writeSessionEnd(sessionID, entry)
+	}
+	if err := sw.DemoteSDK(ctx); err != nil {
+		return nil, status.Errorf(codes.Internal, "demote SDK: %v", err)
+	}
+	// Return the pod to pod-warm: the SDK is no longer connected, so clear
+	// the warm-readiness flag. The demotion took the session's process away
+	// (on a supervised pod an end with the endDemote disposition, on the
+	// embedded model a close of the in-process runtime), so the generation
+	// state moves with it before the release evaluates the pod-surface
+	// gate. The release runs under the guard this handler already holds.
+	s.mu.Lock()
+	s.sdkConnected = false
+	s.mu.Unlock()
+	s.noteRuntimeClosed(sessionID)
+	s.releaseSessionSlotUnderGuard(sessionID, true)
+	return &adapterv1.DemoteSDKResponse{Demoted: true}, nil
+}
+
+// demoteIdleSDK is DemoteSDK on a registry that holds no entry: no session
+// is running, so no session_end is owed and no slot is released. It tears
+// the pre-connected SDK down, clears sdkConnected, and stops a pod-wide
+// MCP surface no session uses.
+//
+// The demotion ends the warm-up process, so the platform MCP server the
+// warm-up preparation bound on the warm-up manifest's nonce serves no live
+// process. The warm-up binding is released before the idle cancellation,
+// which then stops that server; the next session's claim starts the server
+// on the nonce in the final manifest its step-7 process reads.
+//
+// spec: §4.7; §6.1; §4.7.10 (Runtime supervisor, SDK-warm; Runtime
+// supervisor, Launch); §4.7.6 (mcpNonce row); §15.4.3; §28.5.3
+// (CH-MSGSOCK, Session frame writes).
+func (s *Server) demoteIdleSDK(ctx context.Context, sw SDKWarmRuntime) (*adapterv1.DemoteSDKResponse, error) {
+	if err := sw.DemoteSDK(ctx); err != nil {
+		return nil, status.Errorf(codes.Internal, "demote SDK: %v", err)
+	}
+	s.mu.Lock()
+	s.sdkConnected = false
+	s.releaseWarmUpPlatformMCPLocked()
+	s.mu.Unlock()
+	s.cancelPodMCPIfRuntimeIdle()
+	return &adapterv1.DemoteSDKResponse{Demoted: true}, nil
+}
+
+// anyRegisteredSession returns the identifier of the registry's single
+// entry, empty when the registry holds none. It serves the SDK-warm
+// DemoteSDK, whose request carries no session identifier and whose pod
+// class holds at most one entry. spec: §6.1.
+func (s *Server) anyRegisteredSession() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id := range s.slots {
+		return id
+	}
+	return ""
+}
+
+// isSDKWarm reports whether this adapter drives a §6.1 pre-connected
+// SDK-warm runtime. The merged claim gates its different-session refusal
+// on it: that pod class holds one runtime process with one working
+// directory, so a second session there would rewrite the §15.4.3 nonce
+// the incumbent already authenticated with.
+func (s *Server) isSDKWarm() bool {
+	_, ok := s.sdkWarmRuntime()
+	return ok
+}

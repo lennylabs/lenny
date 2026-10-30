@@ -1,0 +1,676 @@
+// SPDX-License-Identifier: MIT
+
+package adapter
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"github.com/lennylabs/lenny/pkg/adapter/credfile"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+)
+
+// fakeTimer is one armed timer captured by fakeExpiryClock. The test
+// fires it explicitly via fire(); Stop records cancellation.
+type fakeTimer struct {
+	d    time.Duration
+	fire func()
+
+	mu      sync.Mutex
+	stopped bool
+}
+
+func (f *fakeTimer) Stop() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	was := !f.stopped
+	f.stopped = true
+	return was
+}
+
+func (f *fakeTimer) isStopped() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.stopped
+}
+
+// fakeExpiryClock is the §4.9 expiry-timer test seam: it
+// records every armed timer and reports a fixed wall clock so a test can
+// assert the requested delay and fire the timer deterministically.
+type fakeExpiryClock struct {
+	mu     sync.Mutex
+	cur    time.Time
+	timers []*fakeTimer
+}
+
+func (c *fakeExpiryClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cur
+}
+
+func (c *fakeExpiryClock) After(d time.Duration, fn func()) TimerHandle {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ft := &fakeTimer{d: d, fire: fn}
+	c.timers = append(c.timers, ft)
+	return ft
+}
+
+func (c *fakeExpiryClock) armed() []*fakeTimer {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]*fakeTimer(nil), c.timers...)
+}
+
+func (c *fakeExpiryClock) last() *fakeTimer {
+	ts := c.armed()
+	if len(ts) == 0 {
+		return nil
+	}
+	return ts[len(ts)-1]
+}
+
+func expiryServer(t *testing.T, clk *fakeExpiryClock) *Server {
+	t.Helper()
+	s := New("expiry-test")
+	s.CredentialsDir = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
+	s.ExpiryAfterFunc = clk.After
+	s.ExpiryNow = clk.Now
+	return s
+}
+
+const (
+	directPayload = `{"deliveryMode":"direct","materializedConfig":{"apiKey":"sk-ant-x"}}`
+	proxyPayload  = `{"deliveryMode":"proxy","materializedConfig":{"proxyUrl":"https://p/v1","proxyDialect":"anthropic","leaseToken":"lt-1"}}`
+)
+
+func expiryLease(id, provider, payload string, expiresAt time.Time) *adapterv1.CredentialLease {
+	l := &adapterv1.CredentialLease{LeaseId: id, Provider: provider, Payload: []byte(payload)}
+	if !expiresAt.IsZero() {
+		l.ExpiresAtUnixMs = expiresAt.UnixMilli()
+	}
+	return l
+}
+
+func assignOne(t *testing.T, s *Server, session, provider string, lease *adapterv1.CredentialLease) {
+	t.Helper()
+	if _, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: session},
+		Leases:      map[string]*adapterv1.CredentialLease{provider: lease},
+	}); err != nil {
+		t.Fatalf("AssignCredentials: %v", err)
+	}
+}
+
+// fileProviders reads the credential file and returns the set of provider
+// names present in it.
+func fileProviders(t *testing.T, dir string) map[string]bool {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, credfile.FileName))
+	if err != nil {
+		t.Fatalf("read credential file: %v", err)
+	}
+	var doc struct {
+		Providers []map[string]any `json:"providers"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("decode credential file: %v", err)
+	}
+	out := map[string]bool{}
+	for _, p := range doc.Providers {
+		if name, _ := p["provider"].(string); name != "" {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+// attachControlStream wires a §4.7 control stream so emitted AUTH_EXPIRED
+// events are observable, and returns the stream and a cancel func.
+func attachControlStream(t *testing.T, s *Server) (*fakeControlStream, func()) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	stream := newFakeControlStream(ctx)
+	go func() { _ = s.AdapterEvents(stream) }()
+	awaitRegistration(t, s)
+	return stream, cancel
+}
+
+// spec: §4.9 — in direct delivery mode the adapter arms a local
+// timer at each lease's expiresAt.
+func TestDirectLeaseArmsExpiryTimerAtExpiresAt_spec_4_9(t *testing.T) {
+	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
+	s := expiryServer(t, clk)
+	exp := clk.cur.Add(time.Hour)
+	assignOne(t, s, "sess-1", "anthropic_direct", expiryLease("l1", "anthropic_direct", directPayload, exp))
+
+	armed := clk.armed()
+	if len(armed) != 1 {
+		t.Fatalf("armed %d timers, want 1", len(armed))
+	}
+	if got := armed[0].d; got != time.Hour {
+		t.Errorf("timer delay = %s, want 1h", got)
+	}
+	tmr, ok := sessionTimers(s, "sess-1")["anthropic_direct"]
+	if !ok || tmr.leaseID != "l1" {
+		t.Errorf("slot timer[anthropic_direct] = %+v, want leaseID l1", tmr)
+	}
+}
+
+// spec: §4.9 — when the timer fires without a replacement, the
+// adapter deletes the provider's credential-file entry and reports
+// AUTH_EXPIRED on the CH-ADAPTEREVENTS.
+func TestExpiryFireDeletesEntryAndReportsAuthExpired_spec_4_9(t *testing.T) {
+	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
+	s := expiryServer(t, clk)
+	stream, cancel := attachControlStream(t, s)
+	defer cancel()
+
+	assignOne(t, s, "sess-1", "anthropic_direct",
+		expiryLease("l1", "anthropic_direct", directPayload, clk.cur.Add(time.Hour)))
+	if !fileProviders(t, sessionCredentialsDir(s, "sess-1"))["anthropic_direct"] {
+		t.Fatal("credential file missing anthropic_direct entry before expiry")
+	}
+
+	clk.last().fire()
+
+	if fileProviders(t, sessionCredentialsDir(s, "sess-1"))["anthropic_direct"] {
+		t.Error("credential file still carries anthropic_direct after expiry")
+	}
+	ev := recvEvent(t, stream)
+	if ev.Type != eventAuthExpired || ev.Provider != "anthropic_direct" || ev.LeaseID != "l1" {
+		t.Errorf("control event = %+v, want AUTH_EXPIRED anthropic_direct l1", ev)
+	}
+	_, stillArmed := sessionTimers(s, "sess-1")["anthropic_direct"]
+	if stillArmed {
+		t.Error("expiry timer still tracked after firing")
+	}
+}
+
+// spec: §4.9 — proxy-mode leases get no adapter timer; the
+// gateway enforces proxy-request expiry server-side.
+func TestProxyLeaseArmsNoExpiryTimer_spec_4_9(t *testing.T) {
+	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
+	s := expiryServer(t, clk)
+	assignOne(t, s, "sess-1", "anthropic_direct",
+		expiryLease("l1", "anthropic_direct", proxyPayload, clk.cur.Add(time.Hour)))
+
+	if armed := clk.armed(); len(armed) != 0 {
+		t.Fatalf("armed %d timers for a proxy lease, want 0", len(armed))
+	}
+	_, ok := sessionTimers(s, "sess-1")["anthropic_direct"]
+	if ok {
+		t.Error("proxy lease tracked an expiry timer")
+	}
+}
+
+// spec: §4.9 — a direct lease with no expiresAt cannot expire,
+// so no timer is armed.
+func TestDirectLeaseWithoutExpiryArmsNoTimer_spec_4_9(t *testing.T) {
+	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
+	s := expiryServer(t, clk)
+	assignOne(t, s, "sess-1", "anthropic_direct",
+		expiryLease("l1", "anthropic_direct", directPayload, time.Time{}))
+	if armed := clk.armed(); len(armed) != 0 {
+		t.Fatalf("armed %d timers for a no-expiry lease, want 0", len(armed))
+	}
+}
+
+// spec: §4.9 — an already-expired direct lease arms a timer with
+// a non-positive delay so it fires immediately (time.AfterFunc semantics).
+func TestExpiredDirectLeaseArmsImmediateTimer_spec_4_9(t *testing.T) {
+	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
+	s := expiryServer(t, clk)
+	assignOne(t, s, "sess-1", "anthropic_direct",
+		expiryLease("l1", "anthropic_direct", directPayload, clk.cur.Add(-time.Minute)))
+	last := clk.last()
+	if last == nil || last.d > 0 {
+		t.Fatalf("armed timer delay = %v, want non-positive", last)
+	}
+}
+
+// spec: §4.9 — "without a replacement lease having been
+// delivered": a rotation re-arms the timer for the new lease, and the
+// stale timer's late fire is a no-op.
+func TestRotationReplacesTimerAndStaleFireIsNoop_spec_4_9(t *testing.T) {
+	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
+	s := expiryServer(t, clk)
+	stream, cancel := attachControlStream(t, s)
+	defer cancel()
+
+	assignOne(t, s, "sess-1", "anthropic_direct",
+		expiryLease("l1", "anthropic_direct", directPayload, clk.cur.Add(time.Hour)))
+	staleTimer := clk.last()
+
+	if _, err := s.RotateCredentials(context.Background(), &adapterv1.RotateCredentialsRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		Leases: map[string]*adapterv1.CredentialLease{
+			"anthropic_direct": expiryLease("l2", "anthropic_direct", directPayload, clk.cur.Add(2*time.Hour)),
+		},
+	}); err != nil {
+		t.Fatalf("RotateCredentials: %v", err)
+	}
+
+	if !staleTimer.isStopped() {
+		t.Error("stale timer was not stopped on rotation")
+	}
+	cur := sessionTimers(s, "sess-1")["anthropic_direct"]
+	if cur == nil || cur.leaseID != "l2" {
+		t.Fatalf("current timer = %+v, want leaseID l2", cur)
+	}
+
+	// A late fire of the stale (l1) timer must not delete the entry or
+	// emit AUTH_EXPIRED — the replacement l2 is current.
+	staleTimer.fire()
+	if !fileProviders(t, sessionCredentialsDir(s, "sess-1"))["anthropic_direct"] {
+		t.Error("stale timer fire removed the replacement lease's entry")
+	}
+
+	// Firing the live (l2) timer expires the current lease.
+	clk.last().fire()
+	ev := recvEvent(t, stream)
+	if ev.Type != eventAuthExpired || ev.LeaseID != "l2" {
+		t.Errorf("control event = %+v, want AUTH_EXPIRED l2", ev)
+	}
+}
+
+// spec: §4.9 — revoking a provider cancels its expiry timer so
+// it cannot fire after the lease is already gone.
+func TestRevokeCancelsExpiryTimer_spec_4_9(t *testing.T) {
+	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
+	s := expiryServer(t, clk)
+	assignOne(t, s, "sess-1", "anthropic_direct",
+		expiryLease("l1", "anthropic_direct", directPayload, clk.cur.Add(time.Hour)))
+	timer := clk.last()
+
+	if _, err := s.RevokeCredentials(context.Background(), &adapterv1.RevokeCredentialsRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		Providers: []string{"anthropic_direct"},
+	}); err != nil {
+		t.Fatalf("RevokeCredentials: %v", err)
+	}
+	if !timer.isStopped() {
+		t.Error("revoke did not stop the expiry timer")
+	}
+	_, ok := sessionTimers(s, "sess-1")["anthropic_direct"]
+	if ok {
+		t.Error("revoked provider still tracks an expiry timer")
+	}
+}
+
+// spec: §4.9 — releasing the session cancels every timer armed on its
+// entry so a stale lease cannot fire against a session that has ended.
+func TestReleaseSessionCancelsExpiryTimers_spec_4_9(t *testing.T) {
+	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
+	s := expiryServer(t, clk)
+	assignOne(t, s, "sess-1", "anthropic_direct",
+		expiryLease("l1", "anthropic_direct", directPayload, clk.cur.Add(time.Hour)))
+	timer := clk.last()
+
+	s.ReleaseSlotForTest(t.Context(), "sess-1")
+
+	if !timer.isStopped() {
+		t.Error("the release did not stop the session's expiry timer")
+	}
+	n := len(sessionTimers(s, "sess-1"))
+	if n != 0 {
+		t.Errorf("the session holds %d armed expiry timers after release, want 0", n)
+	}
+}
+
+// spec: §4.9 — independent per-provider timers; expiring one
+// provider leaves the other's lease and timer intact.
+func TestPerProviderExpiryIsIndependent_spec_4_9(t *testing.T) {
+	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
+	s := expiryServer(t, clk)
+	stream, cancel := attachControlStream(t, s)
+	defer cancel()
+
+	if _, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
+		Leases: map[string]*adapterv1.CredentialLease{
+			"anthropic_direct": expiryLease("la", "anthropic_direct", directPayload, clk.cur.Add(time.Hour)),
+			"aws_bedrock":      expiryLease("lb", "aws_bedrock", directPayload, clk.cur.Add(2*time.Hour)),
+		},
+	}); err != nil {
+		t.Fatalf("AssignCredentials: %v", err)
+	}
+
+	// Fire only the anthropic timer.
+	for _, ft := range clk.armed() {
+		if ft.d == time.Hour {
+			ft.fire()
+		}
+	}
+	ev := recvEvent(t, stream)
+	if ev.Provider != "anthropic_direct" || ev.LeaseID != "la" {
+		t.Errorf("control event = %+v, want AUTH_EXPIRED anthropic_direct la", ev)
+	}
+
+	providers := fileProviders(t, sessionCredentialsDir(s, "sess-1"))
+	if providers["anthropic_direct"] {
+		t.Error("anthropic_direct entry survived its expiry")
+	}
+	if !providers["aws_bedrock"] {
+		t.Error("aws_bedrock entry was removed by anthropic_direct expiry")
+	}
+	_, bedrockArmed := sessionTimers(s, "sess-1")["aws_bedrock"]
+	if !bedrockArmed {
+		t.Error("aws_bedrock timer was cancelled by anthropic_direct expiry")
+	}
+}
+
+// slotExpiryServer builds a server wired to the fake expiry clock with the
+// per-slot roots resolved so a slot-qualified AssignCredentials arms a
+// per-slot timer. spec: §6.1; §4.9.
+func slotExpiryServer(t *testing.T, clk *fakeExpiryClock) *Server {
+	t.Helper()
+	base := t.TempDir()
+	s := New("slot-expiry-test")
+	s.WorkspaceBase = filepath.Join(base, "workspace")
+	s.SessionsRoot = filepath.Join(base, "sessions")
+	s.ArtifactsRoot = filepath.Join(base, "artifacts")
+	s.CredentialsDir = filepath.Join(base, "run", "lenny")
+	s.ExpiryAfterFunc = clk.After
+	s.ExpiryNow = clk.Now
+	return s
+}
+
+func assignSlotOne(t *testing.T, s *Server, session, slot, provider string, lease *adapterv1.CredentialLease) {
+	t.Helper()
+	if _, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: session},
+		Leases:      map[string]*adapterv1.CredentialLease{provider: lease},
+	}); err != nil {
+		t.Fatalf("AssignCredentials(slot %s): %v", slot, err)
+	}
+}
+
+func extendReq(session, provider, leaseID string, newExpiresAt time.Time) *adapterv1.ExtendCredentialLeaseRequest {
+	return &adapterv1.ExtendCredentialLeaseRequest{
+		SessionId:       &adapterv1.SessionId{Value: session},
+		Provider:        provider,
+		LeaseId:         leaseID,
+		ExpiresAtUnixMs: newExpiresAt.UnixMilli(),
+	}
+}
+
+// spec: §4.9 — the Token Service unavailability guard moves a
+// still-valid direct-mode lease's deadline by re-arming its expiry timer,
+// without re-delivering credential material: the credential file is
+// unchanged and the re-armed timer still deletes the entry when it fires at
+// the extended deadline.
+func TestExtendCredentialLeaseMovesDeadlineWithoutRewrite_spec_4_9(t *testing.T) {
+	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
+	s := expiryServer(t, clk)
+	stream, cancel := attachControlStream(t, s)
+	defer cancel()
+
+	assignOne(t, s, "sess-1", "anthropic_direct",
+		expiryLease("l1", "anthropic_direct", directPayload, clk.cur.Add(time.Hour)))
+	original := clk.last()
+
+	before := fileProviders(t, sessionCredentialsDir(s, "sess-1"))
+
+	newExp := clk.cur.Add(90 * time.Minute)
+	if _, err := s.ExtendCredentialLease(context.Background(),
+		extendReq("sess-1", "anthropic_direct", "l1", newExp)); err != nil {
+		t.Fatalf("ExtendCredentialLease: %v", err)
+	}
+
+	// The original timer is stopped and a new one is armed at the extended
+	// delay; no material was re-delivered, so the credential file is
+	// unchanged.
+	if !original.isStopped() {
+		t.Error("original expiry timer was not stopped on extension")
+	}
+	extended := clk.last()
+	if extended == original || extended.d != 90*time.Minute {
+		t.Fatalf("extended timer delay = %v, want 90m", extended.d)
+	}
+	after := fileProviders(t, sessionCredentialsDir(s, "sess-1"))
+	if len(before) != len(after) || !after["anthropic_direct"] {
+		t.Errorf("credential file changed on extension: before=%v after=%v", before, after)
+	}
+	tmr, ok := sessionTimers(s, "sess-1")["anthropic_direct"]
+	if !ok || tmr.leaseID != "l1" {
+		t.Errorf("slot timer[anthropic_direct] = %+v, want leaseID l1", tmr)
+	}
+
+	// Firing the extended timer still deletes the entry and reports
+	// AUTH_EXPIRED, at the extended deadline.
+	extended.fire()
+	if fileProviders(t, sessionCredentialsDir(s, "sess-1"))["anthropic_direct"] {
+		t.Error("credential file still carries anthropic_direct after extended expiry")
+	}
+	ev := recvEvent(t, stream)
+	if ev.Type != eventAuthExpired || ev.LeaseID != "l1" {
+		t.Errorf("control event = %+v, want AUTH_EXPIRED l1", ev)
+	}
+}
+
+// spec: §4.9 — an extension with no armed timer for the provider
+// is a no-op: nothing is armed and the response is still returned.
+func TestExtendCredentialLeaseAbsentProviderIsNoop_spec_4_9(t *testing.T) {
+	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
+	s := expiryServer(t, clk)
+	if _, err := s.ExtendCredentialLease(context.Background(),
+		extendReq("sess-1", "anthropic_direct", "l1", clk.cur.Add(time.Hour))); err != nil {
+		t.Fatalf("ExtendCredentialLease: %v", err)
+	}
+	if armed := clk.armed(); len(armed) != 0 {
+		t.Fatalf("armed %d timers for an absent provider, want 0", len(armed))
+	}
+}
+
+// spec: §4.9 — an extension naming a lease id that differs from
+// the armed timer's is a no-op: the current timer is left untouched so a
+// stale extension cannot move a replaced lease's deadline.
+func TestExtendCredentialLeaseMismatchedLeaseIsNoop_spec_4_9(t *testing.T) {
+	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
+	s := expiryServer(t, clk)
+	assignOne(t, s, "sess-1", "anthropic_direct",
+		expiryLease("l1", "anthropic_direct", directPayload, clk.cur.Add(time.Hour)))
+	original := clk.last()
+
+	if _, err := s.ExtendCredentialLease(context.Background(),
+		extendReq("sess-1", "anthropic_direct", "l2", clk.cur.Add(90*time.Minute))); err != nil {
+		t.Fatalf("ExtendCredentialLease: %v", err)
+	}
+	if original.isStopped() {
+		t.Error("mismatched-lease extension stopped the current timer")
+	}
+	if armed := clk.armed(); len(armed) != 1 {
+		t.Fatalf("armed %d timers after mismatched extension, want 1", len(armed))
+	}
+	tmr := sessionTimers(s, "sess-1")["anthropic_direct"]
+	if tmr == nil || tmr.leaseID != "l1" {
+		t.Errorf("slot timer[anthropic_direct] = %+v, want unchanged leaseID l1", tmr)
+	}
+}
+
+// spec: §4.9 — a proxy-mode lease arms no adapter timer, so an
+// extension against it is a no-op (the gateway lease store enforces proxy
+// expiry).
+func TestExtendCredentialLeaseProxyModeIsNoop_spec_4_9(t *testing.T) {
+	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
+	s := expiryServer(t, clk)
+	assignOne(t, s, "sess-1", "anthropic_direct",
+		expiryLease("l1", "anthropic_direct", proxyPayload, clk.cur.Add(time.Hour)))
+	if _, err := s.ExtendCredentialLease(context.Background(),
+		extendReq("sess-1", "anthropic_direct", "l1", clk.cur.Add(90*time.Minute))); err != nil {
+		t.Fatalf("ExtendCredentialLease: %v", err)
+	}
+	if armed := clk.armed(); len(armed) != 0 {
+		t.Fatalf("armed %d timers for a proxy lease extension, want 0", len(armed))
+	}
+}
+
+// spec: §4.9 — an extension with an empty session id is rejected
+// with InvalidArgument, mirroring RotateCredentials's guard.
+func TestExtendCredentialLeaseEmptySessionRejected_spec_4_9(t *testing.T) {
+	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
+	s := expiryServer(t, clk)
+	_, err := s.ExtendCredentialLease(context.Background(),
+		extendReq("", "anthropic_direct", "l1", clk.cur.Add(time.Hour)))
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("ExtendCredentialLease empty session err = %v, want InvalidArgument", err)
+	}
+}
+
+// spec: §6.1; §4.9 — a per-slot extension moves only the
+// named slot's timer to the new deadline, and a sibling slot's timer is
+// untouched.
+func TestExtendCredentialLeaseSlotIsIsolated_spec_6_1(t *testing.T) {
+	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
+	s := slotExpiryServer(t, clk)
+
+	assignSlotOne(t, s, "slot-a", "slot-a", "anthropic_direct",
+		expiryLease("la", "anthropic_direct", directPayload, clk.cur.Add(time.Hour)))
+	assignSlotOne(t, s, "slot-b", "slot-b", "anthropic_direct",
+		expiryLease("lb", "anthropic_direct", directPayload, clk.cur.Add(time.Hour)))
+
+	s.mu.Lock()
+	stA, _ := s.slotStateLocked("slot-a")
+	stB, _ := s.slotStateLocked("slot-b")
+	handleA := stA.timers["anthropic_direct"].handle
+	handleB := stB.timers["anthropic_direct"].handle
+	s.mu.Unlock()
+
+	if _, err := s.ExtendCredentialLease(context.Background(),
+		&adapterv1.ExtendCredentialLeaseRequest{
+			SessionId:       &adapterv1.SessionId{Value: "slot-a"},
+			Provider:        "anthropic_direct",
+			LeaseId:         "la",
+			ExpiresAtUnixMs: clk.cur.Add(90 * time.Minute).UnixMilli(),
+		}); err != nil {
+		t.Fatalf("ExtendCredentialLease(slot-a): %v", err)
+	}
+
+	if !handleA.(*fakeTimer).isStopped() {
+		t.Error("slot-a original timer was not stopped on extension")
+	}
+	if handleB.(*fakeTimer).isStopped() {
+		t.Error("slot-b timer was stopped by a slot-a extension")
+	}
+	s.mu.Lock()
+	newA := stA.timers["anthropic_direct"]
+	curB := stB.timers["anthropic_direct"]
+	s.mu.Unlock()
+	if newA == nil || newA.leaseID != "la" {
+		t.Errorf("slot-a timer = %+v, want leaseID la", newA)
+	}
+	if got := newA.handle.(*fakeTimer).d; got != 90*time.Minute {
+		t.Errorf("slot-a extended timer delay = %v, want 90m", got)
+	}
+	if curB.handle != handleB {
+		t.Error("slot-b timer handle changed after slot-a extension")
+	}
+}
+
+// spec: §6.1; §4.9 — per-slot extension no-op paths: an
+// absent slot, and a mismatched lease id, leave timers untouched.
+func TestExtendCredentialLeaseSlotNoopPaths_spec_6_1(t *testing.T) {
+	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
+	s := slotExpiryServer(t, clk)
+
+	// Absent slot: no state, no timer armed, no error.
+	if _, err := s.ExtendCredentialLease(context.Background(),
+		&adapterv1.ExtendCredentialLeaseRequest{
+			SessionId:       &adapterv1.SessionId{Value: "slot-x"},
+			Provider:        "anthropic_direct",
+			LeaseId:         "lx",
+			ExpiresAtUnixMs: clk.cur.Add(time.Hour).UnixMilli(),
+		}); err != nil {
+		t.Fatalf("ExtendCredentialLease(absent slot): %v", err)
+	}
+	if armed := clk.armed(); len(armed) != 0 {
+		t.Fatalf("armed %d timers for an absent slot, want 0", len(armed))
+	}
+
+	// Mismatched lease id: the slot's timer is left untouched.
+	assignSlotOne(t, s, "slot-a", "slot-a", "anthropic_direct",
+		expiryLease("la", "anthropic_direct", directPayload, clk.cur.Add(time.Hour)))
+	s.mu.Lock()
+	stA, _ := s.slotStateLocked("slot-a")
+	original := stA.timers["anthropic_direct"]
+	s.mu.Unlock()
+
+	if _, err := s.ExtendCredentialLease(context.Background(),
+		&adapterv1.ExtendCredentialLeaseRequest{
+			SessionId:       &adapterv1.SessionId{Value: "slot-a"},
+			Provider:        "anthropic_direct",
+			LeaseId:         "stale",
+			ExpiresAtUnixMs: clk.cur.Add(90 * time.Minute).UnixMilli(),
+		}); err != nil {
+		t.Fatalf("ExtendCredentialLease(mismatched lease): %v", err)
+	}
+	if original.handle.(*fakeTimer).isStopped() {
+		t.Error("mismatched-lease slot extension stopped the current timer")
+	}
+	s.mu.Lock()
+	cur := stA.timers["anthropic_direct"]
+	s.mu.Unlock()
+	if cur != original {
+		t.Error("slot timer was replaced by a mismatched-lease extension")
+	}
+}
+
+func TestLeaseDeliveryMode(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload string
+		want    string
+	}{
+		{"direct", directPayload, "direct"},
+		{"proxy", proxyPayload, "proxy"},
+		{"empty payload", "", ""},
+		{"malformed json", `{not json`, ""},
+		{"missing key", `{"materializedConfig":{}}`, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := leaseDeliveryMode(&adapterv1.CredentialLease{Payload: []byte(tc.payload)})
+			if got != tc.want {
+				t.Errorf("leaseDeliveryMode(%q) = %q, want %q", tc.payload, got, tc.want)
+			}
+		})
+	}
+}
+
+// sessionTimers returns the §4.9 direct-mode expiry timers armed on the
+// named session's own registry entry, which is where every assignment
+// lands now that the per-slot tree is the only layout. spec: §4.9; §6.1.
+func sessionTimers(s *Server, sessionID string) map[string]*expiryTimer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.slotStateLocked(sessionID)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]*expiryTimer, len(st.timers))
+	for provider, t := range st.timers {
+		out[provider] = t
+	}
+	return out
+}
+
+// sessionCredentialsDir is the named session's own §6.1 credential
+// directory, /run/lenny/slots/{sessionId}, which is where every
+// assignment lands. spec: §6.1.
+func sessionCredentialsDir(s *Server, sessionID string) string {
+	return filepath.Join(s.CredentialsDir, "slots", sessionID)
+}

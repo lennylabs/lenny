@@ -1,0 +1,4 @@
+package carrier
+
+// A note about the rule.
+const Name = "carrier"

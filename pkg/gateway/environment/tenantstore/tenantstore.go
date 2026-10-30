@@ -1,0 +1,686 @@
+// SPDX-License-Identifier: MIT
+
+// Package tenantstore is the platform tenant registry. It backs the
+// §10.2 tenant-claim extractor (via auth.TenantRegistry) and the
+// §15.1 admin tenant CRUD endpoints.
+//
+// The in-memory implementation is the minimal-gateway backend; the
+// Postgres-backed implementation that ships in a later phase swaps
+// in behind the same Store interface.
+package tenantstore
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"sort"
+	"sync"
+	"time"
+
+	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/experiment"
+)
+
+// Tenant captures the platform-scoped registry row per §12.5 and
+// §12.8.
+type Tenant struct {
+	// ID is the tenant identifier — must satisfy the §10.2 format
+	// (`^[a-zA-Z0-9_-]{1,128}$`).
+	ID string
+
+	// DisplayName is a human-readable label. Optional.
+	DisplayName string
+
+	// ComplianceProfile is the §12.8 profile applied to this tenant
+	// (`none`, `soc2`, `hipaa`, `gdpr`, `fedramp`). Empty when the
+	// tenant has no compliance profile assigned.
+	ComplianceProfile string
+
+	// DataResidencyRegion pins the tenant's storage routing to a
+	// specific region per §12.8. Empty for unscoped tenants.
+	DataResidencyRegion string
+
+	// WorkspaceTier is the §12.9 data-classification tier. The
+	// tenant-settable values per §15.1 are `T3` (the Confidential
+	// default) and `T4` (Restricted). Empty defaults to T3 at write
+	// time. `T1`/`T2` classify other data categories and are not
+	// selectable as a tenant workspaceTier; ValidWorkspaceTier rejects
+	// them, IsWorkspaceTierDowngrade ratchets T3↔T4.
+	WorkspaceTier string
+
+	// MaxConcurrentSessions is the §11.2 per-tenant concurrent-session
+	// quota: the gateway rejects a session create once the tenant
+	// holds this many non-terminal sessions. Zero means unlimited.
+	MaxConcurrentSessions int
+
+	// StorageQuotaBytes is the §11.2 per-tenant storage quota: the
+	// gateway rejects an upload once the tenant's reserved-plus-
+	// committed artifact bytes would exceed this value. Zero means
+	// unlimited.
+	StorageQuotaBytes int64
+
+	// TokenQuotaPerWindow is the §11.2 per-tenant LLM-token budget for
+	// one reset-period window. The §4.8 QuotaEvaluator enforces it
+	// hierarchically (global → tenant → user) against the §11.2 Redis
+	// token-usage counter and rejects a session create with
+	// QUOTA_EXCEEDED once a window's recorded usage reaches the limit.
+	// Zero means the tenant has no token budget (unlimited).
+	TokenQuotaPerWindow int64
+
+	// QuotaResetPeriod is the §11.2 per-tenant token-quota reset
+	// period: `hourly`, `daily`, `monthly`, or `rolling`. Empty means
+	// the tenant inherits the platform-wide default period. The §4.8
+	// QuotaEvaluator reads this to scope the tenant's token-usage window
+	// independently of other tenants.
+	QuotaResetPeriod string
+
+	// GCPriority is the §12.5 per-tenant garbage-collection
+	// priority: `normal` (the default) or `high`. A `high` tenant,
+	// intended for T4 erasure-SLA compliance, triggers an immediate
+	// tenant-scoped incremental GC sweep whenever an erasure job for the
+	// tenant completes, independent of the global cycle interval. Empty
+	// is read as `normal`.
+	GCPriority string
+
+	// ElicitationContentIntegrity is the §9.2 tenant-stored elicitation
+	// content-integrity mode (`off`, `detect-only`, or `enforce`). The
+	// gateway clamps it against the platform floor at use time. Empty
+	// means the tenant has set no override and the platform floor
+	// applies.
+	ElicitationContentIntegrity string
+
+	// ElicitationContentIntegrityJustification is the §15.1
+	// operator-supplied reason recorded on the last PUT
+	// /v1/admin/tenants/{id}/elicitation-content-integrity. It is
+	// REQUIRED when the stored mode is `detect-only` or `off` so the
+	// audit trail captures why the integrity posture was relaxed. Empty
+	// means the mode was never set or was last set to `enforce` without
+	// one.
+	ElicitationContentIntegrityJustification string
+
+	// ElicitationContentIntegrityChangedAt is the §15.1 UTC instant the
+	// stored elicitation content-integrity mode was last set. Zero means
+	// the tenant has never set a mode.
+	ElicitationContentIntegrityChangedAt time.Time
+
+	// ElicitationContentIntegrityChangedBy is the §15.1 OIDC `sub` of the
+	// operator that last set the stored elicitation content-integrity
+	// mode. Empty means the tenant has never set a mode.
+	ElicitationContentIntegrityChangedBy string
+
+	// MinIsolationProfile is the §5.3 tenant isolation floor: the
+	// weakest §5.3 profile (`standard`, `sandboxed`, `microvm`) the
+	// tenant's sessions may run at. Empty means no tenant floor — the
+	// platform default applies.
+	MinIsolationProfile string
+
+	// BillingErasurePolicy is the §12.8 policy that decides how the
+	// GDPR erasure job treats this tenant's billing events. Empty or
+	// `pseudonymize` replaces an erased user's id with a salted hash;
+	// `exempt` retains the original id under GDPR Article 17(3)(b) for
+	// financial record-keeping.
+	BillingErasurePolicy string
+
+	// NoEnvironmentPolicy is the §10.6 tenant RBAC-config policy that
+	// governs runtime access for an authenticated caller who is a
+	// member of no environment. `deny-all` (the platform default,
+	// also the value an empty field is treated as) denies all runtime
+	// access; `allow-all` grants access to every runtime owned by the
+	// tenant.
+	NoEnvironmentPolicy string
+
+	// RBACConfig is the rest of the §10.6 tenant RBAC configuration set
+	// through PUT /v1/admin/tenants/{id}/rbac-config: the OIDC identity
+	// provider, the token policy, the tenant-custom capability taxonomy,
+	// and the per-tenant MCP-annotation capability-inference overrides.
+	// The zero value means the tenant configured none of these.
+	RBACConfig RBACConfig
+
+	// ExperimentTargeting is the §10.7 experimentTargeting block: how
+	// the tenant resolves mode:external experiment assignment. The zero
+	// value means the tenant configures no external targeting and only
+	// percentage-mode experiments route.
+	ExperimentTargeting experiment.TargetingConfig
+
+	// CredentialPolicy is the §4.9 tenant credentialPolicy: which
+	// credential sources are available and how they are selected. The
+	// §4.9 CredentialRouter intersects ProviderPools with a Runtime's
+	// supportedProviders at session creation. The zero value means the
+	// tenant configures no credential sourcing and the intersection is
+	// empty (sessions assign no upstream LLM credentials).
+	CredentialPolicy credential.CredentialPolicy
+
+	// ErasureSalt is the §12.8 per-tenant billing-pseudonymization
+	// secret (256-bit). It is non-nil only transiently, while an
+	// erasure job pseudonymizes the tenant's billing events; the job
+	// destroys it immediately afterward so the pseudonymized records
+	// cannot be re-identified. The Postgres tenant store persists it in
+	// the erasure_salt column under §12.8 KMS envelope
+	// encryption (never plaintext); a destroyed salt is NULL. F-12.8.5.
+	ErasureSalt []byte
+
+	// CreatedAt is the UTC instant the tenant row was committed.
+	CreatedAt time.Time
+
+	// UpdatedAt is the UTC instant of the last admin mutation.
+	UpdatedAt time.Time
+
+	// DeletedAt is the UTC instant the tenant was soft-deleted per
+	// §12.8 tenant lifecycle. Nil when active.
+	DeletedAt time.Time
+
+	// State is the §12.8 TenantState lifecycle value
+	// (`active`, `disabling`, `deleting`, `deleted`). The §12.8
+	// tenant-deletion controller advances it; the gateway rejects new
+	// session creation once it leaves `active`, and a `deleted`
+	// tombstone backs the 410 Gone response on GET. An empty value
+	// (a row written before the lifecycle column existed) is read as
+	// `active`. spec: §12.8.
+	State string
+
+	// ForceDeleteHoldOverride records the §12.8 force-delete legal-hold
+	// override: a platform-admin invoked
+	// POST /v1/admin/tenants/{id}/force-delete with
+	// acknowledgeHoldOverride. The §12.8 tenant-deletion controller reads
+	// it at Phase 3.5 to segregate held evidence into the region-scoped
+	// escrow instead of blocking. It is durable so the override survives a
+	// gateway restart that reconstructs the deletion job from the tenant
+	// row. spec: §12.8. F-12.8.2, F-24.10.2.
+	ForceDeleteHoldOverride bool
+
+	// ForceDeleteJustification is the required free-text override reason
+	// recorded as override_justification on the
+	// gdpr.legal_hold_overridden_tenant event. Empty when no override.
+	ForceDeleteJustification string
+
+	// ForceDeleteBy is the platform-admin subject that authorized the
+	// override, recorded as override_by. Empty when no override.
+	ForceDeleteBy string
+
+	// ForceDeleteAt is the UTC instant the override was authorized. Zero
+	// when no override. spec: §12.8.
+	ForceDeleteAt time.Time
+
+	// Suspended marks a tenant suspended by an operator via the §15.1
+	// `POST /v1/admin/tenants/{id}/suspend` action. Suspension is
+	// orthogonal to the §12.8 deletion lifecycle State: a suspended
+	// tenant rejects new session creation and message injection with
+	// TENANT_SUSPENDED until resumed, but its row is otherwise
+	// untouched. spec: §15.1.
+	Suspended bool
+
+	// SuspendedReason is the operator-supplied justification recorded
+	// with a suspension. Empty when the tenant is not suspended or the
+	// operator supplied no reason. spec: §15.1.
+	SuspendedReason string
+
+	// SuspendedAt is the UTC instant the tenant was last suspended. Zero
+	// when the tenant is not suspended. spec: §15.1.
+	SuspendedAt time.Time
+
+	// SuspendedBy is the subject of the operator who suspended the
+	// tenant. Empty when the tenant is not suspended. spec: §15.1.
+	SuspendedBy string
+
+	// Version is the §15.1 ETag-based optimistic-concurrency counter: it
+	// starts at 1 and increments on every successful write (Update and
+	// SoftDelete). The quoted decimal version is the tenant's strong
+	// entity tag, enforced on PUT via the If-Match precondition and
+	// exposed on GET/list. The tenant's §10.6 rbac-config and §9.2
+	// elicitation-content-integrity sub-resources share this version
+	// because they are stored on the tenant row. spec: §15.1.
+	Version int64
+}
+
+// IsActive reports whether the tenant has not been soft-deleted.
+func (t Tenant) IsActive() bool { return t.DeletedAt.IsZero() }
+
+// Registered reports whether the tenant is registered for §10.2
+// tenant_id extraction: it is not soft-deleted and its §12.8
+// TenantState is neither `deleting` nor `deleted`. A `disabling` tenant
+// stays registered because §12.8 Phase 1 lets its existing sessions
+// continue until Phase 2 drains them; from Phase 3 the tenant's bearers
+// are refused with TENANT_NOT_FOUND. IsActive is the separate listed
+// reading and is unchanged. spec: §10.2, §12.8.
+func (t Tenant) Registered() bool {
+	return t.IsActive() && t.State != TenantStateDeleting && t.State != TenantStateDeleted
+}
+
+// AcceptsNewWork reports whether the tenant's §12.8 TenantState permits
+// new session creation. Only `active` (and the empty pre-lifecycle
+// value, read as active) accepts work; `disabling`, `deleting`, and
+// `deleted` reject it per the §12.8 phase table. spec: §12.8.
+func (t Tenant) AcceptsNewWork() bool {
+	return t.State == "" || t.State == TenantStateActive
+}
+
+// IsSuspended reports whether the tenant is operator-suspended via the
+// §15.1 suspend action. A suspended tenant rejects new session creation
+// and message injection with TENANT_SUSPENDED regardless of its §12.8
+// deletion-lifecycle State. spec: §15.1.
+func (t Tenant) IsSuspended() bool { return t.Suspended }
+
+// §12.8 TenantState lifecycle values. spec: §12.8.
+const (
+	// TenantStateActive is a normally operating tenant; the empty value
+	// is treated as active for rows written before the column existed.
+	TenantStateActive = "active"
+	// TenantStateDisabling is §12.8 Phases 1-2: new work is rejected and
+	// existing sessions drain.
+	TenantStateDisabling = "disabling"
+	// TenantStateDeleting is §12.8 Phases 3-5: credentials revoked and
+	// data erased.
+	TenantStateDeleting = "deleting"
+	// TenantStateDeleted is the §12.8 Phase 6 tombstone: the row is
+	// retained with mutable fields nulled to prevent id reuse.
+	TenantStateDeleted = "deleted"
+)
+
+// AllTenantStates returns the closed §12.8 TenantState enum in lifecycle
+// order. spec: §12.8.
+func AllTenantStates() []string {
+	return []string{TenantStateActive, TenantStateDisabling, TenantStateDeleting, TenantStateDeleted}
+}
+
+// ValidTenantState reports whether s is one of the §12.8 TenantState
+// values. The empty string is valid and read as `active`. spec: §12.8.
+func ValidTenantState(s string) bool {
+	if s == "" {
+		return true
+	}
+	for _, v := range AllTenantStates() {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+// §12.5 GCPriority values a tenant may carry. spec: §12.5.
+const (
+	// GCPriorityNormal collects the tenant's expired artifacts only on the
+	// global GC cycle. The empty string is read as normal.
+	GCPriorityNormal = "normal"
+	// GCPriorityHigh triggers an immediate tenant-scoped incremental sweep
+	// on every completed erasure job, for T4 erasure-SLA compliance.
+	GCPriorityHigh = "high"
+)
+
+// ValidGCPriority reports whether s is a §12.5 GCPriority value: the empty
+// string (read as `normal`), `normal`, or `high`. spec: §12.5.
+func ValidGCPriority(s string) bool {
+	return s == "" || s == GCPriorityNormal || s == GCPriorityHigh
+}
+
+// TriggersImmediateGC reports whether the tenant's §12.5 GCPriority is
+// `high`, the state that fires a tenant-scoped sweep on erasure-job
+// completion. spec: §12.5.
+func (t Tenant) TriggersImmediateGC() bool { return t.GCPriority == GCPriorityHigh }
+
+// §12.9 data-classification tier values a tenant (or a stricter
+// environment override) may carry. T1/T2 classify other data categories
+// and are not tenant-settable workspace tiers; the tenant-settable set
+// per §15.1 is T3 (default) and T4. spec: §12.9.
+const (
+	WorkspaceTierT3 = "T3"
+	WorkspaceTierT4 = "T4"
+)
+
+// workspaceTierRank maps the §12.9 tenant-settable classification tier to
+// a strictness ordinal. The empty string is the T3 default, so it shares
+// T3's rank. Off-ladder values (T1, T2, or any unrecognized string) are
+// absent from the map. spec: §12.9; §15.1.
+var workspaceTierRank = map[string]int{
+	"":              1,
+	WorkspaceTierT3: 1,
+	WorkspaceTierT4: 2,
+}
+
+// ValidWorkspaceTier reports whether s is a §12.9 tenant-settable
+// data-classification tier: the empty string (the T3 default), T3, or T4.
+// Per §15.1 the tenant-settable values are restricted to T3 and T4; a
+// value like "T2", "T5", or "prod" is a misconfiguration that downstream
+// consumers would silently treat as "not T4". spec: §12.9.
+func ValidWorkspaceTier(s string) bool {
+	_, ok := workspaceTierRank[s]
+	return ok
+}
+
+// WorkspaceTierRank returns the §12.9 strictness ordinal for tier and
+// whether tier is on the ratchet ladder. A higher ordinal is stricter.
+func WorkspaceTierRank(tier string) (rank int, onLadder bool) {
+	r, ok := workspaceTierRank[tier]
+	return r, ok
+}
+
+// TierRetentionDefault returns the §12.9 retention default for a
+// data-classification tier and whether the spec fixes the value. T2 is 90
+// days and T4 is 24 hours (the spec's lease default, applied as the
+// Restricted-tier ceiling for session artifacts). T3 and the empty default
+// are deployer-configured, so fixed is false and the caller keeps its own
+// configured window. T1 retention is indefinite (zero duration, fixed). An
+// unrecognized tier returns (0, false) so the caller keeps the deployer
+// default rather than silently clamping. spec: §12.9.
+func TierRetentionDefault(tier string) (d time.Duration, fixed bool) {
+	switch tier {
+	case "T1":
+		return 0, true
+	case "T2":
+		return 90 * 24 * time.Hour, true
+	case WorkspaceTierT4:
+		return 24 * time.Hour, true
+	case WorkspaceTierT3, "":
+		return 0, false
+	default:
+		return 0, false
+	}
+}
+
+// IsWorkspaceTierDowngrade reports whether a transition from current to
+// requested lowers the §12.9 classification tier. §15.1 states that
+// workspaceTier is ratcheted stricter-only, exactly as the §11.7
+// complianceProfile is. A transition that involves an off-ladder tier is
+// not treated as a downgrade (the enum validator rejects those values
+// before they reach the ratchet). spec: §12.9; §15.1.
+func IsWorkspaceTierDowngrade(current, requested string) bool {
+	cur, curOnLadder := workspaceTierRank[current]
+	req, reqOnLadder := workspaceTierRank[requested]
+	if !curOnLadder || !reqOnLadder {
+		return false
+	}
+	return req < cur
+}
+
+// IdentityProvider is the §10.6 tenant identity-provider configuration.
+// v1 carries the OIDC provider type and the introspectionEnabled toggle
+// the §10.6 real-time group check reads. spec: §10.6.
+type IdentityProvider struct {
+	// Type names the identity provider. The §10.6 identity model is
+	// OIDC; an empty Type means the tenant inherits the platform OIDC
+	// configuration.
+	Type string `json:"type,omitempty"`
+
+	// IntrospectionEnabled turns on the §10.6 real-time group
+	// check (RFC 7662 token introspection) at the documented latency
+	// cost. The default is off — JWT group claims alone carry group
+	// identity.
+	IntrospectionEnabled bool `json:"introspectionEnabled,omitempty"`
+
+	// IntrospectionEndpoint is the RFC 7662 token-introspection endpoint
+	// URL the gateway calls on the auth hot path when IntrospectionEnabled
+	// is true. Required (https) when introspection is enabled; the global
+	// OIDC issuer config carries no per-tenant introspection endpoint, so
+	// the real-time group check resolves it from here. spec: §10.6.
+	IntrospectionEndpoint string `json:"introspectionEndpoint,omitempty"`
+
+	// IntrospectionClientID / IntrospectionClientSecret authenticate the
+	// gateway to the introspection endpoint via HTTP Basic auth
+	// (RFC 7662 §2.1). Optional for endpoints that authenticate by other
+	// means.
+	IntrospectionClientID     string `json:"introspectionClientId,omitempty"`
+	IntrospectionClientSecret string `json:"introspectionClientSecret,omitempty"`
+
+	// IntrospectionCacheTTLSeconds bounds how long an introspection
+	// result is reused for a (tenant, token) pair before the endpoint is
+	// re-queried. Zero applies the introspection package default. This is
+	// the knob that trades real-time freshness against the §10.6 latency
+	// cost.
+	IntrospectionCacheTTLSeconds int `json:"introspectionCacheTtlSeconds,omitempty"`
+}
+
+// RBACConfig is the §10.6 tenant RBAC configuration carried by
+// PUT /v1/admin/tenants/{id}/rbac-config beyond the noEnvironmentPolicy
+// column. spec: §10.6.
+type RBACConfig struct {
+	// IdentityProvider is the §10.6 OIDC identity-provider configuration.
+	IdentityProvider IdentityProvider `json:"identityProvider,omitempty"`
+
+	// TokenPolicy is the §10.6 tenant token policy. §10.6 names
+	// the field but does not define its sub-fields; the gateway stores
+	// it verbatim as an opaque JSON object and round-trips it without
+	// interpreting fields the spec does not define. A nil or empty value
+	// means the tenant set no token policy.
+	TokenPolicy json.RawMessage `json:"tokenPolicy,omitempty"`
+
+	// Capabilities is the §10.6 tenant-custom capability taxonomy: the
+	// capability names this tenant adds on top of the platform defaults.
+	Capabilities []string `json:"capabilities,omitempty"`
+
+	// MCPAnnotationMapping is the §10.6 / §5.1 per-tenant
+	// override of the MCP-annotation capability inference: a tool name
+	// maps to the §5.3 capability set the gateway assigns it, overriding
+	// the value inferred from the tool's MCP ToolAnnotations.
+	MCPAnnotationMapping map[string][]string `json:"mcpAnnotationMapping,omitempty"`
+}
+
+// Clone deep-copies the RBACConfig so a stored value and a returned copy
+// never share the TokenPolicy backing array, the Capabilities slice, or
+// the MCPAnnotationMapping map.
+func (c RBACConfig) Clone() RBACConfig {
+	cp := c
+	if c.TokenPolicy != nil {
+		cp.TokenPolicy = append(json.RawMessage(nil), c.TokenPolicy...)
+	}
+	if c.Capabilities != nil {
+		cp.Capabilities = append([]string(nil), c.Capabilities...)
+	}
+	if c.MCPAnnotationMapping != nil {
+		cp.MCPAnnotationMapping = make(map[string][]string, len(c.MCPAnnotationMapping))
+		for k, v := range c.MCPAnnotationMapping {
+			cp.MCPAnnotationMapping[k] = append([]string(nil), v...)
+		}
+	}
+	return cp
+}
+
+// §12.8 BillingErasurePolicy values.
+const (
+	// BillingErasurePseudonymize is the default policy: the erasure job
+	// replaces an erased user's id with a salted hash. An empty
+	// BillingErasurePolicy is treated as this value.
+	BillingErasurePseudonymize = "pseudonymize"
+
+	// BillingErasureExempt retains billing events with the original
+	// user id under GDPR Article 17(3)(b).
+	BillingErasureExempt = "exempt"
+)
+
+// §10.6 NoEnvironmentPolicy values. The platform default is deny-all;
+// an empty NoEnvironmentPolicy is treated as deny-all.
+const (
+	// NoEnvPolicyDenyAll denies runtime access to a caller who is a
+	// member of no environment.
+	NoEnvPolicyDenyAll = "deny-all"
+	// NoEnvPolicyAllowAll grants such a caller access to every runtime
+	// owned by the tenant.
+	NoEnvPolicyAllowAll = "allow-all"
+)
+
+// Store is the §12.8 platform-tenant registry contract.
+type Store interface {
+	// Create inserts a new tenant row. Returns ErrAlreadyExists when
+	// the ID is taken.
+	Create(ctx context.Context, t Tenant) error
+
+	// Get returns the tenant row keyed by id. Returns ErrNotFound
+	// when the row is missing — soft-deleted rows ARE returned
+	// (callers consult Tenant.IsActive() to filter).
+	Get(ctx context.Context, id string) (Tenant, error)
+
+	// Update applies mutate to the row and persists the result.
+	// Returns ErrNotFound when the row is missing. The store does
+	// not validate the mutation — callers run any admin-side
+	// validation first.
+	Update(ctx context.Context, id string, mutate func(*Tenant) error) (Tenant, error)
+
+	// List returns every tenant row in created-at-descending order
+	// after applying the filter. IncludeDeleted false drops
+	// soft-deleted rows.
+	List(ctx context.Context, filter ListFilter) ([]Tenant, error)
+
+	// SoftDelete sets DeletedAt on the row per §12.8 tenant
+	// lifecycle. The row remains queryable for audit; the operator
+	// later invokes the tenant-deletion controller to fully erase.
+	SoftDelete(ctx context.Context, id string, at time.Time) error
+}
+
+// ListFilter narrows List results. Zero value returns every active
+// tenant.
+type ListFilter struct {
+	// IncludeDeleted, when true, returns soft-deleted rows as well.
+	IncludeDeleted bool
+}
+
+// Sentinel errors.
+var (
+	// ErrNotFound — the tenant id is not in the registry.
+	ErrNotFound = errors.New("tenantstore: tenant not found")
+
+	// ErrAlreadyExists — a tenant with this id is already
+	// registered.
+	ErrAlreadyExists = errors.New("tenantstore: tenant already exists")
+)
+
+// Memory is the in-memory Store backing tests and the minimal
+// gateway.
+type Memory struct {
+	mu      sync.RWMutex
+	tenants map[string]Tenant
+}
+
+// NewMemory returns an empty Memory store.
+func NewMemory() *Memory { return &Memory{tenants: map[string]Tenant{}} }
+
+// Create implements Store.
+func (m *Memory) Create(_ context.Context, t Tenant) error {
+	if err := auth.ValidateTenantID(t.ID); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.tenants[t.ID]; exists {
+		return ErrAlreadyExists
+	}
+	now := time.Now().UTC()
+	if t.CreatedAt.IsZero() {
+		t.CreatedAt = now
+	}
+	if t.UpdatedAt.IsZero() {
+		t.UpdatedAt = t.CreatedAt
+	}
+	if t.State == "" {
+		t.State = TenantStateActive
+	}
+	// spec: §15.1 — a new resource is born at version 1.
+	if t.Version == 0 {
+		t.Version = 1
+	}
+	m.tenants[t.ID] = cloneTenant(t)
+	return nil
+}
+
+// cloneTenant returns a deep copy of t so the in-memory store never
+// shares the ExperimentTargeting sub-blocks or the ErasureSalt backing
+// array with a caller — a mutation through a returned or stored Tenant
+// cannot reach into the registry.
+func cloneTenant(t Tenant) Tenant {
+	cp := t
+	if t.ErasureSalt != nil {
+		cp.ErasureSalt = append([]byte(nil), t.ErasureSalt...)
+	}
+	cp.ExperimentTargeting = t.ExperimentTargeting.Clone()
+	cp.CredentialPolicy = t.CredentialPolicy.Clone()
+	cp.RBACConfig = t.RBACConfig.Clone()
+	return cp
+}
+
+// Get implements Store.
+func (m *Memory) Get(_ context.Context, id string) (Tenant, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	row, ok := m.tenants[id]
+	if !ok {
+		return Tenant{}, ErrNotFound
+	}
+	return cloneTenant(row), nil
+}
+
+// Update implements Store.
+func (m *Memory) Update(_ context.Context, id string, mutate func(*Tenant) error) (Tenant, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	stored, ok := m.tenants[id]
+	if !ok {
+		return Tenant{}, ErrNotFound
+	}
+	row := cloneTenant(stored)
+	prev := row.UpdatedAt
+	if err := mutate(&row); err != nil {
+		return Tenant{}, err
+	}
+	now := time.Now().UTC()
+	if !now.After(prev) {
+		now = prev.Add(time.Nanosecond)
+	}
+	row.UpdatedAt = now
+	// spec: §15.1 — bump the entity-tag version on every write.
+	row.Version++
+	m.tenants[id] = row
+	return cloneTenant(row), nil
+}
+
+// List implements Store.
+func (m *Memory) List(_ context.Context, filter ListFilter) ([]Tenant, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]Tenant, 0, len(m.tenants))
+	for _, row := range m.tenants {
+		if !filter.IncludeDeleted && !row.IsActive() {
+			continue
+		}
+		out = append(out, cloneTenant(row))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
+}
+
+// SoftDelete implements Store.
+func (m *Memory) SoftDelete(_ context.Context, id string, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.tenants[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if !row.DeletedAt.IsZero() {
+		// Idempotent — already soft-deleted.
+		return nil
+	}
+	row.DeletedAt = at
+	row.UpdatedAt = at
+	// §12.8 Phase 6: a soft-deleted tenant is a tombstone, so its
+	// TenantState is `deleted`.
+	row.State = TenantStateDeleted
+	// spec: §15.1 — a soft-delete is a write, so it bumps the tag.
+	row.Version++
+	m.tenants[id] = row
+	return nil
+}
+
+// IsRegistered implements auth.TenantRegistry with the Registered
+// reading of the row: a missing, `deleting`, or `deleted` tenant reports
+// false so the §10.2 tenant-claim extractor rejects requests against it
+// with TENANT_NOT_FOUND. spec: §10.2, §12.8.
+func (m *Memory) IsRegistered(id string) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	row, ok := m.tenants[id]
+	if !ok {
+		return false, nil
+	}
+	return row.Registered(), nil
+}
+
+// Ensure Memory satisfies auth.TenantRegistry at compile time.
+var _ auth.TenantRegistry = (*Memory)(nil)

@@ -161,7 +161,7 @@ When the adapter receives a completions request:
 
 1. The `model` field is resolved to a **Lenny runtime name**. If no runtime matches, the gateway returns `404`.
 2. A **Lenny session** is created using that runtime.
-3. The `messages` array is translated to a `MessageEnvelope` with the conversation history as input `OutputPart` arrays.
+3. The `messages` array is translated to a `MessageEnvelope` with the conversation history as input `MessagePart` arrays.
 4. The session runs to completion. Agent output is translated back to OpenAI chat completion format.
 5. Token usage reported by the runtime is mapped to the `usage` object.
 
@@ -195,7 +195,7 @@ terminate_session()
 Return OpenAI-format response
 ```
 
-For streaming requests, the adapter streams `OutputPart` chunks as they arrive from the runtime, translating each to an OpenAI delta chunk.
+For streaming requests, the adapter streams `MessagePart` chunks as they arrive from the runtime, translating each to an OpenAI delta chunk.
 
 ---
 
@@ -209,7 +209,7 @@ For streaming requests, the adapter streams `OutputPart` chunks as they arrive f
 | Fine-tuned models | Supported (`ft:model-name`) | Not supported. The `model` parameter maps to Lenny runtime names, not fine-tuned model IDs. |
 | Embeddings | `POST /v1/embeddings` | Not supported. No embeddings endpoint. |
 | Logprobs | `logprobs` parameter | Not supported. |
-| Vision (image inputs) | Supported via `image_url` content | Supported. Image content in messages is translated to `OutputPart` with `type: image`. |
+| Vision (image inputs) | Supported via `image_url` content | Supported. Image content in messages is translated to `MessagePart` with `type: image`. |
 | Response format (`json_mode`) | Supported | Passed through as runtime metadata. Runtime support varies. |
 | Seed (deterministic) | Supported | Passed through as runtime metadata. Determinism depends on the runtime. |
 
@@ -368,7 +368,8 @@ Remove any parameters Lenny does not support:
 ### Step 4: Handle session semantics
 
 Be aware that each request creates a Lenny session:
-- Requests are **not** stateless. Each request allocates a pod, sets up a workspace, and tears it down.
+- For a `session`-mode runtime, requests are **not** stateless. Each request allocates a pod, sets up a workspace, and tears it down.
+- For a `service`-mode runtime, each message is self-contained and the platform maintains no conversation context between messages, so a `multi_turn` runtime served in service mode must receive any needed context in each request. The session creation response carries `sessionIsolationLevel.conversationContinuity: "none"` in that case.
 - Latency is higher than a direct LLM call because of session lifecycle overhead.
 - For conversational use cases with multiple turns, consider using the [MCP API](mcp.html) or [REST API](rest) instead, which support multi-turn sessions natively.
 

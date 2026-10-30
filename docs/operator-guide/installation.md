@@ -14,7 +14,7 @@ There are three ways to install. Pick based on what you're doing:
 | Path | Use it for | Starting point |
 |------|------------|----------------|
 | **`lenny up`** | Evaluation, developer laptops, demos, smoke-testing a new runtime before you touch a real cluster. Runs the entire platform as a single binary. Never for production. | [`lenny up` quickstart](#lenny-up-for-local-evaluation) |
-| **`lenny-ctl install` wizard** | New production installs. Detects your cluster, asks a small set of questions, then runs Helm and bootstrap for you. | [Installer wizard](#interactive-installer-lenny-ctl-install) |
+| **`lenny-ctl install` wizard** | New production installs. Asks a set of questions, composes Helm values on a capacity-tier preset, then runs Helm for you. | [Installer wizard](#interactive-installer-lenny-ctl-install) |
 | **Direct Helm** | GitOps or infrastructure-as-code setups. Hand-write `values.yaml` (or start from an answer-file base) and run Helm yourself. | [Helm chart installation](#helm-chart-installation) |
 
 All three paths use the same chart, the same preflight checks, and the same bootstrap. The wizard is a friendlier layer over Helm.
@@ -24,72 +24,64 @@ All three paths use the same chart, the same preflight checks, and the same boot
 ## `lenny up` for local evaluation
 {: #lenny-up-for-local-evaluation }
 
-For evaluation and developer laptops, the `lenny` binary runs the entire platform in-process:
+For evaluation and developer laptops, the `lenny` binary runs the entire platform from one binary:
 
 ```bash
 lenny up
 ```
 
-On first run it downloads k3s to `~/.lenny/k3s/` and starts the whole stack -- embedded Kubernetes, Postgres, Redis, a development key-management shim, an identity provider, the gateway, the management plane, the controllers, and the reference runtime catalog. The pool controller warms up pods, and `lenny session new --runtime chat --message "hello"` is ready in under a minute.
+It renders the production chart under a development profile and runs the gateway, the management plane, the controllers, and the reference runtime catalog as pods in an embedded Kubernetes (k3s). The application data stores (Postgres, Redis, and artifact storage) are in-process in-memory backends inside the gateway pod, so there is no separate Postgres, Redis, KMS, or identity-provider process. The local KMS provider derives its keys, including the JWT signing key, from a master key Secret that `lenny up` generates in the embedded cluster when none exists, so the keys persist with the cluster. The CLI authenticates by minting a development bearer from a persisted local key, and the in-cluster gateway trusts it in development mode. On Linux it downloads k3s to `~/.lenny/k3s/` and supervises it as a managed child process, needing no external services. On macOS and Windows the embedded k3s needs a Linux kernel the binary cannot embed, so it runs the same pinned k3s version as a container under Docker Desktop's Linux VM; Docker Desktop is the one prerequisite on those hosts, and you should start it before `lenny up`. The first `lenny up` imports the platform and runtime images once and may take longer; subsequent bring-ups reuse the persisted substrate and image store and are well under a minute. The pool controller warms the reference-runtime pods shortly after the gateway answers.
 
-`lenny up` prints a banner you can't suppress: credentials, master key, and identities are insecure, and it's not for production. The built-in identity provider rejects any audience claim other than `dev.local`, and trying to expose the gateway beyond localhost fails with `EMBEDDED_MODE_LOCAL_ONLY`.
+The embedded single-node cluster does not reproduce the full production isolation surface: the `sandboxed` and `microvm` profiles both fall back to standard `runc` (gVisor because the cluster installs no gVisor runtime class, Kata because it needs hardware virtualization the local substrate cannot nest), and NetworkPolicy enforcement is disabled. Treat the local stack as a functional preview rather than the production isolation boundary.
+
+`lenny up` prints a banner you can't suppress: credentials, master key, and identities are insecure, and it's not for production. In development mode the gateway rejects any token whose audience claim is not `dev.local`, even when signed by the trusted development key, and trying to expose the gateway beyond localhost fails with `EMBEDDED_MODE_LOCAL_ONLY`.
 
 Use it to explore the platform, demo it, or smoke-test a new runtime before you ship it to a real cluster.
 
 Teardown:
 
 ```bash
-lenny down          # stop everything, keep ~/.lenny/
-lenny down --purge  # stop everything and wipe ~/.lenny/
+lenny down          # stop everything; keep the persisted substrate and image store
+lenny down --purge  # also remove the persisted substrate and image store for a fresh start
 ```
+
+The in-memory application stores are ephemeral and not preserved across `lenny down`. A non-`--purge` `lenny down` keeps the persisted substrate and the imported-image store, so the next `lenny up` reuses them; `--purge` removes them.
 
 ---
 
 ## Interactive installer (`lenny-ctl install`)
 
-For production installs, the interactive wizard handles detection, questions, composing `values.yaml`, running preflight, invoking `helm install`, bootstrap, and a final smoke test against the `chat` runtime:
+For production installs, the `lenny-ctl install` wizard collects a set of installation answers, composes them into a Helm values document, layers a capacity-tier preset under that document, and runs `helm install`:
 
 ```bash
 lenny-ctl install
 ```
 
-It runs in five phases:
+With no `--answers` flag the wizard prompts for each answer on standard input, showing each default in brackets. It asks for the release name and namespace, the target environment, the capacity tier, the gateway domain and TLS strategy, the data-store connection details, the auth mode, the agent namespaces, and the optional admission-webhook feature flags. After collecting the answers, the wizard validates them, prints the composed values and the `helm install` command, and then runs Helm.
 
-1. **Detection** -- probes the cluster: CNI, `RuntimeClass` availability, admission controllers, cert-manager, Prometheus Operator, storage classes, cloud provider. The results seed default answers and skip questions that don't apply.
-2. **Questions** -- around 10 prompts: environment (production / staging / dev), cluster type (EKS / GKE / AKS / on-prem / k3s), database and cache options (managed or self-hosted), deployment size, isolation profile, auth setup, and a few tenant/runtime/pool seed entries.
-3. **Preview** -- shows the composed `values.yaml` and diffs it against any existing install. Nothing is applied yet.
-4. **Preflight + install** -- runs `lenny-ctl preflight`, then `helm install` (or `helm upgrade`), then `lenny-ctl bootstrap --from-values`.
-5. **Smoke test** -- creates a session against the `chat` reference runtime and confirms the full round trip works.
+The same preflight Job, schema migrations, and bootstrap Job described in [Helm Chart Installation](#helm-chart-installation) run as Helm hooks during the `helm install` the wizard invokes.
 
 ### Answer files
 
-Any interactive session can be saved to an answer file:
+Any interactive run can be saved to an answer file with `--save-answers`:
 
 ```bash
 lenny-ctl install --save-answers ./answers.yaml
 ```
 
-The saved file is plain YAML. Replay it non-interactively in CI:
+The saved file is plain YAML. Replay it non-interactively in CI with `--non-interactive`:
 
 ```bash
 lenny-ctl install --non-interactive --answers ./answers.yaml
 ```
 
-The chart also ships answer-file bases for common scenarios -- `answers/eks-small-team.yaml`, `answers/gke-growth.yaml`, `answers/laptop.yaml`, and others. If you'd rather hand-write values, skip the wizard entirely and run `helm install -f answers/<base>.yaml -f values-<size>.yaml -f overrides.yaml`. Both paths are supported equally.
+The chart ships answer files under `charts/lenny/answers/`, one per capacity tier: `tier1-local.yaml`, `tier2-prod.yaml`, and `tier3-prod.yaml`. Use one directly, or copy it as a starting point. To hand-write values instead, skip the wizard and run `helm install -f presets/values-<tier>.yaml -f overrides.yaml`.
 
-### Upgrades
-
-Upgrades replay the answer file against the existing release:
-
-```bash
-lenny-ctl upgrade --answers ./answers.yaml
-```
-
-That runs preflight, diffs the composed values against the live release, and invokes `helm upgrade` once you approve.
+For the full wizard reference, the answer-file schema, and the tier presets, see [Install Wizard](install-wizard.html).
 
 ### Airgapped clusters
 
-`lenny-ctl install --offline` skips the cluster-reachability probes during detection. Preflight still runs against the target cluster; only detection is affected.
+`lenny-ctl install --offline` skips the cluster-reachability detection probes. The preflight Job still runs against the target cluster as part of `helm install`.
 
 ---
 
@@ -113,7 +105,7 @@ That runs preflight, diffs the composed values against the live release, and inv
 | Component | Why you'd add it | When it's needed |
 |---|---|---|
 | gVisor (`runsc`) | Runs each pod inside a user-space kernel that intercepts system calls, so a compromised agent can't reach the host kernel. This is the default isolation profile. | Recommended for all production workloads. |
-| Kata Containers | Runs each pod in a full lightweight VM, for the strongest isolation Lenny supports. | High-risk workloads, partially trusted code, or multi-tenant clusters where pods may be reused across tenants. |
+| Kata Containers | Runs each pod in a full lightweight VM, for the strongest isolation Lenny supports. | High-risk workloads, partially trusted code, or multi-tenant clusters. A pod is never reused across tenants, because a recycled pod keeps state the scrub does not reach and the tenant pin applies on every pool; `recycle.allowCrossTenantReuse: true` applies only to the sequential-reuse path under this profile. |
 | OPA Gatekeeper or Kyverno | Admission policies that keep untrusted pods on the right sandboxing profile and prevent accidental privilege escalation. | Required for production. |
 | External Secrets Operator | Syncs LLM keys and connector secrets from an external vault -- AWS Secrets Manager, HashiCorp Vault, GCP Secret Manager. | Large deployments with hundreds of credentials per pool, or when your secrets already live in an external vault. |
 | KEDA | Scales deployments off a direct Prometheus query, bypassing the Prometheus Adapter cache for faster reactions to load. | Optional alternative to the Prometheus Adapter. |
@@ -358,6 +350,7 @@ The bootstrap mechanism seeds Day-1 configuration into an empty Postgres databas
 | Resource exists, identical | **No-op** | No-op |
 | Resource exists, differs | **Skip** (logged as WARN) | **Update** (PUT with overwrite) |
 | Security-critical field change | **Error** (blocked) | **Error** (blocked) |
+| Tenant entry whose `id` is the reserved `platform`, or that names an existing tenant in the `deleting` or `deleted` state | **Error** (no tenant is created or changed; exit code 2, or 1 when no entry succeeds) | **Error** (blocked) |
 
 ### Dry-Run Mode
 
@@ -377,7 +370,7 @@ kubectl get secret lenny-admin-token -n lenny-system \
   -o jsonpath='{.data.token}' | base64 -d
 ```
 
-To rotate the initial admin token (internally calls `POST /v1/oauth/token` with an RFC 8693 token-exchange grant and patches the `lenny-admin-token` Kubernetes Secret):
+To rotate the initial admin token, run the command below. The CLI calls the dedicated `POST /v1/admin/users/{user}/rotate-token` route, and the gateway mints the new token in process, patches the `lenny-admin-token` Kubernetes Secret with it, and revokes the prior token. The CLI does not mint the token or patch the Secret.
 
 ```bash
 lenny-ctl admin users rotate-token --user lenny-admin
@@ -475,7 +468,7 @@ For production deployments, cloud-managed services are recommended over self-man
 | Amazon RDS (PostgreSQL) | Session state, tokens, audit log | Multi-AZ, `db.r6g.xlarge` at Growth size, envelope encryption via AWS KMS |
 | Amazon ElastiCache (Redis) | Leases, quota counters, routing cache | Cluster mode, TLS in-transit, AUTH token |
 | Amazon S3 | Workspace artifacts and checkpoints | Versioning on, lifecycle rules to expire non-current versions |
-| AWS KMS | Envelope encryption of cluster secrets and data-encryption keys | Used for etcd secret encryption and for wrapping the gateway's data-encryption keys |
+| AWS KMS | Envelope encryption of cluster secrets and data-encryption keys | Used for etcd secret encryption, for wrapping the gateway's data-encryption keys, and for ES256 signing of Lenny-issued JWTs |
 | Amazon RDS Proxy | Connection pooling | Use instead of self-managed PgBouncer; set `postgres.connectionPooler: external` |
 
 ### GCP
@@ -485,7 +478,7 @@ For production deployments, cloud-managed services are recommended over self-man
 | Cloud SQL (PostgreSQL) | Session state, tokens, audit log | HA, `db-custom-4-16384` at Growth size, CMEK via Cloud KMS |
 | Memorystore (Redis) | Leases, quota counters, routing cache | Standard tier (HA), TLS, AUTH |
 | Google Cloud Storage | Workspace artifacts and checkpoints | Versioning on, lifecycle rules |
-| Cloud KMS | Envelope encryption of data-encryption keys | Used for wrapping the gateway's data-encryption keys |
+| Cloud KMS | Envelope encryption of data-encryption keys | Used for wrapping the gateway's data-encryption keys and for ES256 signing of Lenny-issued JWTs |
 | Cloud SQL Auth Proxy | Connection pooling | Use instead of PgBouncer; set `postgres.connectionPooler: external` |
 
 ### Azure
@@ -495,7 +488,7 @@ For production deployments, cloud-managed services are recommended over self-man
 | Azure Database for PostgreSQL | Session state, tokens, audit log | Flexible server with HA, `Standard_D4s_v3` at Growth size |
 | Azure Cache for Redis | Leases, quota counters, routing cache | Premium tier (HA), TLS, access keys |
 | Azure Blob Storage | Workspace artifacts and checkpoints | Versioning on, lifecycle management rules |
-| Azure Key Vault | Envelope encryption of cluster secrets and data-encryption keys | Used for etcd secret encryption and for wrapping the gateway's data-encryption keys |
+| Azure Key Vault | Envelope encryption of cluster secrets and data-encryption keys | Used for etcd secret encryption, for wrapping the gateway's data-encryption keys, and for ES256 signing of Lenny-issued JWTs |
 
 ### When using a cloud-managed database proxy
 

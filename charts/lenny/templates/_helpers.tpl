@@ -1,0 +1,677 @@
+{{/*
+lenny.labels renders the common label set applied to every resource
+the chart emits. Callers invoke it with the root context, for example
+`{{- include "lenny.labels" $ | nindent 4 }}`.
+*/}}
+{{- define "lenny.labels" -}}
+helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+app.kubernetes.io/name: {{ .Chart.Name }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+{{- end -}}
+
+{{/*
+lenny.componentImage composes a Lenny component image reference from the
+single-source platform.registry.* values (§17.8.6: "the gateway,
+lenny-ops, controllers, lenny-backup, and the warm-pool controller all
+honor the same registry configuration"). It mirrors the
+pkg/common/registry ImageResolver precedence so a chart render and a
+binary resolve the same way. Invoke with a dict carrying the root
+context, the component short name, and the per-component image block:
+
+  {{ include "lenny.componentImage" (dict "root" $ "name" "lenny-gateway" "image" .Values.gateway.image) }}
+
+Precedence:
+  1. platform.registry.overrides[<name>] — a complete reference wins.
+  2. platform.registry.url + "/" + <name> + ":" + tag — the single source.
+  3. The component image.repository + ":" + tag when registry.url is empty,
+     so a registry-less custom values file still renders.
+The tag defaults to .Chart.AppVersion when the component pins none.
+*/}}
+{{- define "lenny.componentImage" -}}
+{{- $root := .root -}}
+{{- $name := .name -}}
+{{- $image := .image | default dict -}}
+{{- $reg := $root.Values.platform.registry -}}
+{{- $overrides := $reg.overrides | default dict -}}
+{{- $tag := $image.tag | default $root.Chart.AppVersion -}}
+{{- if hasKey $overrides $name -}}
+{{- index $overrides $name -}}
+{{- else -}}
+{{- $url := $reg.url | default "" | trimSuffix "/" -}}
+{{- if $url -}}
+{{- printf "%s/%s:%s" $url $name $tag -}}
+{{- else -}}
+{{- printf "%s:%s" $image.repository $tag -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+lenny.agentNamespaceNames renders the agentNamespaces entries' names as one
+comma-separated string, the form the lenny-controller and lenny-preflight
+--agent-namespaces flags parse. It renders an empty string when
+agentNamespaces is empty. Invoke with the root context:
+
+  {{ include "lenny.agentNamespaceNames" . }}
+*/}}
+{{- define "lenny.agentNamespaceNames" -}}
+{{- $names := list -}}
+{{- range .Values.agentNamespaces -}}
+{{- $names = append $names .name -}}
+{{- end -}}
+{{- join "," $names -}}
+{{- end -}}
+
+{{/*
+lenny.imagePullSecrets renders the imagePullSecrets list for a Lenny
+component pod spec from platform.registry.pullSecretName (§17.8.6). It
+emits nothing when no pull secret is configured, so a public-registry
+install renders an unchanged pod spec. Invoke with the root context at
+the pod-spec indent, for example:
+
+  {{- include "lenny.imagePullSecrets" $ | nindent 6 }}
+*/}}
+{{- define "lenny.imagePullSecrets" -}}
+{{- with .Values.platform.registry.pullSecretName }}
+imagePullSecrets:
+  - name: {{ . }}
+{{- end }}
+{{- end -}}
+
+{{/*
+lenny.controllerAntiAffinity renders the §17.8.2 controller-tuning
+"Controller pod anti-affinity" block so the WarmPoolController and
+PoolScalingController leaders schedule onto different nodes. The shared
+controller.antiAffinity value selects the mode:
+  - "preferred" (Tier 1, advisory): preferredDuringScheduling, weight 100.
+  - "required"  (Tier 2/3): requiredDuringScheduling — the two leaders
+    must not co-locate, bounding the simultaneous-failover blast radius.
+Invoke with a dict carrying the root context and the peer component the
+pod schedules away from:
+
+  {{- include "lenny.controllerAntiAffinity" (dict "root" . "peer" "pool-scaling-controller") | nindent 6 }}
+*/}}
+{{- define "lenny.controllerAntiAffinity" -}}
+{{- $root := .root -}}
+{{- $peer := .peer -}}
+{{- $mode := $root.Values.controller.antiAffinity | default "preferred" -}}
+affinity:
+  podAntiAffinity:
+{{- if eq $mode "required" }}
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            lenny.dev/component: {{ $peer }}
+        topologyKey: kubernetes.io/hostname
+{{- else }}
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              lenny.dev/component: {{ $peer }}
+          topologyKey: kubernetes.io/hostname
+{{- end }}
+{{- end -}}
+
+{{/*
+lenny.autoscaling.metric.* templates are the §4.1 SCL-026 canonical
+HPA metric-role mapping. The gateway HPA and KEDA ScaledObject
+(autoscaling-gateway.yaml) reference every scale metric by its named
+role through these templates, so a metric rename is a single-line edit
+here rather than a sweep across the chart.
+
+  primaryScaleOut — §4.1 primary HPA scale-out trigger (queue depth).
+  secondaryMetric — §4.1 secondary HPA metric (active streams).
+
+lenny_gateway_active_sessions is intentionally absent: §4.1 SCL-026
+classifies it as an alert-only capacity-ceiling signal, never an HPA
+trigger.
+*/}}
+{{- define "lenny.autoscaling.metric.primaryScaleOut" -}}
+lenny_gateway_request_queue_depth
+{{- end -}}
+{{- define "lenny.autoscaling.metric.secondaryMetric" -}}
+lenny_gateway_active_streams
+{{- end -}}
+
+{{/*
+lenny.mtlsLeafCertificate renders one §10.3 internal-control-plane
+cert-manager Certificate. The certificate has a DNS SAN of
+<name>.<namespace>.svc (and the cluster-FQDN form), the §10.3 24h leaf
+TTL, and an issuerRef pointing at the lenny-mtls-ca CA Issuer so the
+leaf chains to the cluster-internal CA.
+
+Invoke with a dict carrying the root context, the component's Service
+name, and a short component label:
+
+    {{- include "lenny.mtlsLeafCertificate" (dict "root" $ "name" "lenny-gateway" "component" "gateway") }}
+
+The resulting Secret is named <name>-tls.
+*/}}
+{{- define "lenny.mtlsLeafCertificate" -}}
+{{- $ := .root -}}
+{{- $name := .name -}}
+{{- $component := .component -}}
+{{- $ns := $.Release.Namespace -}}
+{{- $m := $.Values.mtls -}}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $name }}-tls
+  namespace: {{ $ns }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+    lenny.dev/component: mtls-pki
+spec:
+  secretName: {{ $name }}-tls
+  duration: {{ printf "%dh" (int $m.leafDurationHours) }}
+  renewBefore: {{ printf "%dh" (int $m.leafRenewBeforeHours) }}
+  commonName: {{ $name }}.{{ $ns }}.svc
+  dnsNames:
+    - {{ $name }}.{{ $ns }}.svc
+    - {{ $name }}.{{ $ns }}.svc.cluster.local
+  usages:
+    - server auth
+    - client auth
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: lenny-mtls-ca
+    kind: Issuer
+{{- end -}}
+
+{{/*
+lenny.interceptorCertificate renders one §10.3 NET-063 in-cluster
+interceptor cert-manager Certificate (spec line 327). The certificate
+lands in the interceptor's own namespace and carries two SANs: a SPIFFE
+URI spiffe://<trust-domain>/interceptor/<namespace>/<serviceName> and a
+DNS SAN <serviceName>.<namespace>.svc(.clusterDomain). The gateway
+validates both on every outbound handshake (NET-063): the SPIFFE URI via
+the InterceptorPeerVerifier and the DNS SAN via the pinned
+tls.Config.ServerName.
+
+Invoke with a dict carrying the root context and the interceptor
+namespace:
+
+    {{- include "lenny.interceptorCertificate" (dict "root" $ "namespace" "acme-interceptors") }}
+*/}}
+{{- define "lenny.interceptorCertificate" -}}
+{{- $ := .root -}}
+{{- $namespace := .namespace -}}
+{{- $m := $.Values.mtls -}}
+{{- $ic := $m.interceptorCertificates -}}
+{{- $trustDomain := required "global.spiffeTrustDomain is required to render the §10.3 NET-063 interceptor Certificate (it is the host of the spiffe:// URI SAN); set it to a deployment-unique value." $.Values.global.spiffeTrustDomain -}}
+{{- $svc := $ic.serviceName -}}
+{{- $clusterDomain := $ic.clusterDomain -}}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: lenny-interceptor-tls
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+    lenny.dev/component: mtls-pki
+spec:
+  secretName: lenny-interceptor-tls
+  duration: {{ printf "%dh" (int $m.leafDurationHours) }}
+  renewBefore: {{ printf "%dh" (int $m.leafRenewBeforeHours) }}
+  commonName: {{ $svc }}.{{ $namespace }}.svc
+  dnsNames:
+    - {{ $svc }}.{{ $namespace }}.svc
+    - {{ $svc }}.{{ $namespace }}.svc.{{ $clusterDomain }}
+  uris:
+    - spiffe://{{ $trustDomain }}/interceptor/{{ $namespace }}/{{ $svc }}
+  usages:
+    - server auth
+    - client auth
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: {{ $ic.issuerRef.name }}
+    kind: {{ $ic.issuerRef.kind }}
+{{- end -}}
+
+{{/*
+lenny.monitoring.validateFormat fails the render when monitoring.format
+is not one of the §16.9 / §25.13 allow-list values (prometheusrule,
+configmap, both). Without this guard a typo (e.g. "prometheus-rule")
+silently renders no alerting manifest and no scrape configuration, with
+no warning. Invoked from prometheusrule.yaml, which Helm always
+processes, so the check runs on every render. F-16.9.8.
+*/}}
+{{- define "lenny.monitoring.validateFormat" -}}
+{{- $format := .Values.monitoring.format -}}
+{{- $allowed := list "prometheusrule" "configmap" "both" -}}
+{{- if not (has $format $allowed) -}}
+{{- fail (printf "monitoring.format must be one of [prometheusrule configmap both]; got %q" $format) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+lenny.monitoring.operatorPresent reports "true" when the Prometheus
+Operator CRD API group (monitoring.coreos.com/v1) is registered in the
+target cluster, else "". Render-time detection via
+.Capabilities.APIVersions, which reflects the live cluster during
+`helm install`/`helm upgrade` and the built-in set during `helm template`
+(where `--api-versions monitoring.coreos.com/v1` declares it explicitly).
+This is the §16.9 R8 CRD-presence preflight: a chart render targeting the
+operator CRDs first confirms they exist. F-16.9.4.
+*/}}
+{{- define "lenny.monitoring.operatorPresent" -}}
+{{- if .Capabilities.APIVersions.Has "monitoring.coreos.com/v1" -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+lenny.monitoring.effectiveFormat resolves monitoring.format to the value
+actually rendered. When the configured format selects the Prometheus
+Operator PrometheusRule CRD (prometheusrule or both) but the operator is
+absent, it degrades to "configmap" so `kubectl apply` does not fail on a
+missing PrometheusRule CRD. This is the §16.9 R8 automatic fallback. The
+format is validated against the allow-list first. F-16.9.4.
+*/}}
+{{- define "lenny.monitoring.effectiveFormat" -}}
+{{- include "lenny.monitoring.validateFormat" . -}}
+{{- $format := .Values.monitoring.format -}}
+{{- $operator := include "lenny.monitoring.operatorPresent" . -}}
+{{- if and (or (eq $format "prometheusrule") (eq $format "both")) (not $operator) -}}
+configmap
+{{- else -}}
+{{- $format -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+lenny.monitoring.renderMonitors reports "true" when the chart should
+render the §16.9 ServiceMonitor and PodMonitor. The Prometheus Operator
+CRDs MUST be present, and either monitoring.format selects the operator
+CRDs (prometheusrule/both) or monitoring.serviceMonitor.enabled forces
+them on. Collapsing the scrape-CRD gate onto monitoring.format (F-16.9.6)
+is safe because the operator-presence check (F-16.9.4) fails closed when
+the CRDs are absent, so a `format: prometheusrule` install on a cluster
+without the operator renders neither a PrometheusRule nor scrape monitors.
+F-16.9.4, F-16.9.6.
+*/}}
+{{- define "lenny.monitoring.renderMonitors" -}}
+{{- $operator := include "lenny.monitoring.operatorPresent" . -}}
+{{- $format := .Values.monitoring.format -}}
+{{- $formatSelects := or (eq $format "prometheusrule") (eq $format "both") -}}
+{{- if and $operator (or $formatSelects .Values.monitoring.serviceMonitor.enabled) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+lenny.connectionPooler resolves the effective Postgres connection-pooler
+posture. An explicit postgres.connectionPooler wins; otherwise it
+defaults to "external" when backends is "cloud-managed" (so a
+cloud-managed install never silently runs without the lenny_tenant_guard
+trigger) and "pgbouncer" otherwise. The result is validated against the
+§17.9.3 allow-list, so a typo aborts the render rather than silently
+disabling the cloud-pooler defense.
+spec: §12.3 / §17.9.3.
+*/}}
+{{- define "lenny.connectionPooler" -}}
+{{- $explicit := (.Values.postgres | default dict).connectionPooler | default "" -}}
+{{- $effective := $explicit | default (ternary "external" "pgbouncer" (eq (.Values.backends | default "") "cloud-managed")) -}}
+{{- if not (or (eq $effective "pgbouncer") (eq $effective "external")) -}}
+{{- fail (printf "§17.9.3: postgres.connectionPooler must be \"pgbouncer\" or \"external\", got %q" $effective) -}}
+{{- end -}}
+{{- $effective -}}
+{{- end -}}
+
+{{/*
+lenny.poolerMode maps the effective connection-pooler posture to the
+gateway's LENNY_POOLER_MODE env. "external" (a managed out-of-process
+pooler that cannot run the connect_query __unset__ sentinel) stays
+"external"; the in-cluster pooler is "transactional". The gateway reads
+this to decide whether to enforce the §12.3 lenny_tenant_guard
+startup refusal, so deriving it from the same connectionPooler value the
+preflight check uses keeps the install-time and runtime defenses
+consistent.
+spec: §12.3 / §4.2.
+*/}}
+{{- define "lenny.poolerMode" -}}
+{{- if eq (include "lenny.connectionPooler" .) "external" -}}
+external
+{{- else -}}
+transactional
+{{- end -}}
+{{- end -}}
+
+{{/*
+lenny.redisProvider resolves and validates the §17.9.3 Redis topology
+selector, returning the effective provider ("external", "sentinel", or
+"cluster"). An explicit redis.provider is validated against the
+allow-list and against the fields the chosen topology requires (sentinel
+needs redis.sentinels + redis.sentinelMaster; cluster needs
+redis.cluster.addrs). An empty redis.provider resolves from the
+configured fields — cluster.addrs selects "cluster", a non-empty
+sentinels list selects "sentinel", otherwise "external" — so existing
+url-only and cluster-only values files resolve exactly as before. The
+external topology imposes no requirement: an empty url is the §17.4
+in-memory dev posture. Templates use this helper as the single source of
+truth for which connection env block to render.
+spec: §17.9.3.
+*/}}
+{{- define "lenny.redisProvider" -}}
+{{- $redis := .Values.redis | default dict -}}
+{{- $cluster := $redis.cluster | default dict -}}
+{{- $hasClusterAddrs := ne ($cluster.addrs | default "" | toString) "" -}}
+{{- $hasSentinels := and (hasKey $redis "sentinels") $redis.sentinels -}}
+{{- $provider := $redis.provider | default "" -}}
+{{- if eq $provider "" -}}
+{{- if $hasClusterAddrs -}}{{- $provider = "cluster" -}}
+{{- else if $hasSentinels -}}{{- $provider = "sentinel" -}}
+{{- else -}}{{- $provider = "external" -}}{{- end -}}
+{{- else if not (or (eq $provider "external") (eq $provider "sentinel") (eq $provider "cluster")) -}}
+{{- fail (printf "§17.9.3: redis.provider must be \"external\", \"sentinel\", or \"cluster\", got %q" $provider) -}}
+{{- end -}}
+{{- if eq $provider "sentinel" -}}
+{{- if not $hasSentinels -}}
+{{- fail "§17.9.3: redis.provider=sentinel requires a non-empty redis.sentinels list" -}}
+{{- end -}}
+{{- if eq ($redis.sentinelMaster | default "") "" -}}
+{{- fail "§17.9.3: redis.provider=sentinel requires redis.sentinelMaster" -}}
+{{- end -}}
+{{- end -}}
+{{- if and (eq $provider "cluster") (not $hasClusterAddrs) -}}
+{{- fail "§17.9.3: redis.provider=cluster requires redis.cluster.addrs" -}}
+{{- end -}}
+{{- $provider -}}
+{{- end -}}
+
+{{/*
+lenny.selfManagedBackendCheck signals the §17.3 RPO/RTO posture for a
+self-managed install. §17.9.5 makes the self-managed backend dimension a
+first-class chart path: a `backends: self-managed` deployment must either
+render each backend in-cluster (postgres.deploy / redis.deploy /
+minio.deploy) or point at an out-of-band self-managed endpoint
+(postgres.dsn / redis.sentinels|cluster.addrs / minio.endpoint). The
+check fails the render when a backend is neither, so the chart can no
+longer silently install with no Postgres, Redis, or object store.
+
+It also enforces the §17.3 RPO/RTO targets the table requires: a
+chart-managed Postgres must use synchronous replication (RPO=0), and a
+self-managed Redis must use the Sentinel or Cluster topology (failover),
+never a single external endpoint with no failover path.
+
+The check is a no-op for `cloud-managed` (provider-native HA) and
+`embedded` (the developer `lenny up` mode). It emits no object; the
+self-managed-backends-guard template evaluates it at render time.
+spec: §17.3, §17.9.5.
+*/}}
+{{- define "lenny.selfManagedBackendCheck" -}}
+{{- if eq (.Values.backends | default "") "self-managed" -}}
+{{- $pg := .Values.postgres | default dict -}}
+{{- $pgDeploy := $pg.deploy | default false -}}
+{{- $pgDSN := $pg.dsn | default "" | toString -}}
+{{- if and (not $pgDeploy) (eq $pgDSN "") -}}
+{{- fail "§17.9.5: backends=self-managed requires a Postgres backend: set postgres.deploy=true to render a CloudNativePG cluster (§17.3 RPO=0 sync replication) or point postgres.dsn at an out-of-band self-managed Postgres." -}}
+{{- end -}}
+{{- if and $pgDeploy (not (($pg.selfManaged | default dict).synchronous | default false)) -}}
+{{- fail "§17.3: a chart-managed self-managed Postgres must use synchronous replication to meet the RPO=0 target; set postgres.selfManaged.synchronous: true." -}}
+{{- end -}}
+{{- $redis := .Values.redis | default dict -}}
+{{- $redisProvider := include "lenny.redisProvider" . -}}
+{{- if eq $redisProvider "external" -}}
+{{- fail "§17.3: backends=self-managed requires a Redis failover topology; set redis.provider to \"sentinel\" or \"cluster\" (a single external endpoint has no Sentinel failover path). Set redis.deploy=true to render it in-cluster or point at an out-of-band Sentinel/Cluster." -}}
+{{- end -}}
+{{- $minio := .Values.minio | default dict -}}
+{{- if and (not ($minio.deploy | default false)) (eq ($minio.endpoint | default "") "") -}}
+{{- fail "§17.9.5: backends=self-managed requires an object store: set minio.deploy=true to render an erasure-coded MinIO StatefulSet or point minio.endpoint at an out-of-band MinIO." -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+lenny.gatewayLogLevel maps the §17.9.1 environment dimension to the
+gateway's LENNY_LOG_LEVEL. The local and dev environments render
+"debug" verbosity; staging and prod render "info". An empty environment
+yields "info", matching the gateway's own LENNY_LOG_LEVEL default, so a
+stock render is unchanged.
+spec: §17.9.1; §16.4.
+*/}}
+{{- define "lenny.gatewayLogLevel" -}}
+{{- $env := .Values.environment | default "" -}}
+{{- if or (eq $env "local") (eq $env "dev") -}}
+debug
+{{- else -}}
+info
+{{- end -}}
+{{- end -}}
+
+{{/*
+lenny.clusterType validates and returns the §17.9.1 cluster-type
+composition dimension. An empty value is the docker-compose answer
+file's cluster=n/a case and passes through unchanged; a non-empty value
+must be one of the §17.9.1 cluster types so a typo in a curated answer
+file (e.g. cluster: eks-prod) fails the render rather than rendering an
+install that silently ignores the dimension.
+spec: §17.9.1. F-17.9.1.
+*/}}
+{{- define "lenny.clusterType" -}}
+{{- $c := .Values.cluster | default "" -}}
+{{- if and (ne $c "") (not (has $c (list "laptop" "eks" "gke" "aks" "openshift" "vanilla"))) -}}
+{{- fail (printf "§17.9.1: cluster must be one of laptop, eks, gke, aks, openshift, vanilla (or empty), got %q" $c) -}}
+{{- end -}}
+{{- $c -}}
+{{- end -}}
+
+{{/*
+lenny.seededIsolationProfile maps the §17.9.1 isolationProfile
+composition dimension (baseline | sandboxed | hypervisor) to the §5.3
+runtime isolation profile the seeded reference runtimes carry: baseline
+-> standard (runc), sandboxed -> sandboxed (gVisor), hypervisor ->
+microvm (Kata). An empty dimension defaults to sandboxed, preserving the
+historical seeded-runtime posture. An unrecognized value fails the
+render so a typo cannot silently drop every seeded runtime onto the
+wrong RuntimeClass.
+spec: §17.9.1; §5.3. F-17.9.10.
+*/}}
+{{- define "lenny.seededIsolationProfile" -}}
+{{- $p := .Values.isolationProfile | default "sandboxed" -}}
+{{- if eq $p "baseline" -}}standard
+{{- else if eq $p "sandboxed" -}}sandboxed
+{{- else if eq $p "hypervisor" -}}microvm
+{{- else -}}
+{{- fail (printf "§17.9.1: isolationProfile must be one of baseline, sandboxed, hypervisor, got %q" $p) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+lenny.artifactReplicationConfigJSON renders the §25.11 minio.artifactBackup
+Helm values into the JSON the gateway's --artifact-replication-config flag
+(LENNY_ARTIFACT_REPLICATION_CONFIG) decodes into replication.Config. It
+emits the empty string when replication is disabled so the gateway omits
+the env and runs no replication controller.
+
+Two topologies (§25.11 "Required Helm values"):
+  - per-region: each minio.regions.<region>.artifactBackup becomes a
+    region entry with dataResidencyRegion = <region> (cross-region
+    replication is prohibited, so the destination jurisdiction tag MUST
+    equal the region key).
+  - single-region: minio.artifactBackup.enabled true becomes one "default"
+    region with no residency constraint and sourceBucket = minio.bucket.
+Per-region entries take precedence; when any exist the single-region block
+is ignored. The gateway runs the §25.11 startup CONFIG_INVALID validation
+on the decoded config, so an incomplete residency-region target is
+rejected fail-closed at process start.
+spec: §25.11. F-25.11.9.
+*/}}
+{{- define "lenny.artifactReplicationConfigJSON" -}}
+{{- $minio := .Values.minio | default dict -}}
+{{- $ab := $minio.artifactBackup | default dict -}}
+{{- $regionsIn := $minio.regions | default dict -}}
+{{- $regionList := list -}}
+{{- range $rk, $rv := $regionsIn -}}
+{{- $rab := (default dict $rv).artifactBackup -}}
+{{- if $rab -}}
+{{- $rt := (default dict $rab).target | default dict -}}
+{{- $target := dict "endpoint" ($rt.endpoint | default "") "bucket" ($rt.bucket | default "") "accessCredentialSecret" ($rt.accessCredentialSecret | default "") "kmsKeyId" ($rt.kmsKeyId | default "") -}}
+{{- $entry := dict "region" $rk "sourceBucket" ((default dict $rv).sourceBucket | default $minio.bucket | default "") "dataResidencyRegion" $rk "target" $target "allowedDestinationCidrs" ((default dict $rab).allowedDestinationCidrs | default (list)) -}}
+{{- $regionList = append $regionList $entry -}}
+{{- end -}}
+{{- end -}}
+{{- $enabled := false -}}
+{{- if gt (len $regionList) 0 -}}
+{{- $enabled = true -}}
+{{- else if $ab.enabled -}}
+{{- $enabled = true -}}
+{{- $t := $ab.target | default dict -}}
+{{- $target := dict "endpoint" ($t.endpoint | default "") "bucket" ($t.bucket | default "") "accessCredentialSecret" ($t.accessCredentialSecret | default "") "kmsKeyId" ($t.kmsKeyId | default "") -}}
+{{- $entry := dict "region" "default" "sourceBucket" ($minio.bucket | default "") "dataResidencyRegion" "" "target" $target "allowedDestinationCidrs" (list) -}}
+{{- $regionList = append $regionList $entry -}}
+{{- end -}}
+{{- if $enabled -}}
+{{- if eq ($minio.endpoint | default "") "" -}}
+{{- fail "§25.11: minio.artifactBackup requires minio.endpoint (the source ArtifactStore cluster the gateway replicates from)." -}}
+{{- end -}}
+{{- $cfg := dict "enabled" true "versioning" (ternary $ab.versioning true (hasKey $ab "versioning")) "replicationLagRpoSeconds" (int ($ab.replicationLagRpoSeconds | default 900)) "residencyCheckIntervalSeconds" (int ($ab.residencyCheckIntervalSeconds | default 300)) "residencyAuditSamplingWindowSeconds" (int ($ab.residencyAuditSamplingWindowSeconds | default 3600)) "regions" $regionList -}}
+{{- $cfg | toJson -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+lenny.kmsLocal returns "true" when kms.provider selects the local provider
+and the empty string otherwise. An unset provider is local, matching the
+binaries' providerflags default.
+spec: §10.2 "Signing key and algorithm", §17.4.
+*/}}
+{{- define "lenny.kmsLocal" -}}
+{{- $kms := .Values.kms | default dict -}}
+{{- if eq ($kms.provider | default "local") "local" -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/*
+lenny.kmsMasterKeySecretName returns the name of the Secret that holds the
+local provider's master key: kms.masterKeySecret when set, and otherwise the
+Secret kms-master-key-secret.yaml generates.
+spec: §17.4 (the local provider is keyed by a master key Secret).
+*/}}
+{{- define "lenny.kmsMasterKeySecretName" -}}
+{{- $kms := .Values.kms | default dict -}}
+{{- $kms.masterKeySecret | default "lenny-kms-master-key" -}}
+{{- end -}}
+
+{{/*
+lenny.kmsArgs renders the KMS provider flags that lenny-gateway,
+lenny-token-service, and lenny-ops each receive, so every process that signs
+or verifies a Lenny-issued JWT resolves the same provider, aliases, and
+environment. Under the local provider it also passes --kms-master-key-file,
+which reads the shared master key Secret that lenny.kmsMasterKeyVolume mounts;
+every process therefore derives the same KEKs and the same ES256 signing key.
+Include it with nindent at the args list indentation.
+spec: §10.2 "Signing key and algorithm", §10.2 "Verifier key set and
+rotation", §17.4.
+*/}}
+{{- define "lenny.kmsArgs" -}}
+- --kms-provider={{ .Values.kms.provider }}
+- --environment={{ .Values.environment }}
+{{- with .Values.kms.aliases }}
+- --kms-alias={{ . }}
+{{- end }}
+{{- with .Values.kms.awsRegion }}
+- --kms-aws-region={{ . }}
+{{- end }}
+{{- with .Values.kms.azureVaultURL }}
+- --kms-azure-vault-url={{ . }}
+{{- end }}
+{{- if include "lenny.kmsLocal" . }}
+- --kms-master-key-file=/etc/lenny/kms/master-key
+{{- end }}
+{{- end -}}
+
+{{/*
+lenny.kmsEgressRule renders the KMS endpoint egress rule (TCP 443 to
+kms.endpointCIDR) that allow-gateway-egress and lenny-ops-egress carry
+whenever kms.provider is not local, and nothing under the local provider,
+which makes no KMS call. The gateway signs and both processes call
+GetPublicKey for the JWT verifier key set. Under a cloud provider the
+helper refuses to render while kms.endpointCIDR is 0.0.0.0/0 or ::/0:
+NetworkPolicy allows are additive, so an unrestricted 443 peer would
+cancel the private-range and IMDS excepts of the external HTTPS rules
+(NET-057). Include it with nindent at the egress list indentation.
+spec: §13.2.4 (Gateway row, lenny-ops row), §25.4 lenny-ops-egress.
+*/}}
+{{- define "lenny.kmsEgressRule" -}}
+{{- if not (include "lenny.kmsLocal" .) -}}
+{{- $kms := .Values.kms | default dict -}}
+{{- $cidr := trim ($kms.endpointCIDR | default "" | toString) -}}
+{{- if has $cidr (list "" "0.0.0.0/0" "::/0") -}}
+{{- fail (printf "kms.endpointCIDR is %q while kms.provider is %q: set it to the subnet of the provider's private KMS endpoint, because an unrestricted KMS egress peer cancels the external HTTPS excepts (§13.2.4)" $cidr $kms.provider) -}}
+{{- end -}}
+- to:
+    - ipBlock:
+        cidr: {{ $cidr | quote }}
+  ports:
+    - port: 443
+      protocol: TCP
+{{- end -}}
+{{- end -}}
+
+{{/*
+lenny.kmsMasterKeyVolumeMount and lenny.kmsMasterKeyVolume render the
+read-only mount of the local provider's master key Secret at
+/etc/lenny/kms. The volume is never optional: a pod whose master key Secret
+is absent does not start, rather than falling back to a per-process random
+key that no other process shares. A caller renders them only when
+lenny.kmsLocal is true, so neither appears under a cloud provider. Include
+them with nindent at the volumeMounts and volumes list indentation.
+spec: §17.4 (the local provider is keyed by a master key Secret).
+*/}}
+{{- define "lenny.kmsMasterKeyVolumeMount" -}}
+- name: kms-master-key
+  mountPath: /etc/lenny/kms
+  readOnly: true
+{{- end -}}
+
+{{- define "lenny.kmsMasterKeyVolume" -}}
+- name: kms-master-key
+  secret:
+    secretName: {{ include "lenny.kmsMasterKeySecretName" . }}
+    items:
+      - key: master-key
+        path: master-key
+{{- end -}}
+
+{{/*
+lenny.pgbouncer.upstreamHost resolves the Postgres host the PgBouncer
+[databases] entry routes to: pgbouncer.upstream.host when set, the
+CloudNativePG lenny-postgres-rw Service when postgres.deploy is true, and
+empty otherwise.
+spec: §12.3, §17.9.5.
+*/}}
+{{- define "lenny.pgbouncer.upstreamHost" -}}
+{{- $up := (.Values.pgbouncer.upstream | default dict) -}}
+{{- if $up.host -}}
+{{- $up.host -}}
+{{- else if .Values.postgres.deploy -}}
+lenny-postgres-rw
+{{- end -}}
+{{- end -}}
+
+{{/*
+lenny.pgbouncer.databaseURLRef resolves the Secret and key the PgBouncer
+DATABASE_URL reads, as "<secret>/<key>": pgbouncer.databaseURLSecret and
+pgbouncer.databaseURLKey when the secret is set, the CloudNativePG app
+Secret (lenny-postgres-app, key uri) when postgres.deploy is true, and
+empty otherwise.
+spec: §12.3, §17.9.5.
+*/}}
+{{- define "lenny.pgbouncer.databaseURLRef" -}}
+{{- $pb := .Values.pgbouncer -}}
+{{- if $pb.databaseURLSecret -}}
+{{- printf "%s/%s" $pb.databaseURLSecret $pb.databaseURLKey -}}
+{{- else if .Values.postgres.deploy -}}
+lenny-postgres-app/uri
+{{- end -}}
+{{- end -}}

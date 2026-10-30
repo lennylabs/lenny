@@ -1,0 +1,5 @@
+DROP POLICY IF EXISTS lenny_tenant_isolation ON session_partial_checkpoint_manifest;
+DROP TRIGGER IF EXISTS lenny_tenant_guard ON session_partial_checkpoint_manifest;
+DROP INDEX IF EXISTS idx_session_partial_checkpoint_manifest_deleted_at;
+DROP INDEX IF EXISTS idx_session_partial_checkpoint_manifest_active;
+DROP TABLE IF EXISTS session_partial_checkpoint_manifest;

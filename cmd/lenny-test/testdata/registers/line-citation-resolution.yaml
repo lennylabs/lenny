@@ -1,0 +1,5 @@
+version: 1
+entries:
+  - file: spec/10_gateway.md
+    citation: the runtime lifecycle channel
+    resolves: false

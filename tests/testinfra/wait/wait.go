@@ -36,19 +36,8 @@ var ErrPredicate = errors.New("predicate error")
 // supplied message.
 func For(t testing.TB, timeout time.Duration, message string, cond Condition) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for {
-		ok, err := cond()
-		if err != nil {
-			t.Fatalf("wait %q: predicate error: %v", message, err)
-		}
-		if ok {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("wait %q: timeout after %s", message, timeout)
-		}
-		time.Sleep(50 * time.Millisecond)
+	if err := forUntil(timeout, message, cond); err != nil {
+		t.Fatalf("%v", err)
 	}
 }
 
@@ -57,17 +46,38 @@ func For(t testing.TB, timeout time.Duration, message string, cond Condition) {
 // returning (payload, true, nil).
 func ForResult[T any](t testing.TB, timeout time.Duration, message string, cond func() (T, bool, error)) T {
 	t.Helper()
+	var captured T
+	err := forUntil(timeout, message, func() (bool, error) {
+		v, ok, err := cond()
+		if ok {
+			captured = v
+		}
+		return ok, err
+	})
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	return captured
+}
+
+// forUntil is the testing.TB-free body of For. It polls cond until the
+// predicate returns true, the predicate returns an error, or the
+// timeout expires, and surfaces the result as a returned error rather
+// than calling t.Fatalf. Splitting the loop out lets the predicate-error
+// and timeout-expiry paths be exercised in unit tests without a fake
+// *testing.T.
+func forUntil(timeout time.Duration, message string, cond Condition) error {
 	deadline := time.Now().Add(timeout)
 	for {
-		value, ok, err := cond()
+		ok, err := cond()
 		if err != nil {
-			t.Fatalf("wait %q: predicate error: %v", message, err)
+			return fmt.Errorf("wait %q: predicate error: %w", message, err)
 		}
 		if ok {
-			return value
+			return nil
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("wait %q: timeout after %s", message, timeout)
+			return fmt.Errorf("wait %q: timeout after %s", message, timeout)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

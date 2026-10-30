@@ -9,7 +9,6 @@ components:
   - gateway
 symptoms:
   - "seal operation retrying beyond maxWorkspaceSealDurationSeconds"
-  - "session completion blocked on finalize"
   - "artifact upload not progressing"
 tags:
   - workspace
@@ -26,12 +25,14 @@ related:
 
 # workspace-seal-stuck
 
-A workspace seal operation (the finalization step that snapshots and uploads the pod's workspace to object storage) is retrying past `maxWorkspaceSealDurationSeconds`. The session cannot reach `completed` state until the seal succeeds or fails definitively.
+A workspace seal operation (the finalization step that snapshots and uploads the pod's workspace to object storage) is retrying past `maxWorkspaceSealDurationSeconds`. The session already holds its terminal state while the seal retries. When the retry window ends without a successful export, the gateway relabels the session `failed` with reason `workspace_seal_timeout`.
 
 ## Trigger
 
 - `WorkspaceSealStuck` alert.
-- Session in state `sealing` past the configured max duration.
+- A seal of an ended session that retried until `maxWorkspaceSealDurationSeconds` elapsed. No session state marks a seal in progress, because the session already holds its terminal state.
+
+The `WorkspaceSealStuck` alert fires on the `outcome="timeout"` arm of `lenny_workspace_seal_duration_seconds` alone. A seal that ends on a permanent condition (a permanent adapter error, a session binding lost during the seal, or a deleted session row) records `outcome="permanent"` and returns immediately without retrying, so it does not fire this alert and does not hold the pod in `draining`. A `permanent`-outcome seal fails the session fast rather than retrying past the deadline; investigate it through the session's failure record, the gateway logs, and the adapter logs instead of this runbook.
 
 ## Diagnosis
 
@@ -89,13 +90,7 @@ Workspaces > `workspace.maxSealBytes` cannot be sealed. Options:
 
 If the pod itself is unhealthy and cannot stream the archive:
 
-<!-- access: lenny-ctl -->
-```bash
-lenny-ctl admin sessions fail-sealed <session-id> \
-  --reason "workspace_seal_failed" --retain-partial-upload
-```
-
-Marks the session as failed; any partial upload is retained for forensic review.
+The gateway ends such a seal when `maxWorkspaceSealDurationSeconds` elapses, relabels the session `failed` with reason `workspace_seal_timeout`, and releases the pod, or on a pool with `maxConcurrentSessions` above 1 cleans up and releases the session's slot. Force-terminating the session has no effect, because the session is already terminal. The platform retains any partial upload under the object-store forensic-retention policy; do not delete the partial object until the seal failure is diagnosed.
 
 ### Step 4 — Credential
 
@@ -108,7 +103,7 @@ If uploader credentials were revoked, rotate and confirm the uploader ServiceAcc
 GET /v1/admin/metrics?q=lenny_workspace_seal_duration_seconds&window=15m
 ```
 
-- No sessions in `sealing` past the max duration.
+- No new `outcome="timeout"` observations of `lenny_workspace_seal_duration_seconds`.
 - Seal p95 returns to baseline.
 - Alert clears.
 

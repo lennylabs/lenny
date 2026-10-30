@@ -3,7 +3,7 @@ layout: default
 title: "OAuth Token Exchange"
 parent: Tutorials
 nav_order: 15
-description: Use POST /v1/oauth/token to swap identity-provider tokens for Lenny access tokens, refresh access tokens, and rotate the admin token.
+description: Use POST /v1/oauth/token to swap identity-provider tokens for Lenny access tokens, refresh access tokens, and rotate a caller's own token.
 ---
 
 # OAuth Token Exchange
@@ -17,7 +17,7 @@ description: Use POST /v1/oauth/token to swap identity-provider tokens for Lenny
 
 1. **Swap an IdP token for a Lenny access token.** Your application already has a Google/Okta/Azure AD access token; exchange it for a Lenny token scoped to your tenant.
 2. **Refresh an access token that is about to expire.** Use the refresh token issued alongside the access token.
-3. **Rotate the admin token without restarting the gateway.** Run `lenny-ctl auth rotate-admin-token` (which hits the same endpoint) or call the endpoint directly with the current admin token.
+3. **Rotate a caller's own token without restarting the gateway.** Call the endpoint directly with the current token as the `subject_token`. This covers self and service-principal rotation. Rotating the bootstrap admin credential uses a dedicated route instead: `lenny-ctl admin users rotate-token --user lenny-admin` calls `POST /v1/admin/users/{user}/rotate-token`, and the gateway mints the new admin token in process and patches the `lenny-admin-token` Secret (see [Installation](../operator-guide/installation.md)).
 
 ## What this walkthrough will cover
 

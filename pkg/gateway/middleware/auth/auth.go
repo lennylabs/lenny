@@ -10,9 +10,10 @@
 //
 //   - Authorization: Bearer <jwt>  — the canonical RFC 6750 path
 //   - X-Lenny-Tenant-ID + X-Lenny-User-ID — dev-mode headers, only
-//     honoured when the Options.AllowDevHeaders flag is true; used
-//     by the existing tier-3 contract suites until they migrate to
-//     signed-token fixtures
+//     honoured when the Options.AllowDevHeaders flag is true, which the
+//     gateway sets only under --dev-mode. Without that flag the
+//     middleware deletes every client-sent identity header before any
+//     other processing.
 //
 // On rejection the middleware emits the §10.2 error envelopes:
 // TENANT_CLAIM_MISSING / TENANT_CLAIM_INVALID_FORMAT (401) and
@@ -23,11 +24,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/common/scopes"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 )
 
 // Principal captures the resolved caller identity attached to the
@@ -38,6 +43,84 @@ type Principal struct {
 	SessionID  string
 	CallerType string
 	Typ        auth.TokenType
+
+	// Roles carries the §10.2 RBAC roles claimed by this token, copied
+	// verbatim from the JWT roles claim (Bearer path) or parsed from
+	// the comma-separated X-Lenny-Roles dev header (dev-headers path).
+	Roles []auth.Role
+
+	// Groups carries the §10.6 OIDC groups claimed by this token, copied
+	// from the JWT groups claim (Bearer path) or parsed from the
+	// comma-separated X-Lenny-Groups dev header (dev-headers path, only
+	// under AllowDevRoles). Environment membership is resolved against
+	// it.
+	Groups []string
+
+	// Scopes is the §25.1 RFC 9068 scope claim parsed off the JWT.
+	// Handlers and the MCP adapter call Scopes.Matches(required) to
+	// enforce the per-endpoint x-lenny-scope from §15.1. An absent
+	// claim yields a zero Set whose Matches always returns true, which
+	// the spec maps to "no scope restriction beyond role". The dev-
+	// header path leaves Scopes zero (no scope narrowing in dev mode).
+	Scopes scopes.Set
+
+	// JTI is the caller bearer's JWT `jti` claim copied verbatim; the
+	// §13.3 revocation cache and the issued-token index key on it. It is
+	// empty on the pod path over LNK-GWCONTROL, which carries no
+	// Lenny-issued JWT, and under the dev-headers path (no JWT).
+	JTI string
+
+	// Origin is the §27.3 token-origin claim copied verbatim from the
+	// JWT `origin` field. It is "playground" on every session-capability
+	// JWT minted for a /playground/* request (all three playground auth
+	// modes), empty otherwise. Downstream consumers — the §27.6 session
+	// idle/duration caps the session server stamps at create time, the
+	// §27.8 origin=playground dashboard slice, and §11 policy rules —
+	// key on this value, which is why it must reach handlers as part of
+	// the resolved principal. Empty under the dev-headers path (no JWT).
+	// spec: §27.3. F-27.3.3.
+	Origin string
+
+	// Act is the RFC 8693 `act` claim of the caller's bearer, copied from
+	// the verified JWT. It is non-nil on an `a2a_delegation` child token
+	// and names the delegating actor, and nil on every bearer that
+	// carries no `act` claim, on the service-identity path, and under the
+	// dev-headers path. It is the source of the §15 CallerIdentity.Act
+	// projection adapters read.
+	// spec: §13.3 "Lenny JWT claim structure" (the `act` row); §15
+	// "Shared Adapter Types" CallerIdentity.Act.
+	Act *jwt.ActorClaim
+}
+
+// HasRole reports whether p holds r. Endpoints that gate behaviour on
+// a specific role (e.g. the §7.1 derive `allowIsolationDowngrade`
+// override requires `platform-admin`) call HasRole to authorise.
+func (p Principal) HasRole(r auth.Role) bool {
+	for _, q := range p.Roles {
+		if q == r {
+			return true
+		}
+	}
+	return false
+}
+
+// HasScope reports whether p's §25.1 scope claim permits the given
+// required scope (e.g. the handler's x-lenny-scope from §15.1).
+// An absent scope claim defers to the role ceiling — HasScope
+// returns true so the standard RBAC check still runs.
+func (p Principal) HasScope(required string) bool {
+	return p.Scopes.Matches(required)
+}
+
+// copyActor returns a copy of the `act` claim so a handler that edits the
+// principal cannot reach back into the verified claims, or nil when the
+// bearer carries no `act` claim.
+func copyActor(a *jwt.ActorClaim) *jwt.ActorClaim {
+	if a == nil {
+		return nil
+	}
+	c := *a
+	return &c
 }
 
 type principalCtxKey struct{}
@@ -73,16 +156,276 @@ type Options struct {
 	MultiTenant bool
 
 	// AllowDevHeaders, when true, permits the X-Lenny-Tenant-ID /
-	// X-Lenny-User-ID dev-mode headers as a transport. Convenient
-	// for the existing tier-3 contract suites that predate the JWT
-	// surface.
+	// X-Lenny-User-ID dev-mode headers as a transport. The gateway sets
+	// it only under --dev-mode. When false the middleware deletes the
+	// identity headers (X-Lenny-Tenant-ID, X-Lenny-User-ID, X-Lenny-Roles,
+	// and X-Lenny-Groups) from every request before any other processing,
+	// so a client-sent value never reaches a handler.
+	// spec: §10.2 (Authentication); §17.4 (dev mode).
 	AllowDevHeaders bool
 
+	// DevHeaderNamesTenant, when true and MultiTenant is false, lets the
+	// X-Lenny-Tenant-ID dev header name the request's tenant directly
+	// (format-checked against the §10.2 tenant_id pattern; an absent
+	// header resolves to the built-in "default" tenant). It applies to
+	// the dev-header transport only: the Bearer path keeps the §10.2
+	// single-tenant rule and ignores the tenant claim. The gateway sets
+	// it only in dev mode, alongside AllowDevHeaders, so the dev and
+	// integration suites can exercise more than one tenant against a
+	// single-tenant gateway. In multi-tenant mode it has no effect and
+	// the dev header is checked against Registry like a Bearer claim.
+	//
+	// spec: §10.2 (single-tenant claim extraction); §18 Phase 4 (the
+	// minimal gateway reads the tenant from X-Lenny-Tenant-ID, defaulting
+	// to `default`).
+	DevHeaderNamesTenant bool
+
+	// AllowDevRoles, when true, additionally honours the X-Lenny-Roles
+	// and X-Lenny-Groups dev headers so dev-mode callers can claim RBAC
+	// roles and §10.6 environment groups. SECURITY: This MUST be false
+	// in production — both headers are unauthenticated client-controlled
+	// values and X-Lenny-Roles admits self-claiming `platform-admin`.
+	// Production deployments leave this false (the dev-header path
+	// silently drops Roles and Groups) so RBAC and environment
+	// membership are anchored to the Bearer JWT only.
+	//
+	// AllowDevHeaders without AllowDevRoles is the recommended dev
+	// mode: tenant + user_id round-trip through headers for
+	// convenience, but role and group claims remain authenticated.
+	AllowDevRoles bool
+
 	// RequireAuth, when true, rejects requests that carry neither a
-	// Bearer token nor (under AllowDevHeaders) the dev tenant header.
-	// When false, unauthenticated requests pass through with no
-	// Principal on the context — useful for /healthz and similar.
+	// Bearer token nor (under AllowDevHeaders) the dev tenant header with
+	// 401 UNAUTHORIZED, except on a route PublicPath admits. When false,
+	// unauthenticated requests pass through with no Principal on the
+	// context. The gateway sets it outside dev mode so that no
+	// authenticated surface is reachable without credentials.
+	// spec: §10.2 (Authentication); §15.1 (UNAUTHORIZED).
 	RequireAuth bool
+
+	// PublicPath, when set, reports whether a request targets a route the
+	// specification serves without credentials, such as the liveness and
+	// readiness probes, the OpenAPI document, the JWK Set, or a public
+	// runtime metadata entry. Under RequireAuth such a request passes
+	// through with no Principal on the context instead of being refused.
+	// A request that does carry a Bearer token is still verified on a
+	// public route. nil treats every route as authenticated.
+	PublicPath func(*http.Request) bool
+
+	// Revocations, when set, is consulted after a Bearer JWT verifies:
+	// a token whose jti has been revoked is rejected even though its
+	// signature and expiry are still valid (§13.3 token revocation).
+	Revocations RevocationChecker
+
+	// RevocationFreshness, when set, reports whether the in-memory
+	// revocation set is too stale to trust because the replica cannot
+	// reach Postgres. §13.3 requires a replica that cannot reach
+	// Postgres to refuse validation (503 token_validation_unavailable)
+	// rather than honor a possibly-revoked token from a stale cache. It is
+	// wired only when Postgres backs the revocation rehydration; the dev
+	// path leaves it nil so an in-memory deployment does not fail closed.
+	// spec: §13.3. F-13.3.4.
+	RevocationFreshness RevocationFreshness
+
+	// PlaygroundRevocations, when set, is the §27.6 authoritative
+	// per-request revocation check for playground-origin bearers. It is
+	// consulted on the auth hot path for every verified Bearer whose
+	// `origin` claim is `playground` (the claim §27.3 stamps on every
+	// session-capability JWT minted through a /playground/* ingress
+	// path). A hit rejects with 401 UNAUTHORIZED and
+	// details.reason=bearer_revoked; a backing-store error fails closed
+	// with 503 REDIS_UNAVAILABLE rather than honoring the bearer.
+	// Non-playground bearers (no origin claim) never consult it.
+	// spec: §27.6 / §27.3.1. F-27.6.3 / F-27.3.1.
+	PlaygroundRevocations PlaygroundRevocationChecker
+
+	// RevocationScope, when set, limits the RevocationFreshness,
+	// Revocations, and PlaygroundRevocations checks to a verified bearer
+	// for which it returns true. lenny-ops sets it when its verifier also
+	// trusts the dev embedded-OIDC key, so the revocation set and its
+	// first-read gate apply only to Lenny-issued tokens the key set
+	// verified. nil applies the checks to every verified bearer.
+	// spec: §25.4 (The lenny-ops Service: Authentication, revocation set
+	// rule 6).
+	RevocationScope func(token string) bool
+
+	// AuthFailureSink, when set, receives §4.2
+	// audit events for every tenant-claim rejection
+	// (TENANT_CLAIM_MISSING, TENANT_NOT_FOUND, TENANT_CLAIM_INVALID_FORMAT).
+	// The middleware also writes an INFO log line carrying `user_id`
+	// and `jti` for traceability on every such rejection regardless of
+	// whether a sink is wired.
+	AuthFailureSink AuthFailureSink
+
+	// Clock returns the gateway clock instant the middleware stamps on
+	// `auth_failure` audit events. Defaults to time.Now when nil.
+	Clock func() time.Time
+
+	// Interceptors, when set, runs the §4.8 PreAuth interceptor chain
+	// after the principal is resolved and before the request reaches the
+	// inner handler. The built-in AuthEvaluator (priority 100) runs as
+	// the sole interceptor at this phase; external interceptors are
+	// rejected from PreAuth at registration (§4.8). A chain
+	// REJECT blocks the request with 403 INTERCEPTOR_REJECTED. nil skips
+	// the phase. spec: §4.8.
+	Interceptors *interceptor.Chain
+
+	// PlatformRoles, when set, resolves the §10.2
+	// platform-managed user→role mapping. The middleware consults it for
+	// every Bearer principal whose Subject is non-empty; when a mapping
+	// row exists for (TenantID, Subject), its Roles fully replace the
+	// roles claimed by the JWT, allowing tenant-admins to override
+	// OIDC-derived roles within their tenant. Absent the mapping the JWT
+	// roles claim stays authoritative.
+	// spec: §10.2. F-10.2.3.
+	PlatformRoles PlatformRoleResolver
+
+	// ServiceIdentity, when set, resolves a platform service account's
+	// bearer token into a Principal. §25.4 states that `lenny-ops` calls
+	// the gateway admin API as a regular authenticated HTTPS client using a
+	// dedicated service account holding the platform-admin role, through
+	// the gateway's standard RBAC. The credential that service account
+	// presents is a projected Kubernetes ServiceAccount token, which is not
+	// a Lenny-minted JWT and carries no roles claim, so the bearer chain
+	// consults this resolver when JWT verification rejects the token. Nil
+	// leaves the admin API reachable by Lenny-minted bearers only.
+	// spec: §25.4 ("Calling the Gateway").
+	ServiceIdentity ServiceIdentityResolver
+
+	// GroupIntrospector, when set, performs the §10.6 real-time
+	// group check. The middleware consults it for every verified Bearer.
+	// When the principal's tenant has identityProvider.introspectionEnabled
+	// set, the provider's RFC 7662 introspection endpoint supplies the
+	// authoritative group set, replacing the JWT groups claim; when the
+	// tenant leaves introspection off, the JWT groups stay authoritative.
+	// A transport/config failure or an inactive-token verdict fails closed
+	// (the operator enabled real-time checks for a security reason).
+	// spec: §10.6. F-10.6.8.
+	GroupIntrospector GroupIntrospector
+}
+
+// GroupIntrospector is the §10.6 real-time group check. The
+// auth middleware calls it for every verified Bearer; the introspection
+// package satisfies it over the tenant's RFC 7662 endpoint.
+type GroupIntrospector interface {
+	// IntrospectGroups returns the real-time group set for token under
+	// tenantID. enabled is false when the tenant has not turned on
+	// introspectionEnabled (the middleware keeps the JWT groups). When
+	// enabled is true: active is the RFC 7662 token-active verdict, groups
+	// is the authoritative group set, and a non-nil err is a config or
+	// transport failure the middleware fails closed on.
+	IntrospectGroups(ctx context.Context, tenantID, token string) (enabled, active bool, groups []string, err error)
+}
+
+// ServiceIdentity is the principal a platform service account is admitted
+// as. It carries the roles the deployment grants that account rather than
+// any claim the presented token makes about itself, so a pod cannot widen
+// its own authority by minting a token.
+// spec: §25.4 ("Calling the Gateway").
+type ServiceIdentity struct {
+	// Subject is the authenticated service-account username
+	// (`system:serviceaccount:<namespace>:<name>`).
+	Subject string
+	// TenantID is the tenant the service principal acts in.
+	TenantID string
+	// Roles are the §10.2 roles the deployment grants the account.
+	Roles []auth.Role
+}
+
+// ServiceIdentityResolver maps a service account's bearer token onto the
+// principal the deployment grants it. It is consulted only after the JWT
+// verifier has rejected the token, so an ordinary bearer never reaches it.
+//
+// Implementations fail closed: ok is true only when the token is
+// cryptographically authentic for this deployment and names an account the
+// deployment grants a role to. A non-nil error is a transport or
+// configuration failure, on which the middleware denies the request rather
+// than admitting it.
+// spec: §25.4 ("Calling the Gateway": all calls go through the gateway's
+// standard RBAC, with no backdoor and no loopback shortcut).
+type ServiceIdentityResolver interface {
+	ResolveService(ctx context.Context, token string) (identity ServiceIdentity, ok bool, err error)
+}
+
+// PlatformRoleResolver is the §10.2 platform-managed
+// user→role mapping. The auth middleware consults it for every
+// authenticated Bearer principal; when a mapping row exists, its Roles
+// override the JWT claim.
+type PlatformRoleResolver interface {
+	// ResolveRoles returns the platform-managed roles for
+	// (tenantID, subject). The found return is true when a mapping row
+	// exists for the principal (in which case Roles fully replaces the
+	// OIDC claim); false means no mapping exists and the OIDC claim
+	// stays authoritative. Implementations return the underlying error
+	// on transport-level failures so the middleware can fail closed.
+	ResolveRoles(ctx context.Context, tenantID, subject string) (roles []auth.Role, found bool, err error)
+}
+
+// RevocationChecker reports whether a token's jti has been revoked.
+type RevocationChecker interface {
+	IsRevoked(jti string) bool
+}
+
+// RevocationFreshness reports whether the local revocation set is too
+// stale to trust. The auth middleware consults it before honoring any
+// Bearer token: a stale set (the replica cannot reach Postgres to
+// confirm the token has not been revoked) fails closed with 503
+// token_validation_unavailable per §13.3.
+type RevocationFreshness interface {
+	// Stale reports that the in-memory revocation set is older than the
+	// freshness window because Postgres is unreachable.
+	Stale() bool
+}
+
+// playgroundOriginClaim is the §27.3 `origin` claim value stamped on
+// every session-capability JWT minted through a /playground/* ingress
+// path. The auth middleware keys the §27.6 per-request revocation check
+// on this claim, not on authMode. It is duplicated here as a literal
+// rather than imported from the playground package to avoid an import
+// cycle (the playground package depends on the auth chain).
+// spec: §27.3.
+const playgroundOriginClaim = "playground"
+
+// PlaygroundRevocationChecker is the §27.6 / §27.3.1 authoritative
+// per-request revocation check for playground-origin bearers. The auth
+// middleware consults it for every verified Bearer carrying the
+// `origin: "playground"` claim. The error return is non-nil only when
+// the backing store (Redis) is unreachable; §27.3.1 specifies
+// the middleware fails closed (503) on that error rather than honoring
+// the bearer. spec: §27.6 / §27.3.1.
+type PlaygroundRevocationChecker interface {
+	IsBearerRevoked(ctx context.Context, tenant, jti string) (bool, error)
+}
+
+// AuthFailureEvent captures the payload of an §4.2
+// `auth_failure` audit event emitted by the middleware on tenant-claim
+// rejection.
+type AuthFailureEvent struct {
+	// Reason is the §4.2 error envelope code:
+	// TENANT_CLAIM_MISSING, TENANT_NOT_FOUND, or
+	// TENANT_CLAIM_INVALID_FORMAT.
+	Reason string
+
+	// TenantID carries the inferred tenant identifier when present
+	// (the value of the OIDC claim before validation, or the resolved
+	// tenant for the dev-header path). Empty when no claim was carried.
+	TenantID string
+
+	// UserID is the JWT `sub` claim copied verbatim for traceability.
+	UserID string
+
+	// JTI is the JWT `jti` claim copied verbatim for traceability.
+	JTI string
+
+	// At is the gateway clock instant the rejection fired.
+	At time.Time
+}
+
+// AuthFailureSink receives an `auth_failure` audit event for every
+// tenant-claim rejection. Implementations must be non-blocking — the
+// middleware does not wait for delivery.
+type AuthFailureSink interface {
+	EmitAuthFailure(ctx context.Context, event AuthFailureEvent)
 }
 
 // Wrap returns the auth middleware around inner.
@@ -96,6 +439,17 @@ type middleware struct {
 }
 
 func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// 0) Outside the dev-header posture the identity headers are never a
+	// client input. Delete any the client sent so that no handler, and no
+	// later middleware, can read a client-asserted tenant, user, role, or
+	// group. The Bearer path writes X-Lenny-Tenant-ID back from the
+	// verified principal. Without this, a request on an unauthenticated
+	// path reached its handler still carrying the tenant it named
+	// (F-10.2.21). spec: §10.2 (Authentication).
+	if !m.opts.AllowDevHeaders {
+		stripIdentityHeaders(r.Header)
+	}
+
 	// 1) Try Bearer.
 	if header := r.Header.Get("Authorization"); strings.HasPrefix(header, "Bearer ") {
 		m.serveBearer(w, r, strings.TrimPrefix(header, "Bearer "))
@@ -112,8 +466,15 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3) No credentials.
-	if m.opts.RequireAuth {
-		writeError(w, http.StatusUnauthorized, "AUTH_REQUIRED", "request requires a bearer token", nil)
+	if m.opts.RequireAuth && (m.opts.PublicPath == nil || !m.opts.PublicPath(r)) {
+		// spec: §15.1 — UNAUTHORIZED (401) is the §15.1 catalog
+		// code for "Missing or invalid authentication credentials". The
+		// details.reason discriminates the missing-bearer case so
+		// callers scripting against the §15.1 catalog get a stable code
+		// while operators retain the diagnostic.
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED",
+			"request requires a bearer token",
+			map[string]any{"reason": "auth_required"})
 		return
 	}
 	m.inner.ServeHTTP(w, r)
@@ -121,11 +482,24 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token string) {
 	if m.opts.Verifier == nil {
-		writeError(w, http.StatusInternalServerError, "AUTH_NOT_CONFIGURED", "gateway has no JWT verifier wired in", nil)
+		// spec: §15.1 — gateway misconfiguration surfaces as
+		// the canonical INTERNAL_ERROR (500); details.reason names the
+		// configuration gap for operator triage.
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"gateway has no JWT verifier wired in",
+			map[string]any{"reason": "auth_not_configured"})
 		return
 	}
 	claims, err := m.opts.Verifier.Verify(token)
 	if err != nil {
+		// §25.4: `lenny-ops` presents a projected ServiceAccount token rather
+		// than a Lenny-minted JWT, so a token the JWT verifier rejects may
+		// still be an authentic platform service-account credential. The
+		// resolver is consulted only here, after JWT verification has already
+		// failed, so it never widens the authority of an ordinary bearer.
+		if m.serveServiceIdentity(w, r, token) {
+			return
+		}
 		var ve *jwt.VerifyError
 		if errors.As(err, &ve) && ve.Reason == "expired" {
 			writeError(w, http.StatusUnauthorized, "TOKEN_EXPIRED", err.Error(), nil)
@@ -134,13 +508,73 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 		writeError(w, http.StatusUnauthorized, "TOKEN_INVALID", err.Error(), nil)
 		return
 	}
+	// §13.3 fail-closed validation: a replica that cannot reach
+	// Postgres refuses to validate tokens rather than honor one from a
+	// stale revocation cache that may be missing a revocation recorded
+	// during the outage. The freshness check fires for every Bearer
+	// before the in-memory revocation lookup so a token absent from the
+	// stale set is not accepted. F-13.3.4.
+	inScope := m.opts.RevocationScope == nil || m.opts.RevocationScope(token)
+	if inScope && m.opts.RevocationFreshness != nil && m.opts.RevocationFreshness.Stale() {
+		writeError(w, http.StatusServiceUnavailable, "token_validation_unavailable",
+			"the revocation store is unreachable; the token cannot be validated",
+			map[string]any{"retryable": true})
+		return
+	}
+	// §13.3 revocation: a signature- and expiry-valid token is still
+	// rejected when its jti has been revoked.
+	if inScope && m.opts.Revocations != nil && m.opts.Revocations.IsRevoked(claims.JWTID) {
+		writeError(w, http.StatusUnauthorized, "TOKEN_REVOKED",
+			"the presented token has been revoked", nil)
+		return
+	}
+	// spec: §10.2 (Authentication: `tenant_id` extraction) — the
+	// verifier that accepted the token has already resolved
+	// claims.TenantID: an IdP-key member reads the configured
+	// `auth.tenantIdClaim` (jwt.TenantClaimVerifier) and a gateway-issued
+	// token keeps its own `tenant_id`. The middleware never selects a
+	// claim by payload content. F-10.2.9.
+	rawTenant := claims.TenantID
 	tenant, terr := auth.ExtractTenant(auth.ExtractRequest{
 		MultiTenant: m.opts.MultiTenant,
-		Claim:       claims.TenantID,
+		Claim:       rawTenant,
 		Registry:    m.opts.Registry,
 	})
 	if terr != nil {
-		writeTenantError(w, terr)
+		m.writeTenantError(r.Context(), w, terr, rawTenant, claims.Subject, claims.JWTID)
+		return
+	}
+	// §27.6 / §27.3.1 — authoritative per-request
+	// revocation check for playground-origin bearers. Every request
+	// carrying the `origin: "playground"` claim MUST consult
+	// pg:revoked:{jti} on the auth hot path before the bearer is honored,
+	// so a logout/idle/admin revocation on one replica cannot be bypassed
+	// by presenting the same bearer to a peer. A hit is 401 with
+	// details.reason=bearer_revoked; a store-unreachable error fails
+	// closed (503 REDIS_UNAVAILABLE). Non-playground bearers carry no
+	// origin claim and skip the check entirely. F-27.6.3 / F-27.3.1.
+	if inScope && m.opts.PlaygroundRevocations != nil && claims.Origin == playgroundOriginClaim {
+		revoked, rerr := m.opts.PlaygroundRevocations.IsBearerRevoked(r.Context(), tenant.TenantID, claims.JWTID)
+		if rerr != nil {
+			writeError(w, http.StatusServiceUnavailable, "REDIS_UNAVAILABLE",
+				"the playground revocation store is unreachable; the bearer cannot be honored",
+				map[string]any{"reason": "revocation_store_unavailable"})
+			return
+		}
+		if revoked {
+			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED",
+				"the presented playground bearer has been revoked",
+				map[string]any{"reason": "bearer_revoked"})
+			return
+		}
+	}
+	// §25.1: parse the RFC 9068 scope claim into a typed Set. A
+	// malformed claim rejects the token with TOKEN_INVALID so a
+	// downstream handler never sees a half-parsed scope.
+	scopeSet, perr := scopes.Parse(claims.Scope)
+	if perr != nil {
+		writeError(w, http.StatusUnauthorized, "TOKEN_INVALID",
+			"scope claim malformed: "+perr.Error(), nil)
 		return
 	}
 	p := Principal{
@@ -149,54 +583,339 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 		SessionID:  claims.SessionID,
 		CallerType: claims.CallerType,
 		Typ:        claims.Typ,
+		Roles:      append([]auth.Role(nil), claims.Roles...),
+		Groups:     append([]string(nil), claims.Groups...),
+		Scopes:     scopeSet,
+		JTI:        claims.JWTID,
+		// spec: §27.3 — carry the mode-agnostic origin claim onto
+		// the principal so the session-creation path can detect a
+		// /playground/*-originated session and apply the §27.6 caps +
+		// origin=playground label. F-27.3.3.
+		Origin: claims.Origin,
+		// spec: §13.3 — carry the delegating actor of an
+		// a2a_delegation bearer onto the principal. F-13.3.23.
+		Act: copyActor(claims.Act),
 	}
-	ctx := WithPrincipal(r.Context(), p)
+	// spec: §10.2 — the platform-managed user→role mapping
+	// takes precedence over OIDC-derived roles. When the resolver
+	// returns a row for (tenant, subject), its Roles override the JWT
+	// claim wholesale; on a transport error the request fails closed
+	// (we cannot safely fall back to the unmodified OIDC roles when we
+	// do not know whether a platform override exists). F-10.2.3.
+	if m.opts.PlatformRoles != nil && p.Subject != "" {
+		roles, found, perr := m.opts.PlatformRoles.ResolveRoles(r.Context(), p.TenantID, p.Subject)
+		if perr != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+				"platform role resolution failed: "+perr.Error(),
+				map[string]any{"reason": "platform_role_lookup_failed"})
+			return
+		}
+		if found {
+			p.Roles = append([]auth.Role(nil), roles...)
+		}
+	}
+	// spec: §10.6 — when the tenant has introspectionEnabled set,
+	// an RFC 7662 introspection of the bearer supplies the authoritative
+	// group set, catching LDAP/AD membership changes the JWT groups claim
+	// has not yet reflected. The check is opt-in per tenant; tenants that
+	// leave it off keep the JWT groups. A config/transport failure fails
+	// closed (503), and an inactive-token verdict rejects the bearer
+	// (401) — the operator enabled the real-time check for a security
+	// reason, so we do not silently fall back to the stale JWT groups.
+	// F-10.6.8.
+	if m.opts.GroupIntrospector != nil {
+		enabled, active, groups, ierr := m.opts.GroupIntrospector.IntrospectGroups(r.Context(), p.TenantID, token)
+		if ierr != nil {
+			writeError(w, http.StatusServiceUnavailable, "GROUP_INTROSPECTION_UNAVAILABLE",
+				"the OIDC introspection endpoint is unreachable; the bearer cannot be validated",
+				map[string]any{"reason": "introspection_unavailable", "retryable": true})
+			return
+		}
+		if enabled {
+			if !active {
+				writeError(w, http.StatusUnauthorized, "TOKEN_INVALID",
+					"the OIDC provider reports this token is no longer active",
+					map[string]any{"reason": "introspection_inactive"})
+				return
+			}
+			p.Groups = append([]string(nil), groups...)
+		}
+	}
+	// spec: §29.3 Forwarding rule 2 — record the verified credential so a
+	// forward to the coordinating replica relays it.
+	ctx := WithCredential(WithPrincipal(r.Context(), p), bearerCredential(r))
 	// Echo the resolved tenant via the dev header path so handlers
 	// that read the dev header (sessionserver in particular) see the
 	// authenticated tenant without depending on the context key.
 	r = r.WithContext(ctx)
 	r.Header.Set("X-Lenny-Tenant-ID", p.TenantID)
+	if !m.runPreAuth(w, r, p) {
+		return
+	}
 	m.inner.ServeHTTP(w, r)
 }
 
+// serveServiceIdentity admits a §25.4 platform service-account bearer and
+// serves the request under the principal the deployment grants that account.
+// It reports whether it handled the request; false leaves the caller to write
+// the JWT rejection it already has.
+//
+// It fails closed. With no resolver wired, a token the resolver does not
+// recognise, or a resolver error (an unreachable apiserver, a TokenReview the
+// gateway is not permitted to submit), the request is not admitted and the
+// caller's JWT rejection stands. The roles come from the deployment's grant
+// rather than from any claim in the presented token, so the principal cannot
+// be widened by whoever holds the token.
+//
+// spec: §25.4 ("`lenny-ops` calls the gateway's admin API as a regular
+// authenticated HTTPS client. It uses a dedicated service account
+// (`lenny-ops-sa`) with `platform-admin` role... All calls go through the
+// gateway's standard RBAC, validation, and audit").
+func (m *middleware) serveServiceIdentity(w http.ResponseWriter, r *http.Request, token string) bool {
+	if m.opts.ServiceIdentity == nil {
+		return false
+	}
+	id, ok, err := m.opts.ServiceIdentity.ResolveService(r.Context(), token)
+	if err != nil || !ok {
+		return false
+	}
+	p := Principal{
+		Subject:  id.Subject,
+		TenantID: id.TenantID,
+		// §25.4: the service account's token is distinguished in the audit
+		// trail by caller_type "service".
+		CallerType: serviceCallerType,
+		Roles:      append([]auth.Role(nil), id.Roles...),
+	}
+	ctx := WithCredential(WithPrincipal(r.Context(), p), bearerCredential(r))
+	r = r.WithContext(ctx)
+	r.Header.Set("X-Lenny-Tenant-ID", p.TenantID)
+	if !m.runPreAuth(w, r, p) {
+		return true
+	}
+	m.inner.ServeHTTP(w, r)
+	return true
+}
+
+// serviceCallerType is the §25.4 `caller_type` a platform service account's
+// principal carries, so an audit reader can tell a service call from a human
+// one. spec: §25.4 ("The service account's JWT token includes
+// `caller_type: "service"` for audit trail distinction").
+const serviceCallerType = "service"
+
 func (m *middleware) serveDevHeaders(w http.ResponseWriter, r *http.Request) {
 	tenantHeader := r.Header.Get("X-Lenny-Tenant-ID")
-	tenant, err := auth.ExtractTenant(auth.ExtractRequest{
-		MultiTenant: m.opts.MultiTenant,
-		Claim:       tenantHeader,
-		Registry:    m.opts.Registry,
-	})
+	tenant, err := m.devHeaderTenant(tenantHeader)
 	if err != nil {
-		writeTenantError(w, err)
+		// Dev-header path: no JWT means no sub / jti claim. The
+		// rejection still produces an audit row + INFO log so the §4.2 observability contract is honoured uniformly across
+		// transports; user_id falls back to the X-Lenny-User-ID header
+		// when present so dev integrations carry traceability too.
+		m.writeTenantError(r.Context(), w, err, tenantHeader, r.Header.Get("X-Lenny-User-ID"), "")
 		return
 	}
 	p := Principal{
 		Subject:  r.Header.Get("X-Lenny-User-ID"),
 		TenantID: tenant.TenantID,
 	}
-	ctx := WithPrincipal(r.Context(), p)
+	if m.opts.AllowDevRoles {
+		p.Roles = parseRolesHeader(r.Header.Get("X-Lenny-Roles"))
+		p.Groups = parseGroupsHeader(r.Header.Get("X-Lenny-Groups"))
+	}
+	ctx := WithCredential(WithPrincipal(r.Context(), p), devHeaderCredential(r))
 	r = r.WithContext(ctx)
 	r.Header.Set("X-Lenny-Tenant-ID", p.TenantID)
+	if !m.runPreAuth(w, r, p) {
+		return
+	}
 	m.inner.ServeHTTP(w, r)
 }
 
-func writeTenantError(w http.ResponseWriter, err error) {
+// devHeaderTenant resolves the tenant a dev-header request runs as. In
+// multi-tenant mode, and in single-tenant mode without
+// DevHeaderNamesTenant, the header follows the same §10.2 extraction
+// table as a Bearer claim. In single-tenant mode with
+// DevHeaderNamesTenant the header names the tenant directly after the
+// §10.2 format check, and an absent header resolves to the default
+// tenant. spec: §10.2.
+func (m *middleware) devHeaderTenant(header string) (auth.ExtractResult, error) {
+	if m.opts.MultiTenant || !m.opts.DevHeaderNamesTenant {
+		return auth.ExtractTenant(auth.ExtractRequest{
+			MultiTenant: m.opts.MultiTenant,
+			Claim:       header,
+			Registry:    m.opts.Registry,
+		})
+	}
+	if header == "" {
+		return auth.ExtractResult{TenantID: auth.DefaultTenantID, FromDefault: true}, nil
+	}
+	if err := auth.ValidateTenantID(header); err != nil {
+		return auth.ExtractResult{}, err
+	}
+	return auth.ExtractResult{TenantID: header}, nil
+}
+
+// runPreAuth runs the §4.8 PreAuth interceptor chain over the resolved
+// principal. It returns true when the request may proceed (the chain
+// admitted it, or no chain is wired); on a REJECT it writes the error
+// envelope and returns false. The PreAuth content payload is the
+// authenticated identity, carried as metadata so AuthEvaluator and any
+// later phase read the same tenant_id / user_id keys.
+//
+// spec: §4.8.
+func (m *middleware) runPreAuth(w http.ResponseWriter, r *http.Request, p Principal) bool {
+	if m.opts.Interceptors == nil {
+		return true
+	}
+	res := m.opts.Interceptors.Run(r.Context(), interceptor.Request{
+		Phase:     interceptor.PhasePreAuth,
+		SessionID: p.SessionID,
+		TenantID:  p.TenantID,
+		Metadata: map[string]string{
+			"tenant_id": p.TenantID,
+			"user_id":   p.Subject,
+		},
+	})
+	if res.Action != interceptor.ActionReject {
+		return true
+	}
+	// spec: §15.1 — a fail-closed interceptor timeout/error is surfaced
+	// as 503 INTERCEPTOR_TIMEOUT (TRANSIENT, retryable); a deliberate
+	// REJECT is 403 INTERCEPTOR_REJECTED.
+	if res.Code == interceptor.CodeInterceptorTimeout {
+		writeError(w, http.StatusServiceUnavailable, interceptor.CodeInterceptorTimeout, res.Reason,
+			map[string]any{
+				"interceptor_ref": res.RejectedBy,
+				"phase":           string(interceptor.PhasePreAuth),
+				"timeout_ms":      res.TimeoutMs,
+			})
+		return false
+	}
+	writeError(w, http.StatusForbidden, "INTERCEPTOR_REJECTED", res.Reason,
+		map[string]any{"interceptor_ref": res.RejectedBy, "phase": string(interceptor.PhasePreAuth)})
+	return false
+}
+
+// identityHeaders are the dev-mode identity headers the dev-header
+// transport reads. X-Lenny-Tenant-ID is also the header the Bearer path
+// echoes the verified tenant into for handlers that read it.
+var identityHeaders = []string{"X-Lenny-Tenant-ID", "X-Lenny-User-ID", "X-Lenny-Roles", "X-Lenny-Groups"}
+
+// stripIdentityHeaders deletes every client-supplied identity header.
+func stripIdentityHeaders(h http.Header) {
+	for _, name := range identityHeaders {
+		h.Del(name)
+	}
+}
+
+// parseRolesHeader parses the comma-separated X-Lenny-Roles dev header
+// value into a slice of auth.Role values. Whitespace and empty entries
+// are skipped; unknown role names are dropped silently — the dev
+// header is convenience only, not a security boundary, and the
+// downstream authorization check still rejects callers without the
+// required role regardless of what they claim.
+func parseRolesHeader(v string) []auth.Role {
+	if v == "" {
+		return nil
+	}
+	out := make([]auth.Role, 0, 1)
+	for _, raw := range strings.Split(v, ",") {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			continue
+		}
+		role := auth.Role(name)
+		if role.IsValid() {
+			out = append(out, role)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// parseGroupsHeader parses the comma-separated X-Lenny-Groups dev
+// header into a §10.6 group-name slice. Whitespace and empty entries
+// are skipped. Like the roles header it is convenience only, not a
+// security boundary; production anchors group membership to the
+// Bearer JWT.
+func parseGroupsHeader(v string) []string {
+	if v == "" {
+		return nil
+	}
+	out := make([]string, 0, 1)
+	for _, raw := range strings.Split(v, ",") {
+		name := strings.TrimSpace(raw)
+		if name != "" {
+			out = append(out, name)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// writeTenantError maps a §10.2 tenant-extraction error to the
+// HTTP envelope and, for the three §4.2 rejection reasons
+// (TENANT_CLAIM_MISSING / TENANT_NOT_FOUND / TENANT_CLAIM_INVALID_FORMAT),
+// emits an INFO log line with `user_id` and `jti` for traceability and
+// an `auth_failure` audit event via the configured sink. The audit
+// payload carries the inferred tenant identifier when one was
+// presented; for TENANT_CLAIM_MISSING the value is empty.
+//
+// spec: §4.2 ("Both rejection reasons are logged (INFO level,
+// with user_id and jti for traceability) and emitted as auth_failure
+// audit events.")
+func (m *middleware) writeTenantError(ctx context.Context, w http.ResponseWriter, err error, tenantID, userID, jti string) {
 	switch {
 	case errors.Is(err, auth.ErrTenantClaimMissing):
 		writeError(w, http.StatusUnauthorized, "TENANT_CLAIM_MISSING", err.Error(), nil)
+		m.recordAuthFailure(ctx, "TENANT_CLAIM_MISSING", tenantID, userID, jti)
 	case errors.Is(err, auth.ErrTenantNotFound):
 		writeError(w, http.StatusForbidden, "TENANT_NOT_FOUND", err.Error(), nil)
+		m.recordAuthFailure(ctx, "TENANT_NOT_FOUND", tenantID, userID, jti)
 	default:
 		var fe *auth.TenantIDFormatError
 		if errors.As(err, &fe) {
 			writeError(w, http.StatusUnauthorized, "TENANT_CLAIM_INVALID_FORMAT", err.Error(), map[string]any{
 				"value": fe.Value,
 			})
+			m.recordAuthFailure(ctx, "TENANT_CLAIM_INVALID_FORMAT", fe.Value, userID, jti)
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 	}
 }
+
+// recordAuthFailure writes the §4.2 INFO log line and emits
+// the `auth_failure` audit event. Logging always fires; the audit
+// emission is a no-op when no sink is wired.
+func (m *middleware) recordAuthFailure(ctx context.Context, reason, tenantID, userID, jti string) {
+	log.Printf("auth: %s tenant_id=%q user_id=%q jti=%q",
+		reason, tenantID, userID, jti)
+	if m.opts.AuthFailureSink == nil {
+		return
+	}
+	clk := m.opts.Clock
+	if clk == nil {
+		clk = func() time.Time { return time.Now().UTC() }
+	}
+	m.opts.AuthFailureSink.EmitAuthFailure(ctx, AuthFailureEvent{
+		Reason:   reason,
+		TenantID: tenantID,
+		UserID:   userID,
+		JTI:      jti,
+		At:       clk(),
+	})
+}
+
+// AuthFailureEventType is the §4.2 event-type identifier the
+// middleware emits on tenant-claim rejection. The string is fixed by
+// the spec; the §16.7 catalog only enumerates §25-introduced events
+// so this constant is the source of truth for the auth-failure name.
+const AuthFailureEventType = "auth_failure"
 
 func writeError(w http.ResponseWriter, status int, code, message string, details map[string]any) {
 	w.Header().Set("Content-Type", "application/json")

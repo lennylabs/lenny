@@ -1,0 +1,224 @@
+suite: lenny-pool-scaling-controller (§4.6.2)
+templates:
+  - pool-scaling-controller-rbac.yaml
+  - pool-scaling-controller-deployment.yaml
+tests:
+  - it: renders the service account, cluster role, and bindings
+    template: pool-scaling-controller-rbac.yaml
+    asserts:
+      - hasDocuments:
+          count: 5
+
+  - it: creates the dedicated lenny-pool-scaling-controller service account
+    template: pool-scaling-controller-rbac.yaml
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: ServiceAccount
+      - equal:
+          path: metadata.name
+          value: lenny-pool-scaling-controller
+
+  - it: grants create/update/delete on the PSC-owned CRD pair
+    template: pool-scaling-controller-rbac.yaml
+    documentIndex: 1
+    asserts:
+      - isKind:
+          of: ClusterRole
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["lenny.dev"]
+            resources: ["sandboxtemplates", "sandboxwarmpools"]
+            verbs: ["get", "list", "watch", "create", "update", "delete"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["lenny.dev"]
+            resources: ["sandboxwarmpools/status"]
+            verbs: ["get", "update", "patch"]
+
+  - it: does not render the Deployment without a Postgres DSN
+    template: pool-scaling-controller-deployment.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders the Deployment under its own ServiceAccount when Postgres is set
+    template: pool-scaling-controller-deployment.yaml
+    set:
+      postgres:
+        dsn: postgres://lenny@db/lenny
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Deployment
+      - equal:
+          path: metadata.name
+          value: lenny-pool-scaling-controller
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: lenny-pool-scaling-controller
+
+  # spec: §16.5 / F-16.5.6 — the PSC reads the
+  # capacityPlanning.* workload-profile values at startup. The chart
+  # renders the stock defaults and the tier as env vars.
+  - it: renders the capacityPlanning workload-profile env with stock defaults
+    template: pool-scaling-controller-deployment.yaml
+    set:
+      postgres:
+        dsn: postgres://lenny@db/lenny
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_CAPACITY_TIER
+            value: "tier1"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_CAPACITY_AVG_SESSION_DURATION_SECONDS
+            value: "333"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_CAPACITY_DELEGATION_PARTICIPATION_RATE
+            value: "0.05"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_CAPACITY_SESSION_IDLE_FRACTION
+            value: "0.3"
+
+  # spec: §16.5 / F-16.5.6 — a Tier 3 deployment substituting
+  # observed workload values renders them so the PSC's at-defaults
+  # warning stays silent.
+  - it: renders operator-substituted capacityPlanning values at Tier 3
+    template: pool-scaling-controller-deployment.yaml
+    set:
+      postgres.dsn: postgres://lenny@db/lenny
+      capacityPlanning.tier: tier3
+      capacityPlanning.avgSessionDurationSeconds: 600
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_CAPACITY_TIER
+            value: "tier3"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_CAPACITY_AVG_SESSION_DURATION_SECONDS
+            value: "600"
+
+  # spec: §17.8.2 / F-17.8.4 — poolScaling.safetyFactor renders
+  # as LENNY_POOL_SCALING_SAFETY_FACTOR. The base default 0 lets the
+  # controller resolve the per-tier default from LENNY_CAPACITY_TIER.
+  - it: renders the default safety_factor env (0 = auto from tier)
+    template: pool-scaling-controller-deployment.yaml
+    set:
+      postgres.dsn: postgres://lenny@db/lenny
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POOL_SCALING_SAFETY_FACTOR
+            value: "0"
+
+  # spec: §17.8.2 / F-17.8.4 — an operator pins the safety
+  # factor universally (e.g. when the failover-warm-serve SLO is not met).
+  - it: renders an operator-pinned safety_factor
+    template: pool-scaling-controller-deployment.yaml
+    set:
+      postgres.dsn: postgres://lenny@db/lenny
+      poolScalingController.safetyFactor: 1.3
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POOL_SCALING_SAFETY_FACTOR
+            value: "1.3"
+
+  # spec: §6.1 / F-6.2.21 — the SDK-warm circuit-breaker
+  # demotion source is wired only when prometheusURL is set; the v1
+  # bootstrap default omits LENNY_PROMETHEUS_URL so the breaker never
+  # auto-trips.
+  - it: omits LENNY_PROMETHEUS_URL by default
+    template: pool-scaling-controller-deployment.yaml
+    set:
+      postgres.dsn: postgres://lenny@db/lenny
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_PROMETHEUS_URL
+            value: ""
+  - it: renders LENNY_PROMETHEUS_URL when prometheusURL is set
+    template: pool-scaling-controller-deployment.yaml
+    set:
+      postgres.dsn: postgres://lenny@db/lenny
+      poolScalingController.prometheusURL: http://prometheus-server.monitoring.svc:80
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_PROMETHEUS_URL
+            value: http://prometheus-server.monitoring.svc:80
+
+  # spec: §17.8.6 ImageResolver — the PSC resolves its image from the
+  # single-source platform.registry.*. F-17.8.2.
+  - it: resolves the PSC image from platform.registry.url
+    template: pool-scaling-controller-deployment.yaml
+    set:
+      postgres.dsn: postgres://lenny@db/lenny
+      platform.registry.url: registry.acme.internal/lenny
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: registry.acme.internal/lenny/lenny-pool-scaling-controller:0.1.0
+
+  - it: propagates platform.registry.pullSecretName to the PSC pod
+    template: pool-scaling-controller-deployment.yaml
+    set:
+      postgres.dsn: postgres://lenny@db/lenny
+      platform.registry.pullSecretName: acme-regcred
+    asserts:
+      - contains:
+          path: spec.template.spec.imagePullSecrets
+          content:
+            name: acme-regcred
+
+  # spec: §17.8.2 controller-tuning table — the PSC shares the
+  # controller.antiAffinity knob with the WPC so the two leaders schedule
+  # onto different nodes. F-17.8.6.
+  - it: defaults the PSC anti-affinity to preferred against the WPC
+    template: pool-scaling-controller-deployment.yaml
+    set:
+      postgres.dsn: postgres://lenny@db/lenny
+    asserts:
+      - contains:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution
+          content:
+            weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  lenny.dev/component: controller
+              topologyKey: kubernetes.io/hostname
+
+  - it: requires PSC/WPC anti-affinity when controller.antiAffinity is required
+    template: pool-scaling-controller-deployment.yaml
+    set:
+      postgres.dsn: postgres://lenny@db/lenny
+      controller.antiAffinity: required
+    asserts:
+      - contains:
+          path: spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution
+          content:
+            labelSelector:
+              matchLabels:
+                lenny.dev/component: controller
+            topologyKey: kubernetes.io/hostname
+      - isNull:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution

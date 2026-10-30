@@ -1,0 +1,335 @@
+{{- /*
+The lenny-token-service Deployment and its Service (§4.3, §13.3,
+§17.1). The Token Service serves the RFC 8693 token-exchange endpoint
+the gateway calls; it signs with a §4 KMS-envelope-backed signer. It is
+stateless and runs with 2+ replicas (§17.1) under the §13.1
+Restricted-PSS posture (non-root, all capabilities dropped, read-only
+root filesystem, RuntimeDefault seccomp) shared with the controller.
+
+The §13.2 Token Service NetworkPolicy admits the gateway on
+tokenService.grpcPort; the binary's listener is bound to that port so
+the Service port and the NetworkPolicy agree. The Token Service binary
+serves no HTTP health endpoint, so the probes are TCP socket checks
+against the listener.
+
+spec: §17.4 dev profile — the whole Token Service (Deployment, Service,
+ServiceAccount, PodDisruptionBudget) is gated on tokenService.enabled.
+Default true preserves the §4.3 trust boundary. The development profile
+sets it false: no lenny-token-service image is bundled, and the gateway
+falls back to its in-process MintLease / credassign dev path (the
+gateway --token-service-* flags are gated on the same key).
+*/ -}}
+{{- if .Values.tokenService.enabled }}
+{{- /* §17.4: under kms.provider=local the Token Service mounts the shared
+   master key Secret. */ -}}
+{{- $localKMS := include "lenny.kmsLocal" . -}}
+{{- /* §4.3 / §13.3 datastore connections. The Token Service writes
+   issued_tokens and the token.exchanged audit rows in Postgres, and it
+   publishes each committed revocation on token:revocations, so it reads
+   the same lenny-datastore-conn values the gateway does: the Postgres DSN,
+   the §17.9.3 Redis topology (url, Sentinel, or Cluster), and the §12.4
+   Cache/Pub-Sub concern URL the gateway replicas and lenny-ops subscribe
+   on. F-4.3.21. */ -}}
+{{- $pg := .Values.postgres -}}
+{{- $hasPg := and $pg $pg.dsn (ne $pg.dsn "") -}}
+{{- $redis := .Values.redis -}}
+{{- $redisProvider := include "lenny.redisProvider" . -}}
+{{- $redisCluster := (and $redis (hasKey $redis "cluster")) | ternary $redis.cluster dict -}}
+{{- $hasRedis := and (eq $redisProvider "external") $redis $redis.url (ne $redis.url "") -}}
+{{- $hasRedisCluster := and (eq $redisProvider "cluster") $redisCluster (hasKey $redisCluster "addrs") (ne ($redisCluster.addrs | toString) "") -}}
+{{- $useSentinel := eq $redisProvider "sentinel" -}}
+{{- $hasRedisPassword := and (or $useSentinel $hasRedisCluster) (ne ($redis.password | default "" | toString) "") -}}
+{{- $hasSentinelPassword := and $useSentinel (ne ($redis.sentinelPassword | default "" | toString) "") -}}
+{{- $concerns := (and $redis (hasKey $redis "concerns")) | ternary $redis.concerns dict -}}
+{{- $hasCacheRedis := and $concerns (hasKey $concerns "cachePubSubUrl") (ne ($concerns.cachePubSubUrl | toString) "") -}}
+{{- $anyRedis := or $hasRedis $hasRedisCluster $useSentinel -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lenny-token-service
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: token-service
+spec:
+  replicas: {{ .Values.tokenService.replicas }}
+  # spec: §10.5 /
+  # §17.1. The strategy is declared explicitly so the rolling posture
+  # is auditable and survives chart customization rather than relying
+  # on the Kubernetes 25% default. The Token Service sits on the
+  # gateway auth path, so maxUnavailable: 0 keeps full token-minting
+  # capacity through a rollout: the replacement Pod becomes Ready
+  # before the old one is removed.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: {{ .Values.tokenService.rollingUpdate.maxUnavailable }}
+      maxSurge: {{ .Values.tokenService.rollingUpdate.maxSurge }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      lenny.dev/component: token-service
+  template:
+    metadata:
+      labels:
+        {{- include "lenny.labels" . | nindent 8 }}
+        lenny.dev/component: token-service
+    spec:
+      serviceAccountName: lenny-token-service
+      {{- include "lenny.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        # spec: §13.2 credential-delivery primitive. fsGroup makes the
+        # mounted mTLS Secret group-owned by this GID and adds it as a
+        # supplemental group on the process, so the non-root distroless
+        # image (gcr.io/distroless/static:nonroot, UID 65532) can read the
+        # cert-manager-issued cert/key mounted group-readable at defaultMode
+        # 0440 below. Without it a root-owned 0400 cert is unreadable under
+        # runAsNonRoot and the §10.3 gateway↔Token-Service mTLS listener
+        # fails to load /etc/lenny/mtls/tls.crt with "permission denied". The
+        # fsGroup + 0440 pair is the read primitive every mode needs, so it
+        # is unconditional rather than gated on devMode.
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      {{- /*
+          §4.3 / §10.3 mTLS material. The lenny-token-service-tls
+          Secret is rendered by mtls-pki.yaml (cert-manager-managed).
+          cert-manager stores the leaf cert under tls.crt / tls.key and
+          the issuing CA cert under ca.crt inside the same Secret;
+          mounting it at /etc/lenny/mtls/ gives the binary all three
+          files it needs to require and verify gateway client
+          certificates against the shared cluster-internal CA. The
+          mount is gated on mtls.enabled so a no-mesh / external-mTLS
+          deployment can opt out, but the chart default is
+          mtls.enabled=true.
+      */ -}}
+      {{- if or .Values.mtls.enabled $localKMS }}
+      volumes:
+        {{- if .Values.mtls.enabled }}
+        - name: lenny-token-service-tls
+          secret:
+            secretName: lenny-token-service-tls
+            # spec: §13.2. 0440 group-readable, paired with the fsGroup
+            # above, lets the non-root distroless process read the cert in
+            # every mode. A root-owned 0400 cert is unreadable under
+            # runAsNonRoot and breaks the §10.3 mTLS listener.
+            defaultMode: 0440
+        {{- end }}
+        {{- if $localKMS }}
+        # spec: §17.4 — the local provider's master key Secret, shared with
+        # lenny-gateway and lenny-ops (lenny.kmsMasterKeyVolume).
+        {{- include "lenny.kmsMasterKeyVolume" . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: token-service
+          image: {{ include "lenny.componentImage" (dict "root" $ "name" "lenny-token-service" "image" .Values.tokenService.image) | quote }}
+          imagePullPolicy: {{ .Values.tokenService.image.pullPolicy }}
+          args:
+            - --addr=:{{ .Values.tokenService.httpPort }}
+            - --grpc-addr=:{{ .Values.tokenService.grpcPort }}
+            - --metrics-addr=:{{ .Values.tokenService.metricsPort }}
+            - --issuer={{ .Values.tokenService.issuer }}
+            # §10.2 auth.capabilityTokenTtlSeconds: the default lifetime of
+            # a POST /v1/oauth/token JWT requested without expires_in. It
+            # reads the same value as the gateway's playground bearer
+            # lifetime, so both binaries take one operator-set default.
+            - --capability-token-ttl-seconds={{ .Values.auth.capabilityTokenTtlSeconds }}
+            # §13.3 "Client authentication on /v1/oauth/token": the upstream
+            # IdP's ID token is the bootstrap caller credential. The Token
+            # Service verifies it against the issuer's JWK Set with the
+            # audience and tenant claim the gateway uses. F-13.3.21.
+            {{- with .Values.auth.oidc.issuerUrl }}
+            - --oidc-issuer-url={{ . }}
+            {{- end }}
+            {{- with .Values.auth.oidc.clientId }}
+            - --oidc-client-id={{ . }}
+            {{- end }}
+            - --tenant-id-claim={{ .Values.auth.tenantIdClaim }}
+            # §4 KMS provider (F-4.3.11 / F-17.5.2). `local` is the
+            # dev default; cloud installs set kms.provider to
+            # aws | gcp | azure and supply the matching aliases.
+            {{- include "lenny.kmsArgs" . | nindent 12 }}
+            {{- if .Values.mtls.enabled }}
+            # §4.3 / §10.3 mTLS server material. The gRPC listener
+            # requires every client (gateway replica) to present a
+            # cert signed by the chart's shared lenny-mtls-ca; the
+            # §4.3 "gateway has no KMS decrypt rights" boundary
+            # rests on the Token Service authenticating the caller.
+            # cert-manager stores tls.crt/tls.key/ca.crt under the
+            # same Secret, so all three paths share the same mount.
+            - --tls-cert=/etc/lenny/mtls/tls.crt
+            - --tls-key=/etc/lenny/mtls/tls.key
+            - --tls-ca=/etc/lenny/mtls/ca.crt
+            {{- end }}
+            {{- if and .Values.global.devMode $anyRedis }}
+            # §12.4 requires Redis AUTH and TLS; a dev install backed by a
+            # plaintext no-password Redis would otherwise fail the Token
+            # Service startup invariant. Dev mode acknowledges the insecure
+            # dev Redis, matching the gateway and lenny-ops.
+            - --redis-allow-insecure
+            {{- end }}
+          {{- if or $hasPg $anyRedis $hasCacheRedis }}
+          env:
+            {{- if $hasPg }}
+            # §13.3 write-before-issue: issued_tokens rows, the step (1a)
+            # source revocation check, rotation, and token.exchanged audit
+            # rows all need Postgres; without it the Token Service keeps no
+            # durable state.
+            - name: LENNY_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: postgres-dsn
+            {{- end }}
+            {{- if $hasRedis }}
+            - name: LENNY_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-url
+            {{- end }}
+            {{- if $hasRedisCluster }}
+            # §12.4 Redis Cluster seed nodes (plain env; not secret).
+            - name: LENNY_REDIS_CLUSTER_ADDRS
+              value: {{ $redisCluster.addrs | quote }}
+            {{- end }}
+            {{- if $useSentinel }}
+            # §17.9.3 / §12.4 Redis Sentinel topology. TLS and the data
+            # password render in the block that follows.
+            - name: LENNY_REDIS_SENTINEL_ADDRS
+              value: {{ join "," $redis.sentinels | quote }}
+            - name: LENNY_REDIS_SENTINEL_MASTER
+              value: {{ $redis.sentinelMaster | quote }}
+            {{- if $hasSentinelPassword }}
+            - name: LENNY_REDIS_SENTINEL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-sentinel-password
+            {{- end }}
+            {{- end }}
+            {{- /* §12.4 "Security" — AUTH and TLS are required on every
+                   Redis instance. The Sentinel and Cluster topologies carry
+                   no URL, so TLS is requested explicitly and the data AUTH
+                   password is read from the datastore Secret. The external
+                   topology carries both in its rediss:// URL. F-12.4.37. */}}
+            {{- if or $useSentinel $hasRedisCluster }}
+            - name: LENNY_REDIS_TLS
+              value: "true"
+            {{- if $hasRedisPassword }}
+            - name: LENNY_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-password
+            {{- end }}
+            {{- end }}
+            {{- if $hasCacheRedis }}
+            # §12.4 / §13.3: the Cache/Pub-Sub Redis the gateway replicas
+            # and lenny-ops subscribe to token:revocations on.
+            - name: LENNY_REDIS_CACHE_PUBSUB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-cache-pubsub-url
+            {{- end }}
+          {{- end }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.tokenService.grpcPort }}
+            - name: http-token
+              containerPort: {{ .Values.tokenService.httpPort }}
+            - name: metrics
+              containerPort: {{ .Values.tokenService.metricsPort }}
+          {{- if or .Values.mtls.enabled $localKMS }}
+          volumeMounts:
+            {{- if .Values.mtls.enabled }}
+            - name: lenny-token-service-tls
+              mountPath: /etc/lenny/mtls
+              readOnly: true
+            {{- end }}
+            {{- if $localKMS }}
+            # spec: §17.4 — the local provider's master key, read through
+            # --kms-master-key-file.
+            {{- include "lenny.kmsMasterKeyVolumeMount" . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- toYaml .Values.tokenService.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lenny-token-service
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  {{- /* §10.2 "Signing topology": binds the ServiceAccount to the provider
+     identity that holds the KMS Sign and GetPublicKey permissions. */}}
+  {{- with .Values.tokenService.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-token-service
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: token-service
+spec:
+  selector:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    lenny.dev/component: token-service
+  ports:
+    - name: grpc
+      port: {{ .Values.tokenService.grpcPort }}
+      targetPort: grpc
+    - name: http-token
+      port: {{ .Values.tokenService.httpPort }}
+      targetPort: http-token
+    - name: metrics
+      port: {{ .Values.tokenService.metricsPort }}
+      targetPort: metrics
+---
+# PodDisruptionBudget for the lenny-token-service. The §4.3 trust
+# boundary requires the gateway to reach the Token Service for every
+# credential lease materialization; an unprotected voluntary disruption
+# (node drain, cluster autoscaler) of both replicas at once would stall
+# every new session that needs a fresh lease. minAvailable: 1 ensures
+# at least one replica stays serving across rolling node operations.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: lenny-token-service
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: token-service
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      lenny.dev/component: token-service
+{{- end }}

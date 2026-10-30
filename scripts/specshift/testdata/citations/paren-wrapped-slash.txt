@@ -1,0 +1,3 @@
+// the Unix time of the last successful backup per type, evaluated by the §25.11
+// BackupOverdue alert (line 4317: a full backup older than 48h). It is
+// registered on the default registry.

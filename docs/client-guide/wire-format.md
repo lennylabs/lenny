@@ -37,7 +37,7 @@ https://<gateway-host>/
 | OpenAI Chat Completions | `application/json` | `application/json` or `text/event-stream` |
 | Open Responses | `application/json` | `application/json` or `text/event-stream` |
 | Admin | `application/json` | `application/json` |
-| Upload (`POST /v1/sessions/{id}/upload`) | `multipart/form-data` | `application/json` |
+| Upload (`POST /v1/sessions/{id}/upload`, `POST /v1/sessions/{id}/upload-archive`) | Raw file or archive bytes (any content type) | `application/json` |
 
 ---
 
@@ -49,10 +49,10 @@ Authorization: Bearer <oidc-or-lenny-access-token>
 
 For the admin surface, the token is a shared admin token set at install time. For client surfaces, the token is either an IdP-issued OIDC token the gateway verifies directly, or a Lenny access token obtained via `POST /v1/oauth/token` (RFC 8693 token exchange).
 
-**Upload token** (separate credential, not a Bearer token). Every `POST /v1/sessions` response includes an `uploadToken`. Include it on every upload request as:
+**Upload token** (separate credential, not a Bearer token). Every `POST /v1/sessions` response includes an `uploadToken`. Include it on every upload and finalize request as:
 
 ```
-X-Upload-Token: <uploadToken>
+X-Lenny-Upload-Token: <uploadToken>
 ```
 
 Format: `<session_id>.<expiry_unix_seconds>.<hmac_hex>`. Treat it as a secret. The token expires at `session_creation_time + maxCreatedStateTimeoutSeconds` (default 300s).
@@ -66,8 +66,9 @@ Format: `<session_id>.<expiry_unix_seconds>.<hmac_hex>`. Treat it as a secret. T
 | Method | Endpoint | Purpose |
 |:-------|:---------|:--------|
 | `POST` | `/v1/sessions` | Multi-step session creation (returns `sessionId`, `uploadToken`) |
-| `POST` | `/v1/sessions/{id}/upload` | Upload workspace files (multipart; requires `X-Upload-Token`) |
-| `POST` | `/v1/sessions/{id}/finalize` | Seal workspace; run setup commands |
+| `POST` | `/v1/sessions/{id}/upload` | Upload one workspace file as the raw body (requires `X-Lenny-Upload-Token`); the `201` response carries an `uploadRef` |
+| `POST` | `/v1/sessions/{id}/upload-archive` | Upload one `tar`, `tar.gz`, or `zip` archive as the raw body (requires `X-Lenny-Upload-Token`); the `201` response carries an `uploadRef` |
+| `POST` | `/v1/sessions/{id}/finalize` | Bind the workspace plan in the optional body if creation carried none, materialize the workspace, and run setup commands |
 | `POST` | `/v1/sessions/{id}/start` | Start the agent runtime |
 | `POST` | `/v1/sessions/start` | One-shot create + finalize + start |
 | `POST` | `/v1/sessions/{id}/messages` | Send a message to a running session |
@@ -99,7 +100,7 @@ For the complete list including admin endpoints, see the [REST API Reference](..
 |:------|:-----|:---------|:------|
 | `type` | enum | yes | Always `"message"` on the inbound side. |
 | `input` | array | yes | Ordered array of content parts. Each part has a `type` and type-specific fields. |
-| `input[].type` | enum | yes | See the OutputPart type registry below. The inbound side supports the same registry. |
+| `input[].type` | enum | yes | See the MessagePart type registry below. The inbound side supports the same registry. |
 | `input[].inline` | string | — | Literal payload (e.g., text). |
 | `input[].uploadRef` | string | — | Reference to an already-uploaded file, for large payloads. |
 
@@ -118,7 +119,7 @@ For the complete list including admin endpoints, see the [REST API Reference](..
 | Field | Type | Required | Notes |
 |:------|:-----|:---------|:------|
 | `type` | enum | yes | Always `"response"`. |
-| `output` | array | yes | Ordered array of `OutputPart`. |
+| `output` | array | yes | Ordered array of `MessagePart`. |
 
 Note: the outbound response puts `output` directly on the top level. **TaskResult** (delegation child output) wraps it one level deeper:
 
@@ -133,7 +134,7 @@ Note: the outbound response puts `output` directly on the top level. **TaskResul
 
 ---
 
-## 5. OutputPart type registry
+## 5. MessagePart type registry
 
 Canonical discriminated-union types. See Spec §15 for field-level detail.
 
@@ -147,10 +148,10 @@ Canonical discriminated-union types. See Spec §15 for field-level detail.
 | `image` | `inline` (base64) or `ref`, `mimeType` (`image/*`) | Generic image. |
 | `diff` | `inline` (string), `annotations.language` (`diff`) | Unified-format diff. |
 | `file` | `inline` or `ref`, `mimeType` | File produced by the agent. |
-| `execution_result` | `parts[]` (each part is a full `OutputPart`) | Tool-call result. |
+| `execution_result` | `parts[]` (each part is a full `MessagePart`) | Tool-call result. |
 | `error` | `inline` (human-readable), `annotations.errorCode` (optional) | Error emitted mid-stream. |
 
-Parts with a size above 64 KB are staged to blob storage and delivered with `ref` populated instead of `inline`; parts above 50 MB are rejected at ingress with `413 OUTPUTPART_TOO_LARGE`. Unknown types MUST be preserved and forwarded verbatim by middleware; unprefixed custom types collapse to `text` with `annotations.originalType` set.
+Parts with a size above 64 KB are staged to blob storage and delivered with `ref` populated instead of `inline`; parts above 50 MB are rejected at ingress with `413 MESSAGEPART_TOO_LARGE`. Unknown types MUST be preserved and forwarded verbatim by middleware; unprefixed custom types collapse to `text` with `annotations.originalType` set.
 
 ---
 
@@ -175,14 +176,14 @@ The `id` is a cursor you can pass back via `Last-Event-ID` on reconnect.
 
 | `event:` | `data:` payload | Meaning |
 |:---------|:----------------|:--------|
-| `agent_output` | `{ "output": OutputPart[] }` | One or more parts of agent output. |
+| `agent_output` | `{ "output": MessagePart[] }` | One or more parts of agent output. |
 | `tool_use_requested` | `{ "tool_call_id", "tool", "args" }` | Agent wants to call a tool (if approval required). |
-| `tool_result` | `{ "tool_call_id", "result": { "content": OutputPart[] } }` | Tool call returned. |
+| `tool_result` | `{ "tool_call_id", "result": { "content": MessagePart[] } }` | Tool call returned. |
 | `elicitation_request` | `{ "elicitation_id", "schema" }` | Agent/tool needs user input. |
 | `status_change` | `{ "state" }` | Session state transition (including `suspended` and `input_required`). |
 | `session.resumed` | `{ "resumeMode", "workspaceLost" }` | Session resumed from checkpoint or minimal state. |
 | `children_reattached` | `{ "children": ReattachedChild[] }` | Parent session resumed with active children. |
-| `session_complete` | `{ "result": { "output": OutputPart[] } }` | Session reached terminal state. |
+| `session_complete` | `{ "result": { "output": MessagePart[] } }` | Session reached terminal state. |
 | `error` | `{ "code", "message", "transient" }` | Fatal or recoverable error. |
 | `checkpoint_boundary` | `{ "cursor", "events_lost", "reason", "checkpoint_timestamp" }` | Client's last-seen cursor fell outside the replay window. |
 | `session_expiring_soon` | `{ "maxSessionAge", "remainingSeconds" }` | Sent 5 minutes before `maxSessionAge` expires. |
@@ -216,8 +217,7 @@ The session-creation body may include a `workspacePlan`. Top-level fields:
     "$schema": "https://schemas.lenny.dev/workspaceplan/v1.json",
     "schemaVersion": 1,
     "sources": [
-      { "type": "inlineFile", "path": "CLAUDE.md", "content": "..." },
-      { "type": "uploadFile", "path": "src/main.ts", "uploadRef": "upload_abc123" }
+      { "type": "inlineFile", "path": "CLAUDE.md", "content": "..." }
     ],
     "setupCommands": [
       { "cmd": "npm ci", "timeoutSeconds": 300 }
@@ -230,6 +230,8 @@ The session-creation body may include a `workspacePlan`. Top-level fields:
   "delegationLease": { "maxDepth": 2, "maxChildrenTotal": 5 }
 }
 ```
+
+A plan in the session-creation body cannot carry `uploadFile` or `uploadArchive` sources, because uploads happen after creation. A plan that names uploads binds in the `POST /v1/sessions/{id}/finalize` body as `{"workspacePlan": {...}}`, with each source's `uploadRef` set to the value from the upload response (see [Workspace sources](../getting-started/concepts.md#workspace-sources)).
 
 The full schema is in the [WorkspacePlan reference](../reference/workspace-plan) and [Spec §14](https://github.com/lennylabs/lenny/blob/main/spec/14_workspace-plan-schema.md).
 
@@ -318,7 +320,7 @@ X-RateLimit-Reset: 1718203380
 ## 12. Things that surprise new integrators
 
 - **SSE buffer size.** Some `agent_output` events carry large payloads (base64 screenshots, long code blocks). If your SSE parser caps lines at 64 KB (e.g., Go's default `bufio.Scanner`), raise the ceiling or switch to a reader.
-- **Upload token is not a Bearer token.** It goes in `X-Upload-Token`, not `Authorization`. Using `Authorization: Bearer <uploadToken>` returns `401 UNAUTHORIZED`.
+- **Upload token is not a Bearer token.** It goes in `X-Lenny-Upload-Token`, not `Authorization`. Using `Authorization: Bearer <uploadToken>` returns `401 UNAUTHORIZED`.
 - **TaskResult nests `output.parts`.** Inbound messages use `input[]`, outbound responses use `output[]` directly, but delegation task results use `output.parts[]` with an extra wrapper.
 - **Inline vs. uploadRef.** Small text fits in `inline`; anything binary or over a few KB should be pre-uploaded and referenced by `uploadRef`.
 - **Isolation profile vs. RuntimeClass.** Use `isolationProfile` (`standard`/`sandboxed`/`microvm`) in config; the K8s `RuntimeClass` (`runc`/`gvisor`/`kata`) is an implementation detail set by the installer.

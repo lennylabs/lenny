@@ -1,0 +1,150 @@
+//go:build component
+
+// SPDX-License-Identifier: MIT
+
+// Tier-4 integration test: the real cmd/lenny-gateway binary running
+// against a Redis container via --redis-url. It proves the §12.4
+// circuit-breaker wiring — an operator opening a breaker through the
+// admin API lands the breaker state in Redis, verified by reading the
+// cb:{name} key directly.
+package tier4_integration_test
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
+	"github.com/lennylabs/lenny/tests/testinfra/containers"
+	"github.com/lennylabs/lenny/tests/testinfra/gateway"
+)
+
+func TestGatewayRedisBreakerE2E(t *testing.T) {
+	t.Parallel()
+	gateway.SkipUnlessAvailable(t)
+
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--redis-url=redis://"+rd.Addr+"/0")
+	base := gw.BaseURL()
+	ctx := context.Background()
+
+	// Open a circuit breaker through the §15.1 admin API as a
+	// platform-admin.
+	const name = "rt-echo-e2e"
+	body, _ := json.Marshal(map[string]any{
+		"reason":     "runaway runtime (e2e)",
+		"limit_tier": "runtime",
+		"scope":      map[string]any{"runtime": "echo"},
+	})
+	req, _ := http.NewRequest(http.MethodPost,
+		base+"/v1/admin/circuit-breakers/"+name+"/open", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Lenny-Tenant-ID", "platform")
+	req.Header.Set("X-Lenny-User-ID", "ops@acme.com")
+	req.Header.Set("X-Lenny-Roles", "platform-admin")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("open breaker: %v", err)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("open breaker: status %d, body=%s", resp.StatusCode, raw)
+	}
+
+	// The breaker state must now be in Redis under the §12.4 cb:{name}
+	// key — that is what makes the operator's safety block survive a
+	// gateway restart.
+	stored, err := rd.Client.Get(ctx, "cb:"+name).Result()
+	if err != nil {
+		t.Fatalf("read cb:%s from Redis: %v", name, err)
+	}
+	if !strings.Contains(stored, `"State":"open"`) {
+		t.Errorf("Redis breaker record is not open: %s", stored)
+	}
+	if !strings.Contains(stored, "echo") {
+		t.Errorf("Redis breaker record missing the runtime scope: %s", stored)
+	}
+}
+
+// TestGatewayRedisCoordinationE2E confirms the §10.1 lease
+// coordination sweeper is wired: a session created through the gateway
+// acquires its coordination lease in Redis within a sweep interval,
+// held by the gateway replica.
+func TestGatewayRedisCoordinationE2E(t *testing.T) {
+	t.Parallel()
+	gateway.SkipUnlessAvailable(t)
+
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode",
+		"--redis-url=redis://"+rd.Addr+"/0",
+		"--coordination-interval=300ms")
+	ctx := context.Background()
+
+	// §11.2: the QuotaEvaluator fails closed on an unconfigured
+	// tenant. Bootstrap a `default` tenant so the session create
+	// admission satisfies the quota gate.
+	bootstrap, _ := json.Marshal(map[string]any{
+		"tenants": []map[string]any{{"id": "default", "displayName": "Default"}},
+	})
+	bsReq, _ := http.NewRequest(http.MethodPost, gw.BaseURL()+"/v1/admin/bootstrap", bytes.NewReader(bootstrap))
+	bsReq.Header.Set("Content-Type", "application/json")
+	bsReq.Header.Set("X-Lenny-Tenant-ID", "platform")
+	bsReq.Header.Set("X-Lenny-User-ID", "ops@acme.com")
+	bsReq.Header.Set("X-Lenny-Roles", "platform-admin")
+	bsResp, err := http.DefaultClient.Do(bsReq)
+	if err != nil {
+		t.Fatalf("bootstrap default tenant: %v", err)
+	}
+	bsRaw, _ := io.ReadAll(bsResp.Body)
+	bsResp.Body.Close()
+	if bsResp.StatusCode != http.StatusOK {
+		t.Fatalf("bootstrap default tenant: status %d body %s", bsResp.StatusCode, bsRaw)
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"runtimeRef": "echo",
+		"userId":     "alice@acme.com",
+	})
+	req, _ := http.NewRequest(http.MethodPost, gw.BaseURL()+"/v1/sessions/start", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Lenny-Tenant-ID", "default")
+	req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create session: status %d, body=%s", resp.StatusCode, raw)
+	}
+	var created map[string]any
+	_ = json.Unmarshal(raw, &created)
+	sid, _ := created["id"].(string)
+	if sid == "" {
+		t.Fatal("session id missing")
+	}
+
+	// Within a few sweep intervals the coordination sweeper must have
+	// acquired the session's lease in Redis.
+	leaseKey := leasestore.Key("default", sid)
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		holder, err := rd.Client.Get(ctx, leaseKey).Result()
+		if err == nil && holder != "" {
+			ttl, _ := rd.Client.TTL(ctx, leaseKey).Result()
+			if ttl <= 0 {
+				t.Errorf("coordination lease %s has no TTL", leaseKey)
+			}
+			return
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	t.Fatalf("coordination lease %s never appeared in Redis", leaseKey)
+}

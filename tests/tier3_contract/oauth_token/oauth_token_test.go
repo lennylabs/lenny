@@ -21,14 +21,29 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
+
+// mustNewServer builds a Token Service handler through
+// tokenservice.NewServer and fails the test when NewServer refuses the
+// options.
+func mustNewServer(t *testing.T, opts tokenservice.Options) *tokenservice.Server {
+	t.Helper()
+	srv, err := tokenservice.NewServer(opts)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	return srv
+}
 
 func newTestServer(t *testing.T) (*httptest.Server, *jwt.HMACSigner) {
 	t.Helper()
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
-	srv := tokenservice.NewServer(tokenservice.Options{
-		Signer: signer,
-		Issuer: "https://lenny.dev.test/token",
+	srv := mustNewServer(t, tokenservice.Options{
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
 		PerDialectCap: map[string]time.Duration{
 			"lenny-gateway": 24 * time.Hour,
 		},
@@ -43,10 +58,10 @@ func newTestServer(t *testing.T) (*httptest.Server, *jwt.HMACSigner) {
 // any plausible test-run timestamp. IssuedAt sits an hour before
 // Expiry to maintain the not-before invariant.
 var (
-	farFutureExpiry  = time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
-	farFutureIssued  = time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).Add(-time.Hour).Unix()
-	farPastExpiry    = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
-	beyond24hExpiry  = time.Date(2099, 1, 1, 48, 0, 0, 0, time.UTC).Unix()
+	farFutureExpiry = time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
+	farFutureIssued = time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).Add(-time.Hour).Unix()
+	farPastExpiry   = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
+	beyond24hExpiry = time.Date(2099, 1, 1, 48, 0, 0, 0, time.UTC).Unix()
 )
 
 func mint(t *testing.T, signer *jwt.HMACSigner, c jwt.Claims) string {
@@ -112,6 +127,17 @@ func TestRotationHappyPath(t *testing.T) {
 	tok, _ := body["access_token"].(string)
 	if tok == "" {
 		t.Fatal("missing access_token")
+	}
+	// RFC 8693 §2.2.1 requires issued_token_type and token_type on a
+	// successful exchange. Per §13.3 the issued_token_type matches the
+	// requested token type (JWT for a rotation of a JWT subject), and the
+	// Token Service issues Bearer tokens.
+	// spec: §13.3 (Response issued_token_type matches requested_token_type)
+	if it, _ := body["issued_token_type"].(string); it != "urn:ietf:params:oauth:token-type:jwt" {
+		t.Errorf("issued_token_type: want urn:ietf:params:oauth:token-type:jwt, got %q", it)
+	}
+	if tt, _ := body["token_type"].(string); tt != "Bearer" {
+		t.Errorf("token_type: want Bearer, got %q", tt)
 	}
 	out, err := signer.Verify(tok)
 	if err != nil {
@@ -186,7 +212,7 @@ func TestCrossTenantExchangeRejected(t *testing.T) {
 	}
 }
 
-// spec: 13.3 + 8.2 (actor_token present → a2a_delegation, depth = actor.depth + 1)
+// spec: 13.3 (actor_token present → a2a_delegation, depth = actor.depth + 1)
 // diagnosis: The issued typ was wrong or depth did not increment.
 //
 //	Inspect the actor-token branch of tokenexchange.Validate.
@@ -356,7 +382,7 @@ func TestPerDialectCapCapsExp(t *testing.T) {
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
 		Scope:            "sessions:read",
 		Audience:         "lenny-gateway",
-		ExpiresIn:        int64((48 * time.Hour).Seconds()),
+		ExpiresIn:        expiresInPtr(int64((48 * time.Hour).Seconds())),
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("cap rotation: want 200, got %d", resp.StatusCode)
@@ -364,5 +390,50 @@ func TestPerDialectCapCapsExp(t *testing.T) {
 	expiresIn, _ := body["expires_in"].(float64)
 	if expiresIn > float64(24*60*60)+5 { // 24h ± skew
 		t.Errorf("expires_in: want ≤ 24h, got %v", expiresIn)
+	}
+}
+
+// spec: 13.3 (per-dialect cap, F-13.3.12)
+// diagnosis: pre-fix the cap lookup used `req.Audience` verbatim as
+// the map key. A request with `audience: "lenny-gateway lenny-ops"`
+// never matched a single-key entry and the cap silently no-opped. The
+// fix iterates the requested audiences and applies the tightest cap.
+// With caps lenny-gateway=24h and lenny-ops=1h, a multi-value audience
+// must cap at 1h.
+func TestPerDialectCapCapsExpForMultiValueAudience(t *testing.T) {
+	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
+	srv := mustNewServer(t, tokenservice.Options{
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
+		PerDialectCap: map[string]time.Duration{
+			"lenny-gateway": 24 * time.Hour,
+			"lenny-ops":     1 * time.Hour,
+		},
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	subject := mint(t, signer, jwt.Claims{
+		Subject: "alice", TenantID: "acme",
+		Typ: auth.TokenUserBearer, Scope: "sessions:read",
+		Audience: []string{"lenny-gateway", "lenny-ops"},
+		Expiry:   beyond24hExpiry,
+	})
+	resp, body := exchange(t, ts, subject, tokenservice.Request{
+		GrantType:        "urn:ietf:params:oauth:grant-type:token-exchange",
+		SubjectToken:     subject,
+		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
+		Scope:            "sessions:read",
+		Audience:         "lenny-gateway lenny-ops",
+		ExpiresIn:        expiresInPtr(int64((48 * time.Hour).Seconds())),
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("multi-value cap rotation: want 200, got %d (body %v)", resp.StatusCode, body)
+	}
+	expiresIn, _ := body["expires_in"].(float64)
+	// Tightest cap is lenny-ops at 1h (3600s); allow 5s skew.
+	if expiresIn > float64(60*60)+5 {
+		t.Errorf("expires_in for multi-value audience: want ≤ 1h, got %v", expiresIn)
 	}
 }

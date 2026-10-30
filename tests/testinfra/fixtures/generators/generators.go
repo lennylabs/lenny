@@ -2,7 +2,7 @@
 
 // Package generators ships rapid-driven fixture generators for the
 // §18.2 reference document types: WorkspacePlan, TaskRecord,
-// OutputPart. Each generator is a *rapid.Generator-typed factory so
+// MessagePart. Each generator is a *rapid.Generator-typed factory so
 // callers can compose them inside their own rapid.Check loops.
 //
 // The generators emit map[string]any (rather than typed structs)
@@ -95,10 +95,10 @@ func TaskRecord() *rapid.Generator[map[string]any] {
 	})
 }
 
-// OutputPart returns a rapid generator for the §7 OutputPart shape.
+// MessagePart returns a rapid generator for the §7 MessagePart shape.
 // Each draw is a single part; tests that need a list compose with
 // rapid.SliceOf.
-func OutputPart() *rapid.Generator[map[string]any] {
+func MessagePart() *rapid.Generator[map[string]any] {
 	return rapid.Custom(func(rt *rapid.T) map[string]any {
 		kind := rapid.SampledFrom([]string{"text", "tool_use", "tool_result", "reasoning", "file"}).Draw(rt, "part.type")
 		part := map[string]any{

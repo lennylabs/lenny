@@ -1,0 +1,119 @@
+suite: cosign image-signing webhook
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - admission-policies/cosign-verify-webhook.yaml
+tests:
+  - it: renders nothing when cosign verification is disabled
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders the workload and webhook config when cosign is enabled
+    set:
+      imageVerification.cosign.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 5
+
+  - it: configures the cosign webhook fail-closed
+    set:
+      imageVerification.cosign.enabled: true
+    documentIndex: 4
+    asserts:
+      - isKind:
+          of: ValidatingWebhookConfiguration
+      - equal:
+          path: webhooks[0].failurePolicy
+          value: Fail
+      - equal:
+          path: webhooks[0].clientConfig.service.path
+          value: /cosign-verify
+      - equal:
+          path: metadata.annotations["cert-manager.io/inject-ca-from"]
+          value: lenny-system/lenny-cosign-verify
+
+  - it: scopes the cosign webhook to pod CREATE in agent namespaces
+    set:
+      imageVerification.cosign.enabled: true
+    documentIndex: 4
+    asserts:
+      - equal:
+          path: webhooks[0].rules[0].resources[0]
+          value: pods
+      - equal:
+          path: webhooks[0].rules[0].operations[0]
+          value: CREATE
+      - equal:
+          path: webhooks[0].namespaceSelector.matchExpressions[0].key
+          value: lenny.dev/agent-namespace
+
+  - it: runs the cosign webhook with two replicas and the runbook pod label
+    set:
+      imageVerification.cosign.enabled: true
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: Deployment
+      - equal:
+          path: spec.replicas
+          value: 2
+      - equal:
+          path: spec.template.metadata.labels.app
+          value: lenny-cosign-webhook
+      - equal:
+          path: spec.template.metadata.labels["lenny.dev/component"]
+          value: admission-webhook
+
+  - it: passes the cosign verification flags to the webhook container
+    set:
+      imageVerification.cosign.enabled: true
+      imageVerification.cosign.verifiedRegistries:
+        - ghcr.io/lennylabs/
+        - registry.acme.com/agents/
+    documentIndex: 0
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --cosign-verify=true
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --cosign-verified-registries=ghcr.io/lennylabs/,registry.acme.com/agents/
+
+  - it: mounts the cosign public key and policy into the webhook pod
+    set:
+      imageVerification.cosign.enabled: true
+    documentIndex: 0
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: cosign-public-key
+            secret:
+              secretName: lenny-cosign-public-key
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: cosign-policy
+            configMap:
+              name: lenny-cosign-policy
+
+  - it: protects the cosign webhook with a PodDisruptionBudget
+    set:
+      imageVerification.cosign.enabled: true
+    documentIndex: 2
+    asserts:
+      - isKind:
+          of: PodDisruptionBudget
+      - equal:
+          path: spec.minAvailable
+          value: 1
+
+  - it: fails to render when enabled with an empty verified-registry list
+    set:
+      imageVerification.cosign.enabled: true
+      imageVerification.cosign.verifiedRegistries: []
+    asserts:
+      - failedTemplate:
+          errorMessage: imageVerification.cosign.enabled is true but imageVerification.cosign.verifiedRegistries is empty; an empty verified-registry list would place no image in scope and silently disable the cosign signature gate (§5.2)

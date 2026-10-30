@@ -40,6 +40,9 @@ lenny-test infra status
 lenny-test --group pr --dry-run
 lenny-test --tier component --dry-run
 lenny-test --changed --dry-run
+lenny-test --since main --max-tier unit --dry-run   # branch diff from its merge base
+lenny-test --since main --tier unit --dry-run       # the same diff, unit tier only
+lenny-test --since A...B --dry-run                   # any explicit range
 lenny-test --spec 4.6.1,12.3 --dry-run
 
 # Actually run (Phase 0: static + unit only)
@@ -47,6 +50,21 @@ lenny-test --tier static
 lenny-test --tier unit
 lenny-test --group pr-fast
 ```
+
+## Per-tier timeouts
+
+Each tier passes a `go test -timeout` budget. `go test` aborts the whole package binary when the budget runs out, so each default sits above the tier's recorded runtime with margin. An environment variable overrides each budget with a Go duration such as `45m`; an unparseable value is logged and the default applies. `timeouts.go` records the basis of each default.
+
+| Tier | Default | Override |
+|:-----|:--------|:---------|
+| unit (per package) | 30m | `LENNY_TEST_UNIT_TIMEOUT` |
+| component | 10m | `LENNY_TEST_COMPONENT_TIMEOUT` |
+| integration | 30m | `LENNY_TEST_INTEGRATION_TIMEOUT` |
+| e2e_kind | 60m | `LENNY_TEST_E2E_KIND_TIMEOUT` |
+| e2e_cloud | 30m | `LENNY_TEST_E2E_CLOUD_TIMEOUT` |
+| load_local, load_kind, chaos, load_cloud | 10m | `LENNY_TEST_LONG_TIMEOUT` |
+| security | 60m | `LENNY_TEST_SECURITY_TIMEOUT` |
+| docs | 1m | `LENNY_TEST_DOCS_TIMEOUT` |
 
 ## Files
 
@@ -58,4 +76,6 @@ lenny-test --group pr-fast
 | `cmd_list.go` | `list` subcommand |
 | `cmd_infra.go` | `infra up/down/status/prune` (Phase 0 stubs) |
 | `tiers.go` | Tier ordering and group-to-tier resolution |
+| `cmd_run_resolve.go` | `--changed`, `--spec`, and `--pkg` resolution into a tier plan |
+| `changed_select.go` | Unit-tier package scope for `--changed`: owning packages, change-graph unit targets, and in-module importers |
 | `verdict.go` | JSON verdict writer per TESTING.md §7 |

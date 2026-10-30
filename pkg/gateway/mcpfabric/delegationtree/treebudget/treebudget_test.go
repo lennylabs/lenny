@@ -1,0 +1,354 @@
+// SPDX-License-Identifier: MIT
+
+package treebudget_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
+)
+
+func newReserver(t *testing.T) (*treebudget.Reserver, *miniredis.Miniredis) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	cl := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
+	t.Cleanup(func() { _ = cl.Close() })
+	return treebudget.New(cl, 0), mr
+}
+
+// spec: §8.2 — a delegation within every cap is admitted and
+// the tree-wide counters advance by the reserved deltas.
+func TestReserveAdmitsWithinCaps_spec_8_2_57(t *testing.T) {
+	t.Parallel()
+	r, _ := newReserver(t)
+	got, err := r.Reserve(context.Background(), treebudget.Reservation{
+		RootSessionID:         "root1",
+		CreateTree:            true,
+		ParentSessionID:       "root1",
+		TreeSizeCap:           50,
+		TreeSizeDelta:         1,
+		TreeMemoryCap:         2097152,
+		TreeMemoryDelta:       treebudget.PerNodeMemoryBytes,
+		ParallelChildrenCap:   5,
+		ParallelChildrenDelta: 1,
+		ChildrenTotalCap:      10,
+		ChildrenTotalDelta:    1,
+	})
+	if err != nil {
+		t.Fatalf("Reserve: %v", err)
+	}
+	if got.TreeSize != 1 || got.ParallelChildren != 1 || got.ChildrenTotal != 1 {
+		t.Fatalf("Totals = %+v, want tree_size/parallel/children = 1", got)
+	}
+	if got.TreeMemory != treebudget.PerNodeMemoryBytes {
+		t.Fatalf("TreeMemory = %d, want %d", got.TreeMemory, treebudget.PerNodeMemoryBytes)
+	}
+}
+
+// spec: §8.2 — a zero cap means no limit on that axis; the
+// reservation is admitted regardless of accumulated value.
+func TestReserveZeroCapUnbounded_spec_8_2_57(t *testing.T) {
+	t.Parallel()
+	r, _ := newReserver(t)
+	for i := 0; i < 100; i++ {
+		if _, err := r.Reserve(context.Background(), treebudget.Reservation{
+			RootSessionID: "rootZ", ParentSessionID: "rootZ", CreateTree: true,
+			TreeSizeCap: 0, TreeSizeDelta: 1,
+		}); err != nil {
+			t.Fatalf("Reserve %d under zero cap: %v", i, err)
+		}
+	}
+}
+
+// spec: §8.2 — a reservation that would push tree_size over
+// maxTreeSize is rejected with BUDGET_EXHAUSTED and no counter mutates.
+func TestReserveTreeSizeExhausted_spec_8_2_127(t *testing.T) {
+	t.Parallel()
+	r, mr := newReserver(t)
+	ctx := context.Background()
+	res := treebudget.Reservation{
+		RootSessionID: "root2", ParentSessionID: "root2", CreateTree: true,
+		TreeSizeCap: 2, TreeSizeDelta: 1,
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := r.Reserve(ctx, res); err != nil {
+			t.Fatalf("Reserve %d: %v", i, err)
+		}
+	}
+	_, err := r.Reserve(ctx, res)
+	var bx *treebudget.BudgetExhaustedError
+	if !errors.As(err, &bx) {
+		t.Fatalf("third Reserve err = %v, want BudgetExhaustedError", err)
+	}
+	if bx.Axis != "maxTreeSize" || bx.Current != 2 || bx.Cap != 2 {
+		t.Fatalf("BudgetExhaustedError = %+v, want maxTreeSize 2/2", bx)
+	}
+	// The rejected reservation must not have advanced the counter.
+	if v, _ := mr.Get("{root2}:dlg:tree_size"); v != "2" {
+		t.Fatalf("tree_size after rejection = %q, want 2", v)
+	}
+}
+
+// spec: §8.2 — every capped axis rejects independently. Memory
+// is the binding axis here even though tree_size has headroom.
+func TestReserveMemoryExhausted_spec_8_2_127(t *testing.T) {
+	t.Parallel()
+	r, _ := newReserver(t)
+	ctx := context.Background()
+	res := treebudget.Reservation{
+		RootSessionID: "root3", ParentSessionID: "root3", CreateTree: true,
+		TreeSizeCap: 100, TreeSizeDelta: 1,
+		TreeMemoryCap: treebudget.PerNodeMemoryBytes, TreeMemoryDelta: treebudget.PerNodeMemoryBytes,
+	}
+	if _, err := r.Reserve(ctx, res); err != nil {
+		t.Fatalf("first Reserve: %v", err)
+	}
+	_, err := r.Reserve(ctx, res)
+	var bx *treebudget.BudgetExhaustedError
+	if !errors.As(err, &bx) || bx.Axis != "maxTreeMemoryBytes" {
+		t.Fatalf("second Reserve err = %v, want maxTreeMemoryBytes exhaustion", err)
+	}
+}
+
+// spec: §12.4 — parallel_children is per-parent. Two distinct
+// parents in the same tree each get their own ceiling.
+func TestReserveParallelChildrenPerParent_spec_12_4_193(t *testing.T) {
+	t.Parallel()
+	r, _ := newReserver(t)
+	ctx := context.Background()
+	mk := func(parent string) treebudget.Reservation {
+		return treebudget.Reservation{
+			RootSessionID: "root4", ParentSessionID: parent, CreateTree: true,
+			ParallelChildrenCap: 1, ParallelChildrenDelta: 1,
+		}
+	}
+	if _, err := r.Reserve(ctx, mk("pA")); err != nil {
+		t.Fatalf("pA reserve: %v", err)
+	}
+	// pB shares the tree but has its own per-parent counter, so it is
+	// admitted even though pA is at its cap.
+	if _, err := r.Reserve(ctx, mk("pB")); err != nil {
+		t.Fatalf("pB reserve: %v", err)
+	}
+	// pA over its own ceiling is rejected.
+	_, err := r.Reserve(ctx, mk("pA"))
+	var bx *treebudget.BudgetExhaustedError
+	if !errors.As(err, &bx) || bx.Axis != "maxParallelChildren" {
+		t.Fatalf("pA second reserve err = %v, want maxParallelChildren exhaustion", err)
+	}
+}
+
+// spec: §8.2 — Return decrements the reserved axes; a released
+// parallel-children slot frees capacity for a new child.
+func TestReturnFreesParallelSlot_spec_8_2_130(t *testing.T) {
+	t.Parallel()
+	r, _ := newReserver(t)
+	ctx := context.Background()
+	res := treebudget.Reservation{
+		RootSessionID: "root5", ParentSessionID: "root5", CreateTree: true,
+		ParallelChildrenCap: 1, ParallelChildrenDelta: 1,
+	}
+	if _, err := r.Reserve(ctx, res); err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	if _, err := r.Reserve(ctx, res); !errors.As(err, new(*treebudget.BudgetExhaustedError)) {
+		t.Fatalf("second reserve err = %v, want exhaustion", err)
+	}
+	if err := r.Return(ctx, res); err != nil {
+		t.Fatalf("return: %v", err)
+	}
+	if _, err := r.Reserve(ctx, res); err != nil {
+		t.Fatalf("reserve after return: %v", err)
+	}
+}
+
+// spec: §8.2 — Return clamps at zero so a double-return cannot
+// drive a counter negative and inflate available budget.
+func TestReturnClampsAtZero_spec_8_2_130(t *testing.T) {
+	t.Parallel()
+	r, mr := newReserver(t)
+	ctx := context.Background()
+	res := treebudget.Reservation{
+		RootSessionID: "root6", ParentSessionID: "root6", CreateTree: true,
+		TreeSizeCap: 5, TreeSizeDelta: 1,
+	}
+	if _, err := r.Reserve(ctx, res); err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	if err := r.Return(ctx, res); err != nil {
+		t.Fatalf("return 1: %v", err)
+	}
+	if err := r.Return(ctx, res); err != nil {
+		t.Fatalf("return 2: %v", err)
+	}
+	if v, _ := mr.Get("{root6}:dlg:tree_size"); v != "0" {
+		t.Fatalf("tree_size after double return = %q, want clamped 0", v)
+	}
+}
+
+// spec: §12.4 — a Redis outage fails closed; Reserve returns
+// ErrBudgetUnavailable rather than admitting an unbudgeted delegation.
+func TestReserveFailsClosedOnRedisOutage_spec_12_4_213(t *testing.T) {
+	t.Parallel()
+	r, mr := newReserver(t)
+	mr.Close()
+	_, err := r.Reserve(context.Background(), treebudget.Reservation{
+		RootSessionID: "root7", ParentSessionID: "root7", CreateTree: true,
+		TreeSizeCap: 10, TreeSizeDelta: 1,
+	})
+	if !errors.Is(err, treebudget.ErrBudgetUnavailable) {
+		t.Fatalf("Reserve after outage err = %v, want ErrBudgetUnavailable", err)
+	}
+}
+
+// spec: §8.3 (Return on completion), §12.4 — a Return that cannot consult
+// Redis fails with ErrBudgetUnavailable, the same class Reserve reports, and
+// never with ErrBudgetKeysExpired, which is reserved for an absent sentinel.
+func TestReturnDuringRedisOutageIsBudgetUnavailable_spec_8_3(t *testing.T) {
+	t.Parallel()
+	r, mr := newReserver(t)
+	res := treebudget.Reservation{
+		RootSessionID: "root7r", ParentSessionID: "root7r", CreateTree: true,
+		TreeSizeCap: 10, TreeSizeDelta: 1,
+	}
+	if _, err := r.Reserve(context.Background(), res); err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	mr.Close()
+	err := r.Return(context.Background(), res)
+	if !errors.Is(err, treebudget.ErrBudgetUnavailable) {
+		t.Fatalf("Return after outage err = %v, want ErrBudgetUnavailable", err)
+	}
+	if errors.Is(err, treebudget.ErrBudgetKeysExpired) {
+		t.Fatalf("Return after outage err = %v, must not be ErrBudgetKeysExpired", err)
+	}
+}
+
+// spec: §8.2 — an empty root session id is rejected before any
+// Redis interaction.
+func TestReserveEmptyRootRejected_spec_8_2_57(t *testing.T) {
+	t.Parallel()
+	r, _ := newReserver(t)
+	if _, err := r.Reserve(context.Background(), treebudget.Reservation{TreeSizeDelta: 1}); err == nil {
+		t.Fatal("Reserve with empty root = nil err, want error")
+	}
+}
+
+// spec: §12.4 — all five keys share the {root} hash tag so a
+// Redis Cluster co-locates them on one slot for atomic multi-key Lua.
+func TestReserveKeysShareHashTag_spec_12_4_193(t *testing.T) {
+	t.Parallel()
+	r, mr := newReserver(t)
+	if _, err := r.Reserve(context.Background(), treebudget.Reservation{
+		RootSessionID: "rootH", ParentSessionID: "pX", CreateTree: true,
+		TreeSizeCap: 10, TreeSizeDelta: 1,
+		TreeMemoryCap: 1 << 20, TreeMemoryDelta: 1,
+		ParallelChildrenCap: 5, ParallelChildrenDelta: 1,
+		ChildrenTotalCap: 5, ChildrenTotalDelta: 1,
+		TokenCap: 1000, TokenDelta: 10,
+	}); err != nil {
+		t.Fatalf("Reserve: %v", err)
+	}
+	for _, k := range []string{
+		"{rootH}:dlg:tree_size", "{rootH}:dlg:tree_memory",
+		"{rootH}:dlg:parallel_children:pX", "{rootH}:dlg:children_total:pX",
+		"{rootH}:dlg:tokens",
+	} {
+		if !mr.Exists(k) {
+			t.Errorf("expected key %q to exist", k)
+		}
+	}
+}
+
+// spec: §8.3 — the reserve script tracks the per-tree
+// parallel-children high-watermark, and ObserveHighWatermark reads it
+// once at tree completion and clears the key (GETDEL) so a re-settle
+// cannot double-count. F-8.9.6.
+func TestHighWatermarkTracksMaxParallelChildren_spec_8_3_379(t *testing.T) {
+	t.Parallel()
+	r, _ := newReserver(t)
+	ctx := context.Background()
+	mk := func(parent string) treebudget.Reservation {
+		return treebudget.Reservation{
+			RootSessionID: "rootW", ParentSessionID: parent, CreateTree: true,
+			ParallelChildrenCap: 10, ParallelChildrenDelta: 1,
+		}
+	}
+	// Parent pA reaches 3 concurrent children; pB reaches 1. The tree
+	// high-watermark is the max single-parent in-flight count, 3.
+	for i := 0; i < 3; i++ {
+		if _, err := r.Reserve(ctx, mk("pA")); err != nil {
+			t.Fatalf("pA reserve %d: %v", i, err)
+		}
+	}
+	if _, err := r.Reserve(ctx, mk("pB")); err != nil {
+		t.Fatalf("pB reserve: %v", err)
+	}
+	value, found, err := r.ObserveHighWatermark(ctx, "rootW")
+	if err != nil {
+		t.Fatalf("ObserveHighWatermark: %v", err)
+	}
+	if !found || value != 3 {
+		t.Fatalf("high-watermark = (%d, %v), want (3, true)", value, found)
+	}
+	// The read cleared the key, so a re-observe finds nothing.
+	_, found2, err := r.ObserveHighWatermark(ctx, "rootW")
+	if err != nil {
+		t.Fatalf("ObserveHighWatermark second: %v", err)
+	}
+	if found2 {
+		t.Fatalf("high-watermark key not cleared after read")
+	}
+}
+
+// spec: §8.3 — a tree that admitted no delegation has no
+// recorded watermark, so ObserveHighWatermark returns found=false and
+// the caller skips the histogram observation. F-8.9.6.
+func TestHighWatermarkAbsentForUndelegatedTree_spec_8_3_379(t *testing.T) {
+	t.Parallel()
+	r, _ := newReserver(t)
+	value, found, err := r.ObserveHighWatermark(context.Background(), "noTree")
+	if err != nil {
+		t.Fatalf("ObserveHighWatermark: %v", err)
+	}
+	if found || value != 0 {
+		t.Fatalf("got (%d, %v), want (0, false)", value, found)
+	}
+}
+
+// spec: §8.3 — the watermark does not regress when a later
+// reservation observes a lower per-parent in-flight count (e.g. a
+// different parent's first child). F-8.9.6.
+func TestHighWatermarkDoesNotRegress_spec_8_3_379(t *testing.T) {
+	t.Parallel()
+	r, _ := newReserver(t)
+	ctx := context.Background()
+	for i := 0; i < 2; i++ {
+		if _, err := r.Reserve(ctx, treebudget.Reservation{
+			RootSessionID: "rootR", ParentSessionID: "pA", CreateTree: true,
+			ParallelChildrenCap: 10, ParallelChildrenDelta: 1,
+		}); err != nil {
+			t.Fatalf("pA reserve %d: %v", i, err)
+		}
+	}
+	// pC's first child is in-flight count 1 < the existing watermark 2.
+	if _, err := r.Reserve(ctx, treebudget.Reservation{
+		RootSessionID: "rootR", ParentSessionID: "pC", CreateTree: true,
+		ParallelChildrenCap: 10, ParallelChildrenDelta: 1,
+	}); err != nil {
+		t.Fatalf("pC reserve: %v", err)
+	}
+	value, found, err := r.ObserveHighWatermark(ctx, "rootR")
+	if err != nil || !found {
+		t.Fatalf("ObserveHighWatermark: (%v, found=%v)", err, found)
+	}
+	if value != 2 {
+		t.Fatalf("high-watermark = %d, want 2 (no regression)", value)
+	}
+}

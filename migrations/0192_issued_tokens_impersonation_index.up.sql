@@ -1,0 +1,13 @@
+-- §13.3 platform-admin impersonation partial index.
+--
+-- An impersonation session is the issued_tokens row of the bearer it mints,
+-- identified by act_sub IS NOT NULL AND parent_jti IS NULL (§13.3
+-- "Platform-admin impersonation" rule 2). The impersonation listing and the
+-- platform-admin full-revoke cascade read those rows across every tenant, so
+-- this partial index is keyed on act_sub and restricted to impersonation rows.
+-- It grows with the impersonation population rather than with every live
+-- token in every tenant.
+--
+-- spec: §12.2 (TokenIssuanceStore indexes), §13.3 (Platform-admin
+-- impersonation).
+CREATE INDEX idx_issued_tokens_impersonation ON issued_tokens (act_sub) WHERE act_sub IS NOT NULL AND parent_jti IS NULL;

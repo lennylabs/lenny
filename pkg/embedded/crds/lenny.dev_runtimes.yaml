@@ -1,0 +1,697 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
+    lenny.dev/schema-version: "1"
+  name: runtimes.lenny.dev
+spec:
+  group: lenny.dev
+  names:
+    kind: Runtime
+    listKind: RuntimeList
+    plural: runtimes
+    shortNames:
+    - rt
+    singular: runtime
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.type
+      name: Type
+      type: string
+    - jsonPath: .spec.image
+      name: Image
+      type: string
+    - jsonPath: .spec.integrationLevel
+      name: Level
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          Runtime is the lenny.dev/v1alpha1 declaration of a registered agent
+          runtime (§5.1). Runtimes are platform-global, so the resource is
+          cluster-scoped.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              RuntimeSpec is the desired state of a registered agent Runtime
+              (§5.1). The gateway mirrors the registered runtimes into its
+              runtime_definitions registry; the CRD is the declarative source.
+
+              The CEL rules enforce the §5.1 `command` and `env` placement rules at the
+              API server: `command` is required on a `type: agent` runtime whose
+              deploymentModel is sidecar (an empty deploymentModel defaults to sidecar)
+              and forbidden on every other runtime, and `env` is forbidden wherever
+              `command` is. spec: §5.1 (command), §5.1 (env).
+            properties:
+              agentInterface:
+                description: |-
+                  AgentInterface is the §5.1 agentInterface descriptor on a
+                  type:agent runtime: the human-readable description, the input and
+                  output media types, the workspace-files flag, and the declared
+                  skills. §26 reference runtimes declare it so the registered Runtime
+                  advertises the agent's skills and the §15 A2A agent-card auto-
+                  generation has a source. The runtime controller mirrors it into the
+                  gateway registry; the admin path regenerates the agent card from it.
+                  It is nil for type:mcp runtimes and for type:agent runtimes that omit
+                  the block. spec: §5.1; §26.3 — F-26.2.1 /
+                  F-26.3.5.
+                properties:
+                  description:
+                    description: Description is the human-readable summary of the
+                      runtime's role.
+                    type: string
+                  inputModes:
+                    description: InputModes enumerates the media types the runtime
+                      accepts.
+                    items:
+                      description: |-
+                        AgentInterfaceMode is one entry in AgentInterface.InputModes or
+                        AgentInterface.OutputModes.
+                      properties:
+                        role:
+                          description: Role is an optional tag such as "primary".
+                          type: string
+                        type:
+                          description: Type is the IANA media type, for example "text/plain".
+                          minLength: 1
+                          type: string
+                      required:
+                      - type
+                      type: object
+                    type: array
+                  outputModes:
+                    description: OutputModes enumerates the media types the runtime
+                      emits.
+                    items:
+                      description: |-
+                        AgentInterfaceMode is one entry in AgentInterface.InputModes or
+                        AgentInterface.OutputModes.
+                      properties:
+                        role:
+                          description: Role is an optional tag such as "primary".
+                          type: string
+                        type:
+                          description: Type is the IANA media type, for example "text/plain".
+                          minLength: 1
+                          type: string
+                      required:
+                      - type
+                      type: object
+                    type: array
+                  skills:
+                    description: Skills enumerates the discrete capabilities the runtime
+                      advertises.
+                    items:
+                      description: AgentInterfaceSkill is one entry in AgentInterface.Skills.
+                      properties:
+                        description:
+                          description: Description elaborates on what the skill does.
+                          type: string
+                        id:
+                          description: ID is the stable skill identifier, for example
+                            "review".
+                          minLength: 1
+                          type: string
+                        name:
+                          description: Name is the human-readable skill name.
+                          type: string
+                      required:
+                      - id
+                      type: object
+                    type: array
+                  supportsWorkspaceFiles:
+                    description: |-
+                      SupportsWorkspaceFiles signals that the runtime honors workspace
+                      files in a TaskSpec.
+                    type: boolean
+                type: object
+              allowedResourceClasses:
+                description: |-
+                  AllowedResourceClasses lists the §5 resource classes a session
+                  of this runtime may request.
+                items:
+                  type: string
+                type: array
+              archivePolicy:
+                description: |-
+                  ArchivePolicy is the §13.4 per-Runtime archive-extraction opt-in
+                  block: AllowSymlinks lifts the §7.4 default-deny on symlink
+                  entries inside uploadArchive sources. An empty block leaves the
+                  platform default (symlinks rejected). spec: §7.4;
+                  §13.4 — F-7.4.4.
+                properties:
+                  allowSymlinks:
+                    description: |-
+                      AllowSymlinks lifts the §7.4 default-deny on symlink
+                      entries inside uploadArchive sources. When false (the default),
+                      extraction aborts on any symlink with details.reason = "symlink".
+                    type: boolean
+                type: object
+              capabilities:
+                description: |-
+                  Capabilities is the §5.1 capabilities block on a runtime: the
+                  runtime's interaction model and its mid-session injection support.
+                  §26 reference runtimes (mastra, openai-assistants, crewai, …)
+                  declare these so the registered Runtime CRD advertises the
+                  §15.4.6 conformance battery the runtime actually implements; the
+                  runtime controller mirrors them into the gateway registry's
+                  RuntimeCapabilities at reconciliation time so §7.2 path-4 (queued
+                  injection) is gated on the runtime's declared injection.modes.
+                  spec: §5.1; §26.9; §26.10; §26.11 — F-26.9.2 / F-26.10.2 / F-26.11.2.
+                properties:
+                  injection:
+                    description: |-
+                      Injection is the runtime's §5.1 capabilities.injection block:
+                      whether mid-session message injection is supported and the modes
+                      (immediate, queued) the runtime accepts. §26's reference runtimes
+                      declare supported=true with both modes.
+                    properties:
+                      modes:
+                        description: |-
+                          Modes lists the §7.2 injection modes the runtime accepts:
+                          `immediate` interrupts a suspended session to deliver, `queued`
+                          buffers the message for the next runtime turn.
+                        items:
+                          type: string
+                        type: array
+                      supported:
+                        description: |-
+                          Supported is the §5.1 capabilities.injection.supported flag. False
+                          (the default) rejects injection per §7.2.
+                        type: boolean
+                    type: object
+                  interaction:
+                    description: |-
+                      Interaction is the runtime's §5.1 capabilities.interaction model:
+                      one_shot (one message, one response) or multi_turn (repeated message
+                      delivery over a task). §26's reference runtimes declare multi_turn.
+                    enum:
+                    - one_shot
+                    - multi_turn
+                    type: string
+                  preConnect:
+                    description: |-
+                      PreConnect is the §5.1 capabilities.preConnect flag: when true the
+                      pod's adapter starts the agent SDK process during warm-up, before the
+                      pod becomes idle, so the pool's pods are SDK-warm. In the sidecar
+                      model the adapter does so through the runtime supervisor. Default
+                      false. spec: §6.1.
+                    type: boolean
+                type: object
+              command:
+                description: |-
+                  Command is the §5.1 argv of the runtime process. The runtime
+                  supervisor launches it as the runtime process (§4.7.10 Runtime
+                  supervisor), ignoring the image's ENTRYPOINT and CMD. Required on a
+                  `type: agent` sidecar runtime and forbidden on every other runtime
+                  (the RuntimeSpec CEL rules); its first element is an absolute path in
+                  the runtime image. It is settable only on the Runtime CRD: the
+                  RuntimeReconciler mirrors only the derived restartable flag into the
+                  gateway registry, and the pod builder reads the argv from the live
+                  CRD. spec: §5.1 (command).
+                items:
+                  minLength: 1
+                  type: string
+                minItems: 1
+                type: array
+                x-kubernetes-validations:
+                - message: the first element of command must be an absolute path
+                  rule: self[0].startsWith('/')
+              credentialCapabilities:
+                description: |-
+                  CredentialCapabilities declares the runtime's §4.9 credential
+                  hot-rotation support and the LLM-proxy dialects its SDK speaks. It
+                  is required when a pool bound to this runtime uses
+                  deliveryMode: proxy, and empty for direct-mode-only runtimes.
+                properties:
+                  hotRotation:
+                    description: HotRotation reports mid-session credential hot-rotation
+                      support.
+                    type: boolean
+                  proxyDialect:
+                    description: |-
+                      ProxyDialect lists the §4.9 LLM-proxy dialects the runtime's SDK
+                      speaks (openai, anthropic). An empty list declares direct-mode-only
+                      support.
+                    items:
+                      type: string
+                    type: array
+                type: object
+              defaultPoolConfig:
+                description: |-
+                  DefaultPoolConfig is the §5.1 defaultPoolConfig block: the
+                  runtime-declared default pool sizing the §5.2 pool resolver consults
+                  before falling back to platform defaults. The §26 coding-agent
+                  catalog declares it (warmCount 2, resourceClass medium, egressProfile
+                  restricted). The runtime controller mirrors it into the gateway
+                  registry. An empty block leaves the platform defaults. spec: §5.1; §26.3 — F-26.2.1 / F-26.3.5.
+                properties:
+                  egressProfile:
+                    description: |-
+                      EgressProfile is the default §13.2 egress profile for the pool. The
+                      §26 coding-agent catalog declares restricted.
+                    type: string
+                  resourceClass:
+                    description: ResourceClass is the default §5.1 resource class
+                      for the pool.
+                    type: string
+                  warmCount:
+                    description: WarmCount is the default number of warm pods the
+                      pool keeps.
+                    minimum: 0
+                    type: integer
+                type: object
+              delegationPolicyRef:
+                description: |-
+                  DelegationPolicyRef is the §5.1 delegationPolicyRef: the
+                  DelegationPolicy this runtime is bound to. §26.11 (crewai) declares
+                  the field as required on a runtime that delegates. The runtime
+                  controller propagates it through the gateway registry.
+                  spec: §5.1; §26.11 — F-26.11.2.
+                type: string
+              deploymentModel:
+                description: |-
+                  DeploymentModel is the §4.7 agent-pod deployment model. `sidecar`
+                  (the default) runs the lenny-adapter as a separate sidecar
+                  container that bridges the runtime over an abstract Unix socket;
+                  `embedded` runs a first-party runtime image that links the adapter
+                  as a library and serves the gRPC contract from a single container.
+                  Empty defaults to `sidecar` at registration time.
+                enum:
+                - sidecar
+                - embedded
+                type: string
+              env:
+                description: |-
+                  Env is the §5.1 list of variables the runtime supervisor gives the
+                  runtime process, which starts from an empty environment rather than
+                  the image's ENV (§4.7.10 Runtime supervisor). Forbidden wherever
+                  Command is (the RuntimeSpec CEL rules). Names are unique (the map
+                  list key), match the POSIX variable-name pattern, and never begin
+                  with the platform-reserved LENNY_ prefix. Values are readable by the
+                  runtime, so the field carries no Secret or ConfigMap reference;
+                  secrets reach the runtime through its credential file. The field is
+                  not mirrored into the gateway registry. spec: §5.1 (env).
+                items:
+                  description: |-
+                    RuntimeEnvVar is one §5.1 `env` pair the runtime supervisor sets in the
+                    runtime process's environment. spec: §5.1 (env).
+                  properties:
+                    name:
+                      description: |-
+                        Name is the variable name: a non-empty POSIX variable name that does
+                        not begin with LENNY_, which the platform reserves for its own
+                        variables.
+                      pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+                      type: string
+                      x-kubernetes-validations:
+                      - message: env names beginning with LENNY_ are reserved for
+                          the platform
+                        rule: '!self.startsWith(''LENNY_'')'
+                    value:
+                      description: |-
+                        Value is the variable value. An empty value sets the variable to the
+                        empty string.
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              executionMode:
+                description: |-
+                  ExecutionMode is the §5.2 pod-reuse mode: `session` (a pod
+                  parameterized by the pool's sessionPolicy) or `service` (a claimless,
+                  request-routed pod). Empty defaults to `session` at registration
+                  time.
+                enum:
+                - session
+                - service
+                type: string
+              image:
+                description: |-
+                  Image is the OCI image reference the warm pool launches. Per §5.3
+                  images must be pinned by digest, not tag: the reference must
+                  contain an `@sha256:<64-hex>` digest. The Pattern enforces the
+                  §5.3 supply-chain MUST at the CRD layer so a `kubectl apply` of a
+                  tag-pinned Runtime is rejected by the API server, matching the
+                  admin-API digest check.
+                pattern: '@sha256:[A-Fa-f0-9]{64}$'
+                type: string
+              integrationLevel:
+                description: |-
+                  IntegrationLevel is the §5.1 conformance level the runtime
+                  implements.
+                enum:
+                - basic
+                - standard
+                - full
+                type: string
+              isolationProfile:
+                description: IsolationProfile is the §5.3 default sandbox isolation
+                  profile.
+                enum:
+                - standard
+                - sandboxed
+                - microvm
+                type: string
+              limits:
+                description: |-
+                  Limits is the §5.1 limits block: the per-runtime session-age,
+                  upload-size, and §11.3 request-input / elicitation wait caps. The
+                  §26 coding-agent catalog declares it (maxSessionAge 14400,
+                  maxUploadSize 500MB, maxRequestInputWaitSeconds 1800). The runtime
+                  controller mirrors it into the gateway registry so the
+                  §11.3 / §6.2 session-age watchdog, the upload-handler cap, and the
+                  inter-agent request_input timeout read the values the deployer
+                  declared on the Runtime resource. An empty block leaves the platform
+                  defaults. spec: §5.1; §26.2; §26.3 — F-26.2.1 / F-26.3.2.
+                properties:
+                  maxElicitationWaitSeconds:
+                    description: |-
+                      MaxElicitationWaitSeconds is the §11.3 human-facing
+                      lenny/request_elicitation wait timeout in seconds. Zero selects the
+                      platform default (600s).
+                    minimum: 0
+                    type: integer
+                  maxElicitationsPerSession:
+                    description: |-
+                      MaxElicitationsPerSession is the §11.3 per-session lifetime
+                      elicitation budget. Zero selects the platform default (50).
+                    minimum: 0
+                    type: integer
+                  maxRequestInputWaitSeconds:
+                    description: |-
+                      MaxRequestInputWaitSeconds is the §11.3 inter-agent
+                      lenny/request_input timeout in seconds. Zero selects the platform
+                      default. The §26 coding-agent catalog declares 1800 (30 minutes).
+                    minimum: 0
+                    type: integer
+                  maxSessionAgeSeconds:
+                    description: |-
+                      MaxSessionAgeSeconds caps a session's lifetime in seconds. Zero
+                      declares no per-runtime session-age cap. The §26 coding-agent
+                      catalog declares 14400 (4 hours).
+                    minimum: 0
+                    type: integer
+                  maxUploadSizeBytes:
+                    description: |-
+                      MaxUploadSizeBytes caps a single client upload in bytes. Zero
+                      declares no per-runtime upload cap. The §26 coding-agent catalog
+                      declares 500 MB (524288000 bytes).
+                    format: int64
+                    minimum: 0
+                    type: integer
+                type: object
+              requireSoPeercred:
+                description: |-
+                  RequireSoPeercred gates the §4.7 SO_PEERCRED adapter-agent boundary
+                  self-test. A nil or true value (the default) requires SO_PEERCRED to
+                  be functional; a failed self-test crashes the pod. Set false only
+                  when gVisor SO_PEERCRED divergence is confirmed (Phase 3.5) and
+                  nonce-only mode is explicitly accepted. Sidecar model only: the
+                  RuntimeReconciler marks an embedded runtime carrying false
+                  Registered=False (InvalidRuntime) and does not mirror it; derived
+                  runtimes inherit the base value through the §5.1 merge. The
+                  WarmPoolController renders --require-so-peercred=false for pools
+                  carrying the §5.3 acknowledgeNonceOnlyAuth acknowledgment and
+                  surfaces SOPeercredDisabled / SecurityDegradedMode per §4.6.3.
+                  spec: §4.7.
+                type: boolean
+              runtimeOptionsSchemaRef:
+                description: |-
+                  RuntimeOptionsSchemaRef is the §5.1 / §26 runtimeOptionsSchema URL
+                  the runtime advertises. The §14 path resolves it (or the inline
+                  schema set via the admin API) when validating session-creation
+                  runtimeOptions. The CRD carries the URL form so the chart can
+                  declaratively register schemas hosted at
+                  `https://schemas.lenny.dev/runtime-options/<name>/v1.json` per §26.
+                  The runtime controller stamps it into the gateway registry as a
+                  JSON `{"$ref": "<url>"}` schema fragment. spec: §5.1; §26.9; §26.10; §26.11 — F-26.9.2 / F-26.10.2 /
+                  F-26.11.2.
+                pattern: ^https?://
+                type: string
+              setupCommandPolicy:
+                description: |-
+                  SetupCommandPolicy is the §5.1 / §7.5 setupCommandPolicy block: the
+                  per-runtime command allow/block list, shell-execution flag, and
+                  per-session command cap the gateway enforces at session create-time
+                  (§7.5). An empty block declares no policy (the legacy
+                  admit-everything path). F-7.5.10.
+                properties:
+                  allowlist:
+                    description: |-
+                      Allowlist is the set of permitted §7.5 command prefixes when Mode is
+                      allowlist.
+                    items:
+                      type: string
+                    type: array
+                  blocklist:
+                    description: |-
+                      Blocklist is the set of rejected §7.5 command prefixes when Mode is
+                      blocklist.
+                    items:
+                      type: string
+                    type: array
+                  maxCommands:
+                    description: |-
+                      MaxCommands caps the number of setup commands per session. Zero
+                      declares no cap.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  mode:
+                    description: |-
+                      Mode selects allowlist (deny-by-default) or blocklist
+                      (allow-by-default) §7.5 prefix matching. An empty value disables the
+                      prefix gate but the rest of the policy (shell, maxCommands) still
+                      applies.
+                    enum:
+                    - allowlist
+                    - blocklist
+                    type: string
+                  shell:
+                    description: |-
+                      Shell selects shell-vs-argv setup-command execution. False splits on
+                      whitespace and execs the argv directly, neutering shell
+                      metacharacters per §7.5.
+                    type: boolean
+                type: object
+              setupPolicy:
+                description: |-
+                  SetupPolicy is the §5.1 setupPolicy block: the aggregate cap on the
+                  pod setup phase and the disposition when the cap is hit. The §26
+                  coding-agent catalog declares it (timeoutSeconds 600, onTimeout
+                  fail). The runtime controller mirrors it into the gateway registry
+                  so the §6.2 finalizing-state watchdog enforces the runtime-declared
+                  setup timeout. An empty block leaves the runtime with no aggregate
+                  setup cap. spec: §5.1; §26.3 — F-26.2.1 /
+                  F-26.3.4.
+                properties:
+                  onTimeout:
+                    description: |-
+                      OnTimeout is the disposition when the cap is exceeded. An empty value
+                      is treated as the conservative "fail" default.
+                    enum:
+                    - fail
+                    - warn
+                    type: string
+                  timeoutSeconds:
+                    description: |-
+                      TimeoutSeconds is the aggregate cap on the setup phase in seconds.
+                      Zero declares no aggregate cap (§5.1). The §26 coding-agent
+                      catalog declares 600.
+                    minimum: 0
+                    type: integer
+                type: object
+              sharedAssets:
+                description: |-
+                  SharedAssets is the §6.4 concurrent-workspace read-only shared-asset
+                  list. Each entry is an inline file the platform materializes into the
+                  pod's `/workspace/shared/` directory at warm time, before any slot is
+                  assigned. `/workspace/shared/` is then mounted read-only on the
+                  runtime container, so a runtime write returns EROFS. The directory is
+                  mounted (empty, read-only) even when this list is empty, denying the
+                  runtime writable scratch space there. Artifact-reference assets
+                  (§4.5) are delivered by the gateway during pod initialization and are
+                  not expressed inline here. spec: §6.4 — F-6.4.3.
+                items:
+                  description: |-
+                    SharedAsset is one §6.4 read-only shared-asset entry the platform
+                    materializes into the pod's `/workspace/shared/` directory at warm
+                    time. The directory is mounted read-only on the runtime container, so
+                    the agent reads these files but a write returns EROFS. spec: §6.4 — F-6.4.3.
+                  properties:
+                    content:
+                      description: |-
+                        Content is the inline file body. An empty value materializes an empty
+                        file. The length is capped so the rendered pod spec stays within the
+                        API-server object-size budget; larger cross-slot assets are delivered
+                        by the gateway as artifact references during pod initialization.
+                      maxLength: 32768
+                      type: string
+                    mode:
+                      description: |-
+                        Mode is the octal file mode for the materialized file (for example
+                        `0444`). An empty value defaults to `0444` (read-only for all),
+                        matching the read-only mount. setuid and setgid modes are rejected.
+                      pattern: ^[0-7]{3,4}$
+                      type: string
+                    path:
+                      description: |-
+                        Path is the destination path relative to `/workspace/shared/`. It
+                        must be a relative path with no parent-directory (`..`) segment; the
+                        adapter rejects an absolute path or one that escapes the shared root.
+                      minLength: 1
+                      type: string
+                  required:
+                  - path
+                  type: object
+                type: array
+              supportedProviders:
+                description: |-
+                  SupportedProviders lists the LLM providers the runtime accepts
+                  leased credentials for.
+                items:
+                  type: string
+                type: array
+              type:
+                description: |-
+                  Type is the runtime kind: `agent` runs an interactive agent,
+                  `mcp` exposes an MCP server.
+                enum:
+                - agent
+                - mcp
+                type: string
+              workspaceTier:
+                description: |-
+                  WorkspaceTier is the §12.9 / §5.2 data-classification tier this
+                  runtime processes. The default workspace classification is `T3`
+                  (Confidential); runtimes that handle Restricted data (PHI, regulated
+                  credentials) declare `T4`. A `T4` Runtime forbids cross-tenant pod
+                  reuse (§5.2) and triggers the §6.4 dedicated-node controls:
+                  the sandbox reconciler injects the `lenny.dev/workspace-tier: t4`
+                  pod label, the T4 nodeSelector, and the T4 NoSchedule toleration so
+                  the lenny-t4-node-isolation admission webhook admits the pod onto a
+                  dedicated T4 node pool. An empty value is treated as `T3`.
+                enum:
+                - T3
+                - T4
+                type: string
+            required:
+            - image
+            - integrationLevel
+            - type
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+            x-kubernetes-validations:
+            - message: 'command is required on a type: agent runtime whose deploymentModel
+                is sidecar and forbidden on every other runtime'
+              rule: (self.type == 'agent' && (!has(self.deploymentModel) || self.deploymentModel
+                == 'sidecar')) == has(self.command)
+            - message: 'env is forbidden on a runtime that is not a type: agent sidecar
+                runtime'
+              rule: '!has(self.env) || (self.type == ''agent'' && (!has(self.deploymentModel)
+                || self.deploymentModel == ''sidecar''))'
+          status:
+            description: RuntimeStatus is the observed state of a Runtime.
+            properties:
+              conditions:
+                description: |-
+                  Conditions is the standard Kubernetes condition list. The
+                  controller sets a `Registered` condition once the runtime is
+                  mirrored into the gateway.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              observedGeneration:
+                description: |-
+                  ObservedGeneration is the .metadata.generation the controller
+                  last reconciled into the gateway registry.
+                format: int64
+                type: integer
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

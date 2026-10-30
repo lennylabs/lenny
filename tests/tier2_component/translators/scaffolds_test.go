@@ -2,32 +2,22 @@
 
 //go:build component
 
-// Tier-2 component scaffolds for §12.2.5 Translators. The LLM Proxy
+// Tier-2 component scaffolds for TESTING.md §12.2.5 Translators. The LLM Proxy
 // native translator is exercised against canonical request/response
-// pairs from the OpenAI and Anthropic SDKs. The mock LLM provider
-// records every translated request and the suite asserts the
-// round-trip is byte-equivalent for the canonical inputs.
+// pairs from the OpenAI and Anthropic SDKs.
+//
+// The Anthropic corpus entries are exercised in
+// anthropic_translator_test.go against pkg/gateway/llmproxy's
+// AnthropicDirectTranslator. The OpenAI Chat Completions corpus is
+// exercised in openai_chat_translator_test.go and the OpenAI Responses
+// corpus in openai_responses_translator_test.go.
 
 package translators_test
 
-import "testing"
+// TestLLMProxyTranslatorOpenAIChatCompletions is implemented in
+// openai_chat_translator_test.go, which round-trips the canonical
+// openai_chat corpus through pkg/gateway/llmproxy.OpenAIDirectTranslator.
 
-// TestLLMProxyTranslatorAnthropic — round-trips canonical Anthropic
-// SDK requests and responses through the native translator. Byte
-// equivalence is the contract.
-func TestLLMProxyTranslatorAnthropic(t *testing.T) {
-	t.Skip("not implemented: §12.2.5 anthropic_direct translator — requires pkg/llmproxy + the canonical request/response corpus under tests/testdata/anthropic/ + the mock provider recorder")
-}
-
-// TestLLMProxyTranslatorOpenAIChatCompletions — round-trips canonical
-// OpenAI Chat Completions requests and responses.
-func TestLLMProxyTranslatorOpenAIChatCompletions(t *testing.T) {
-	t.Skip("not implemented: §12.2.5 openai_chat_completions translator — requires pkg/llmproxy + the canonical corpus under tests/testdata/openai_chat/")
-}
-
-// TestLLMProxyTranslatorOpenAIResponses — round-trips canonical
-// OpenAI Responses API requests and responses, including the id
-// field's extended behavior.
-func TestLLMProxyTranslatorOpenAIResponses(t *testing.T) {
-	t.Skip("not implemented: §12.2.5 openai_responses translator — requires pkg/llmproxy + the canonical corpus under tests/testdata/openai_responses/")
-}
+// TestLLMProxyTranslatorOpenAIResponses is implemented in
+// openai_responses_translator_test.go, which round-trips the canonical
+// openai_responses corpus through pkg/gateway/llmproxy.OpenAIResponsesTranslator.

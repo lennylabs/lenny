@@ -67,14 +67,18 @@ func tierBuildTag(tier string) string {
 		return "e2e_kind"
 	case "e2e_cloud":
 		return "e2e_cloud"
-	case "load":
-		return "load"
+	case "load_local":
+		return "load_local"
+	case "load_kind":
+		return "load_kind"
 	case "chaos":
 		return "chaos"
 	case "security":
 		return "security"
 	case "conformance":
 		return "conformance"
+	case "load_cloud":
+		return "load_cloud"
 	}
 	return ""
 }
@@ -97,8 +101,10 @@ func testsForTier(tier string) []string {
 		return []string{"./tests/tier5_e2e_kind/..."}
 	case "e2e_cloud":
 		return []string{"./tests/tier6_e2e_cloud/..."}
-	case "load":
-		return []string{"./tests/tier7_load/..."}
+	case "load_local":
+		return []string{"./tests/tier7a_load_local/..."}
+	case "load_kind":
+		return []string{"./tests/tier7b_load_kind/..."}
 	case "chaos":
 		return []string{"./tests/tier8_chaos/..."}
 	case "security":
@@ -107,6 +113,8 @@ func testsForTier(tier string) []string {
 		return []string{"./tests/tier10_conformance/..."}
 	case "docs":
 		return []string{"./tests/tier11_docs/..."}
+	case "load_cloud":
+		return []string{"./tests/tier12_load_cloud/..."}
 	}
 	return nil
 }

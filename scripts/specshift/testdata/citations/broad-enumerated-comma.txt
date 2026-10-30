@@ -1,0 +1,1 @@
+// A note about spec/04_system-components.md, line 7 of the section.

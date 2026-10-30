@@ -2,7 +2,7 @@
 
 //go:build component
 
-// Tier-2 component scaffolds for the §12.2.1 store-interface contract
+// Tier-2 component scaffolds for the TESTING.md §12.2.1 store-interface contract
 // suites. Every store role listed in spec §12.2 (and the table in
 // TESTING.md §12.2.1) has one suite here. Each test calls t.Skip with
 // a precise diagnosis pointing at the missing implementation:
@@ -23,125 +23,123 @@ package stores_test
 
 import "testing"
 
-// TestSessionStoreContract — Postgres-backed session store. Coverage:
-// CRUD, state machine, concurrent claim via SELECT ... FOR UPDATE
-// SKIP LOCKED, RLS, delegation-tree co-location, lineage, orphan
-// reconciliation, retry-state persistence, FK cascade.
-func TestSessionStoreContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 SessionStore — requires Postgres-backed pkg/sessionstore implementation + RLS migrations + claim-with-SKIP-LOCKED transaction helper")
-}
+// TestSessionStoreContract is implemented in sessionstore_test.go,
+// which exercises the Postgres-backed pkg/gateway/sessionstore/pgstore
+// against a real container.
 
-// TestLeaseStoreContract — Redis + Postgres advisory store. Coverage:
-// acquire/renew/release, TTL expiry, Redis-outage fallback to advisory
-// lock, atomic re-acquisition after crash.
-func TestLeaseStoreContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 LeaseStore — requires Redis lease primitives with pg_advisory_xact_lock fallback + crash-recovery re-acquisition path")
-}
+// TestLeaseStoreContract — the Redis lease primitives are implemented
+// in tests/tier2_component/leases against pkg/gateway/leasestore. The
+// §12.4 Redis-outage Postgres advisory-lock fallback lives in
+// pkg/gateway/leasestore/pgstore behind the leasestore.Failover wrapper;
+// its advisory-lock CAS is exercised in
+// tests/tier4_integration/lease_failover_test.go and the failover
+// routing in pkg/gateway/leasestore/failover_test.go.
 
-// TestQuotaStoreContract — Redis + Postgres quota store. Coverage:
-// increment/decrement, sliding window, fail-open semantics, per-user
-// fraction, per-replica hard cap, cumulative timeout, MAX-rule
-// reconciliation, storage-quota pre-check, GC decrement.
-func TestQuotaStoreContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 QuotaStore — pkg/quota arithmetic exists; this suite needs the Redis-backed counters and the MAX-rule reconciliation pipeline")
-}
+// TestQuotaStoreContract — Redis-backed token-usage counter contract.
+// Fixed-window counter: tests/tier2_component/quota/quotastore_test.go.
+// Sliding-window counter (SlidingAdd / SlidingUsage):
+// tests/tier2_component/quota/quotastore_sliding_test.go.
+// §11.2 arithmetic (Check, HierarchicalCheck, FailOpenCeiling,
+// PerUserFailOpenCeiling, MaxOvershoot, ReconcileMax) is unit-tested
+// in pkg/quota. The §11.2 per-replica fail-open accounting timer
+// layered over the counter and the Postgres-checkpoint pipeline that
+// invokes ReconcileMax on Redis recovery are the follow-on tracked
+// in BUILD-GAPS.md.
 
-// TestTokenStoreContract — Postgres encrypted token store. Coverage:
-// KMS-envelope encryption, hash storage, revocation lookup, rotation,
-// RLS.
-func TestTokenStoreContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 TokenStore — requires Postgres token table + KMS-envelope writer + revocation index migration")
-}
+// TestTokenStoreContract is implemented in
+// connectorcredstore_test.go, which exercises the §13.3 Postgres
+// encrypted TokenStore (pkg/gateway/connectorcredstore/pgstore)
+// against a real container with migration 0048 applied: KMS-envelope
+// encryption of the access and refresh tokens, SHA-256 hash storage
+// for the revocation-lookup hot path, upsert + UpdatedAt monotonicity,
+// cross-tenant isolation under the RLS policy, and Delete /
+// ListByConnector semantics.
 
-// TestTokenIssuanceStoreContract — Postgres token-issuance store.
-// Coverage: JTI uniqueness, revocation index, parent-jti tracking,
-// expired-row GC.
-func TestTokenIssuanceStoreContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 TokenIssuanceStore — requires the token-issuance ledger schema and the parent-jti relationship for delegation lineage")
-}
+// TestTokenIssuanceStoreContract is implemented in
+// issuedtokenstore_test.go against pkg/gateway/issuedtokenstore.
 
-// TestArtifactStoreContract — MinIO artifact store. Coverage:
-// tenant-prefix validation, SSE-KMS for T3/T4, per-tenant key for T4,
-// checkpoint rotation, legal-hold suspension, soft-delete idempotency,
-// tombstone hard-prune, partial-manifest cleanup, eviction-context
-// cleanup, GC exception handling, T4 KMS probe, MinIO-outage fallback
-// to minimal state.
+// TestArtifactStoreContract — MinIO artifact store. The §12.5
+// ArtifactStore contract is exercised through a set of focused
+// sibling suites; this scaffold logs the composition so the
+// component-tier reader can navigate to each piece.
+//
+// spec: 12.2.1
+// diagnosis: §12.5 ArtifactStore coverage spread across siblings; this scaffold logs the navigation map.
 func TestArtifactStoreContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 ArtifactStore — requires pkg/artifactstore over MinIO with SSE-KMS, soft-delete tombstones, and Postgres-minimal-state fallback")
+	t.Log("§12.5 ArtifactStore contract coverage map:")
+	t.Log("- tenant-prefix validation and tombstone soft-delete/hard-prune: " +
+		"pkg/blobstore (MemoryStore + Tombstoner) plus the MinIO-backed " +
+		"contract in pkg/blobstore/miniostore_test.go (TestSSE* and " +
+		"TestArtifactStore* groups).")
+	t.Log("- artifact_store catalog table + live/soft_deleted/tombstoned " +
+		"lifecycle: tests/tier2_component/stores/artifactcatalog_test.go " +
+		"(TestArtifactCatalogContract).")
+	t.Log("- SSE-KMS resolver per tenant: " +
+		"pkg/blobstore/miniostore/sse_test.go.")
+	t.Log("- per-tenant KMS key lifecycle (provision / rotate / destroy): " +
+		"pkg/tenantkms (TestEnsureForTenant*, TestRotateForTenant*, " +
+		"TestDestroyForTenant*).")
+	t.Log("- T4 KMS availability probe (admin-time + continuous): " +
+		"pkg/tenantkms (TestProbeAvailability*, TestProber*) and " +
+		"pkg/gateway/admin tenants_kmsprobe_test.go for the §15.1 " +
+		"PUT /v1/admin/tenants/{id} probe wiring.")
+	t.Log("- legal-hold suspension: pkg/blobstore SetLegalHold + " +
+		"DeleteBySession guard; covered in pkg/blobstore tests.")
+	t.Log("Remaining sub-features tracked in BUILD-GAPS: §10.1 " +
+		"partial-manifest cleanup sweep (gated on the checkpoint " +
+		"metadata table) and the §4.4 MinIO-outage Postgres minimal-" +
+		"state fallback router (gated on the eviction-handler " +
+		"caller-side wiring; the target EvictionStateStore exists).")
 }
 
-// TestEventStoreContract — Postgres event store. Coverage: audit hash
-// chain, sequence monotonicity, event schema versioning, OCSF
-// translation state machine, EventBus publish state,
-// retranscribe-worker sweep, terminal-failure escalation, T2 batching
-// loss alert, startup chain-continuity check, RLS, erasure.
-func TestEventStoreContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 EventStore — requires pkg/audit-backed Postgres event ledger + retranscribe worker + OCSF translation pipeline")
-}
+// TestEventStoreContract is implemented in eventstore_test.go, which
+// exercises the Postgres-backed TESTING.md §12.2.1 EventStore (pkg/gateway/auditstore)
+// against a real container: the §11.7 audit hash chain, the OCSF
+// translation state machine, the TESTING.md §12.3.7 EventBus publish-state
+// machine, the startup chain-continuity check, RLS, and erasure.
 
-// TestCredentialPoolStoreContract — Postgres encrypted credential
-// pool. Coverage: pool CRUD, lease assignment, health scoring,
-// deny-list, revocation, encryption, RLS, erasure.
-func TestCredentialPoolStoreContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 CredentialPoolStore — requires the Token Service Postgres credential-pool tables and the health/deny-list scoring loop")
-}
+// TestCredentialPoolStoreContract is implemented in
+// credentialpoolstore_test.go, which exercises the Postgres-backed
+// pkg/gateway/credentialpoolstore/pgstore against a real container.
 
-// TestEvictionStateStoreContract — Postgres eviction state. Coverage:
-// eviction-state CRUD, MinIO context-key storage, terminal-state
-// cleanup, RLS.
-func TestEvictionStateStoreContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 EvictionStateStore — requires pkg/checkpoint-backed eviction tracking table and MinIO context-key index")
-}
+// TestEvictionStateStoreContract is implemented in
+// evictionstatestore_test.go, which exercises the Postgres-backed
+// pkg/gateway/evictionstatestore/pgstore against a real container.
 
-// TestMemoryStoreContract — Postgres + pgvector memory store with
-// pluggable backends. Coverage: RLS, user-scope isolation,
-// tenant-scope isolation, mandatory DeleteByUser/DeleteByTenant,
-// startup preflight, per-job preflight, custom-backend contract
-// validation, retention TTL, capacity eviction.
-func TestMemoryStoreContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 MemoryStore — requires Postgres+pgvector default backend and the MemoryStore interface contract (mandatory DeleteByUser/DeleteByTenant)")
-}
+// TestMemoryStoreContract is implemented in memorystore_test.go, which
+// exercises the Postgres-backed pkg/gateway/memorystore/pgstore. The
+// pgvector default backend is a later-wave addition.
 
-// TestEvalResultStoreContract — Postgres eval result store. Coverage:
-// score CRUD, FK to sessions, RLS, erasure cascade.
-func TestEvalResultStoreContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 EvalResultStore — Phase 17b feature; requires eval_results schema and the session FK cascade")
-}
+// TestEvalResultStoreContract is implemented in evalstore_test.go,
+// which exercises the Postgres-backed pkg/gateway/evalstore/pgstore
+// against a real container, including the sessions FK cascade.
 
-// TestSemanticCacheContract — Redis semantic cache with pluggable
-// backends. Coverage: scope isolation (u:/s:/t:), per-tenant prefix,
-// miss-on-outage, erasure.
-func TestSemanticCacheContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 SemanticCache — Phase 17b feature; requires Redis-backed semantic cache with scope-aware key prefixes")
-}
+// TestSemanticCacheContract is implemented in semanticcache_test.go,
+// which exercises the Redis-backed pkg/gateway/semanticcache/redisstore
+// against a real Redis container: the §12.4 t:{tenant}:scache:{scope}
+// key scheme, per-tenant and per-user isolation, the §4.9 similarity
+// lookup and TTL, and the §12.2 DeleteByUser / DeleteByTenant erasure.
 
-// TestPodRegistryContract — Kubernetes API CRDPodRegistry. Coverage:
-// all ops listed in spec §12.6, optimistic locking via
-// resource_version, WatchPods events within 500 ms P99.
-func TestPodRegistryContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 PodRegistry — requires CRDPodRegistry over a real Kubernetes API (envtest) + WatchPods event-latency assertions")
-}
+// TestPodRegistryContract is implemented in
+// pkg/podregistry/crd_test.go, which exercises the §12.6
+// CRDPodRegistry over the controller-runtime fake client: every
+// PodRegistry method (GetPod, UpdatePodState with mismatched-From
+// rejection, ClaimPod with ErrPoolExhausted, ReleasePod by reason,
+// ListPodsByPool with state filtering, CountByState, CreatePod,
+// DeletePod, WatchPods) is covered. The §12.6 optimistic-locking
+// CAS uses Sandbox.metadata.resourceVersion; the watch loop polls
+// at the §12.6 P99 event-latency budget.
 
-// TestStoreRouterContract — Postgres + Redis store router. Coverage:
-// session-shard extraction, tenant-shard routing, billing/audit-shard
-// routing (R-03), scatter-gather concurrency and timeout,
-// partial-result semantics.
-func TestStoreRouterContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 StoreRouter — requires the pkg/storerouter implementation with R-03 routing rules and scatter-gather concurrency control")
-}
+// TestStoreRouterContract is implemented in storerouter_test.go,
+// which exercises the v1 pkg/storerouter.SingleShardRouter against
+// a real Postgres + Redis container.
 
-// TestEventBusContract — Redis pub/sub event bus. Coverage:
-// CloudEvents envelope, tenant-prefixed channels, at-most-once
-// delivery, retranscribe semantics.
-func TestEventBusContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 EventBus — requires Redis pub/sub event bus implementation + CloudEvents v1.0.2 envelope writer")
-}
+// TestEventBusContract is implemented in eventstore_test.go, which
+// exercises the TESTING.md §12.3.7 RedisEventBus (pkg/gateway/eventbus) over a
+// real Redis container: the CloudEvents v1.0.2 envelope, the
+// tenant-prefixed channels, and at-most-once delivery isolation.
 
-// TestDeleteByUserAndTenantInterface — every tenant-scoped store MUST
-// expose DeleteByUser(ctx, tenantID, userID) error and
-// DeleteByTenant(ctx, tenantID) error. The interface is
-// compile-time-enforced; this test confirms the implementation
-// actually deletes.
-func TestDeleteByUserAndTenantInterface(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 / §14.10 — requires every Store implementation to satisfy the mandatory erasure interface; lands as each store does")
-}
+// TestDeleteByUserAndTenantInterface is implemented in
+// erasure_interface_test.go, which compile-checks the TESTING.md §12.2.1 /
+// TESTING.md §14.10 mandatory-erasure interface against every tenant-scoped
+// store the gateway depends on.

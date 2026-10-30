@@ -152,6 +152,7 @@ func (r *recorder) Helper() {}
 func (r *recorder) Fatalf(format string, args ...any) {
 	panic(formatRecMsg(format, args...))
 }
+
 func (r *recorder) Errorf(format string, args ...any) {
 	r.msg = formatRecMsg(format, args...)
 }

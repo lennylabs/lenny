@@ -1,0 +1,211 @@
+// SPDX-License-Identifier: MIT
+
+// Package experimentsticky is the §10.7 `sticky: user` variant-assignment
+// cache. An experiment with `targeting.sticky: user` caches its per-user
+// variant assignment in Redis keyed by (user_id, experiment_id) so the
+// gateway does not re-evaluate the assignment on every session creation.
+//
+// The cache matters most for `mode: external` experiments: §10.7
+// states the OpenFeature provider "is not called again for subsequent
+// sessions if a cached assignment exists", so without the cache every
+// session pays a synchronous provider round-trip. Percentage-mode
+// `sticky: user` assignment is deterministic in user_id under the built-in
+// HMAC hash, so recomputing it yields the same variant and needs no cache;
+// the cache is wired for the external path the spec calls out.
+//
+// On Redis unavailability the §12.4 failure-behavior row mandates a
+// fail-open path: the gateway re-computes the assignment from the provider
+// (or hash) instead of reading the cache. Get and Put surface their Redis
+// errors so the caller can degrade to fresh evaluation; neither blocks the
+// session-creation hot path on Redis.
+package experimentsticky
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/redis/go-redis/v9"
+
+	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
+	"github.com/lennylabs/lenny/pkg/redisconn"
+)
+
+// DefaultTTL bounds how long a cached assignment survives without a
+// refreshing read or write. The authoritative cleanup is the §10.7
+// pause/conclude flush (Flush); the TTL is a safety net so a cache for an
+// experiment that is deleted without a clean transition cannot leak keys
+// indefinitely.
+const DefaultTTL = 7 * 24 * time.Hour
+
+// InvalidationRecorder receives one observation per §10.7 sticky-cache
+// flush for the `lenny_experiment_sticky_cache_invalidations_total`
+// counter, labeled by experiment_id and transition (§16.1).
+// *gatewaymetrics.Metrics satisfies it. A nil recorder disables the metric;
+// the flush still runs.
+type InvalidationRecorder interface {
+	RecordExperimentStickyCacheInvalidation(experimentID, transition string)
+}
+
+// RedisCache is the Redis-backed §10.7 sticky-assignment cache. Construct
+// with NewRedis.
+type RedisCache struct {
+	client redis.UniversalClient
+	ttl    time.Duration
+	rec    InvalidationRecorder
+}
+
+// Option configures a RedisCache.
+type Option func(*RedisCache)
+
+// WithTTL overrides DefaultTTL.
+func WithTTL(ttl time.Duration) Option {
+	return func(c *RedisCache) {
+		if ttl > 0 {
+			c.ttl = ttl
+		}
+	}
+}
+
+// WithInvalidationRecorder wires the §16.1
+// lenny_experiment_sticky_cache_invalidations_total counter.
+func WithInvalidationRecorder(r InvalidationRecorder) Option {
+	return func(c *RedisCache) { c.rec = r }
+}
+
+// NewRedis returns a sticky-assignment cache over client.
+func NewRedis(client redis.UniversalClient, opts ...Option) *RedisCache {
+	c := &RedisCache{client: client, ttl: DefaultTTL}
+	for _, o := range opts {
+		o(c)
+	}
+	return c
+}
+
+// assignmentKey is the §12.4 canonical sticky-cache key
+// `t:{tenant_id}:exp:{experiment_id}:sticky:{user_id}`.
+func assignmentKey(tenantID, experimentID, userID string) string {
+	return rediskeys.TenantPrefix(tenantID) + "exp:" + experimentID + ":sticky:" + userID
+}
+
+// flushPattern is the §10.7 flush glob
+// `t:{tenant_id}:exp:{experiment_id}:sticky:*`.
+func flushPattern(tenantID, experimentID string) string {
+	return rediskeys.TenantPrefix(tenantID) + "exp:" + experimentID + ":sticky:*"
+}
+
+// userErasurePattern is the §12.8 step-4 per-user purge glob
+// `t:{tenant_id}:exp:*:sticky:{user_id}` — every experiment in which the
+// user holds a sticky variant assignment.
+func userErasurePattern(tenantID, userID string) string {
+	return rediskeys.TenantPrefix(tenantID) + "exp:*:sticky:" + userID
+}
+
+// tenantErasurePattern is the §12.8 tenant-deletion Phase 4 purge glob
+// `t:{tenant_id}:exp:*:sticky:*`: every sticky assignment of every
+// experiment the tenant ran.
+func tenantErasurePattern(tenantID string) string {
+	return rediskeys.TenantPrefix(tenantID) + "exp:*:sticky:*"
+}
+
+// nonEmpty rejects an empty key component. An empty tenant, experiment, or
+// user id would produce a malformed key or a flush glob that matches more
+// than the intended experiment; callers must never reach Redis with one.
+func nonEmpty(tenantID, experimentID, userID string) error {
+	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(experimentID) == "" || strings.TrimSpace(userID) == "" {
+		return fmt.Errorf("experimentsticky: tenant_id, experiment_id, and user_id must be non-empty")
+	}
+	return nil
+}
+
+// Get returns the cached variant assignment for (tenant, experiment, user).
+// ok is false on a cache miss. A Redis error is returned so the caller can
+// fall open to fresh evaluation (§12.4 failure behavior); on error ok is
+// false and variantID is empty.
+func (c *RedisCache) Get(ctx context.Context, tenantID, experimentID, userID string) (variantID string, ok bool, err error) {
+	if err := nonEmpty(tenantID, experimentID, userID); err != nil {
+		return "", false, err
+	}
+	v, gerr := c.client.Get(ctx, assignmentKey(tenantID, experimentID, userID)).Result()
+	if gerr == redis.Nil {
+		return "", false, nil
+	}
+	if gerr != nil {
+		return "", false, gerr
+	}
+	return v, true, nil
+}
+
+// Put writes the variant assignment for (tenant, experiment, user) with the
+// configured TTL. A write that loses to a concurrent writer is harmless: a
+// `sticky: user` assignment is stable for a fixed (user, experiment) pair,
+// so any writer stores the same value. A Redis error is returned best-effort;
+// the caller treats it as a non-fatal cache-write failure.
+func (c *RedisCache) Put(ctx context.Context, tenantID, experimentID, userID, variantID string) error {
+	if err := nonEmpty(tenantID, experimentID, userID); err != nil {
+		return err
+	}
+	return c.client.Set(ctx, assignmentKey(tenantID, experimentID, userID), variantID, c.ttl).Err()
+}
+
+// Flush deletes every cached assignment for an experiment (§10.7:
+// `DEL` on all keys matching `t:{tenant_id}:exp:{experiment_id}:sticky:*`)
+// and records one §16.1 invalidation observation. It is invoked when an
+// experiment transitions to `paused` or `concluded`; `paused → active`
+// requires no flush. transition is the target status, carried as the §16.1 metric label. Returns the number of keys removed. SCAN is cursor-
+// based so a large keyspace does not stall Redis, and it runs on the master
+// that owns the tenant's hash slot (redisconn.ScanDelete).
+func (c *RedisCache) Flush(ctx context.Context, tenantID, experimentID, transition string) (int, error) {
+	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(experimentID) == "" {
+		return 0, fmt.Errorf("experimentsticky: flush requires a non-empty tenant_id and experiment_id")
+	}
+	deleted, err := redisconn.ScanDelete(ctx, c.client, rediskeys.TenantPrefix(tenantID), flushPattern(tenantID, experimentID))
+	// The invalidation is recorded for the flush operation itself: §10.7
+	// names the counter "incremented on each flush", independent of how many
+	// keys the sweep removed (an experiment with no cached users still
+	// invalidated its — empty — sticky set).
+	if c.rec != nil {
+		c.rec.RecordExperimentStickyCacheInvalidation(experimentID, transition)
+	}
+	return deleted, err
+}
+
+// DeleteByUser removes every experiment sticky assignment held for
+// userID across all of the tenant's experiments. It is the §12.8 step-4
+// erasure primitive: a sticky-assignment key carries the user_id and
+// constitutes personal data under GDPR, so a user-level erasure DELs
+// `t:{tenant_id}:exp:*:sticky:{user_id}` via the same cursor-based sweep
+// Flush uses. Returns the number of keys removed.
+//
+// spec: §12.8, step 4
+// ("delete all experiment sticky assignments for the user").
+func (c *RedisCache) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
+	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(userID) == "" {
+		return 0, fmt.Errorf("experimentsticky: DeleteByUser requires a non-empty tenant_id and user_id")
+	}
+	return redisconn.ScanDelete(ctx, c.client, rediskeys.TenantPrefix(tenantID), userErasurePattern(tenantID, userID))
+}
+
+// DeleteByTenant removes every experiment sticky assignment the tenant
+// holds, across all of its experiments and users. It is the tenant-deletion
+// Phase 4 erasure of the experiment sticky cache: it DELs
+// `t:{tenant_id}:exp:*:sticky:*` with the same node-routed cursor sweep
+// Flush and DeleteByUser use, so on a Redis Cluster the sweep runs on the
+// master that owns the tenant's hash slot. It records no §16.1
+// invalidation observation, because the metric counts the §10.7
+// pause/conclude transitions of one experiment and a tenant teardown is
+// not one. Returns the number of keys removed; a tenant with no
+// assignments returns 0 and a nil error.
+//
+// spec: §12.8 (Compliance Interfaces: Tenant deletion lifecycle, Phase 4).
+func (c *RedisCache) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if strings.TrimSpace(tenantID) == "" {
+		return 0, fmt.Errorf("experimentsticky: DeleteByTenant requires a non-empty tenant_id")
+	}
+	n, err := redisconn.ScanDelete(ctx, c.client, rediskeys.TenantPrefix(tenantID), tenantErasurePattern(tenantID))
+	if err != nil {
+		return n, fmt.Errorf("experimentsticky: delete tenant %s sticky assignments: %w", tenantID, err)
+	}
+	return n, nil
+}

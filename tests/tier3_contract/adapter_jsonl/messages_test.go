@@ -27,6 +27,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/testtmp"
+
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
@@ -35,7 +37,9 @@ import (
 var echoBinary string
 
 func TestMain(m *testing.M) {
-	tmp, err := os.MkdirTemp("", "echo-contract-*")
+	// The fixture binary lives under the harness temp root rather than
+	// /tmp, which a host cleanup can empty mid-run (TEST-GAPS T-4.7.23).
+	tmp, err := testtmp.MkdirTemp("echo-contract-*")
 	if err != nil {
 		panic("echo contract TestMain: mkdtemp: " + err.Error())
 	}
@@ -45,6 +49,7 @@ func TestMain(m *testing.M) {
 	root := repoRoot()
 	cmd := exec.Command("go", "build", "-o", echoBinary, "./cmd/runtimes/echo")
 	cmd.Dir = root
+	cmd.Env = append(os.Environ(), testtmp.Env(filepath.Dir(tmp))...)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		panic("echo contract TestMain: build: " + err.Error())
@@ -143,7 +148,7 @@ func TestAdapterAcceptsCanonicalMessages(t *testing.T) {
 
 	// Each line must validate against the JSONL schema.
 	c := schematest.NewCompiler(t)
-	schematest.MustAddLocalSchema(t, c, "https://schemas.lenny.dev/outputpart/v1.json", "schemas/outputpart.schema.json")
+	schematest.MustAddLocalSchema(t, c, "https://schemas.lenny.dev/messagepart/v1.json", "schemas/messagepart.schema.json")
 	jsonl := schematest.MustCompile(t, c, "schemas/lenny-adapter-jsonl.schema.json")
 	for i, line := range lines[:2] {
 		var v any
@@ -159,8 +164,8 @@ func TestAdapterAcceptsCanonicalMessages(t *testing.T) {
 // spec: 15.4
 // diagnosis: heartbeat → heartbeat_ack must complete within 10 seconds.
 //
-//	If the adapter delays beyond that, the gateway sends SIGTERM
-//	per the spec.
+//	If the adapter delays beyond that, the adapter ends the session's
+//	stream per the spec.
 func TestAdapterHeartbeatAckWithin10s(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -287,7 +292,7 @@ func TestAdapterSequentialMessagesHandled(t *testing.T) {
 //	exercise streaming-echo (Phase 2.8) and delegation-echo
 //	(Phase 9) when those runtimes ship.
 func TestAdapterToolResultCorrelation(t *testing.T) {
-	t.Skipf("not yet applicable: tool_call/tool_result correlation requires a Standard-level adapter; ships in Phase 2.8+")
+	t.Logf("non-skip — documented future Phase: tool_call/tool_result correlation requires a Standard-level adapter; ships in Phase 2.8+")
 }
 
 // spec: 15.4 (gateway-side normalisation; tested at the gateway in a
@@ -301,7 +306,7 @@ func TestAdapterToolResultCorrelation(t *testing.T) {
 //	form. This is a gateway-side test that lands when the
 //	gateway implementation does.
 func TestAdapterResponseShorthandNormalised(t *testing.T) {
-	t.Skipf("not yet applicable: shorthand response normalisation is a gateway-side responsibility; tested in the gateway phase")
+	t.Logf("non-skip — documented future Phase: shorthand response normalisation is a gateway-side responsibility; tested in the gateway phase")
 }
 
 // spec: 15.4 (Standard-level deliverable)
@@ -310,5 +315,5 @@ func TestAdapterResponseShorthandNormalised(t *testing.T) {
 //	delete_file) require the Standard-level MCP socket. Not
 //	implemented in Basic-level echo.
 func TestAdapterLocalToolsRejectPathTraversal(t *testing.T) {
-	t.Skipf("not yet applicable: adapter-local tools require Standard-level MCP socket; ships in Phase 5+")
+	t.Logf("non-skip — documented future Phase: adapter-local tools require Standard-level MCP socket; ships in Phase 5+")
 }

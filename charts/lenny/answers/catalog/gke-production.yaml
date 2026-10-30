@@ -1,0 +1,35 @@
+# §17.9.2 answer file: gke-production.
+#
+# Dimensions fixed: cluster=gke, backends=cloud-managed (CloudSQL +
+# Memorystore + GCS), environment=prod, isolationProfile=sandboxed. GKE
+# Sandbox supplies the gVisor RuntimeClass for the sandboxed profile.
+#
+# Layering: with presets/values-tierN.yaml. Supply the CloudSQL,
+# Memorystore, and GCS endpoints in an overrides file. Cloud SQL Auth
+# Proxy does not pool; deploy PgBouncer or pgcat alongside it, or use
+# AlloyDB with built-in pooling (§17.9.3).
+#
+# Leaves open: capacity tier, connection endpoints, bucket names.
+
+cluster: gke
+backends: cloud-managed
+environment: prod
+isolationProfile: sandboxed
+# Network posture (§13.2, §17.6). The chart's universal egress except-rules
+# block RFC1918 ranges and the cloud metadata endpoint (169.254.169.254,
+# reached on GKE as metadata.google.internal) on every cluster
+# (NET-002/057/062), so a gke install needs no cluster-specific egress
+# tightening here. webhookIngressCIDR stays 0.0.0.0/0 by default because the
+# GKE control plane calls admission webhooks from a control-plane IP that is
+# impractical to pin without cloud-specific knowledge (§17.9). Narrow it to
+# the cluster's master-authorized-network CIDR when you operate one.
+# webhookIngressCIDR: "REPLACE-gke-control-plane-cidr"
+postgres:
+  connectionPooler: external
+  dsn: "postgres://lenny@REPLACE-cloudsql-proxy.acme.svc:5432/lenny?sslmode=require"
+redis:
+  provider: external
+  url: "rediss://REPLACE-memorystore.acme.internal:6378"
+objectStorage:
+  provider: gcs
+  bucket: "REPLACE-acme-lenny-artifacts"

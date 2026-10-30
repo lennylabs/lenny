@@ -10,7 +10,7 @@ import (
 )
 
 // runBaseline diffs two baseline JSON documents and reports
-// per-percentile deltas. Used by CI to enforce the §22.5 15%
+// per-percentile deltas. Used by CI to enforce the 15%
 // regression threshold across baseline runs.
 //
 // Usage:

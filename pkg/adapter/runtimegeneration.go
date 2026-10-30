@@ -1,0 +1,242 @@
+// SPDX-License-Identifier: MIT
+
+package adapter
+
+import (
+	"context"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+// This file holds the pod-level runtime-generation state and the one
+// accessor that names the session a pod-global surface may act as.
+//
+// One runtime process serves every slot on the pod, and the frames it
+// writes carry no session of their own. A pod-global surface (the
+// intra-pod MCP providers, the direct-mode token fold, the control-event
+// session stamp) therefore has to decide whether the session it would
+// name can be the only one whose code is resident in that process. The
+// slot registry cannot answer that: a per-session Runtime.Close deletes a
+// bookkeeping entry and returns without ending that session's code inside
+// the shared process, so an entry count is a proxy for the process's
+// occupancy rather than a statement about it. The state below counts the
+// sessions given to the process instead.
+//
+// No session teardown ends the runtime process, and on a keep pod no
+// occupancy-zero boundary ends it either, so a later session on a recycled
+// pod runs in the process that served the earlier ones. The cohort counts
+// every session the current process has been given and resets only at a new
+// runtime generation, the supervised launch of a new process (§4.7.10,
+// Runtime supervisor, Generation). Once a second session has been given to
+// the process, no session is sole again until a new generation, and
+// pod-global surfaces fail closed for every later session.
+//
+// spec: §28 (CH-MCP-PLATFORM exclusivity); §15.4.3; §4.7.10 (Runtime process
+// lifetime); §9.1; §11.2.
+
+// noteRuntimeStarted records the pod's one shared runtime process as holding
+// sessionID, the record at which the slot reaches §6.2 running, and reports
+// whether the record was taken. It runs immediately after a successful
+// start. It refuses in the two states a §7.1 reclaim leaves: the registry
+// holds no entry under this slot identifier, or it holds an entry other
+// than entry, the one this start's claim was admitted against. Recording in
+// either would put a session in runtimeLive that the registry does not hold
+// under this start's identity, holding runtimeIdleLocked false and
+// soleSession empty for the life of the pod.
+//
+// The second state is the replaced-entry case. The slot identifier equals
+// the session identifier, so a successor attempt at the same session holds
+// an entry under the same key with the same sessionID, and a predicate
+// reading only st.sessionID cannot see that the entry belongs to a later
+// attempt. Rule 8 compares entry identity, the same pointer comparison
+// registryHoldsClaimEntry takes before the session_start write. A token
+// comparison does not conform: a successor bound under the same token, or
+// two untokened entries for one session, carry equal tokens on distinct
+// entries.
+//
+// entry is the registry entry the claim was admitted against, passed in
+// rather than looked up again here: a read taken after the claim is as racy
+// as the confirmation it anchors. The predicate reads the registry rather
+// than st.started, because the claim sets st.started before Runtime.Start
+// and it is therefore true for this very call.
+//
+// The resolve, the confirmation and the record run under one hold of s.mu,
+// which is the start step of the §4.7.1 registry critical section: a
+// confirmation that released the lock before recording would record a
+// session a reclaim had already released.
+//
+// spec: §7.1 (normal flow); §4.7.1 (Role and Gateway RPC Contract), rule 8
+// (the start-confirmation rule); §15.4.3.
+func (s *Server) noteRuntimeStarted(sessionID string, entry *slotState) bool {
+	ok, err := s.confirmRuntimeStart(sessionID, entry)
+	return ok && err == nil
+}
+
+// confirmRuntimeStart is noteRuntimeStarted with the supervised runtime's
+// liveness read inside the same hold of s.mu. It reports false with a nil
+// error when rule 8 refuses (the entry left the registry or was replaced),
+// and false with an error wrapping errRuntimeNotLive when the entry stands
+// but the pod's supervised runtime cannot hold the session: the not-live
+// state is set, or the generation the start was given to has ended, whether
+// by a reported exit or by the end of the process's CH-MSGSOCK connection.
+// The Runtime exits handling takes the same lock, so a start recorded here
+// is one a crash of its generation fails with runtime_crash, and a start
+// whose generation's end was handled first is refused here rather than
+// recorded on a process that no longer runs.
+// spec: §4.7.1 (The registry critical section; Role and Gateway RPC
+// Contract, rule 8); §4.7.10 (Runtime supervisor, Crash; Runtime supervisor,
+// Liveness); §5.2 (Pod retirement policy, Runtime not live).
+func (s *Server) confirmRuntimeStart(sessionID string, entry *slotState) (bool, error) {
+	if sessionID == "" || entry == nil {
+		return false, nil
+	}
+	rt := s.supervisedRuntime()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// spec: §4.7.1 (Role and Gateway RPC Contract), rule 8: entry identity.
+	st, ok := s.slots[sessionID]
+	if !ok || st != entry || st.sessionID != sessionID {
+		return false, nil
+	}
+	if rt != nil {
+		if err := rt.confirmStart(sessionID); err != nil {
+			return false, err
+		}
+	}
+	s.noteRuntimeStartedLocked(sessionID)
+	return true, nil
+}
+
+// rollbackUnconfirmedStart is the arm a start takes when noteRuntimeStarted
+// refuses: a §7.1 reclaim removed the slot while Runtime.Start ran, or a
+// successor replaced its entry. It takes the session back off the shared
+// runtime process, cancels a pod-wide MCP surface no surviving claimant
+// holds, and returns the refusal the handler answers.
+//
+// It deregisters nothing, and that is deliberate. The confirmation refuses
+// exactly when the registry holds no entry under this slot identifier or
+// holds one a later attempt owns, so a release keyed on the session
+// identifier alone either removes nothing or removes the successor's
+// entry, its tree, its uploads and its credential directory. The MCP
+// cancellation is safe against a successor because it is gated on
+// mcpArmingHeldLocked. It reports no cleanup outcome either: the slot never
+// reached running, and §5.2 files the one cleanup-outcome report per
+// release from the cleanup that reclaims the slot.
+//
+// The refusal is codes.Aborted, the transient classification a caller
+// retries on: a further attempt succeeds once the reclaim's residue is gone.
+//
+// spec: §7.1 (normal flow); §4.7.1 (role and gateway RPC contract), rule 8
+// (the start-confirmation rule); §15.4.3.
+func (s *Server) rollbackUnconfirmedStart(ctx context.Context, sessionID string) error {
+	if s.Runtime != nil {
+		_ = s.Runtime.Close(ctx, sessionID)
+	}
+	s.cancelPodMCPIfRuntimeIdle()
+	return status.Errorf(codes.Aborted,
+		"session %s slot was reclaimed while the start was in flight", sessionID)
+}
+
+// noteRuntimeStartedLocked adds sessionID to the shared runtime process's
+// generation, with s.mu already held and the start already confirmed. It is
+// a no-op when the generation's first session is already this session, so
+// an idempotent repeat of a start cannot raise the cohort and drive
+// soleSession empty for the life of the pod.
+func (s *Server) noteRuntimeStartedLocked(sessionID string) {
+	if s.runtimeLive == nil {
+		s.runtimeLive = map[string]struct{}{}
+	}
+	// spec: §4.7.10 (Runtime supervisor, Generation) — the cohort counts
+	// from the generation's launch, so it resets when the runtime's
+	// generation changes, and the entry records the generation its session
+	// was given to, which a crash of that generation reads.
+	gen := s.runtimeGeneration()
+	if gen != s.cohortGen {
+		s.cohortGen = gen
+		s.runtimeCohort = 0
+		s.cohortSession = ""
+	}
+	if st, ok := s.slots[sessionID]; ok {
+		st.runtimeGen = gen
+	}
+	if s.cohortSession == sessionID {
+		s.runtimeLive[sessionID] = struct{}{}
+		return
+	}
+	s.runtimeLive[sessionID] = struct{}{}
+	s.runtimeCohort++
+	if s.runtimeCohort == 1 {
+		s.cohortSession = sessionID
+	}
+}
+
+// noteRuntimeClosed records that sessionID's Runtime.Close has returned by
+// removing it from runtimeLive. It leaves runtimeCohort and cohortSession
+// alone: the process that served the session lives on and serves the pod's
+// later sessions, so the next session is not sole even when the process
+// serves no session at the moment it arrives. A close for a session the
+// generation never held moves nothing.
+// spec: §4.7.10 (Runtime process lifetime); §15.4.3.
+func (s *Server) noteRuntimeClosed(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.runtimeLive, sessionID)
+}
+
+// generationRuntime is the optional capability of a runtime whose process
+// is launched by generation (the supervised sidecar runtime). A runtime
+// without it has one process for the pod's life, generation 0.
+type generationRuntime interface {
+	RuntimeGeneration() uint64
+}
+
+// runtimeGeneration returns the current runtime generation, 0 for a runtime
+// that has no generations.
+func (s *Server) runtimeGeneration() uint64 {
+	if g, ok := s.Runtime.(generationRuntime); ok {
+		return g.RuntimeGeneration()
+	}
+	return 0
+}
+
+// soleSession returns the session the current runtime process has been
+// given, and nothing else, since its launch, while that session is still
+// live in the process. It is the empty string whenever another session's
+// code may be or may have been resident in that process, and once the one
+// session it was given has closed, so a pod-global surface fails closed
+// rather than acting under a session other than the caller's.
+// spec: §28 (CH-MCP-PLATFORM exclusivity); §15.4.3.
+func (s *Server) soleSession() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.soleSessionLocked()
+}
+
+// soleSessionLocked is soleSession with s.mu already held.
+func (s *Server) soleSessionLocked() string {
+	if s.runtimeCohort != 1 {
+		return ""
+	}
+	if _, live := s.runtimeLive[s.cohortSession]; !live {
+		return ""
+	}
+	return s.cohortSession
+}
+
+// runtimeIdleLocked reports that the pod's shared runtime process is
+// serving no session. Callers hold s.mu.
+func (s *Server) runtimeIdleLocked() bool {
+	return len(s.runtimeLive) == 0
+}
+
+// runtimeHoldsLocked reports whether the pod's shared runtime process holds
+// sessionID, which is what separates a slot that reached §6.2's running from
+// one whose start is still in flight or never ran. noteRuntimeStartedLocked
+// is the only writer that adds the session and noteRuntimeClosed the only
+// one that removes it. Callers hold s.mu.
+// spec: §5.2 (pool configuration and execution modes); §6.2.
+func (s *Server) runtimeHoldsLocked(sessionID string) bool {
+	_, ok := s.runtimeLive[sessionID]
+	return ok
+}

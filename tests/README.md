@@ -24,7 +24,7 @@ Each tier has its own directory and build tag (see TESTING.md §4 for the canoni
 - `tier4_integration/` — multi-component flows via compose
 - `tier5_e2e_kind/` — full deployment on Kind
 - `tier6_e2e_cloud/` — full deployment on GKE, EKS, AKS
-- `tier7_load/` — performance and SLO scenarios
+- `tier7b_load_kind/` — performance and SLO scenarios
 - `tier8_chaos/` — failure injection
 - `tier9_security/` — security controls and adversarial scenarios
 - `tier10_conformance/` — runtime adapter conformance

@@ -7,147 +7,143 @@ nav_order: 8
 
 # Testing
 
-Lenny provides a compliance test suite that validates your runtime against the adapter contract. This page covers the test framework, the compliance matrix per integration level, local testing, and CI integration.
+`lenny runtime validate` is the conformance test suite that checks a runtime against the adapter contract. The suite is organized around integration levels (Basic, Standard, or Full), which apply to `type: agent` runtimes. A `type: mcp` runtime has no integration level; see [`type: mcp` runtimes](#type-mcp-runtimes) at the end of this page.
+
+This page covers the conformance suite, the test categories per integration level, local testing, and CI integration. For the full message contract the suite asserts against, see the [Adapter Contract](../reference/adapter-contract.md).
 
 ---
 
-## Compliance Suite Overview
+## Conformance Suite Overview
 
-The compliance suite (`lenny-compliance`) is a standalone test harness that exercises every aspect of the adapter contract for your runtime's declared integration level. It spawns your binary, feeds it messages on stdin, reads responses from stdout, and validates correctness.
+`lenny runtime validate` exercises the adapter contract for your runtime's declared integration level. It reads the `integrationLevel` field from your `runtime.yaml` (defaulting to `basic` when the field is absent), builds your image or binary, feeds it messages on stdin, reads responses on stdout, and connects the platform-side fixtures the higher levels need. The fixtures (a fake adapter, a fake platform MCP server, fake connector servers, and sample manifests) ship inside the `lenny` binary, so no separate download or install is required.
 
-### What It Tests
+### What it checks
 
-| Category | What Is Validated |
+| Category | What is validated |
 |----------|-------------------|
-| **Protocol compliance** | JSON Lines format, message parsing, field presence, type correctness |
-| **Message handling** | Correct response to `message`, `tool_result`, `heartbeat`, `shutdown` |
-| **Forward compatibility** | Unknown message types are ignored (not rejected) |
-| **Heartbeat liveness** | `heartbeat_ack` arrives within 10 seconds |
+| **Protocol framing** | JSON Lines format, message parsing, field presence, type correctness, stdout flushing |
+| **Message handling** | Correct response to `message`, `tool_result`, `heartbeat`, and `shutdown` |
+| **Session lifetime** | One process serves sequential and concurrent sessions opened by `session_start` and released by `session_end` |
+| **Forward compatibility** | Unknown message types are ignored rather than rejected |
+| **Heartbeat liveness** | `heartbeat_ack` arrives within 10 seconds, and carries `busy: true` with the heartbeat's `sessionId` while a `message` for that session is outstanding |
 | **Shutdown behavior** | Clean exit within `deadline_ms` on `shutdown` |
-| **Stdout flushing** | Output is readable immediately (not buffered) |
-| **Tool call protocol** | Valid `tool_call` format, correlation with `tool_result` |
-| **MCP integration** (Standard+) | Platform MCP server connection, nonce authentication, tool discovery |
-| **Lifecycle channel** (Full) | Capability handshake, checkpoint, interrupt, credential rotation |
+| **Schema compliance** | Every emitted frame and every `MessagePart` validates against the published JSON Schemas |
+| **MCP integration** (Standard and Full) | Platform MCP server connection, nonce authentication, tool invocation, connector reachability |
+| **CH-RUNTIMEOPS** (Full) | Connection handshake, capability handshake, `session_started` acknowledgement, checkpoint, interrupt, credential rotation, and deadline signal |
+
+The validator also reconciles the level your runtime declares against the level it actually demonstrates. See [Declared versus observed level](#declared-versus-observed-level).
 
 ---
 
-## Running the Compliance Suite
+## Running the Conformance Suite
 
 ### Prerequisites
 
-- Your runtime binary, built and ready to execute.
-- The `lenny-compliance` binary (installed via `go install github.com/lennylabs/lenny/cmd/lenny-compliance@latest`).
+- The `lenny` binary, which carries the conformance fixtures and the `lenny runtime validate` subcommand.
+- A runtime repository with a `runtime.yaml` that declares the `integrationLevel` you intend to validate, and a buildable image or binary.
 
-### Basic Usage
+### Usage
+
+Run the validator from your runtime repository. It reads the declared level from `runtime.yaml` and runs the categories for that level:
 
 ```bash
-# Test a Basic-level runtime
-lenny-compliance --binary ./my-agent --level basic
+# Validate against the level declared in runtime.yaml
+lenny runtime validate
 
-# Test a Standard-level runtime
-lenny-compliance --binary ./my-agent --level standard
-
-# Test a Full-level runtime
-lenny-compliance --binary ./my-agent --level full
+# Validate a repository at another path
+lenny runtime validate ./my-agent
 ```
 
-### Options
+The command exits `0` on a full pass and non-zero with a structured failure report otherwise.
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--binary` | (required) | Path to your runtime binary |
-| `--level` | `basic` | Integration level to test: `basic`, `standard`, `full` |
-| `--timeout` | `30s` | Per-test timeout |
-| `--verbose` | `false` | Show detailed test output including stdin/stdout traces |
-| `--filter` | (all) | Run only tests matching this pattern |
-| `--json` | `false` | Output results in JSON format (for CI) |
+To emit a machine-readable JSON report for CI or for inclusion in release artifacts, pass `--report`:
+
+```bash
+lenny runtime validate --report results.json
+```
+
+To stabilize the conformance surface across releases, pin a specific `lenny` version. Each release pins the fixture version its `lenny runtime validate` runs against.
 
 ---
 
-## Test Matrix by Integration Level
+## Test categories by integration level
 
-### Basic-level tests
+The validator runs a set of test categories for the declared level. Each higher level inherits every category from the levels below it: Standard runs the Basic categories plus its own, and Full runs the Standard categories plus its own. The tables below name the categories at each level.
 
-| Test | Description |
-|------|-------------|
-| `TestMessageEcho` | Send a `message`, verify a `response` arrives on stdout |
-| `TestHeartbeatAck` | Send a `heartbeat`, verify `heartbeat_ack` within 10s |
-| `TestHeartbeatTimeout` | Send a `heartbeat`, verify SIGTERM is sent if no ack within 10s |
-| `TestShutdownClean` | Send `shutdown` with `deadline_ms`, verify clean exit |
-| `TestShutdownDeadline` | Send `shutdown`, verify exit within `deadline_ms` |
-| `TestUnknownTypeIgnored` | Send an unknown message type, verify it is silently ignored |
-| `TestStdoutFlushing` | Verify output is readable immediately after write |
-| `TestToolCallFormat` | Emit a `tool_call`, verify correct JSON format |
-| `TestToolResultCorrelation` | Send `tool_result` matching a prior `tool_call` ID |
-| `TestEmptyInput` | Send a `message` with empty `input` array |
-| `TestLargeMessage` | Send a `message` exceeding 64KB to test scanner buffer |
-| `TestResponseShorthand` | Verify `{"type":"response","text":"..."}` shorthand is accepted |
-| `TestMultipleMessages` | Send multiple `message` payloads in sequence |
-| `TestStdinClose` | Close stdin, verify the binary exits cleanly |
+A category that sends a session-scoped frame first writes `session_start` for the session that frame names, and before it writes a session-scoped CH-RUNTIMEOPS frame it reads the `session_started` that answers that `session_start`. A process-scoped frame, such as `lifecycle_capabilities`, has no such precondition. The [Adapter Contract](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin) defines the session frames.
 
-### Standard-level tests (in addition to Basic)
+### Basic-level categories
 
-| Test | Description |
-|------|-------------|
-| `TestManifestRead` | Verify the runtime reads `/run/lenny/adapter-manifest.json` |
-| `TestMcpConnect` | Verify connection to platform MCP server via abstract Unix socket |
-| `TestMcpNonce` | Verify `_lennyNonce` is presented in MCP `initialize` |
-| `TestMcpToolDiscovery` | Verify `tools/list` returns platform tools |
-| `TestDelegateTask` | Call `lenny/delegate_task` and verify the gateway processes it |
-| `TestDiscoverAgents` | Call `lenny/discover_agents` and verify response format |
-| `TestOutputTool` | Call `lenny/output` and verify parts are delivered |
-| `TestRequestInput` | Call `lenny/request_input`, provide a response, verify unblock |
-| `TestSendMessage` | Call `lenny/send_message` and verify delivery receipt |
-| `TestMemoryWriteQuery` | Write a memory, query it, verify retrieval |
-| `TestConnectorMcp` | Connect to a connector MCP server (if configured) |
+| Category | What it asserts |
+|----------|-----------------|
+| stdin/stdout protocol framing | The binary reads newline-delimited JSON on stdin and writes newline-delimited JSON on stdout, flushes every outbound message before the next read, and ignores unknown inbound `type` values rather than aborting. |
+| `message` / `response` round-trip | A canonical `message` produces a structurally valid `response` carrying the `sessionId` the inbound `message` was addressed with, either the full form with an `output` array of `MessagePart` or the Basic-level shorthand `{"type":"response","sessionId":"...","text":"..."}`. The response validates against the published JSON Lines schema. |
+| heartbeat ack | Within 10 seconds of receiving a `heartbeat`, the binary writes a `heartbeat_ack`. If no acknowledgment arrives, the adapter treats the runtime as hung for the session the heartbeat names: it ends the session's stream to the gateway when one is open and refuses each later stream for the session until the adapter releases the session, and the runtime process receives no signal. The gateway handles the session as a runtime crash under its retry policy. |
+| heartbeat busy | After `session_start` for a session, the harness writes a `message` for the session and then a `heartbeat` naming it, before it reads the `response`. When the binary writes the `heartbeat_ack` before that `response`, the ack carries `busy: true` and the session's `sessionId`. The harness does not fail a `heartbeat_ack` that carries `busy: true` with no `message` outstanding. |
+| shutdown within `deadline_ms` | On `shutdown` with a `deadline_ms`, the binary exits cleanly before the deadline elapses. Failing this means the runtime supervisor sends the process SIGTERM and then SIGKILL 10 seconds later in production, losing unflushed output. |
+| `MessagePart` schema compliance | Every `MessagePart` the runtime produces validates against the published `MessagePart` schema, including the canonical type registry and the `x-<vendor>/` namespace convention for custom types. |
+| session lifetime | On one connection the harness writes `session_start` and a `message` for session A, reads the `response`, and writes `session_end`; then does the same for session B; then writes `session_start` for sessions C and D followed by alternating `message` frames for C and D before it reads any response. The binary answers every `message` with a `response`, answers a `heartbeat` written after each `session_end` with `heartbeat_ack`, and neither exits nor closes its stdout before the harness closes stdin. |
 
-### Full-level tests (in addition to Standard)
+### Standard-level categories (in addition to Basic)
 
-| Test | Description |
-|------|-------------|
-| `TestLifecycleConnect` | Verify connection to lifecycle channel (`@lenny-lifecycle`) |
-| `TestCapabilityHandshake` | Verify `lifecycle_capabilities` / `lifecycle_support` exchange |
-| `TestCheckpointCooperative` | `checkpoint_request` -> `checkpoint_ready` -> `checkpoint_complete` |
-| `TestCheckpointTimeout` | Verify fallback behavior when `checkpoint_ready` is not sent in time |
-| `TestInterruptRequest` | `interrupt_request` -> `interrupt_acknowledged` |
-| `TestCredentialRotation` | `credentials_rotated` -> `credentials_acknowledged` |
-| `TestDeadlineApproaching` | Verify `deadline_approaching` is handled without error |
-| `TestTaskLifecycle` | `task_complete` -> `task_complete_acknowledged` -> `task_ready` |
+| Category | What it asserts |
+|----------|-----------------|
+| MCP nonce handshake | On startup the runtime reads `/run/lenny/adapter-manifest.json`, connects to the platform MCP server, and presents `_lennyNonce` in the `initialize` params. The fixture's MCP server rejects any tool call without a valid nonce to verify enforcement. |
+| platform MCP tool invocation | The runtime calls at least `lenny/output` and `lenny/request_input` through the MCP client, and the responses are processed correctly. |
+| connector MCP server reachability | When `connectorServers` in the manifest is non-empty, the runtime connects to each with the same nonce and completes the `initialize` handshake. |
+| `tool_call` / `tool_result` correlation | Each adapter-local `tool_call` carries a unique `id`, and the matching `tool_result` is read from stdin before the runtime emits its final `response`. |
+
+### Full-level categories (in addition to Standard)
+
+| Category | What it asserts |
+|----------|-----------------|
+| CH-RUNTIMEOPS opening | The runtime connects to the CH-RUNTIMEOPS named in the manifest (`@lenny-runtime-ops`) and completes the `lifecycle_capabilities` / `lifecycle_support` exchange. After that exchange, the runtime answers a `session_start` with a `session_started` that carries the same `sessionId` and `startId` and no `error`. |
+| checkpoint quiesce/resume | On `checkpoint_request`, the runtime quiesces output, replies with `checkpoint_ready`, waits for `checkpoint_complete`, and resumes. |
+| interrupt acknowledgement | On `interrupt_request`, the runtime reaches a safe stop point and replies with `interrupt_acknowledged` carrying the original `interruptId` within the deadline. |
+| credential rotation handling | A runtime that declares `credential_rotation` support re-reads the credential file at the `credentialsPath` that `credentials_rotated` carries for the named session, and services the next message without a restart. |
+| deadline signal handling | A runtime that declares the `deadline_signal` capability in `lifecycle_support` receives, after the session's `session_started`, a `message` for the session and then `deadline_approaching` with that session's `sessionId`. The runtime writes the response to that `message` (optionally carrying `error.code: "DEADLINE_EXCEEDED"`) before `remainingMs` elapses, writes no other `response` for that session after `deadline_approaching`, and still answers a later `heartbeat` with `heartbeat_ack`. |
+
+Each failure is classified as `schema_violation`, `timeout`, `missing_capability`, or `unexpected_error`, and the report lists the failing category with its classification and a reproduction command.
+
+---
+
+## Declared versus observed level
+
+Alongside running the declared level's categories, the validator probes the running runtime to determine the level it actually demonstrates, then compares the two:
+
+- It starts the runtime with the full Full-level fixture set available: the CH-RUNTIMEOPS listening, the platform MCP server and connector fixtures reachable, and the manifest written.
+- If the runtime completes the `lifecycle_capabilities` / `lifecycle_support` exchange on `@lenny-runtime-ops` within the grace window, the observed level is at least Full.
+- Otherwise, if it connects to the platform MCP server and presents a valid `_lennyNonce` during `initialize`, the observed level is at least Standard.
+- Otherwise the observed level is Basic.
+
+The outcome determines the exit behavior:
+
+| Comparison | Exit | Meaning |
+|------------|------|---------|
+| Observed equals declared | `0` | The runtime meets the level it claims. |
+| Observed above declared | `0` with a WARN | The runtime under-declared. Raise `integrationLevel` in `runtime.yaml` so callers and admission can rely on the higher level. |
+| Observed below declared | non-zero | The runtime does not meet the level it published. The report names the missing capabilities, and the missing level's categories are reported as failed. |
 
 ---
 
 ## Local Testing
 
-### Unit-style tests with `make run`
-
-Run the compliance suite directly against your binary:
+The conformance suite carries its own fixtures, so `lenny runtime validate` runs against your runtime without a separate platform stack. At every level it builds your image or binary, spawns it, and connects the fake platform-side servers from inside the `lenny` binary:
 
 ```bash
-# Build your runtime
-go build -o my-agent .
-
-# Run compliance tests
-lenny-compliance --binary ./my-agent --level basic --verbose
+# Build, then validate against the declared level
+lenny runtime validate
 ```
 
-This requires no Docker, Kubernetes, or infrastructure. The test harness spawns your binary and communicates via stdin/stdout.
+This needs no Docker, Kubernetes, or external infrastructure for any level. The Standard and Full categories connect to the fake MCP server and CH-RUNTIMEOPS the validator hosts itself.
 
-### Integration tests with `docker compose up`
+Use a local development mode when you want to exercise your runtime end-to-end against the platform rather than against the conformance fixtures. The recommended path is `lenny up`, which runs the whole platform from one binary and starts your runtime in a real Kubernetes pod. `make run` and `docker compose up` give tighter loops in specific cases. For the differences and when to use each, see [Local Development](local-development.md).
 
-For Standard and Full level tests that require MCP servers:
+The Standard and Full categories rely on Linux abstract Unix sockets for the platform MCP server and the CH-RUNTIMEOPS. When you exercise a runtime end-to-end on macOS or Windows, `make run` cannot host those sockets because it runs your runtime as a plain host process, so use `lenny up` or `docker compose up`, which provide a Linux environment.
 
-```bash
-# Start the full local stack
-docker compose up -d
+### Smoke test
 
-# Run compliance tests against the running stack
-lenny-compliance --binary ./my-agent --level standard \
-  --manifest-path ./lenny-data/adapter-manifest.json
-```
-
-### Smoke Test
-
-Both local dev modes include a built-in smoke test that validates the entire pipeline:
+`lenny up`, `make run`, and `docker compose up` each include a built-in smoke test that exercises the whole pipeline:
 
 ```bash
 # With `make run`
@@ -163,105 +159,59 @@ The smoke test creates a session with the echo runtime, sends a prompt, verifies
 
 ## CI Integration
 
-### GitHub Actions Example
+Because the conformance fixtures ship inside the `lenny` binary, CI runs `lenny runtime validate` directly. No platform stack is needed, and the same job covers Basic, Standard, or Full according to the `integrationLevel` your `runtime.yaml` declares. Install the `lenny` binary, then run the validator from the runtime repository.
+
+### GitHub Actions example
 
 ```yaml
-name: Runtime Compliance
+name: Runtime Conformance
 on: [push, pull_request]
 
 jobs:
-  compliance:
+  conformance:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
+      - name: Install lenny
+        run: go install github.com/lennylabs/lenny/cmd/lenny-ctl@latest
 
-      - name: Build runtime
-        run: go build -o my-agent .
-
-      - name: Install compliance suite
-        run: go install github.com/lennylabs/lenny/cmd/lenny-compliance@latest
-
-      - name: Run Basic-level tests
-        run: lenny-compliance --binary ./my-agent --level basic --json > results.json
+      - name: Validate runtime
+        run: lenny runtime validate --report results.json
 
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: compliance-results
+          name: conformance-results
           path: results.json
 ```
 
-### Standard-level tests in CI
-
-Standard-level tests require the local stack. Use Docker Compose in CI:
-
-```yaml
-  compliance-standard:
-    runs-on: ubuntu-latest
-    services:
-      # Use the docker-compose setup
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Start local stack
-        run: docker compose up -d
-
-      - name: Wait for stack
-        run: |
-          for i in $(seq 1 30); do
-            curl -s http://localhost:8080/healthz && break
-            sleep 1
-          done
-
-      - name: Build and register runtime
-        run: |
-          docker build -t my-agent:dev .
-          curl -X POST http://localhost:8080/v1/admin/runtimes \
-            -H "Content-Type: application/json" \
-            -d '{"name": "my-agent", "type": "agent", "image": "my-agent:dev"}'
-
-      - name: Run Standard-level tests
-        run: lenny-compliance --binary ./my-agent --level standard --json > results.json
-```
+`lenny runtime validate` runs on Linux, where the abstract Unix sockets the Standard and Full categories use are available. Run conformance CI on a Linux runner regardless of the level you target.
 
 ---
 
 ## Validation Gate
 
-The compliance suite is the validation gate for runtime publication. Before publishing your runtime to the community registry (see [Publishing](publishing.md)), your runtime must pass all tests at its declared integration level:
+`lenny runtime validate` is the gate for runtime publication. Before publishing your runtime to the community registry (see [Publishing](publishing.md)), it must pass every category at its declared integration level. The exit code is the gate: `0` means a full pass, and non-zero means at least one category failed or the observed level is below the declared level.
 
 ```bash
-# Required for publication
-lenny-compliance --binary ./my-agent --level standard --json | \
-  jq '.summary.passed == .summary.total'
+# Required for publication; non-zero exit blocks the gate
+lenny runtime validate --report results.json
 ```
 
-The compliance report includes:
+The `--report` file records the declared-versus-observed reconciliation and the per-category result. The `integrationLevel` block reports `match` when the levels agree and `underdeclared` when the runtime demonstrates more than it claims. When the runtime falls short of its claim, the validator exits non-zero with a `runtime_level_underperforms` error that names the missing capabilities.
 
 ```json
 {
-  "level": "standard",
-  "binary": "./my-agent",
-  "summary": {
-    "total": 25,
-    "passed": 25,
-    "failed": 0,
-    "skipped": 0
-  },
-  "tests": [
-    {
-      "name": "TestMessageEcho",
-      "status": "passed",
-      "duration": "42ms"
-    }
-  ]
+  "integrationLevel": {
+    "declared": "standard",
+    "observed": "standard",
+    "status": "match"
+  }
 }
 ```
+
+When the registry CI validates a submission, it runs the same `lenny runtime validate` at your declared level and compares the report against your submission.
 
 ---
 
@@ -269,22 +219,23 @@ The compliance report includes:
 
 | Failure | Cause | Fix |
 |---------|-------|-----|
-| `TestHeartbeatAck` timeout | Heartbeat handler does heavy work before responding | Move all non-trivial work out of the heartbeat handler. Respond immediately. |
-| `TestStdoutFlushing` hang | stdout is buffered and not flushed | Add explicit flush after every write. See the [Adapter Contract](adapter-contract.md) flushing table. |
-| `TestUnknownTypeIgnored` failure | Runtime rejects or crashes on unknown message types | Add a `default` case in your message type switch that silently ignores unknown types. |
-| `TestShutdownDeadline` timeout | Runtime does not exit within `deadline_ms` | Ensure your shutdown handler finishes work and calls `exit()` within the deadline. |
-| `TestToolCallFormat` invalid JSON | Missing required fields in `tool_call` | Ensure `type`, `id`, `name`, and `arguments` are all present. |
-| `TestMcpConnect` refused | Running on macOS with `make run` | Abstract Unix sockets require Linux. Use `docker compose up` instead. |
-| `TestMcpNonce` rejected | Reading stale manifest | Re-read `/run/lenny/adapter-manifest.json` at startup --- nonce is regenerated per task. |
-| `TestManifestRead` not found | Manifest path incorrect | Manifest is at `/run/lenny/adapter-manifest.json` (not `/workspace/`). |
-| `TestCheckpointCooperative` timeout | `checkpoint_ready` not sent within deadline | Ensure your checkpoint handler quiesces state and responds within `deadlineMs`. |
-| `TestResponseShorthand` rejected | Shorthand format not recognized | The shorthand `{"type":"response","text":"..."}` is normalized by the adapter --- ensure you are testing against the adapter, not directly. |
+| Heartbeat ack times out | Heartbeat handler does heavy work before responding | Move all non-trivial work out of the heartbeat handler. Respond immediately. |
+| Output never arrives or the session hangs | stdout is buffered and not flushed | Add an explicit flush after every write. See the [Adapter Contract](../reference/adapter-contract.md) flushing guidance. |
+| Forward-compatibility category fails | Runtime rejects or crashes on unknown message types | Add a `default` case in your message-type switch that silently ignores unknown types. |
+| Shutdown exceeds `deadline_ms` | Runtime does not exit within the deadline | Ensure your shutdown handler finishes work and exits within `deadline_ms`. |
+| `tool_call` fails schema validation | Missing required fields in `tool_call` | Ensure `type`, `id`, `name`, and `arguments` are all present. |
+| MCP connection refused on macOS or Windows | A runtime run under `make run` reaches the platform MCP server over a Linux abstract Unix socket, which the host process cannot use off Linux | Validate with `lenny runtime validate`, which carries its own fixtures, or run the runtime end-to-end with `lenny up` or `docker compose up`. |
+| MCP nonce rejected | The presented value is not the one the running server was armed with | Read `/run/lenny/adapter-manifest.json` at startup and present the nonce it carried then. The intra-pod MCP servers are pod-wide and started at most once per pod, so a server validates against the nonce the manifest carried at the start that bound it, and a later session's manifest write does not re-arm a running server. |
+| Manifest not found | Manifest path incorrect | The manifest is at `/run/lenny/adapter-manifest.json`, not under `/workspace/`. |
+| Socket connection closed before the first frame | The nonce line was missing, late, or stale, or a nonce-only challenge went unanswered | Send `{"_lennyNonce":"<nonce_hex>"}` with the manifest's `mcpNonce` as the first line within 500 ms, answer a `_lennyChallenge` that arrives before the first protocol frame, and read the manifest again and redial when the adapter closes the connection. See the [connection handshake](../reference/adapter-contract.md#connection-handshake). |
+| Sessions fail to start on a runtime that opened the CH-RUNTIMEOPS | The runtime does not answer `session_start` with `session_started` before the adapter's bounded wait ends | Write `session_started` with the session's `sessionId` and `startId` for every `session_start`, once the session's context exists. |
+| Checkpoint quiesce times out | `checkpoint_ready` not sent within the deadline | Ensure your checkpoint handler quiesces state and replies with `checkpoint_ready` within `deadlineMs`. |
 
 ---
 
 ## Writing Your Own Tests
 
-Beyond the compliance suite, you should write runtime-specific tests for your business logic:
+The conformance suite checks the adapter contract. Add runtime-specific tests for your own business logic on top of it.
 
 ### Testing Message Handling
 
@@ -297,8 +248,8 @@ func TestMyRuntime_ProcessesInput(t *testing.T) {
     cmd.Start()
     defer cmd.Process.Kill()
 
-    // Send a message
-    msg := `{"type":"message","id":"msg_001","input":[{"type":"text","inline":"Hello"}]}` + "\n"
+    // Send a message addressed to a session
+    msg := `{"type":"message","id":"msg_001","sessionId":"sess_abc","input":[{"type":"text","inline":"Hello"}]}` + "\n"
     stdin.Write([]byte(msg))
 
     // Read response
@@ -311,10 +262,17 @@ func TestMyRuntime_ProcessesInput(t *testing.T) {
     if resp["type"] != "response" {
         t.Errorf("expected response, got %s", resp["type"])
     }
+    // The response echoes the address the inbound message carried. A response
+    // that names no session is rejected on a pod holding more than one slot.
+    if resp["sessionId"] != "sess_abc" {
+        t.Errorf("expected sessionId sess_abc, got %v", resp["sessionId"])
+    }
 }
 ```
 
 ### Testing Heartbeat
+
+The adapter sends a `heartbeat` for each session, naming the session in `sessionId`. If no acknowledgment arrives within 10 seconds, the adapter treats the runtime as hung for the session the heartbeat names: it ends the session's stream to the gateway when one is open and refuses each later stream for the session until the adapter releases the session, and the runtime process receives no signal. The gateway handles the session as a runtime crash under its retry policy. A runtime reports `busy: true` with the heartbeat's `sessionId` on its `heartbeat_ack` while it does any work for the session the heartbeat names, as in `{"type":"heartbeat_ack","sessionId":"sess_abc","busy":true}`. The runtime SDKs do this while a message for the session is pending or being handled and while a busy hold (`HoldBusy` in Go, `hold_busy` in Python, `holdBusy` in TypeScript) is held. Work after a handler returns that takes no hold, including the rest of a streaming turn whose reply is not yet final, is not reported. Without a report, the adapter counts only the following traffic as activity for a session: each frame it writes to the runtime for the session other than `heartbeat` and `session_end`; each `message`, `tool_call`, `tool_result`, `response`, `set_tracing_context`, or `status` frame it reads from the runtime that names the session, or that carries no `sessionId` on a pod holding at most one [slot](../reference/glossary#slot); each CH-RUNTIMEOPS `llm_request_completed` that names the session; and each platform or connector MCP tool call for the session while it is in flight. When the gateway's idle clock (`maxClientIdleSeconds`, default 900s) fires for a session, the adapter seals the session only when it had none of that activity and no `busy` report in the window, and the gateway then idle-suspends the session and releases its pod or slot. See [Idle suspension](lifecycle.md#idle-suspension).
 
 ```go
 func TestMyRuntime_RespondsToHeartbeat(t *testing.T) {
@@ -325,7 +283,7 @@ func TestMyRuntime_RespondsToHeartbeat(t *testing.T) {
     defer cmd.Process.Kill()
 
     // Send heartbeat
-    stdin.Write([]byte(`{"type":"heartbeat","ts":1234567890}` + "\n"))
+    stdin.Write([]byte(`{"type":"heartbeat","ts":1234567890,"sessionId":"sess_test"}` + "\n"))
 
     // Read response with timeout
     scanner := bufio.NewScanner(stdout)
@@ -347,3 +305,11 @@ func TestMyRuntime_RespondsToHeartbeat(t *testing.T) {
     }
 }
 ```
+
+---
+
+## `type: mcp` runtimes
+
+The integration levels and the agent test categories on this page apply to `type: agent` runtimes. A `type: mcp` runtime hosts an MCP server behind the platform and does not participate in the stdin/stdout protocol, the platform tool client, or the CH-RUNTIMEOPS, so the Basic, Standard, and Full categories do not apply to it. For how `type: mcp` runtimes differ, see [Integration Levels](integration-levels.md#type-mcp-runtimes).
+
+Test a `type: mcp` runtime the way you test any MCP server: exercise its `initialize`, `tools/list`, and `tools/call` handlers directly with an MCP client, and add your own functional tests for the tools it exposes.

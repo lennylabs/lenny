@@ -1,0 +1,463 @@
+# SPDX-License-Identifier: MIT
+#
+# Helm values overlay for the tier-5 e2e Kind cluster. It points every
+# workload at the locally-built `lenny-*:e2e` images (loaded onto the
+# cluster nodes by `kind load docker-image`) with `pullPolicy: Never`
+# so the install never reaches a remote registry, and runs the gateway
+# in dev mode so it starts without external Postgres, Redis, or MinIO.
+#
+# install.sh passes a generated overlay, image-tags.gen.yaml, after this
+# file. It replaces each e2e tag below with the content tag
+# (src-<hash>) of the image the install built and loaded, so a rebuilt
+# image changes the rendered reference and its Deployment rolls out. The
+# e2e tag remains a moving alias of the same images, so rendering this
+# file alone still names loaded images.
+#
+# This overlay is for the e2e test harness only. Production installs
+# use the chart defaults with real images and external data stores.
+
+# The §25.8 ImageResolver prepends platform.registry.url to every
+# component image name (lenny.componentImage helper), so the chart
+# default ghcr.io/lennylabs would render ghcr.io/lennylabs/lenny-*:e2e.
+# install.sh builds and `kind load docker-image`s the bare lenny-*:e2e
+# names instead, so with pullPolicy: Never the kubelet reports
+# ErrImageNeverPull for any pod whose image carries the registry prefix.
+# A long-running control-plane pod survives because it was admitted on a
+# prior install, but the per-upgrade lenny-preflight hook Job re-pulls a
+# fresh pod every time and fails closed, hanging at activeDeadlineSeconds
+# (DeadlineExceeded) and aborting the chart install. Clearing the URL
+# routes the helper to the bare image.repository names below, which match
+# the kind-loaded images. This is the e2e harness only; production installs
+# keep the registry URL.
+platform:
+  registry:
+    url: ""
+
+# Run the cluster-internal gRPC links in plaintext (dev posture). With
+# mtls.enabled=true (the chart default) the gateway dials each agent pod's
+# adapter over mTLS (--adapter-tls-cert/key/ca), but the Sandbox reconciler
+# does not yet stamp a per-pod serving certificate onto the adapter
+# container, so the adapter serves :50051 in plaintext. The gateway's mTLS
+# dial then fails the handshake ("tls: first record does not look like a
+# TLS handshake") and POST /v1/sessions/start returns 503
+# SESSION_CREATION_FAILED, which breaks the §6.3 startup benchmark. The
+# per-pod adapter serving cert is the deferred SPIFFE/cert-manager work
+# tracked by the broader chart-wide mTLS gap (BUILD-GAPS F-10.3.10); until
+# it lands, the e2e runs gateway↔adapter and gateway↔Token-Service in
+# plaintext so the two sides agree. This is the e2e harness overlay only;
+# production keeps mtls.enabled=true.
+mtls:
+  enabled: false
+
+controller:
+  # Run a single WarmPoolController replica on the e2e cluster. The chart
+  # default is 2 (a leader plus a hot standby for production HA), but on a
+  # single-host Kind cluster the standby pod is CPU-starved during the heavy
+  # install: its controller-runtime health-probe server cannot answer the 1s
+  # /readyz and /healthz probes, so the liveness probe kills it in a restart
+  # loop and it never reports Ready. The install's control-plane Ready wait
+  # (kubectl wait --for=condition=Ready over every app.kubernetes.io/name=lenny
+  # pod) then blocks on that standby and times out, even though the elected
+  # leader is healthy and reconciling. One replica still runs --leader-elect
+  # and acquires the lease immediately, which is all the §6.3 benchmark and
+  # the tier-5/8/9 suites need (none exercise controller failover). This is
+  # the e2e harness overlay only; production keeps the 2-replica HA default.
+  replicas: 1
+  image:
+    repository: lenny-controller
+    tag: e2e
+    pullPolicy: Never
+  # The Sandbox reconciler stamps this adapter image into every agent
+  # pod. install.sh builds and kind-loads lenny-adapter:e2e.
+  adapterImage: lenny-adapter:e2e
+  # The runtime supervisor image every sidecar pod of a type: agent runtime
+  # stages into its read-only supervisor volume through the
+  # lenny-supervisor-stage init container (§4.7.10 Runtime supervisor; §13.1
+  # Runtime supervisor volume). install.sh builds it from
+  # Dockerfile.supervisor and kind-loads lenny-supervisor:e2e. Without it the
+  # controller creates no pod for any sidecar type: agent pool.
+  supervisorImage: lenny-supervisor:e2e
+  # The §28.5.3 CH-SUPERVISE ping bounds, shortened from the 5s defaults so
+  # a stopped supervisor is detected (interval plus timeout, 4s) inside the
+  # §4.6.1 reserved hold (claimHoldTTLSeconds, 10s), which the tier-8 case
+  # that stops a reserved pod's supervisor needs. The probe Runtimes' 30s
+  # CH-MSGSOCK dial delay stays above interval plus timeout and below the
+  # default 2m warm-up timeout (tests/testinfra/kind/agent-workload.yaml).
+  tuning:
+    supervisePingInterval: 2s
+    supervisePingTimeout: 2s
+  # TESTING.md §12.9.8 tier-9 egress-capture sidecar. The reconciler injects it
+  # into every Sandbox whose template carries the
+  # `lenny.dev/test-egress-capture-upstream` annotation (today, only
+  # the cred-shell-echo template in agent-workload.yaml).
+  egressCaptureImage: lenny-egress-capture:e2e
+  # Shrink the §5.2 resource classes for the Kind cluster. The e2e pools
+  # default to the `medium` class (500m/2Gi request, 2/2Gi limit) per
+  # container, and each agent pod runs two containers (adapter + runtime),
+  # so five warm pools demand 20Gi of memory requests across two ~8Gi
+  # worker nodes and most pods stay Pending with Insufficient memory. The
+  # echo reference runtimes are tiny, so the e2e overlay retunes every
+  # class to a Kind-sized footprint. The limit clears the §6.4 576Mi tmpfs
+  # reservation the controller validates at startup (a class whose memory
+  # limit is below it fails buildResourceClasses). This is the e2e harness
+  # only; production keeps the chart-default class sizing.
+  resourceClasses:
+    small:
+      requests: { cpu: "50m", memory: "128Mi" }
+      limits: { cpu: "500m", memory: "640Mi" }
+    medium:
+      requests: { cpu: "100m", memory: "192Mi" }
+      limits: { cpu: "1", memory: "768Mi" }
+    large:
+      requests: { cpu: "150m", memory: "256Mi" }
+      limits: { cpu: "2", memory: "1Gi" }
+
+admissionWebhooks:
+  image:
+    repository: lenny-webhook
+    tag: e2e
+    pullPolicy: Never
+
+tokenService:
+  image:
+    repository: lenny-token-service
+    tag: e2e
+    pullPolicy: Never
+
+sandbox:
+  # The e2e agent-workload registers SandboxTemplates with
+  # isolationProfile: standard (matching the §13.1 cluster lacking
+  # a Kata / microVM runtime class). Without this override the
+  # gateway falls back to its compiled-in `sandboxed` default and
+  # `POST /v1/sessions/start` returns 503 POD_CLAIM_FAILED for every
+  # session that omits the profile — every k6 scenario does.
+  defaultIsolationProfile: standard
+
+# Disable the §26 reference-runtime catalog on the Kind overlay. The
+# chart's catalog ships ghcr.io/lennylabs/runtime-<name>:1.0.0 images
+# the local Kind cluster cannot pull, and one of those entries
+# (claude-code) collides with the agent-workload.yaml's claude-code
+# Runtime + SandboxTemplate + SandboxWarmPool the tier-7 load
+# scenarios target. The agent-workload owns the e2e runtime set.
+referenceRuntimes:
+  enabled: false
+
+gateway:
+  image:
+    repository: lenny-gateway
+    tag: e2e
+    pullPolicy: Never
+  # The tier-7 load smoke suite drives sustained session creation
+  # against the e2e gateway. The chart's 512Mi default limit is sized
+  # for a quiet control plane; a load run accumulates session and
+  # billing state and OOM-kills the pod at that limit. The e2e cluster
+  # has headroom, so the overlay raises the gateway limit for the
+  # benefit of tests/tier7b_load_kind.
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1536Mi
+  # §7.1's seal-and-export step on /terminate runs a real checkpoint: the
+  # gateway grants presigned chunk PUTs against the in-cluster MinIO and
+  # the adapter uploads the workspace archive. A seal that keeps failing
+  # retries for the full maxWorkspaceSealDurationSeconds window
+  # (compiled-in default 300s), so a broken object store would hold every
+  # terminated session's pod for five minutes. Shortening the window to
+  # 6s (one attempt and one retry) keeps a tier-5 or tier-9 test that
+  # claims and terminates a real session prompt. 6s is the shortest window
+  # the gateway admits at the default 5s usage quiescence timeout: the
+  # gateway refuses to start when the seal window is not greater than that
+  # timeout, which a delegated child's §8.3 budget return waits inside the
+  # terminal pipeline. A seal that
+  # fails inside the window relabels the session failed with
+  # workspace_seal_timeout and releases the pod with the failed
+  # disposition, which retires the pod even on a recycling pool. A test
+  # that expects recycling or a reserved hold after /terminate therefore
+  # needs MinIO to accept writes; MinIO answers 507 Insufficient Storage
+  # when the host disk under the Kind nodes is nearly full. This is the
+  # e2e harness overlay only; production deployments keep the chart's
+  # 300s default.
+  workspaceSealMaxDurationSeconds: 6
+
+ops:
+  image:
+    repository: lenny-ops
+    tag: e2e
+    pullPolicy: Never
+  # §25.4 NET-070: the gateway deployed on this cluster serves its admin
+  # API on the plaintext internal port; it runs no TLS admin listener, and
+  # the internal-TLS port the chart would point lenny-ops at (8443) is the
+  # LLM-proxy listener, which answers a TLS client with a plaintext HTTP
+  # response. Keeping the TLS default here left every lenny-ops -> gateway
+  # admin-API call failing at the transport layer, which took the §25.5
+  # read surface into the dual-outage branch during a Redis outage instead
+  # of the gateway-buffer fall-back. The overlay therefore takes the
+  # acknowledged-plaintext path, which global.devMode (set above) implies
+  # for the ops-tls-guard. The mismatch between the chart's internal-TLS
+  # port and what the gateway serves is tracked as an open finding.
+  tls:
+    internalEnabled: false
+    certManager:
+      enabled: false
+
+# The §6.1 SDK-warm runtime image and the schema-migration Job image are
+# loaded onto the Kind nodes by `kind load docker-image`; like every other
+# component image on this overlay they must use pullPolicy: Never with the
+# :e2e tag. Without this override the chart's migrate Job defaults to
+# ghcr.io/lennylabs/lenny-migrate and ImagePullBackOffs on the offline Kind
+# cluster, blocking the gateway rollout.
+migrate:
+  image:
+    repository: lenny-migrate
+    tag: e2e
+    pullPolicy: Never
+
+preflight:
+  # The Kind e2e cluster validates functional gateway and runtime behaviour,
+  # not the production admission-plane gate. Two pre-install preflight checks
+  # cannot pass in this context: cluster-cidr-discovery needs `get services`
+  # which the preflight ClusterRole does not grant (it grants only `list`),
+  # and lenny-ops-sa-rbac hard-fails because the main-phase ops Role/ClusterRole
+  # is not yet applied when the pre-install hook runs (the same ordering the
+  # conversion-webhook check tolerates). Disable the gate so the chart installs;
+  # the functional tiers exercise the control plane directly.
+  enabled: false
+  image:
+    repository: lenny-preflight
+    tag: e2e
+    pullPolicy: Never
+  # The §17.9.2 airgap path drops the backend-reachability probes (MinIO
+  # SSE, BYO-Redis maxmemory, OTLP TLS handshake, ops-admin internal-TLS)
+  # while keeping the admission-plane cluster-API checks the install needs.
+  # The e2e MinIO now serves https at lenny-minio.lenny-system.svc:9000 with a
+  # cert-manager cert (minio.tls.enabled: true), but its SSE-KMS probe expects
+  # production server-side-encryption that the test fixture does not configure,
+  # so the airgap probe-skip keeps the preflight Job from hanging on the
+  # backend-reachability sweep. The cluster-API admission-plane checks still
+  # run.
+  skipNetworkProbes: true
+  # Raise the activeDeadlineSeconds floor so a cold-cache cluster-API sweep
+  # on a loaded Kind host completes within the hook deadline.
+  timeoutSeconds: 300
+
+backups:
+  image:
+    repository: lenny-backup
+    tag: e2e
+    pullPolicy: Never
+
+# The §4.6.2 PoolScalingController Deployment image, built and loaded by
+# install.sh like the other control-plane components.
+poolScalingController:
+  image:
+    repository: lenny-pool-scaling-controller
+    tag: e2e
+    pullPolicy: Never
+
+# The dedicated §13.2 CoreDNS instance is disabled on the Kind e2e. Its
+# image (ghcr.io/lennylabs/lenny-coredns) bundles the coredns-ratelimit and
+# coredns-filter plugins; coredns-ratelimit has no public Go module source
+# (github.com/coredns/ratelimit 404s on the module proxy), so the image
+# cannot be built offline and the private ghcr image cannot be pulled by the
+# air-gapped Kind kubelet. Left enabled it sits in ImagePullBackOff and the
+# install hangs on `helm install --wait`. The tier-7 startup_latency
+# benchmark creates sessions on echo runtimes that do no DNS lookups, so the
+# dedicated DNS path is not exercised.
+#
+# With coredns.deploy=false the chart skips the CoreDNS Deployment, Service,
+# ConfigMap, and PDB, and the controller-deployment omits the
+# --dedicated-dns-cluster-ip flag (it is gated on coredns.deploy AND
+# coredns.clusterIP). The Sandbox reconciler's applyDedicatedDNS then returns
+# early without an IP, so agent pods keep the default ClusterFirst resolver
+# (kube-system kube-dns) rather than dnsPolicy:None.
+#
+# §13.2 forbids the broad allow-pod-egress-base policy (podSelector
+# lenny.dev/managed: "true") from carrying a kube-system DNS peer: the broad
+# selector would let every managed agent pod bypass the dedicated instance's
+# query logging, rate limiting, and response filtering. The §13.2-sanctioned
+# fallback is the per-pool opt-out. Each e2e pool sets dnsPolicy:
+# cluster-default (in the bootstrap overlay install.sh generates), so the
+# WarmPoolController stamps the lenny.dev/dns-policy: cluster-default label on
+# its pods, and allowClusterDefaultOptOut below renders the supplemental
+# allow-pod-egress-kube-dns NetworkPolicy scoped to that label, which admits
+# only the opted-out pods' kube-system DNS egress. clusterIP and
+# image.pullPolicy are unused while deploy is false.
+coredns:
+  deploy: false
+  # Render the §13.2 allow-pod-egress-kube-dns NetworkPolicy, scoped to the
+  # lenny.dev/dns-policy: cluster-default label, so the e2e pools that opt out
+  # of the (disabled) dedicated CoreDNS instance resolve through kube-system
+  # CoreDNS. Without it the agent pods carry the opt-out label but
+  # default-deny-all blocks their DNS egress and every lookup fails.
+  allowClusterDefaultOptOut: true
+
+# The §16.7 deployment-config-sync post-install hook is disabled on the Kind
+# e2e. The hook runs lenny-ctl `admin deployment sync-config` against the
+# gateway to emit the §16.7 gateway.*/platform.*/deployment.* transition
+# audit events. Its pods carry lenny.dev/component: deployment-config-sync;
+# the chart now ships an allow-deployment-config-sync-egress NetworkPolicy
+# admitting their gateway:8080 + DNS egress (the production fix), but the
+# Kind cluster's kindnet kube-network-policies enforcer does not reliably
+# program the allow for these freshly-created hook pods during the
+# post-install pod-churn window, so the pods hang on "gateway not ready" and
+# the post-install helm hook exhausts its backoffLimit, aborting the install
+# with DeadlineExceeded. The tier-7 startup_latency benchmark exercises
+# session creation and the warm-pool lifecycle, not the §16.7 deployment
+# transition audit stream, so the hook is not needed here. Disabling it skips
+# the hook Job and its ConfigMap while leaving the production audit path
+# (and its NetworkPolicy) intact for real installs.
+deploymentAudit:
+  enabled: false
+
+bootstrap:
+  image:
+    repository: lenny-ctl
+    tag: e2e
+    pullPolicy: Never
+  # Seed the §17.6 Day-1 fixture data the tier-3/4/7 scenarios assume:
+  # an `acme` tenant and an `alice@acme.com` user with tenant-admin.
+  # The bootstrap Job is idempotent; re-runs are safe and the Job runs
+  # on every helm install/upgrade.
+  tenants:
+    - id: acme
+      displayName: Acme Corp
+  users:
+    - subject: alice@acme.com
+      tenantId: acme
+      roles:
+        - tenant-admin
+  # bootstrap.runtimes and bootstrap.pools are NOT declared here. Their
+  # runtime images must be digest-pinned (§13.1) to the freshly-built
+  # lenny-runtime-*:e2e images, whose digests change on every build, so a
+  # hardcoded digest goes stale and ImagePullBackOffs. install.sh resolves
+  # each image's current digest with `docker image inspect` and writes a
+  # generated overlay (bootstrap-overlay.gen.yaml) carrying the full
+  # bootstrap.runtimes and bootstrap.pools lists with the resolved
+  # digests. Helm replaces a list value wholesale when a later -f sets it,
+  # so the overlay's lists supersede anything declared here while the
+  # tenants/users maps above deep-merge through. The pools are seeded into
+  # Postgres (rather than applied as SandboxTemplate/SandboxWarmPool CRs)
+  # because the pool-config-validator webhook rejects any manual kubectl
+  # write to those resources: only the PoolScalingController service
+  # account may create them, and it does so by reconciling each seeded
+  # Postgres pool row. spec: §17.6, §4.6.2, §13.1.
+
+# Dev mode stays on for e2e so the gateway keeps its dev-header auth
+# shortcuts. The data stores below are real in-cluster services, so
+# the gateway and controller persist to them rather than falling back
+# to in-memory backends.
+global:
+  devMode: true
+  # §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
+  # value with no default; the gateway-deployment annotation wraps it in
+  # `required`. The Kind e2e overlay pins a deployment-unique placeholder.
+  spiffeTrustDomain: lenny-kind-e2e
+
+# §25.4 — "No anonymous access except /healthz." lenny-ops
+# leaves that authentication MUST unenforced when no bearer-trust key is
+# configured: cmd/lenny-ops/main.go buildAuthConfig returns a nil
+# AuthConfig outside production, so the surface admits anonymous callers.
+# Without this the e2e deploy would serve the platform-admin operability
+# APIs (remediation locks, backup, drift, diagnostics) to any anonymous
+# caller and never exercise the §25.4 auth gate end-to-end. Naming the
+# Secret renders --bearer-trust-hmac-key-file onto lenny-ops (and the
+# gateway) and gives lenny-ops a RequireAuth AuthConfig; install.sh
+# creates the Secret (data key `key`, an HMAC key file) before the chart
+# install. global.devMode: true keeps production=false so dev-header auth
+# stays an accepted transport — the existing dev-header e2e callers are
+# unaffected while an anonymous caller is now rejected 401.
+security:
+  oidc:
+    bearerTrustKeySecret: lenny-e2e-bearer-trust-key
+
+# In-cluster data stores. install.sh deploys Postgres, Redis, and MinIO
+# from datastores.yaml into lenny-system and runs the lenny-migrate Job
+# before the chart install. These keys point the gateway and controller
+# at those Services by their cluster DNS names. The chart renders the
+# data-store env vars and the lenny-datastore-conn Secret only because
+# these values are set; a production install leaves them empty.
+#
+# sslmode=disable is the simplest working setting for the in-cluster
+# e2e Postgres, which has no TLS configured. Plaintext is acceptable
+# inside the test cluster; this does not change any production default.
+#
+# billingAuditDdlDsn gives the gateway the CREATE-privileged connection it
+# provisions each new tenant's billing_seq_ and audit_seq_ sequences
+# through. The e2e Postgres has a single login role that owns the schema,
+# so the DDL connection reuses it. Without it a tenant a test bootstraps
+# has no audit sequence, and every audit append for that tenant fails,
+# including the §12.8 erasure completion receipt, so an erasure job on
+# such a tenant never completes.
+postgres:
+  dsn: "postgres://lenny:lenny@lenny-postgres.lenny-system.svc:5432/lenny?sslmode=disable"
+  billingAuditDdlDsn: "postgres://lenny:lenny@lenny-postgres.lenny-system.svc:5432/lenny?sslmode=disable"
+
+redis:
+  url: "redis://lenny-redis.lenny-system.svc:6379"
+
+minio:
+  endpoint: "lenny-minio.lenny-system.svc:9000"
+  accessKey: "lennyminio"
+  secretKey: "lennyminio123"
+  bucket: "lenny-artifacts"
+  useSSL: true
+  # §13.2 NET-071 — the agent-pod checkpoint-egress policy
+  # (allow-pod-egress-objectstore) and the paired gateway egress open the
+  # MinIO TLS port from tlsPort. The chart default is 9443, but the e2e MinIO
+  # (datastores.yaml) serves https on its API port 9000, so the overlay pins
+  # tlsPort to the port the fixture actually listens on. This affects only the
+  # rendered NetworkPolicies (the gateway reaches MinIO through minio.endpoint,
+  # which carries its own :9000 port); production keeps the chart-default 9443.
+  tlsPort: 9000
+  # §12.5 — the artifact-store TLS mandate binds the plaintext-MinIO
+  # exception to backends: embedded only; all other backends enforce TLS. The
+  # e2e MinIO is a real in-cluster (non-embedded) backend, so the chart's
+  # §12.5 guard requires tls.enabled: true. datastores.yaml issues a
+  # cert-manager serving cert for lenny-minio.lenny-system.svc and MinIO
+  # serves https on :9000. install.sh copies the cert-manager-issued ca.crt
+  # into the lenny-minio-ca ConfigMap before the helm install; the chart
+  # mounts it into the gateway and the bucket-lifecycle Job and points
+  # SSL_CERT_DIR at it (caBundleConfigMap), so both verify the MinIO
+  # endpoint against the issuing CA. The chart derives the gateway and Job
+  # MinIO scheme (https) from tls.enabled.
+  tls:
+    enabled: true
+    caBundleConfigMap: lenny-minio-ca
+  # The bucket-lifecycle Job runs the chart's default mc image, the pinned
+  # pgsty/mc reference. install.sh loads it and names the same reference
+  # as minio.lifecycle.image in the generated image-tag overlay.
+
+# §13.2 NET-071 — the object-store artifact backend and its agent-pod
+# checkpoint-egress allow-list. The e2e MinIO is an out-of-band self-managed
+# store (minio.endpoint set, minio.deploy false), so the chart renders the
+# allow-pod-egress-objectstore out-of-band arm: an ipBlock egress peer from
+# objectStorage.egressCIDRs on minio.tlsPort. The agent pod reaches the store
+# through the gateway-minted presigned PUT/GET, whose host is minio.endpoint
+# (lenny-minio.lenny-system.svc:9000). kindnet evaluates the egress policy
+# against the post-DNAT destination, so a connection to the MinIO Service
+# ClusterIP is admitted by the pod-subnet peer once kube-proxy DNATs it to the
+# backing MinIO pod IP. Because the store runs in-cluster on the Kind pod subnet
+# (10.245.0.0/16, tests/testinfra/kind/cluster.yaml), the allow-list is that
+# subnet, which covers the MinIO pod IP. A production out-of-band or
+# cloud-managed install lists the external store's PrivateLink, VPC-endpoint, or
+# object-store CIDR here instead. The paired agent-namespace ingress on the
+# MinIO side is re-admitted by allow-e2e-datastores-ingress in datastores.yaml
+# (the e2e analog of the chart's self-managed MinIO ingress clause; the
+# out-of-band arm ships no in-cluster ingress clause because a production
+# out-of-band store is external to the cluster).
+objectStorage:
+  egressCIDRs:
+    - "10.245.0.0/16"
+
+# Enable the feature-gated admission webhooks so the tier-5
+# admission_featuregated tests can exercise their behavioural half:
+# lenny-direct-mode-isolation (llmProxy), lenny-drain-readiness
+# (drainReadiness), and lenny-data-residency-validator +
+# lenny-t4-node-isolation (compliance).
+features:
+  llmProxy: true
+  drainReadiness: true
+  compliance: true

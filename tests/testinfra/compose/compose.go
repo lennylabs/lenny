@@ -115,7 +115,10 @@ func Up(t testing.TB, profile Profile) *Stack {
 // WaitReady polls each service's healthcheck until all report
 // healthy or the deadline expires.
 func (s *Stack) WaitReady(timeout time.Duration) error {
-	services := []string{"lenny-postgres", "lenny-redis", "lenny-minio"}
+	services := []string{
+		"lenny-postgres", "lenny-redis", "lenny-minio",
+		"lenny-pgbouncer", "lenny-redis-replica",
+	}
 	deadline := time.Now().Add(timeout)
 	lastStatus := map[string]string{}
 	for {
@@ -168,9 +171,33 @@ func (s *Stack) PostgresDSN() string {
 	return "postgres://lenny:lenny@127.0.0.1:15432/lenny?sslmode=disable"
 }
 
-// RedisAddr returns the host:port for the Redis service.
+// PgBouncerDSN returns a connection string that points at the
+// PgBouncer connection-pooler in session pooling mode. The TESTING.md §12.2.2
+// connection-reuse leak test reaches Postgres through this endpoint
+// so a returned connection retains its SET LOCAL state, exposing any
+// gateway-side failure to reset the tenant context before reuse.
+func (s *Stack) PgBouncerDSN() string {
+	return "postgres://lenny:lenny@127.0.0.1:16432/lenny?sslmode=disable"
+}
+
+// RedisAddr returns the host:port for the Redis master node.
 func (s *Stack) RedisAddr() string {
 	return "127.0.0.1:16379"
+}
+
+// RedisSentinelAddrs returns the three Sentinel host:port pairs the
+// §12.8 TestRedisSentinelFailover chaos scaffold consumes. The
+// quorum is 2; a client should connect via the redis Sentinel
+// protocol against any of the three addresses.
+func (s *Stack) RedisSentinelAddrs() []string {
+	return []string{"127.0.0.1:26379", "127.0.0.1:26380", "127.0.0.1:26381"}
+}
+
+// RedisSentinelMasterName returns the master name the Sentinel
+// quorum monitors. Matches the `sentinel monitor lenny-master`
+// directive rendered into the Sentinel config.
+func (s *Stack) RedisSentinelMasterName() string {
+	return "lenny-master"
 }
 
 // MinIOEndpoint returns the S3-compatible endpoint URL.

@@ -1,0 +1,102 @@
+suite: §25.11 MinIO backup bucket policy (F-17.3.18)
+templates:
+  - backup-bucket-policy.yaml
+tests:
+  - it: renders nothing when no backup bucket is declared (stock render)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders nothing when bucketPolicy is disabled even with a bucket
+    set:
+      backups.bucket: lenny-backups
+      backups.bucketPolicy.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders the suggested bucket-policy ConfigMap when a bucket is set
+    set:
+      backups.bucket: lenny-backups
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: lenny-backup-bucket-policy
+
+  - it: grants lenny-backup full object CRUD + ListBucket and lenny-ops read-only
+    set:
+      backups.bucket: lenny-backups
+    documentIndex: 0
+    asserts:
+      # lenny-backup principal: PutObject / GetObject / DeleteObject + ListBucket.
+      - matchRegex:
+          path: data["policy.json"]
+          pattern: 'arn:aws:iam:::user/lenny-backup'
+      - matchRegex:
+          path: data["policy.json"]
+          pattern: 's3:DeleteObject'
+      - matchRegex:
+          path: data["policy.json"]
+          pattern: 'LennyBackupListBucket'
+      # lenny-ops principal: read + list only, never DeleteObject under its Sid.
+      - matchRegex:
+          path: data["policy.json"]
+          pattern: 'arn:aws:iam:::user/lenny-ops'
+      - matchRegex:
+          path: data["policy.json"]
+          pattern: 'LennyOpsObjectRead'
+
+  - it: requires TLS via the aws:SecureTransport deny statement
+    set:
+      backups.bucket: lenny-backups
+    documentIndex: 0
+    asserts:
+      - matchRegex:
+          path: data["policy.json"]
+          pattern: 'DenyInsecureTransport'
+      - matchRegex:
+          path: data["policy.json"]
+          pattern: 'aws:SecureTransport'
+
+  - it: omits the SSE-KMS deny statement when no kmsKeyId is configured
+    set:
+      backups.bucket: lenny-backups
+    documentIndex: 0
+    asserts:
+      - notMatchRegex:
+          path: data["policy.json"]
+          pattern: 's3:x-amz-server-side-encryption-aws-kms-key-id'
+
+  - it: requires the matching SSE-KMS key on PutObject when kmsKeyId is set
+    set:
+      backups.bucket: lenny-backups
+      backups.encryption.kmsKeyId: arn:aws:kms:us-east-1:111:key/abc
+    documentIndex: 0
+    asserts:
+      - matchRegex:
+          path: data["policy.json"]
+          pattern: 'DenyPutWithoutMatchingKmsKey'
+      - matchRegex:
+          path: data["policy.json"]
+          pattern: 's3:x-amz-server-side-encryption-aws-kms-key-id'
+      - matchRegex:
+          path: data["policy.json"]
+          pattern: 'arn:aws:kms:us-east-1:111:key/abc'
+
+  - it: honors custom principals
+    set:
+      backups.bucket: lenny-backups
+      backups.bucketPolicy.backupPrincipal: backup-writer
+      backups.bucketPolicy.opsPrincipal: ops-reader
+    documentIndex: 0
+    asserts:
+      - matchRegex:
+          path: data["policy.json"]
+          pattern: 'arn:aws:iam:::user/backup-writer'
+      - matchRegex:
+          path: data["policy.json"]
+          pattern: 'arn:aws:iam:::user/ops-reader'

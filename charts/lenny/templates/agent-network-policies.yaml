@@ -1,0 +1,381 @@
+{{- /*
+Agent-namespace NetworkPolicies (§13.2). Three policies are rendered
+into every agent namespace declared in .Values.agentNamespaces:
+
+  - default-deny-all: denies all ingress and egress for every pod.
+  - allow-gateway-ingress: re-admits the gateway's gRPC control
+    connection to each managed pod's adapter.
+  - allow-pod-egress-base: re-admits each managed pod's egress to the
+    gateway gRPC control channel and to cluster DNS.
+
+The supplemental allow-pod-egress-llm-proxy policy applies only to
+proxy-mode pools and is rendered with the LLM proxy.
+
+The supplemental allow-pod-egress-otlp policy re-admits egress to the
+OTLP trace collector and is rendered only when observability.otlpEndpoint
+is set (§13.2 NET-046).
+
+The supplemental allow-pod-egress-provider-direct and
+allow-pod-egress-internet policies are the §13.2 per-pool egress profiles,
+keyed on the lenny.dev/egress-profile label the WarmPoolController stamps.
+The restricted profile (the default) needs no supplemental policy because
+allow-pod-egress-base already grants its gateway + DNS egress.
+
+The supplemental allow-pod-egress-kube-dns policy is the §13.2.6
+kube-system DNS fallback for pools that opt out of the dedicated CoreDNS
+instance (lenny.dev/dns-policy: cluster-default); it is rendered only when
+coredns.allowClusterDefaultOptOut is set.
+*/ -}}
+{{- range $ns := .Values.agentNamespaces }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: {{ $ns.name }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-ingress
+  namespace: {{ $ns.name }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/managed: "true"
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Release.Namespace }}
+          podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+      ports:
+        - port: {{ $.Values.adapter.grpcPort }}
+          protocol: TCP
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pod-egress-base
+  namespace: {{ $ns.name }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/managed: "true"
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Release.Namespace }}
+          podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+      ports:
+        - port: {{ $.Values.gateway.grpcPort }}
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Release.Namespace }}
+          podSelector:
+            matchLabels:
+              lenny.dev/component: coredns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+  # spec: §13.2 — allow-pod-egress-base must NOT permit a kube-system
+  # CoreDNS fallback. The base policy's podSelector is the broad
+  # lenny.dev/managed: "true" selector, so a kube-system DNS peer here
+  # would grant every managed agent pod a permitted egress path to
+  # kube-system CoreDNS, bypassing the dedicated instance's query
+  # logging, rate limiting, and response filtering. The §13.2 opt-out
+  # fallback is the separate allow-pod-egress-kube-dns policy below,
+  # scoped to lenny.dev/dns-policy: cluster-default.
+  policyTypes: [Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pod-egress-llm-proxy
+  namespace: {{ $ns.name }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+spec:
+  # The lenny.dev/delivery-mode label is set only on pods in proxy-mode
+  # pools, so this supplemental egress reaches the gateway LLM proxy
+  # port for those pods alone; direct-mode pods cannot reach it (§13.2).
+  podSelector:
+    matchLabels:
+      lenny.dev/managed: "true"
+      lenny.dev/delivery-mode: proxy
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Release.Namespace }}
+          podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+      ports:
+        - port: {{ $.Values.gateway.llmProxyPort }}
+          protocol: TCP
+  policyTypes: [Egress]
+{{- if $.Values.observability.otlpEndpoint }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pod-egress-otlp
+  namespace: {{ $ns.name }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+spec:
+  # Re-admits the §13.2 NET-046 agent-pod egress to the OTLP trace
+  # collector. Rendered only when observability.otlpEndpoint is set.
+  # When observability.otlpCIDR is set the collector runs outside the
+  # cluster and the egress rule is an ipBlock CIDR; otherwise it
+  # selects an in-cluster collector pod by namespace and pod label.
+  podSelector:
+    matchLabels:
+      lenny.dev/managed: "true"
+  egress:
+    - to:
+        {{- if $.Values.observability.otlpCIDR }}
+        - ipBlock:
+            cidr: {{ $.Values.observability.otlpCIDR | quote }}
+        {{- else }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.observability.otlpNamespace | quote }}
+          podSelector:
+            matchLabels:
+              {{ $.Values.observability.otlpPodLabel }}: {{ $.Values.observability.otlpPodLabelValue | quote }}
+        {{- end }}
+      ports:
+        - port: {{ $.Values.observability.otlpPort }}
+          protocol: TCP
+  policyTypes: [Egress]
+{{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pod-egress-provider-direct
+  namespace: {{ $ns.name }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+spec:
+  # §13.2.5 — the provider-direct egress profile. Pods the
+  # WarmPoolController stamps with lenny.dev/egress-profile: provider-direct
+  # reach the LLM provider CIDRs (egressCIDRs.providers) directly on TCP
+  # 443, on top of the gateway + DNS egress the base policy grants. The
+  # IMDS except clauses are carried unconditionally (NET-044) so a broad
+  # deployer CIDR can never reach node metadata. Empty providers renders no
+  # CIDR peer, leaving the pool at base egress only.
+  podSelector:
+    matchLabels:
+      lenny.dev/managed: "true"
+      lenny.dev/egress-profile: provider-direct
+  {{- if $.Values.egressCIDRs.providers }}
+  egress:
+    - to:
+        {{- range $.Values.egressCIDRs.providers }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+            except:
+              {{- range $.Values.egressCIDRs.excludeIMDS }}
+              {{- if not (contains ":" .) }}
+              - {{ . | quote }}
+              {{- end }}
+              {{- end }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 443
+  {{- end }}
+  policyTypes: [Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pod-egress-internet
+  namespace: {{ $ns.name }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+spec:
+  # §13.2 (NET-002) — the internet egress profile. Pods stamped
+  # lenny.dev/egress-profile: internet reach the broad public internet,
+  # rendered as two parallel ipBlock peers (one per address family,
+  # NET-062) whose except blocks remove cluster pod/service CIDRs, RFC1918
+  # / link-local / ULA private ranges, and the cloud IMDS endpoints so an
+  # internet-egress pod cannot pivot to in-cluster IPs or node metadata.
+  # The internet profile requires sandboxed/microvm isolation; the
+  # pool-config webhook rejects standard isolation + internet.
+  podSelector:
+    matchLabels:
+      lenny.dev/managed: "true"
+      lenny.dev/egress-profile: internet
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - {{ $.Values.egressCIDRs.excludeClusterPodCIDR | quote }}
+              - {{ $.Values.egressCIDRs.excludeClusterServiceCIDR | quote }}
+              {{- range $.Values.egressCIDRs.excludePrivate }}
+              {{- if not (contains ":" .) }}
+              - {{ . | quote }}
+              {{- end }}
+              {{- end }}
+              {{- range $.Values.egressCIDRs.excludeIMDS }}
+              {{- if not (contains ":" .) }}
+              - {{ . | quote }}
+              {{- end }}
+              {{- end }}
+    - to:
+        - ipBlock:
+            cidr: ::/0
+            except:
+              {{- with $.Values.egressCIDRs.excludeClusterPodCIDRv6 }}
+              - {{ . | quote }}
+              {{- end }}
+              {{- with $.Values.egressCIDRs.excludeClusterServiceCIDRv6 }}
+              - {{ . | quote }}
+              {{- end }}
+              {{- range $.Values.egressCIDRs.excludePrivate }}
+              {{- if contains ":" . }}
+              - {{ . | quote }}
+              {{- end }}
+              {{- end }}
+              {{- range $.Values.egressCIDRs.excludeIMDS }}
+              {{- if contains ":" . }}
+              - {{ . | quote }}
+              {{- end }}
+              {{- end }}
+  policyTypes: [Egress]
+{{- if $.Values.coredns.allowClusterDefaultOptOut }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pod-egress-kube-dns
+  namespace: {{ $ns.name }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+spec:
+  # §13.2.6 — the kube-system CoreDNS fallback for pools that opt
+  # out of the dedicated instance via dnsPolicy: cluster-default. The
+  # podSelector is scoped to lenny.dev/dns-policy: cluster-default (NOT the
+  # broad managed label) so only opted-out pods gain the kube-system DNS
+  # path; using the managed selector would let every agent pod bypass the
+  # dedicated instance's query logging, rate limiting, and response
+  # filtering. Rendered only when coredns.allowClusterDefaultOptOut is set.
+  podSelector:
+    matchLabels:
+      lenny.dev/managed: "true"
+      lenny.dev/dns-policy: cluster-default
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+  policyTypes: [Egress]
+{{- end }}
+{{- /*
+allow-pod-egress-objectstore (§13.2 NET-071) re-admits agent-pod egress to
+object storage so the pod can PUT checkpoint chunks and, on resume and at a
+derived or replayed session's first bind, GET them against gateway-minted
+presigned capabilities. It renders from the
+resolved object store, in one of three mutually exclusive arms:
+
+  - in-cluster: the chart deploys MinIO (minio.deploy). The peer selects
+    the MinIO pod by namespace + lenny.dev/component: minio on minio.tlsPort.
+    The paired allow-minio agent-namespace ingress clause (rendered under the
+    same minio.deploy condition) admits the reverse direction.
+  - out-of-band: an external self-managed MinIO (minio.endpoint set with
+    minio.deploy false). An ipBlock peer from objectStorage.egressCIDRs on
+    minio.tlsPort.
+  - cloud-managed: an s3, gcs, or azure provider. An ipBlock peer from
+    objectStorage.egressCIDRs on TCP 443; there is no ingress-side clause.
+
+Nothing renders for the in-memory or filesystem store (provider=minio with
+an empty endpoint and minio.deploy false), and nothing renders for an
+out-of-band or cloud-managed store with an empty objectStorage.egressCIDRs:
+an egress rule with no peers admits every destination, so the arm is
+omitted entirely and the deployment fails preflight (§17.6) instead.
+*/ -}}
+{{- $minio := $.Values.minio }}
+{{- $os := $.Values.objectStorage }}
+{{- $hasCIDRs := gt (len ($os.egressCIDRs | default list)) 0 }}
+{{- $inCluster := $minio.deploy | default false }}
+{{- $outOfBand := and (not ($minio.deploy | default false)) (ne ($minio.endpoint | default "") "") }}
+{{- $cloud := has ($os.provider | default "") (list "s3" "gcs" "azure") }}
+{{- if or $inCluster (and $outOfBand $hasCIDRs) (and $cloud $hasCIDRs) }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pod-egress-objectstore
+  namespace: {{ $ns.name }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/managed: "true"
+  egress:
+    {{- if $inCluster }}
+    - to: # In-cluster arm — self-managed MinIO the chart deploys.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Release.Namespace }}
+          podSelector:
+            matchLabels:
+              lenny.dev/component: minio
+      ports:
+        - port: {{ $minio.tlsPort }}
+          protocol: TCP
+    {{- else if $outOfBand }}
+    - to: # Out-of-band arm — external self-managed MinIO CIDRs.
+        {{- range $os.egressCIDRs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - port: {{ $minio.tlsPort }}
+          protocol: TCP
+    {{- else }}
+    - to: # Cloud-managed arm — operator-enumerated object-store CIDRs (NET-002).
+        {{- range $os.egressCIDRs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - port: 443
+          protocol: TCP
+    {{- end }}
+  policyTypes: [Egress]
+{{- end }}
+{{- end }}

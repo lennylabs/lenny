@@ -1,0 +1,66 @@
+suite: lenny-gateway Ingress (F-17.1.2, spec §17.1 row 7)
+templates:
+  - gateway-ingress.yaml
+tests:
+  - it: renders nothing with stock values (no external entry point)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders the Ingress routed to the lenny-gateway http port when enabled
+    set:
+      gateway.ingress.enabled: true
+      gateway.ingress.host: gw.acme.com
+      gateway.ingress.className: nginx
+      gateway.ingress.tls.secretName: gw-tls
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Ingress
+      - equal:
+          path: metadata.name
+          value: lenny-gateway
+      - equal:
+          path: spec.ingressClassName
+          value: nginx
+      - equal:
+          path: spec.rules[0].host
+          value: gw.acme.com
+      - equal:
+          path: spec.rules[0].http.paths[0].backend.service.name
+          value: lenny-gateway
+      - equal:
+          path: spec.rules[0].http.paths[0].backend.service.port.name
+          value: http
+      - equal:
+          path: spec.tls[0].hosts[0]
+          value: gw.acme.com
+      - equal:
+          path: spec.tls[0].secretName
+          value: gw-tls
+
+  - it: renders a host-less rule and no TLS block when host is empty
+    set:
+      gateway.ingress.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isNull:
+          path: spec.rules[0].host
+      - isNull:
+          path: spec.tls
+      - equal:
+          path: spec.rules[0].http.paths[0].path
+          value: /
+
+  - it: stamps controller annotations onto the Ingress
+    set:
+      gateway.ingress.enabled: true
+      gateway.ingress.host: gw.acme.com
+      gateway.ingress.annotations:
+        cert-manager.io/cluster-issuer: acme-issuer
+    asserts:
+      - equal:
+          path: metadata.annotations["cert-manager.io/cluster-issuer"]
+          value: acme-issuer

@@ -1,0 +1,180 @@
+suite: openslo-configmap §16.10 OpenSLO export
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - openslo-configmap.yaml
+tests:
+  # spec: §16.10 — the OpenSLO export is opt-in
+  # (monitoring.openslo.enabled default false), so a default install
+  # renders no OpenSLO ConfigMap.
+  - it: renders nothing by default
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders an OpenSLO ConfigMap when enabled
+    set:
+      monitoring:
+        openslo:
+          enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: lenny-openslo
+      - equal:
+          path: metadata.labels["lenny.dev/component"]
+          value: openslo
+
+  # spec: §16.10 — the export defaults into monitoring.namespace
+  # so external SLO tooling discovers it alongside the alerting rules.
+  - it: defaults the OpenSLO ConfigMap into the monitoring namespace
+    set:
+      monitoring:
+        openslo:
+          enabled: true
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: monitoring
+
+  - it: honours an OpenSLO namespace override
+    set:
+      monitoring:
+        openslo:
+          enabled: true
+          namespace: observability
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: observability
+
+  # spec: §16.10 — the rendered documents are OpenSLO v1
+  # SLO/SLI/AlertPolicy objects.
+  - it: carries OpenSLO v1 SLO, SLI, and AlertPolicy documents
+    set:
+      monitoring:
+        openslo:
+          enabled: true
+    asserts:
+      - matchRegex:
+          path: data["openslo.yaml"]
+          pattern: "apiVersion: openslo/v1"
+      - matchRegex:
+          path: data["openslo.yaml"]
+          pattern: "kind: SLO"
+      - matchRegex:
+          path: data["openslo.yaml"]
+          pattern: "kind: SLI"
+      - matchRegex:
+          path: data["openslo.yaml"]
+          pattern: "kind: AlertPolicy"
+
+  # spec: §16.10 — every emitted AlertPolicy references one shared
+  # AlertNotificationTarget through notificationTargets[].targetRef, so the
+  # ConfigMap is self-contained. The default render carries the target
+  # document and the default targetRef name.
+  - it: carries a shared AlertNotificationTarget referenced by targetRef
+    set:
+      monitoring:
+        openslo:
+          enabled: true
+    asserts:
+      - matchRegex:
+          path: data["openslo.yaml"]
+          pattern: "kind: AlertNotificationTarget"
+      - matchRegex:
+          path: data["openslo.yaml"]
+          pattern: "targetRef: lenny-slo-notifications"
+
+  # spec: §16.10 — the AlertNotificationTarget's spec.target type
+  # (monitoring.openslo.notificationTarget.type) and its name
+  # (monitoring.openslo.notificationTarget.name, rendered into
+  # metadata.name and every targetRef) are deployer-configurable and
+  # substituted at install time, leaving no placeholder and no residual
+  # default-name literal behind (a stale literal would dangle a targetRef).
+  - it: substitutes a non-default notification-target name and type
+    set:
+      monitoring:
+        openslo:
+          enabled: true
+          notificationTarget:
+            name: acme-alerts
+            type: slack
+    asserts:
+      - matchRegex:
+          path: data["openslo.yaml"]
+          pattern: 'target: slack'
+      - notMatchRegex:
+          path: data["openslo.yaml"]
+          pattern: "__OPENSLO_NOTIFICATION_TARGET__"
+      - matchRegex:
+          path: data["openslo.yaml"]
+          pattern: 'name: acme-alerts'
+      - matchRegex:
+          path: data["openslo.yaml"]
+          pattern: 'targetRef: acme-alerts'
+      - notMatchRegex:
+          path: data["openslo.yaml"]
+          pattern: "lenny-slo-notifications"
+
+  # spec: §16.10 — the notification-target name renders into
+  # pattern-constrained OpenSLO metadata.name and targetRef fields, so
+  # values.schema.json guards it and an out-of-pattern override is rejected
+  # at install (fail closed). The deny path fails if the deep-nested schema
+  # path is mis-nested and the constraint silently never applies.
+  - it: rejects an out-of-pattern notification-target name
+    set:
+      monitoring:
+        openslo:
+          enabled: true
+          notificationTarget:
+            name: Bad_Name!
+    asserts:
+      - failedTemplate:
+          errorPattern: "does not match pattern"
+
+  # spec: §16.10 — the documents reference the canonical §16.5
+  # metric names so external tooling resolves the same series the bundled
+  # alerts evaluate.
+  - it: references the canonical §16.5 metric names
+    set:
+      monitoring:
+        openslo:
+          enabled: true
+    asserts:
+      # F-16.5.3 — session-creation success/latency and gateway
+      # availability derive from the gateway HTTP middleware series.
+      - matchRegex:
+          path: data["openslo.yaml"]
+          pattern: "lenny_gateway_requests_total"
+      - matchRegex:
+          path: data["openslo.yaml"]
+          pattern: "lenny_session_startup_duration_seconds_bucket"
+      - matchRegex:
+          path: data["openslo.yaml"]
+          pattern: "lenny_session_time_to_first_token_seconds_count"
+
+  # spec: §16.10 / §16.1.1 — the deployment_tier label resolves
+  # to global.deploymentTier, not the chart-fragment substitution token.
+  - it: substitutes global.deploymentTier for the placeholder
+    set:
+      monitoring:
+        openslo:
+          enabled: true
+      global:
+        deploymentTier: tier3
+    asserts:
+      - matchRegex:
+          path: data["openslo.yaml"]
+          pattern: 'deployment_tier: tier3'
+      - matchRegex:
+          path: data["openslo.yaml"]
+          pattern: 'deployment_tier="tier3"'
+      - notMatchRegex:
+          path: data["openslo.yaml"]
+          pattern: "__DEPLOYMENT_TIER__"

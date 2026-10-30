@@ -1,0 +1,338 @@
+// SPDX-License-Identifier: MIT
+
+// Shared surface walker for the tier-11 retired-path sweeps.
+//
+// Two pod-side paths were retired when every session gained a slot: the
+// pod-global working directory and the pod-global credential file. Each
+// retirement is asserted as a mechanical sweep rather than as a list of
+// the sites a change happened to reach, and both sweeps read the same
+// set of surfaces: the specification, the documentation, the schemas,
+// the chart, the commands (the scaffold templates, the reference
+// runtimes, and the compliance harness), the runtime SDKs, and the
+// served OpenAPI document. A missed edit in a template, a chart
+// comment, a proto comment, or a comment beside an SDK default is
+// invisible to the compiler, which is why the walk is by directory
+// rather than by enumerated file.
+//
+// spec: 6.1 (pod filesystem volumes), 6.4 (per-session workspace layout)
+
+package tier11_docs_test
+
+import (
+	"bytes"
+	"errors"
+	"io"
+	"io/fs"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+)
+
+// retirementSweepRoots are the directories a retirement reaches,
+// relative to the repository root. The libraries under pkg are among
+// them, because a retired pod path is written into a struct field
+// comment, a constant's doc comment, and a served tool schema's
+// description string as often as it is into prose, and a statement in
+// any of those places is invisible to the compiler.
+var retirementSweepRoots = []string{
+	"spec",
+	"docs",
+	"schemas",
+	"charts",
+	"cmd",
+	"sdks",
+	"pkg",
+}
+
+// sweepRootsWith returns the retirement roots widened with the extra
+// roots one literal's carriers reach. Each sweep names its own widening
+// rather than aliasing the base set, so widening one sweep does not
+// silently widen its siblings.
+func sweepRootsWith(extra ...string) []string {
+	return append(append([]string{}, retirementSweepRoots...), extra...)
+}
+
+// credentialSweepRoots are the directories the retired pod-global
+// credential file reaches. The suites are among them: a retired path
+// stands in a test header and a diagnosis comment as a statement of the
+// current delivery contract, and a suite that still names the pod-global
+// file as the single-session layout is the one surface a sweep over the
+// library and reader-facing roots alone never reads.
+var credentialSweepRoots = sweepRootsWith("tests")
+
+// workspaceSweepRoots are the directories the retired pod-global working
+// directory reaches. They include the suites for the same reason the
+// credential roots do.
+var workspaceSweepRoots = sweepRootsWith("tests")
+
+// placeholderSweepRoots are the directories a retired path-template
+// placeholder reaches. A placeholder lives in a path template, and path
+// templates are quoted in test headers as often as they are in prose, so
+// the token's carriers extend past the library roots into the suites that
+// assert the path. A comment naming a placeholder that addresses nothing
+// is invisible to the compiler wherever it stands.
+var placeholderSweepRoots = sweepRootsWith("tests")
+
+// The sweep has no carrier whitelist. The predicate is stated over the
+// directory set, so every authored file under a swept root is read
+// whatever its extension: a Helm helper template (.tpl), a packaging
+// manifest (.toml), an ECMAScript module (.mjs), a published HTML page,
+// and an extensionless script are all carriers a retired literal can
+// hide in, and enumerating extensions reintroduces the enumerated-subset
+// hole the directory-wide predicate exists to close. Only binary content
+// is skipped, because no authored statement lives in it.
+
+// retirementSweepSkipDirs are directories whose contents are neither
+// authored nor read as the current contract: dependency trees, build
+// output, and fixtures recorded as they were written.
+var retirementSweepSkipDirs = map[string]bool{
+	"node_modules": true,
+	"dist":         true,
+	"testdata":     true,
+	"__pycache__":  true,
+	".git":         true,
+}
+
+// workspaceSweepSurfaces returns every file the retired-workspace sweep
+// reads: the carriers under the swept roots, plus the served OpenAPI
+// document, which is generated rather than authored and so is swept by
+// path rather than by directory.
+func workspaceSweepSurfaces(t *testing.T, root string) []string {
+	return sweepSurfaces(t, root, workspaceSweepRoots)
+}
+
+// credentialSweepSurfaces returns every file the retired-credential
+// sweep reads.
+func credentialSweepSurfaces(t *testing.T, root string) []string {
+	return sweepSurfaces(t, root, credentialSweepRoots)
+}
+
+// placeholderSweepSurfaces returns every file the retired-placeholder
+// sweep reads: the retirement surfaces widened with the test root the
+// placeholder's carriers reach.
+func placeholderSweepSurfaces(t *testing.T, root string) []string {
+	return sweepSurfaces(t, root, placeholderSweepRoots)
+}
+
+// withoutSweepSource returns the surfaces with one sweep's own source
+// removed. A sweep that reads the tests root reads the file that defines
+// it, and every occurrence of a retired literal in that file is a
+// specimen rather than a statement of the contract: the constant that
+// names the subject, the exemption that quotes the line it permits, and
+// the table-driven case that pins the predicate all spell the literal by
+// construction. Reading them back makes the sweep report itself, so the
+// defining file is excluded from its own walk. It stays inside the swept
+// set of every sibling sweep, which reports a retired literal restated
+// there as prose.
+func withoutSweepSource(t *testing.T, root string, surfaces []string, self string) []string {
+	t.Helper()
+	source := filepath.Join(root, filepath.FromSlash(self))
+	kept := make([]string, 0, len(surfaces))
+	excluded := false
+	for _, path := range surfaces {
+		if path == source {
+			excluded = true
+			continue
+		}
+		kept = append(kept, path)
+	}
+	if !excluded {
+		t.Fatalf("%s was not among the swept surfaces; the sweep's own source moved or was renamed", self)
+	}
+	return kept
+}
+
+// sweepSurfaces walks the given roots and returns every authored carrier
+// under them, plus the served OpenAPI document.
+func sweepSurfaces(t *testing.T, root string, roots []string) []string {
+	t.Helper()
+	var swept []string
+	for _, rel := range roots {
+		dir := filepath.Join(root, rel)
+		walked := 0
+		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				if retirementSweepSkipDirs[d.Name()] {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !d.Type().IsRegular() {
+				return nil
+			}
+			if isBinaryFile(t, path) {
+				return nil
+			}
+			walked++
+			swept = append(swept, path)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", rel, err)
+		}
+		if walked == 0 {
+			t.Fatalf("walk %s: no files swept (moved or renamed?)", rel)
+		}
+	}
+	// The served OpenAPI document is generated rather than authored, so it
+	// is swept by path. A root that already walks it must not yield it
+	// twice, or a sweep reports the same line under two names.
+	openapi := filepath.Join(root, "pkg", "gateway", "externalapi", "openapi", "openapi.json")
+	for _, path := range swept {
+		if path == openapi {
+			return swept
+		}
+	}
+	return append(swept, openapi)
+}
+
+// isBinaryFile reports whether a swept candidate holds binary content,
+// which is decided the way the common text tools decide it: a NUL byte
+// in the leading bytes. A binary file carries no authored statement, so
+// the sweep skips it rather than matching a literal inside compiled or
+// compressed content.
+func isBinaryFile(t *testing.T, path string) bool {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open %s: %v", path, err)
+	}
+	defer f.Close()
+	var head [512]byte
+	n, err := f.Read(head[:])
+	if err != nil && !errors.Is(err, io.EOF) {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return bytes.IndexByte(head[:n], 0) >= 0
+}
+
+// trackedFilesUnder returns the repository-relative paths git tracks
+// under one swept root. The expected set of the coverage gate below is
+// read from the repository index rather than from another walk, because
+// a walk that reproduces the sweep's own filter agrees with it by
+// construction and reports nothing whatever the filter becomes.
+func trackedFilesUnder(t *testing.T, root, rel string) []string {
+	t.Helper()
+	out, err := exec.Command("git", "-C", root, "ls-files", "-z", "--", rel).Output()
+	if err != nil {
+		t.Fatalf("git ls-files %s: %v", rel, err)
+	}
+	var tracked []string
+	for _, name := range strings.Split(string(out), "\x00") {
+		if name != "" {
+			tracked = append(tracked, name)
+		}
+	}
+	if len(tracked) == 0 {
+		t.Fatalf("git ls-files %s: no tracked files (moved or renamed?)", rel)
+	}
+	return tracked
+}
+
+// retirementSweepSkipsPath reports whether a repository-relative path
+// lies under one of the directories the sweep declines to read.
+func retirementSweepSkipsPath(name string) bool {
+	for _, segment := range strings.Split(name, "/") {
+		if retirementSweepSkipDirs[segment] {
+			return true
+		}
+	}
+	return false
+}
+
+// missingFromRetirementSweep returns, in stable order, the tracked
+// authored files under the swept roots that the given swept set does not
+// contain. The candidate set comes from the git index, so narrowing the
+// walker's own carrier filter shows up here as a report rather than
+// disappearing from both sides at once.
+func missingFromRetirementSweep(t *testing.T, root string, swept map[string]bool) []string {
+	t.Helper()
+	var missing []string
+	for _, rel := range placeholderSweepRoots {
+		for _, name := range trackedFilesUnder(t, root, rel) {
+			if retirementSweepSkipsPath(name) {
+				continue
+			}
+			path := filepath.Join(root, name)
+			info, err := os.Lstat(path)
+			if err != nil {
+				// A tracked path with no file in the working tree carries no
+				// authored statement to sweep.
+				continue
+			}
+			if !info.Mode().IsRegular() || isBinaryFile(t, path) {
+				continue
+			}
+			if !swept[path] {
+				missing = append(missing, name)
+			}
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+// spec: 6.4
+// diagnosis: the retirement sweeps read a subset of the directories they
+//
+//	claim to cover. The predicate is stated over the directory set, so an
+//	authored file under a swept root that the walker declines to open is a
+//	place a retired literal ships green: a Helm helper template, a
+//	packaging manifest, an ECMAScript module, or a published HTML page all
+//	sat outside the earlier extension whitelist while living under the
+//	named roots. A failure names the file the walk skipped.
+func TestRetirementSweepReadsEveryAuthoredFileUnderItsRoots(t *testing.T) {
+	root := repoRoot(t)
+	swept := map[string]bool{}
+	for _, path := range placeholderSweepSurfaces(t, root) {
+		swept[path] = true
+	}
+	for _, name := range missingFromRetirementSweep(t, root, swept) {
+		t.Errorf("%s is an authored file tracked under a swept root that no retirement sweep reads", name)
+	}
+}
+
+// spec: 6.4
+// diagnosis: the coverage gate above cannot report a narrowed carrier
+//
+//	filter. It stands over a swept set built by the walker under test, so
+//	a filter that drops a carrier class drops it from the expected set as
+//	well unless the expected set is read from somewhere else. This case
+//	hands the gate's predicate a swept set narrowed the way an extension
+//	whitelist narrows it and requires the dropped carriers to be named. A
+//	failure means the gate agrees with whatever the walker does.
+func TestRetirementSweepCoverageGateReportsANarrowedCarrierFilter(t *testing.T) {
+	root := repoRoot(t)
+	// The whitelist the sweep used to carry: prose and schema carriers only.
+	whitelisted := map[string]bool{".md": true, ".json": true, ".yaml": true, ".go": true}
+	narrowed := map[string]bool{}
+	for _, path := range placeholderSweepSurfaces(t, root) {
+		if whitelisted[filepath.Ext(path)] {
+			narrowed[path] = true
+		}
+	}
+	missing := missingFromRetirementSweep(t, root, narrowed)
+	if len(missing) == 0 {
+		t.Fatal("the coverage gate reported nothing against a whitelist-narrowed sweep; its expected set is derived from the walker under test")
+	}
+	// The carrier classes the whitelist drops are the ones the widening was
+	// made to reach, so each must be named rather than merely counted.
+	for _, ext := range []string{".tpl", ".toml", ".mjs", ".html"} {
+		found := false
+		for _, name := range missing {
+			if filepath.Ext(name) == ext {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("no %s carrier was reported against a whitelist-narrowed sweep", ext)
+		}
+	}
+}

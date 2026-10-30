@@ -1,0 +1,434 @@
+// SPDX-License-Identifier: MIT
+
+package webhook_test
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"strings"
+	"testing"
+
+	admissionv1 "k8s.io/api/admission/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
+
+	"github.com/lennylabs/lenny/pkg/admission/webhook"
+	"github.com/lennylabs/lenny/pkg/podsecurity"
+)
+
+// spec: §13.1 / §18.33 — the lenny-pod-security webhook transport
+// decodes a Pod, translates its securityContext into the podsecurity
+// validator's input, and rejects any pod that breaches a §13.1
+// pod-security invariant, including the RuntimeDefault seccomp profile.
+
+// psCredReadersGID is the lenny-cred-readers GID used in the tests.
+const psCredReadersGID int64 = 65534
+
+// psAdapterUID and psAgentUID are the reserved adapter and agent UIDs
+// the tests wire into the webhook: the security.podUIDs chart defaults.
+const (
+	psAdapterUID int64 = 65532
+	psAgentUID   int64 = 65533
+)
+
+// psFreeUID is a UID outside both reserved UIDs, for containers other
+// than adapter and runtime.
+const psFreeUID int64 = 1000
+
+// psCredVolumeName is the credential tmpfs volume name the §13.1
+// membership-boundary check keys on (POD_SPEC_CRED_GROUP_OVERBROAD).
+const psCredVolumeName = "credentials"
+
+// psSupervisorVolumeName is the runtime supervisor volume name the decider
+// is wired with, matching podspec.SupervisorVolumeName.
+const psSupervisorVolumeName = "lenny-supervisor"
+
+// hardenedContainer returns a container that satisfies every §13.1
+// per-container invariant, running at uid with its primary GID equal to
+// uid as the pod builder renders it. It sets no seccomp profile of its
+// own and inherits the pod-level profile.
+func hardenedContainer(name string, uid int64) corev1.Container {
+	return corev1.Container{
+		Name:  name,
+		Image: "ghcr.io/lennylabs/" + name + "@sha256:aaa",
+		SecurityContext: &corev1.SecurityContext{
+			RunAsNonRoot:             ptr.To(true),
+			RunAsUser:                ptr.To(uid),
+			RunAsGroup:               ptr.To(uid),
+			AllowPrivilegeEscalation: ptr.To(false),
+			Privileged:               ptr.To(false),
+			ReadOnlyRootFilesystem:   ptr.To(true),
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		},
+	}
+}
+
+// hardenedPod returns a pod that satisfies every §13.1 invariant: the
+// shape the agent podspec produces.
+func hardenedPod() corev1.Pod {
+	return corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "agent-pod", Namespace: "lenny-agents"},
+		Spec: corev1.PodSpec{
+			SecurityContext: &corev1.PodSecurityContext{
+				RunAsNonRoot:       ptr.To(true),
+				FSGroup:            ptr.To(psCredReadersGID),
+				SupplementalGroups: []int64{psCredReadersGID},
+				SeccompProfile:     &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+			},
+			Containers: []corev1.Container{
+				hardenedContainer("adapter", psAdapterUID),
+				hardenedContainer("runtime", psAgentUID),
+			},
+		},
+	}
+}
+
+func psPodRaw(t *testing.T, pod corev1.Pod) runtime.RawExtension {
+	t.Helper()
+	raw, err := json.Marshal(pod)
+	if err != nil {
+		t.Fatalf("marshal pod: %v", err)
+	}
+	return runtime.RawExtension{Raw: raw}
+}
+
+func psDecide(t *testing.T, pod corev1.Pod) *admissionv1.AdmissionResponse {
+	t.Helper()
+	return webhook.PodSecurity(psAdapterUID, psAgentUID, psCredReadersGID, psCredVolumeName, psSupervisorVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(), &admissionv1.AdmissionRequest{
+		UID:       "ps",
+		Operation: admissionv1.Create,
+		Kind:      metav1.GroupVersionKind{Kind: "Pod"},
+		Object:    psPodRaw(t, pod),
+	})
+}
+
+func TestPodSecurityAdmitsHardenedPod(t *testing.T) {
+	if resp := psDecide(t, hardenedPod()); !resp.Allowed {
+		t.Fatalf("a §13.1-compliant pod should be admitted: %+v", resp.Result)
+	}
+}
+
+func TestPodSecurityRejectsHostSharing(t *testing.T) {
+	pod := hardenedPod()
+	pod.Spec.HostPID = true
+	resp := psDecide(t, pod)
+	if resp.Allowed {
+		t.Fatalf("hostPID: true must be rejected")
+	}
+	if !strings.Contains(resp.Result.Message, "POD_SPEC_HOST_SHARING_FORBIDDEN") {
+		t.Errorf("rejection should cite POD_SPEC_HOST_SHARING_FORBIDDEN, got %q", resp.Result.Message)
+	}
+}
+
+// psDecideWithPolicy runs the webhook with a §17.2 RuntimeClass policy
+// wired, so a test can exercise the gVisor/Kata relaxations the webhook
+// derives from the pod's runtimeClassName.
+func psDecideWithPolicy(t *testing.T, pod corev1.Pod, rc podsecurity.RuntimeClassPolicy) *admissionv1.AdmissionResponse {
+	t.Helper()
+	return webhook.PodSecurity(psAdapterUID, psAgentUID, psCredReadersGID, psCredVolumeName, psSupervisorVolumeName, rc)(context.Background(), &admissionv1.AdmissionRequest{
+		UID:       "ps",
+		Operation: admissionv1.Create,
+		Kind:      metav1.GroupVersionKind{Kind: "Pod"},
+		Object:    psPodRaw(t, pod),
+	})
+}
+
+// TestPodSecurityGVisorSkipsSeccomp_spec_17_2 asserts the webhook reads
+// the pod's runtimeClassName and applies the §17.2 gVisor seccomp
+// exemption: a gVisor pod with no seccomp profile is admitted.
+func TestPodSecurityGVisorSkipsSeccomp_spec_17_2(t *testing.T) {
+	pod := hardenedPod()
+	pod.Spec.RuntimeClassName = ptr.To("gvisor")
+	pod.Spec.SecurityContext.SeccompProfile = nil
+	resp := psDecideWithPolicy(t, pod, podsecurity.RuntimeClassPolicy{GVisorRuntimeClass: "gvisor", KataRuntimeClass: "kata"})
+	if !resp.Allowed {
+		t.Fatalf("§17.2: a gVisor pod with no seccomp profile should be admitted: %+v", resp.Result)
+	}
+}
+
+// TestPodSecurityKataAllowsPrivEsc_spec_17_2 asserts the webhook applies
+// the §17.2 Kata privilege-escalation relaxation derived from the pod's
+// runtimeClassName.
+func TestPodSecurityKataAllowsPrivEsc_spec_17_2(t *testing.T) {
+	pod := hardenedPod()
+	pod.Spec.RuntimeClassName = ptr.To("kata")
+	pod.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation = ptr.To(true)
+	resp := psDecideWithPolicy(t, pod, podsecurity.RuntimeClassPolicy{GVisorRuntimeClass: "gvisor", KataRuntimeClass: "kata"})
+	if !resp.Allowed {
+		t.Fatalf("§17.2: a Kata pod may allow privilege escalation: %+v", resp.Result)
+	}
+}
+
+func TestPodSecurityRejectsMissingSeccompProfile(t *testing.T) {
+	// Neither the pod nor any container sets a seccomp profile: the
+	// §13.1 / §17.2 RuntimeDefault requirement is unmet.
+	pod := hardenedPod()
+	pod.Spec.SecurityContext.SeccompProfile = nil
+	resp := psDecide(t, pod)
+	if resp.Allowed {
+		t.Fatalf("a pod with no seccomp profile must be rejected")
+	}
+	if !strings.Contains(resp.Result.Message, "seccompProfile.type must be RuntimeDefault") {
+		t.Errorf("rejection should cite the seccomp requirement, got %q", resp.Result.Message)
+	}
+}
+
+func TestPodSecurityRejectsUnconfinedSeccompProfile(t *testing.T) {
+	pod := hardenedPod()
+	pod.Spec.SecurityContext.SeccompProfile = &corev1.SeccompProfile{
+		Type: corev1.SeccompProfileTypeUnconfined,
+	}
+	resp := psDecide(t, pod)
+	if resp.Allowed {
+		t.Fatalf("an Unconfined seccomp profile must be rejected")
+	}
+	if !strings.Contains(resp.Result.Message, "got Unconfined") {
+		t.Errorf("rejection should name the offending profile, got %q", resp.Result.Message)
+	}
+}
+
+func TestPodSecurityRejectsContainerSeccompOverride(t *testing.T) {
+	// The pod-level profile is RuntimeDefault, but a container overrides
+	// it with Unconfined. The container-level value wins and is rejected.
+	pod := hardenedPod()
+	pod.Spec.Containers[1].SecurityContext.SeccompProfile = &corev1.SeccompProfile{
+		Type: corev1.SeccompProfileTypeUnconfined,
+	}
+	resp := psDecide(t, pod)
+	if resp.Allowed {
+		t.Fatalf("a container Unconfined seccomp override must be rejected")
+	}
+}
+
+func TestPodSecurityRejectsMissingCredFSGroup(t *testing.T) {
+	pod := hardenedPod()
+	pod.Spec.SecurityContext.FSGroup = nil
+	resp := psDecide(t, pod)
+	if resp.Allowed {
+		t.Fatalf("a pod missing the credential fsGroup must be rejected")
+	}
+	if !strings.Contains(resp.Result.Message, "POD_SPEC_CRED_FSGROUP_MISSING") {
+		t.Errorf("rejection should cite POD_SPEC_CRED_FSGROUP_MISSING, got %q", resp.Result.Message)
+	}
+}
+
+func TestPodSecurityRejectsPrivilegedContainer(t *testing.T) {
+	pod := hardenedPod()
+	pod.Spec.Containers[0].SecurityContext.Privileged = ptr.To(true)
+	resp := psDecide(t, pod)
+	if resp.Allowed {
+		t.Fatalf("a privileged container must be rejected")
+	}
+}
+
+func TestPodSecurityValidatesInitContainers(t *testing.T) {
+	// An init container with an undropped capability set rejects the
+	// pod: §13.1 invariants apply to init containers too.
+	pod := hardenedPod()
+	bad := hardenedContainer("warm", psFreeUID)
+	bad.SecurityContext.Capabilities = &corev1.Capabilities{Drop: []corev1.Capability{"NET_ADMIN"}}
+	pod.Spec.InitContainers = []corev1.Container{bad}
+	resp := psDecide(t, pod)
+	if resp.Allowed {
+		t.Fatalf("a non-compliant init container must reject the pod")
+	}
+	if !strings.Contains(resp.Result.Message, `container "warm"`) {
+		t.Errorf("rejection should name the init container, got %q", resp.Result.Message)
+	}
+}
+
+// TestPodSecurityValidatesEphemeralContainers_spec_13_1 asserts §13.1: the per-container baseline applies to ephemeral debug
+// containers attached via pods/ephemeralcontainers. A privileged
+// ephemeral container — one that trips neither the cred UID/GID nor a
+// credential mount, so the dedicated cred-guard would let it through —
+// is rejected by the general baseline this webhook enforces (F-13.1.8).
+func TestPodSecurityValidatesEphemeralContainers_spec_13_1(t *testing.T) {
+	pod := hardenedPod()
+	pod.Spec.EphemeralContainers = []corev1.EphemeralContainer{{
+		EphemeralContainerCommon: corev1.EphemeralContainerCommon{
+			Name:  "debugger",
+			Image: "busybox",
+			SecurityContext: &corev1.SecurityContext{
+				RunAsNonRoot: ptr.To(true),
+				RunAsUser:    ptr.To(psFreeUID),
+				RunAsGroup:   ptr.To(psFreeUID),
+				Privileged:   ptr.To(true),
+			},
+		},
+	}}
+	resp := webhook.PodSecurity(psAdapterUID, psAgentUID, psCredReadersGID, psCredVolumeName, psSupervisorVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(),
+		&admissionv1.AdmissionRequest{
+			UID:         "ps-eph",
+			Operation:   admissionv1.Update,
+			SubResource: "ephemeralcontainers",
+			Kind:        metav1.GroupVersionKind{Kind: "Pod"},
+			Object:      psPodRaw(t, pod),
+		})
+	if resp.Allowed {
+		t.Fatalf("a privileged ephemeral container must reject the pod (§13.1)")
+	}
+	if !strings.Contains(resp.Result.Message, `container "debugger"`) {
+		t.Errorf("rejection should name the ephemeral container, got %q", resp.Result.Message)
+	}
+}
+
+// TestPodSecurityRejectsEphemeralContainerMountingCredVolume_spec_13_1
+// asserts the §13.1 membership boundary applies to ephemeral containers
+// too: an ephemeral container that mounts the credential volume is
+// rejected with POD_SPEC_CRED_GROUP_OVERBROAD, defense-in-depth
+// alongside the dedicated cred-guard (F-13.1.8 + F-13.1.10).
+func TestPodSecurityRejectsEphemeralContainerMountingCredVolume_spec_13_1(t *testing.T) {
+	pod := hardenedPod()
+	pod.Spec.EphemeralContainers = []corev1.EphemeralContainer{{
+		EphemeralContainerCommon: corev1.EphemeralContainerCommon{
+			Name:  "debugger",
+			Image: "busybox",
+			SecurityContext: &corev1.SecurityContext{
+				RunAsNonRoot:             ptr.To(true),
+				RunAsUser:                ptr.To(psFreeUID),
+				RunAsGroup:               ptr.To(psFreeUID),
+				AllowPrivilegeEscalation: ptr.To(false),
+				Privileged:               ptr.To(false),
+				ReadOnlyRootFilesystem:   ptr.To(true),
+				Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+			},
+			VolumeMounts: []corev1.VolumeMount{{Name: psCredVolumeName, MountPath: "/peek"}},
+		},
+	}}
+	resp := webhook.PodSecurity(psAdapterUID, psAgentUID, psCredReadersGID, psCredVolumeName, psSupervisorVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(),
+		&admissionv1.AdmissionRequest{
+			UID:         "ps-eph-mount",
+			Operation:   admissionv1.Update,
+			SubResource: "ephemeralcontainers",
+			Kind:        metav1.GroupVersionKind{Kind: "Pod"},
+			Object:      psPodRaw(t, pod),
+		})
+	if resp.Allowed {
+		t.Fatalf("an ephemeral container mounting the credential volume must be rejected")
+	}
+	if !strings.Contains(resp.Result.Message, "POD_SPEC_CRED_GROUP_OVERBROAD") {
+		t.Errorf("rejection should cite POD_SPEC_CRED_GROUP_OVERBROAD, got %q", resp.Result.Message)
+	}
+}
+
+// TestPodSecurityRejectsSidecarMountingCredVolume_spec_13_1 asserts the
+// §13.1 membership boundary on a regular (non-ephemeral) sidecar that
+// mounts the credential volume: it is rejected with
+// POD_SPEC_CRED_GROUP_OVERBROAD even though it runs as a non-credential
+// name and declares no cred-readers GID (F-13.1.10).
+func TestPodSecurityRejectsSidecarMountingCredVolume_spec_13_1(t *testing.T) {
+	pod := hardenedPod()
+	sidecar := hardenedContainer("nosy-sidecar", psFreeUID)
+	sidecar.VolumeMounts = []corev1.VolumeMount{{Name: psCredVolumeName, MountPath: "/elsewhere"}}
+	pod.Spec.Containers = append(pod.Spec.Containers, sidecar)
+	resp := psDecide(t, pod)
+	if resp.Allowed {
+		t.Fatalf("a sidecar mounting the credential volume must be rejected")
+	}
+	if !strings.Contains(resp.Result.Message, "POD_SPEC_CRED_GROUP_OVERBROAD") {
+		t.Errorf("rejection should cite POD_SPEC_CRED_GROUP_OVERBROAD, got %q", resp.Result.Message)
+	}
+}
+
+func TestPodSecurityRejectsUndecodablePod(t *testing.T) {
+	resp := webhook.PodSecurity(psAdapterUID, psAgentUID, psCredReadersGID, psCredVolumeName, psSupervisorVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(),
+		&admissionv1.AdmissionRequest{
+			UID:       "ps-bad",
+			Operation: admissionv1.Create,
+			Kind:      metav1.GroupVersionKind{Kind: "Pod"},
+			Object:    runtime.RawExtension{Raw: []byte("{not a pod")},
+		})
+	if resp.Allowed {
+		t.Fatalf("an undecodable pod must be rejected fail-closed")
+	}
+	if resp.Result.Code != http.StatusBadRequest {
+		t.Errorf("Code = %d, want 400", resp.Result.Code)
+	}
+}
+
+// TestPodSecurityRejectsInjectedContainerAtAgentUID_spec_13_1 asserts the
+// webhook enforces the §13.1 container identity reservation through the
+// full decode and translate path: a regular container a mutating webhook
+// injects at the agent UID is denied, because the agent UID belongs to
+// the runtime container alone.
+//
+// spec: 13.1 (Pod Security)
+func TestPodSecurityRejectsInjectedContainerAtAgentUID_spec_13_1(t *testing.T) {
+	pod := hardenedPod()
+	pod.Spec.Containers = append(pod.Spec.Containers, hardenedContainer("mesh-proxy", psAgentUID))
+	assertPodSecurityDenied(t, psDecide(t, pod),
+		`container "mesh-proxy" runAsUser 65533 is reserved for the "runtime" container (§13.1 Container identity)`)
+}
+
+// TestPodSecurityRejectsInitContainerAtAdapterUID_spec_13_1 asserts an
+// init container at the adapter UID is denied: init containers are
+// flattened into the validator and never join the credential set, so the
+// reservation holds even for an init container.
+//
+// spec: 13.1 (Pod Security)
+func TestPodSecurityRejectsInitContainerAtAdapterUID_spec_13_1(t *testing.T) {
+	pod := hardenedPod()
+	pod.Spec.InitContainers = []corev1.Container{hardenedContainer("setup", psAdapterUID)}
+	assertPodSecurityDenied(t, psDecide(t, pod),
+		`container "setup" runAsUser 65532 is reserved for the "adapter" container (§13.1 Container identity)`)
+}
+
+// TestPodSecurityRejectsInitContainerNamedAdapter_spec_13_1 asserts an
+// init container that borrows the name adapter holds no reservation: in
+// an embedded pod it is denied at the adapter UID, because only regular
+// containers enter the credential set.
+//
+// spec: 13.1 (Pod Security)
+func TestPodSecurityRejectsInitContainerNamedAdapter_spec_13_1(t *testing.T) {
+	pod := hardenedPod()
+	pod.Spec.Containers = []corev1.Container{hardenedContainer("runtime", psAgentUID)}
+	pod.Spec.InitContainers = []corev1.Container{hardenedContainer("adapter", psAdapterUID)}
+	assertPodSecurityDenied(t, psDecide(t, pod),
+		`container "adapter" runAsUser 65532 is reserved for the "adapter" container`)
+}
+
+// TestPodSecurityRejectsPodLevelOnlyRunAsUser_spec_13_1 asserts the
+// webhook reads the container-level runAsUser: a container whose only
+// runAsUser is the pod-level value is denied even though the kubelet
+// would run it at a nonzero UID.
+//
+// spec: 13.1 (Pod Security)
+func TestPodSecurityRejectsPodLevelOnlyRunAsUser_spec_13_1(t *testing.T) {
+	pod := hardenedPod()
+	pod.Spec.SecurityContext.RunAsUser = ptr.To(psFreeUID)
+	pod.Spec.SecurityContext.RunAsGroup = ptr.To(psFreeUID)
+	pod.Spec.Containers[1].SecurityContext.RunAsUser = nil
+	assertPodSecurityDenied(t, psDecide(t, pod),
+		`container "runtime" must set non-zero runAsUser and runAsGroup (§13.1 Container identity)`)
+}
+
+// TestPodSecurityRejectsEphemeralContainerWithoutIdentity_spec_13_1
+// asserts the identity clause covers ephemeral containers attached via
+// pods/ephemeralcontainers: one that sets no runAsGroup is denied.
+//
+// spec: 13.1 (Pod Security)
+func TestPodSecurityRejectsEphemeralContainerWithoutIdentity_spec_13_1(t *testing.T) {
+	pod := hardenedPod()
+	debugger := hardenedContainer("debugger", psFreeUID)
+	debugger.SecurityContext.RunAsGroup = nil
+	pod.Spec.EphemeralContainers = []corev1.EphemeralContainer{{
+		EphemeralContainerCommon: corev1.EphemeralContainerCommon(debugger),
+	}}
+	assertPodSecurityDenied(t, psDecide(t, pod),
+		`container "debugger" must set non-zero runAsUser and runAsGroup`)
+}
+
+// assertPodSecurityDenied fails t unless resp denies with a message
+// containing want.
+func assertPodSecurityDenied(t *testing.T, resp *admissionv1.AdmissionResponse, want string) {
+	t.Helper()
+	if resp.Allowed {
+		t.Fatalf("expected denial carrying %q, got admission", want)
+	}
+	if !strings.Contains(resp.Result.Message, want) {
+		t.Errorf("denial should carry %q, got %q", want, resp.Result.Message)
+	}
+}

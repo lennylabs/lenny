@@ -1,0 +1,749 @@
+// SPDX-License-Identifier: MIT
+
+// Package billingstore is the §11.2.1 billing event ledger. It records
+// the structured, per-tenant, per-session cost-attribution events that
+// back the `GET /v1/metering/events` API and downstream billing
+// integrations.
+//
+// The ledger is append-only: Append assigns the next per-tenant
+// sequence_number and commits the event; there is no update or delete.
+// Consumers detect lost events as gaps in the sequence_number stream
+// and replay them with Since. The sole exception is the §12.8 GDPR
+// erasure path: PseudonymizeUser rewrites a user's events in place so
+// the billing history is de-identified without breaking sequence
+// continuity.
+//
+// The in-memory Memory implementation here backs tests and the
+// minimal gateway; billingstore/pgstore is the durable Postgres
+// implementation over the append-only billing_events table.
+package billingstore
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"sort"
+	"sync"
+	"time"
+)
+
+// EventType is a §11.2.1 billing event type. The constants below cover
+// the closed set the spec enumerates in the §11.2.1 event-type table;
+// each is emitted into the per-tenant billing stream so cost-attribution
+// and compliance consumers observe them in one ordered,
+// sequence-numbered record alongside the audit chain. spec: §11.2.1 —
+// Event types.
+type EventType string
+
+const (
+	// EventSessionCreated is emitted when a new session is created.
+	EventSessionCreated EventType = "session.created"
+
+	// EventSessionCompleted is emitted when a session reaches a
+	// terminal state (completed, failed, cancelled, or expired).
+	EventSessionCompleted EventType = "session.completed"
+
+	// EventDelegationSpawned is emitted when a child session is created
+	// via recursive delegation (§11.2.1; §8.2).
+	EventDelegationSpawned EventType = "delegation.spawned"
+
+	// EventDelegationIsolationViolation is emitted when a delegation is
+	// rejected because the target pool's isolation profile is weaker than
+	// the parent's minIsolationProfile (§11.2.1; §8.3).
+	EventDelegationIsolationViolation EventType = "delegation.isolation_violation"
+
+	// EventPoolIsolationWarning is emitted when a pool registered or
+	// updated via the admin API would cause an isolation monotonicity
+	// violation for an active DelegationPolicy rule (§11.2.1; §8.3 proactive pool-registration enforcement).
+	EventPoolIsolationWarning EventType = "pool.isolation_warning"
+
+	// EventDeriveIsolationDowngrade is emitted when a derive/replay call
+	// bypassed the isolation monotonicity check via the platform-admin
+	// allowIsolationDowngrade flag (§11.2.1; §7.1 derive rule 5).
+	EventDeriveIsolationDowngrade EventType = "derive.isolation_downgrade"
+
+	// EventInterceptorFailPolicyWeakened is emitted when an interceptor's
+	// failPolicy changes from fail-closed to fail-open (§11.2.1; §4.8).
+	EventInterceptorFailPolicyWeakened EventType = "interceptor.fail_policy_weakened"
+
+	// EventInterceptorFailPolicyStrengthened is emitted when an
+	// interceptor's failPolicy changes from fail-open to fail-closed
+	// (§11.2.1; §4.8).
+	EventInterceptorFailPolicyStrengthened EventType = "interceptor.fail_policy_strengthened"
+
+	// EventInterceptorWeakeningCooldownActive is emitted once per
+	// weakening transition that enters the §8.3 weakening cooldown window
+	// (§11.2.1; §8.3 rule 5).
+	EventInterceptorWeakeningCooldownActive EventType = "interceptor.weakening_cooldown_active"
+
+	// EventDelegationExportFileScanRejected is emitted when an exported
+	// file is rejected by the PreExportMaterialization interceptor
+	// (§11.2.1; §8.3, §4.8).
+	EventDelegationExportFileScanRejected EventType = "delegation.export_file_scan_rejected"
+
+	// EventDelegationExportScanFailedOpen is emitted when an export scan
+	// timed out or errored under failPolicy fail-open and the file was
+	// admitted without inspection (§11.2.1; §8.3, §4.8).
+	EventDelegationExportScanFailedOpen EventType = "delegation.export_scan_failed_open"
+
+	// EventDelegationPolicyExportScanWeakened is emitted when a
+	// DelegationPolicy's contentPolicy.scanExportedFiles changes from
+	// true to false (§11.2.1; §8.3).
+	EventDelegationPolicyExportScanWeakened EventType = "delegation_policy.export_scan_weakened"
+
+	// EventDelegationPolicyExportScanStrengthened is emitted when a
+	// DelegationPolicy's contentPolicy.scanExportedFiles changes from
+	// false to true (§11.2.1; §8.3).
+	EventDelegationPolicyExportScanStrengthened EventType = "delegation_policy.export_scan_strengthened"
+
+	// EventTokenUsageCheckpoint is a periodic per-session token-usage
+	// snapshot emitted at configurable intervals, not only at session end
+	// (§11.2.1).
+	EventTokenUsageCheckpoint EventType = "token_usage.checkpoint"
+
+	// EventCredentialLeased is emitted when a credential is leased from a
+	// credential pool to a session (§11.2.1; §4.9).
+	EventCredentialLeased EventType = "credential.leased"
+
+	// EventCredentialRevoked is emitted when a credential is
+	// emergency-revoked and its active leases are terminated (§11.2.1;
+	// §4.9 Emergency Credential Revocation).
+	EventCredentialRevoked EventType = "credential.revoked"
+
+	// EventBillingCorrection corrects a previously emitted billing
+	// event. A correction carries its own SequenceNumber and references
+	// the original event via CorrectsSequence; the original event is
+	// never mutated (§11.2.1 correction semantics).
+	EventBillingCorrection EventType = "billing_correction"
+)
+
+// ReasonCode is a §11.2.1 correction_reason_code. The closed enum below
+// is the built-in set; deployers extend it via the admin API. Each code
+// is classified as gateway-emitted (Category 1) or operator-initiated
+// (Category 2); a deployer-added code is always Category 2.
+type ReasonCode string
+
+const (
+	// ReasonMeteringBug — Category 1: the gateway self-corrects a
+	// metering inconsistency.
+	ReasonMeteringBug ReasonCode = "METERING_BUG"
+	// ReasonRetryOvercounting — Category 1: the gateway removes a
+	// double-count from retried requests.
+	ReasonRetryOvercounting ReasonCode = "RETRY_OVERCOUNTING"
+	// ReasonTestSessionCleanup — Category 2: an operator removes the
+	// cost of a test session.
+	ReasonTestSessionCleanup ReasonCode = "TEST_SESSION_CLEANUP"
+	// ReasonGatewayCrashReconstruction — Category 1: the gateway
+	// reconciles billing from pod-reported totals after crash recovery.
+	ReasonGatewayCrashReconstruction ReasonCode = "GATEWAY_CRASH_RECONSTRUCTION"
+	// ReasonOperatorManualAdjustment — Category 2: an operator records a
+	// manual revenue adjustment.
+	ReasonOperatorManualAdjustment ReasonCode = "OPERATOR_MANUAL_ADJUSTMENT"
+)
+
+// gatewayEmittedReasons is the §11.2.1 Category 1 set: corrections the
+// gateway emits as an automated consequence of crash recovery, retry
+// deduplication, or self-healing metering. These are written through
+// the normal EventStore path and never require operator approval.
+var gatewayEmittedReasons = map[ReasonCode]bool{
+	ReasonMeteringBug:                true,
+	ReasonRetryOvercounting:          true,
+	ReasonGatewayCrashReconstruction: true,
+}
+
+// operatorReasons is the §11.2.1 Category 2 built-in set: corrections a
+// human operator issues through POST /v1/admin/billing-corrections.
+var operatorReasons = map[ReasonCode]bool{
+	ReasonTestSessionCleanup:       true,
+	ReasonOperatorManualAdjustment: true,
+}
+
+// IsGatewayEmittedReason reports whether code is a §11.2.1 Category 1
+// (gateway-emitted automated reconciliation) reason code.
+func IsGatewayEmittedReason(code ReasonCode) bool {
+	return gatewayEmittedReasons[code]
+}
+
+// IsBuiltinReason reports whether code is one of the built-in §11.2.1
+// reason codes. A code that is well-formed but not built-in is a
+// deployer-added code, which is always operator-initiated.
+func IsBuiltinReason(code ReasonCode) bool {
+	return gatewayEmittedReasons[code] || operatorReasons[code]
+}
+
+// defaultSchemaVersion is the §15.5 billing-event schema revision
+// stamped on an event whose SchemaVersion is left zero.
+const defaultSchemaVersion = 1
+
+// Event is one §11.2.1 billing event. The fields mirror the core
+// columns of the billing_events table. SequenceNumber is assigned by
+// Append and is monotonically increasing within a tenant.
+type Event struct {
+	TenantID       string
+	SequenceNumber uint64
+	SchemaVersion  uint32
+	UserID         string
+	SessionID      string
+	ExperimentID   string
+	VariantID      string
+	EventType      EventType
+	TokensInput    uint64
+	TokensOutput   uint64
+	PodMinutes     float64
+	CreatedAt      time.Time
+
+	// EnvironmentID is the §10.6 environment the session was created in,
+	// empty for sessions not scoped to an environment. Populated on
+	// every billing event for sessions created in an environment context
+	// so downstream rollups can aggregate by environment without joining
+	// the session row. spec: §10.6, §10.6. F-10.6.9.
+	EnvironmentID string
+
+	// Labels is the §14 session-label set denormalized from the
+	// originating session row so the §11.2.1 billing stream is filterable
+	// by session label in GET /v1/metering/events without re-joining the
+	// (eventually-erased) session. Nil when the session carried no labels;
+	// a billing_correction inherits the labels of the event it corrects so
+	// it appears under the same label filter. spec: §14. F-14.1.13.
+	Labels map[string]string
+
+	// CorrectsSequence references the original event a billing_correction
+	// adjusts (§11.2.1). It is zero for every non-correction event;
+	// sequence numbers start at 1, so zero is never a valid reference.
+	CorrectsSequence uint64
+
+	// CorrectionReasonCode is the structured §11.2.1 reason code carried
+	// on a billing_correction event. It is empty for every other event
+	// type and required for a billing_correction.
+	CorrectionReasonCode ReasonCode
+
+	// CorrectionDetail is the optional free-text detail supplementing the
+	// structured reason code on a billing_correction event.
+	CorrectionDetail string
+
+	// Conditional carries the §11.2.1 event-type-specific fields (the
+	// "(for X events only)" columns of the §11.2.1 event schema). It is
+	// nil for events that carry no event-type-specific data
+	// (session.created, session.completed, token_usage.checkpoint,
+	// billing_correction). The durable store persists it as the
+	// nullable conditional_fields JSONB column; the §15.1 metering wire
+	// promotes its fields to the top level of the event payload, honoring
+	// the null/absent field contract (a nil Conditional omits the block
+	// entirely). spec: §11.2.1 — Event schema (all events). F-11.2.12.
+	Conditional *Conditional
+}
+
+// Conditional holds the §11.2.1 event-type-specific billing-event
+// fields. Per the §11.2.1 null/absent field contract, each field appears
+// only on the event types it applies to (event_type is the
+// discriminant), so every field is omitempty; a pointer is used where
+// the zero value is itself a meaningful value the consumer must not read
+// as "absent" (the export-scan boolean transitions). A field left at its
+// zero value is omitted from the JSON payload.
+//
+// spec: §11.2.1 — Event schema (all events); null/absent field contract.
+// F-11.2.12.
+type Conditional struct {
+	// credential.leased
+	CredentialPoolID string `json:"credentialPoolId,omitempty"`
+	CredentialID     string `json:"credentialId,omitempty"`
+	DeliveryMode     string `json:"deliveryMode,omitempty"`
+
+	// credential.revoked
+	RevokedBy        string `json:"revokedBy,omitempty"`
+	RevocationReason string `json:"revocationReason,omitempty"`
+	LeasesTerminated uint32 `json:"leasesTerminated,omitempty"`
+
+	// delegation.isolation_violation
+	ParentIsolation string `json:"parentIsolation,omitempty"`
+	TargetIsolation string `json:"targetIsolation,omitempty"`
+	// matched_policy_rule is shared with pool.isolation_warning.
+	MatchedPolicyRule string `json:"matchedPolicyRule,omitempty"`
+
+	// pool.isolation_warning
+	PoolName             string `json:"poolName,omitempty"`
+	PoolIsolation        string `json:"poolIsolation,omitempty"`
+	ConflictingPoolName  string `json:"conflictingPoolName,omitempty"`
+	ConflictingIsolation string `json:"conflictingIsolation,omitempty"`
+
+	// derive.isolation_downgrade
+	SourceSessionID        string `json:"sourceSessionId,omitempty"`
+	SourceIsolationProfile string `json:"sourceIsolationProfile,omitempty"`
+	TargetPool             string `json:"targetPool,omitempty"`
+	TargetIsolationProfile string `json:"targetIsolationProfile,omitempty"`
+	AuthorizingUserSub     string `json:"authorizingUserSub,omitempty"`
+	TicketID               string `json:"ticketId,omitempty"`
+
+	// interceptor.fail_policy_weakened / _strengthened / weakening_cooldown_active
+	InterceptorRef      string   `json:"interceptorRef,omitempty"`
+	OldFailPolicy       string   `json:"oldFailPolicy,omitempty"`
+	NewFailPolicy       string   `json:"newFailPolicy,omitempty"`
+	AffectedPolicyCount uint32   `json:"affectedPolicyCount,omitempty"`
+	AffectedPolicyNames []string `json:"affectedPolicyNames,omitempty"`
+
+	// interceptor.weakening_cooldown_active +
+	// delegation_policy.export_scan_weakened / _strengthened
+	TransitionTS    string `json:"transitionTs,omitempty"`
+	CooldownSeconds uint32 `json:"cooldownSeconds,omitempty"`
+
+	// delegation.export_file_scan_rejected / export_scan_failed_open +
+	// delegation_policy.export_scan_weakened / _strengthened
+	PolicyName string `json:"policyName,omitempty"`
+	FilePath   string `json:"filePath,omitempty"`
+	FileSize   uint64 `json:"fileSize,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+
+	// delegation_policy.export_scan_weakened / _strengthened
+	OldScanExportedFiles *bool `json:"oldScanExportedFiles,omitempty"`
+	NewScanExportedFiles *bool `json:"newScanExportedFiles,omitempty"`
+}
+
+// IsCorrection reports whether e is a §11.2.1 billing_correction event.
+func (e Event) IsCorrection() bool {
+	return e.EventType == EventBillingCorrection
+}
+
+// ErrInvalidEvent — the event is missing a tenant id or event type.
+var ErrInvalidEvent = errors.New("billingstore: event requires a tenant id and event type")
+
+// ErrInvalidCorrection — a billing_correction event is missing its
+// corrects_sequence reference or its correction_reason_code, or a
+// non-correction event carries correction-only fields. §11.2.1 makes
+// both fields mandatory on a correction and absent on every other
+// event type.
+var ErrInvalidCorrection = errors.New("billingstore: a billing_correction event requires corrects_sequence and correction_reason_code")
+
+// ErrPseudonymizeArg — PseudonymizeUser was called without a tenant id,
+// a user id, or a salt. Pseudonymizing with no salt would produce a
+// trivially reversible hash, so the empty-salt case is rejected rather
+// than silently weakened.
+var ErrPseudonymizeArg = errors.New("billingstore: pseudonymize requires a tenant id, a user id, and a salt")
+
+// Pseudonymize returns the §12.8 one-way pseudonym for a billing
+// event's user id: the hex-encoded SHA-256 of the user id followed by
+// the tenant's erasure salt. The salt is a per-tenant 256-bit secret;
+// once it is destroyed the pseudonym cannot be reversed, which is what
+// makes the pseudonymized events effectively anonymous (§12.8 GDPR
+// Recital 26 note).
+func Pseudonymize(userID string, salt []byte) string {
+	h := sha256.New()
+	h.Write([]byte(userID))
+	h.Write(salt)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// Store is the §11.2.1 billing event ledger contract. It is
+// append-only: implementations never update or delete a committed
+// event.
+type Store interface {
+	// Append commits e to the tenant's ledger, assigning the next
+	// per-tenant sequence_number, and returns the sealed event.
+	Append(ctx context.Context, e Event) (Event, error)
+
+	// Since returns the tenant's events with sequence_number greater
+	// than since, in ascending sequence order, capped at limit. A
+	// limit of zero or less applies no cap.
+	Since(ctx context.Context, tenantID string, since uint64, limit int) ([]Event, error)
+
+	// SinceFiltered is Since narrowed to events whose denormalized §14
+	// labels contain every key=value pair in labelFilter (AND-containment).
+	// An empty labelFilter is identical to Since. The label predicate is
+	// applied inside the store query so the §15.1 cursor/hasMore
+	// pagination contract is preserved (a post-hoc filter on a page would
+	// break it). spec: §14; §15.1. F-14.1.13.
+	SinceFiltered(ctx context.Context, tenantID string, since uint64, limit int, labelFilter map[string]string) ([]Event, error)
+
+	// SessionTotals returns the reconciled token + compute usage for one
+	// session: the sum of tokens_input, tokens_output, and pod_minutes
+	// across the session's billing events after §11.2.1 corrections are
+	// applied (a correction supersedes the referenced original rather than
+	// adding to it). It backs the §15.1 GET /v1/sessions/{id}/usage
+	// endpoint and the §15.2 get_token_usage MCP tool. A session with no
+	// billing events returns the zero SessionUsage and a nil error.
+	//
+	// spec: §15.1 (per-session usage); §11.2.1 (correction semantics).
+	// F-15.2.3.
+	SessionTotals(ctx context.Context, tenantID, sessionID string) (SessionUsage, error)
+
+	// EnvironmentTotals returns the reconciled token + compute usage
+	// aggregated across every session created in environmentID within
+	// tenantID, applying the same §11.2.1 correction semantics as
+	// SessionTotals (a correction supersedes the referenced original).
+	// The environmentID is the §10.6 environment name stamped onto every
+	// billing event for sessions created in that environment context, so
+	// the rollup needs no join against the session row. It backs the
+	// §15.1 GET /v1/admin/environments/{name}/usage billing rollup. An
+	// environment with no billing events returns the zero SessionUsage
+	// and a nil error.
+	//
+	// spec: §15.1; §10.6
+	// (environment-stamped billing events); §11.2.1 (correction
+	// semantics). F-15.1.3.
+	EnvironmentTotals(ctx context.Context, tenantID, environmentID string) (SessionUsage, error)
+
+	// PseudonymizeUser rewrites every billing event in tenantID owned
+	// by userID, replacing the user id with its §12.8 salted-hash
+	// pseudonym. Billing events are append-only per §11.2.1, so the
+	// GDPR user-erasure path de-identifies them rather than deleting
+	// them: the sequence numbers, tenant id, and cost dimensions
+	// survive for financial reconciliation while the user id becomes
+	// irreversible once the per-tenant salt is destroyed. Returns the
+	// count rewritten; idempotent.
+	//
+	// spec: §12.8 — tenant-controlled billing erasure (GDPR Recital 26
+	// pseudonymization).
+	PseudonymizeUser(ctx context.Context, tenantID, userID string, salt []byte) (int, error)
+
+	// DeleteByUser implements the §12.1 mandatory-erasure primitive.
+	// Billing events are append-only and the user-erasure path
+	// pseudonymizes rather than deletes, so DeleteByUser is a no-op
+	// that returns (0, nil); the method is mandatory at the interface
+	// level so the §12.1 compile-time contract holds for every backend.
+	// The user-scoped erasure runs through PseudonymizeUser.
+	//
+	// spec: §12.1.
+	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
+
+	// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
+	// Tenant teardown is the only path that removes billing events; the
+	// §11.2.1 immutability constraint does not apply to a tenant being
+	// torn down. Returns the count removed.
+	//
+	// spec: §12.1, §12.8 Phase 4.
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
+
+	// DeleteOlderThan prunes every billing event for tenantID whose
+	// created_at precedes cutoff, implementing the §11.2.1 retention
+	// sweep. Events are retained for the deployer-configurable
+	// `billing.retentionDays` window (default 395); the periodic
+	// retention pruner computes cutoff = now − retentionDays and calls
+	// this per tenant. Like the erasure primitives, the durable backend
+	// performs the DELETE under the §11.7 append-only immutability
+	// bypass. Returns the count removed; idempotent on an empty range.
+	//
+	// spec: §11.2.1. F-11.2.15.
+	DeleteOlderThan(ctx context.Context, tenantID string, cutoff time.Time) (int, error)
+}
+
+// Validate reports the §11.2.1 minimum-field requirements. Every Store
+// implementation runs it before committing an event.
+//
+// For a billing_correction event, §11.2.1 additionally requires a
+// non-zero corrects_sequence and a correction_reason_code. The
+// correction-only fields must not appear on any other event type — the
+// null/absent field contract makes event_type the discriminant — so a
+// non-correction event carrying them is rejected as well.
+func Validate(e Event) error {
+	if e.TenantID == "" || e.EventType == "" {
+		return ErrInvalidEvent
+	}
+	if e.IsCorrection() {
+		if e.CorrectsSequence == 0 || e.CorrectionReasonCode == "" {
+			return ErrInvalidCorrection
+		}
+		return nil
+	}
+	// A non-correction event must carry no correction-only field.
+	if e.CorrectsSequence != 0 || e.CorrectionReasonCode != "" || e.CorrectionDetail != "" {
+		return ErrInvalidCorrection
+	}
+	return nil
+}
+
+// Normalize fills the server-assigned defaults on an event before it
+// is committed: the §15.5 schema version and the creation timestamp.
+// It does not assign SequenceNumber, which each Store derives from its
+// own per-tenant counter.
+func Normalize(e Event, now time.Time) Event {
+	if e.SchemaVersion == 0 {
+		e.SchemaVersion = defaultSchemaVersion
+	}
+	if e.CreatedAt.IsZero() {
+		e.CreatedAt = now
+	}
+	e.CreatedAt = e.CreatedAt.UTC()
+	return e
+}
+
+// Memory is the in-memory Store. Events are held per tenant in
+// sequence order.
+type Memory struct {
+	mu     sync.Mutex
+	events map[string][]Event
+	now    func() time.Time
+}
+
+// NewMemory returns an empty in-memory billing ledger.
+func NewMemory() *Memory {
+	return &Memory{
+		events: map[string][]Event{},
+		now:    func() time.Time { return time.Now().UTC() },
+	}
+}
+
+// Append implements Store.
+func (m *Memory) Append(_ context.Context, e Event) (Event, error) {
+	if err := Validate(e); err != nil {
+		return Event{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	committed := Normalize(e, m.now())
+	committed.SequenceNumber = uint64(len(m.events[e.TenantID])) + 1
+	m.events[e.TenantID] = append(m.events[e.TenantID], committed)
+	return committed, nil
+}
+
+// PseudonymizeUser rewrites every billing event in tenantID owned by
+// userID, replacing the user id with its §12.8 pseudonym. It is the
+// erasure-only exception to the append-only contract: the GDPR erasure
+// job calls it so a user's billing history is de-identified while the
+// sequence numbers, tenant id, and cost dimensions stay intact for
+// financial reconciliation. It returns the count of events rewritten
+// and is idempotent — a second call with the same user id finds no
+// event still keyed to it. The current billing-event schema carries no
+// free-text columns, so the user id is the only personal field.
+func (m *Memory) PseudonymizeUser(_ context.Context, tenantID, userID string, salt []byte) (int, error) {
+	if tenantID == "" || userID == "" || len(salt) == 0 {
+		return 0, ErrPseudonymizeArg
+	}
+	pseudonym := Pseudonymize(userID, salt)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	events := m.events[tenantID]
+	for i := range events {
+		if events[i].UserID == userID {
+			events[i].UserID = pseudonym
+			n++
+		}
+	}
+	return n, nil
+}
+
+// CountUser returns the number of billing events in tenantID owned by
+// userID. The §12.8 erasure verification calls it to confirm no event
+// remains keyed to a pseudonymized user's original id.
+func (m *Memory) CountUser(_ context.Context, tenantID, userID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, e := range m.events[tenantID] {
+		if e.UserID == userID {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// DeleteByUser implements the §12.1 mandatory-erasure interface.
+// Billing events are append-only per §11.2.1; the §12.8 erasure path
+// pseudonymizes rather than deletes them so the chain stays intact.
+// DeleteByUser at this layer is a no-op that returns 0 erased rows;
+// the orchestrator runs PseudonymizeUser for the user-scoped phase.
+func (m *Memory) DeleteByUser(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
+}
+
+// DeleteByTenant implements the §12.1 mandatory-erasure interface.
+// Tenant deletion is the only path that removes billing events; the
+// §11.2.1 immutability constraint does not apply to a tenant being
+// torn down.
+func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := len(m.events[tenantID])
+	delete(m.events, tenantID)
+	return n, nil
+}
+
+// DeleteOlderThan implements Store. It drops every event for tenantID
+// whose CreatedAt precedes cutoff, preserving the relative order of the
+// surviving events. spec: §11.2.1. F-11.2.15.
+func (m *Memory) DeleteOlderThan(_ context.Context, tenantID string, cutoff time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	events := m.events[tenantID]
+	kept := events[:0:0]
+	removed := 0
+	for _, e := range events {
+		if e.CreatedAt.Before(cutoff) {
+			removed++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	if removed == 0 {
+		return 0, nil
+	}
+	if len(kept) == 0 {
+		delete(m.events, tenantID)
+	} else {
+		m.events[tenantID] = kept
+	}
+	return removed, nil
+}
+
+// SessionUsage is the reconciled per-session token + compute total the
+// §15.1 GET /v1/sessions/{id}/usage endpoint and the §15.2
+// get_token_usage MCP tool report. spec: §15.1; §11.2.1. F-15.2.3.
+type SessionUsage struct {
+	TokensInput  uint64  `json:"tokensInput"`
+	TokensOutput uint64  `json:"tokensOutput"`
+	PodMinutes   float64 `json:"podMinutes"`
+	EventCount   int     `json:"eventCount"`
+}
+
+// SumSessionUsage reconciles §11.2.1 corrections across the supplied
+// ledger and sums the token + compute usage for sessionID. The caller
+// supplies the full set of events that could carry a correction for the
+// session (for the durable stores this is the session-scoped row set,
+// whose corrections reference originals in the same set). spec: §11.2.1.
+// F-15.2.3.
+func SumSessionUsage(events []Event, sessionID string) SessionUsage {
+	var u SessionUsage
+	for _, e := range ReconcileLedger(events) {
+		if e.SessionID != sessionID {
+			continue
+		}
+		u.TokensInput += e.TokensInput
+		u.TokensOutput += e.TokensOutput
+		u.PodMinutes += e.PodMinutes
+		u.EventCount++
+	}
+	return u
+}
+
+// SumEnvironmentUsage reconciles §11.2.1 corrections across the supplied
+// ledger and sums the token + compute usage for every event stamped with
+// environmentID. An empty environmentID matches nothing (a session not
+// scoped to an environment carries no environment id). spec: §15.1; §10.6; §11.2.1. F-15.1.3.
+func SumEnvironmentUsage(events []Event, environmentID string) SessionUsage {
+	var u SessionUsage
+	if environmentID == "" {
+		return u
+	}
+	for _, e := range ReconcileLedger(events) {
+		if e.EnvironmentID != environmentID {
+			continue
+		}
+		u.TokensInput += e.TokensInput
+		u.TokensOutput += e.TokensOutput
+		u.PodMinutes += e.PodMinutes
+		u.EventCount++
+	}
+	return u
+}
+
+// SessionTotals implements Store.
+func (m *Memory) SessionTotals(_ context.Context, tenantID, sessionID string) (SessionUsage, error) {
+	m.mu.Lock()
+	events := append([]Event(nil), m.events[tenantID]...)
+	m.mu.Unlock()
+	return SumSessionUsage(events, sessionID), nil
+}
+
+// EnvironmentTotals implements Store.
+func (m *Memory) EnvironmentTotals(_ context.Context, tenantID, environmentID string) (SessionUsage, error) {
+	m.mu.Lock()
+	events := append([]Event(nil), m.events[tenantID]...)
+	m.mu.Unlock()
+	return SumEnvironmentUsage(events, environmentID), nil
+}
+
+// Since implements Store.
+func (m *Memory) Since(ctx context.Context, tenantID string, since uint64, limit int) ([]Event, error) {
+	return m.SinceFiltered(ctx, tenantID, since, limit, nil)
+}
+
+// SinceFiltered implements Store.
+func (m *Memory) SinceFiltered(_ context.Context, tenantID string, since uint64, limit int, labelFilter map[string]string) ([]Event, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Event, 0)
+	for _, e := range m.events[tenantID] {
+		if e.SequenceNumber <= since {
+			continue
+		}
+		// spec: §14 — narrow to events whose labels contain every
+		// requested pair. The cap is applied after the label filter so a
+		// filtered page carries up to limit matching events.
+		if !labelsContain(e.Labels, labelFilter) {
+			continue
+		}
+		out = append(out, e)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].SequenceNumber < out[j].SequenceNumber })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// labelsContain reports whether have contains every key=value pair in
+// want (AND-containment). An empty want matches every event. It mirrors
+// the §15.1 session-list label semantics so the metering stream
+// and the session list agree on what a label filter means. spec: §14. F-14.1.13.
+func labelsContain(have, want map[string]string) bool {
+	for k, v := range want {
+		if hv, ok := have[k]; !ok || hv != v {
+			return false
+		}
+	}
+	return true
+}
+
+var _ Store = (*Memory)(nil)
+
+// ReconcileLedger applies the §11.2.1 correction semantics to a stream
+// of billing events read in sequence-number order. For each
+// billing_correction it encounters, the correction's tokens_input,
+// tokens_output, and pod_minutes supersede the referenced original
+// event's corresponding fields. Multiple corrections to the same
+// original are applied in sequence-number order, so the latest
+// correction wins. The original event is never mutated; ReconcileLedger
+// returns a new slice carrying the reconciled originals and drops the
+// correction records, which is the accurate billing ledger a consumer
+// computes from the immutable stream.
+//
+// A correction that references an unknown sequence number is retained
+// in the output unchanged: the consumer cannot reconcile it, and
+// dropping it would hide a billing adjustment.
+func ReconcileLedger(events []Event) []Event {
+	// Index the originals by sequence number so a correction can be
+	// applied in place on a copy.
+	byseq := make(map[uint64]int, len(events))
+	out := make([]Event, 0, len(events))
+	for _, e := range events {
+		if !e.IsCorrection() {
+			byseq[e.SequenceNumber] = len(out)
+			out = append(out, e)
+		}
+	}
+	// Apply corrections in ascending sequence order so the latest
+	// correction to a given original takes precedence.
+	corrections := make([]Event, 0)
+	for _, e := range events {
+		if e.IsCorrection() {
+			corrections = append(corrections, e)
+		}
+	}
+	sort.Slice(corrections, func(i, j int) bool {
+		return corrections[i].SequenceNumber < corrections[j].SequenceNumber
+	})
+	for _, c := range corrections {
+		idx, ok := byseq[c.CorrectsSequence]
+		if !ok {
+			// The referenced original is not in this window; surface the
+			// correction so the consumer does not silently lose it.
+			out = append(out, c)
+			continue
+		}
+		out[idx].TokensInput = c.TokensInput
+		out[idx].TokensOutput = c.TokensOutput
+		out[idx].PodMinutes = c.PodMinutes
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].SequenceNumber < out[j].SequenceNumber })
+	return out
+}

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lenny.test/schemas/tools_call_result.json",
+  "title": "tools/call result (MCP management server, spec 25.12)",
+  "description": "The result object of a 25.12 tools/call response: the MCP content envelope with the isError flag and a content array. A dry-run preview carries the canonical _meta.lenny.dryRun signal.",
+  "type": "object",
+  "required": ["isError", "content"],
+  "properties": {
+    "isError": {
+      "type": "boolean"
+    },
+    "content": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["type", "text"],
+        "properties": {
+          "type": {
+            "const": "text"
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "_meta": {
+      "type": "object",
+      "properties": {
+        "lenny.dryRun": {
+          "type": "boolean"
+        },
+        "lenny.preview": {}
+      }
+    }
+  }
+}

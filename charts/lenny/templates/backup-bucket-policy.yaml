@@ -1,0 +1,96 @@
+{{- /*
+§25.11 "MinIO Bucket Policy" — the chart renders a suggested bucket
+policy for the backup bucket. The policy:
+
+  - grants s3:PutObject / s3:GetObject / s3:DeleteObject / s3:ListBucket
+    to the lenny-backup principal only,
+  - grants s3:GetObject / s3:ListBucket to the lenny-ops principal (for
+    listing and verification),
+  - grants nothing to any other principal,
+  - requires TLS via the aws:SecureTransport condition, and
+  - when backups.encryption.kmsKeyId is set, requires the SSE-KMS key id
+    to match on PutObject.
+
+MinIO bucket policies are not Kubernetes resources, so the chart renders
+the policy document into a ConfigMap. An operator (or the bucket
+lifecycle Job) applies it with `mc admin policy` / `mc policy set-json`.
+Operators on cloud object stores (S3, GCS, Azure Blob) apply the
+equivalent policy at the provider level.
+
+The ConfigMap renders only when backups.bucket is set and
+backups.bucketPolicy.enabled is true (default), so a stock render that
+has not declared a backup bucket emits nothing.
+*/ -}}
+{{- $b := .Values.backups | default dict -}}
+{{- $bucket := $b.bucket | default "" -}}
+{{- $bp := $b.bucketPolicy | default dict -}}
+{{- $enabled := true -}}
+{{- if hasKey $bp "enabled" -}}
+{{- $enabled = $bp.enabled -}}
+{{- end -}}
+{{- if and $enabled (ne $bucket "") }}
+{{- $backupPrin := $bp.backupPrincipal | default "lenny-backup" -}}
+{{- $opsPrin := $bp.opsPrincipal | default "lenny-ops" -}}
+{{- $bucketArn := printf "arn:aws:s3:::%s" $bucket -}}
+{{- $objectArn := printf "arn:aws:s3:::%s/*" $bucket -}}
+{{- $enc := $b.encryption | default dict -}}
+{{- $kms := $enc.kmsKeyId | default "" -}}
+{{- $backupUser := printf "arn:aws:iam:::user/%s" $backupPrin -}}
+{{- $opsUser := printf "arn:aws:iam:::user/%s" $opsPrin -}}
+{{- $statements := list
+  (dict
+    "Sid" "LennyBackupObjectCRUD"
+    "Effect" "Allow"
+    "Principal" (dict "AWS" (list $backupUser))
+    "Action" (list "s3:PutObject" "s3:GetObject" "s3:DeleteObject")
+    "Resource" (list $objectArn))
+  (dict
+    "Sid" "LennyBackupListBucket"
+    "Effect" "Allow"
+    "Principal" (dict "AWS" (list $backupUser))
+    "Action" (list "s3:ListBucket")
+    "Resource" (list $bucketArn))
+  (dict
+    "Sid" "LennyOpsObjectRead"
+    "Effect" "Allow"
+    "Principal" (dict "AWS" (list $opsUser))
+    "Action" (list "s3:GetObject")
+    "Resource" (list $objectArn))
+  (dict
+    "Sid" "LennyOpsListBucket"
+    "Effect" "Allow"
+    "Principal" (dict "AWS" (list $opsUser))
+    "Action" (list "s3:ListBucket")
+    "Resource" (list $bucketArn))
+  (dict
+    "Sid" "DenyInsecureTransport"
+    "Effect" "Deny"
+    "Principal" "*"
+    "Action" (list "s3:*")
+    "Resource" (list $bucketArn $objectArn)
+    "Condition" (dict "Bool" (dict "aws:SecureTransport" "false")))
+-}}
+{{- if ne $kms "" -}}
+{{- $statements = append $statements
+  (dict
+    "Sid" "DenyPutWithoutMatchingKmsKey"
+    "Effect" "Deny"
+    "Principal" "*"
+    "Action" (list "s3:PutObject")
+    "Resource" (list $objectArn)
+    "Condition" (dict "StringNotEquals" (dict "s3:x-amz-server-side-encryption-aws-kms-key-id" $kms)))
+-}}
+{{- end -}}
+{{- $policy := dict "Version" "2012-10-17" "Statement" $statements -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lenny-backup-bucket-policy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: backup
+data:
+  policy.json: |
+{{ $policy | toPrettyJson | indent 4 }}
+{{- end }}

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 #
-# §17.10 flake-budget workflow. Runs `lenny-test stress --runs 50`
+# TESTING.md §17.10 flake-budget workflow. Runs `lenny-test stress --runs 50`
 # against the unit tier every week and surfaces any test that
 # failed at least once in the 50-iteration sweep.
 #
@@ -24,7 +24,7 @@ permissions:
 jobs:
 
   stress:
-    name: §17.10 stress sweep
+    name: TESTING.md §17.10 stress sweep
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -48,10 +48,32 @@ jobs:
             --timeout-seconds 300 \
             | tee stress.log
           {
-            echo "## §17.10 flake-budget sweep"
+            echo "## TESTING.md §17.10 flake-budget sweep"
             echo ""
             echo '```'
             tail -100 stress.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+        continue-on-error: true
+      - name: Stress the tier-7a pod-coordination race cases (50 iterations)
+        # The unit sweep above selects ./pkg/..., so the tier-7a cases that
+        # drive two concurrent adapter calls from a rendezvous are outside
+        # it. They carry a stress budget in their own file headers; this is
+        # where that budget is spent. The tag selects the load_local build,
+        # which also turns the race detector on by default.
+        run: |
+          ./bin/lenny-test stress \
+            --pattern 'TestConcurrentShutdownsSendOneDrainSignal|TestShutdownDrainRacesAnIncomingSession|TestConcurrentStartsArmThePodMCPSurfaceOnce|TestSoleSessionIsEmptyAcrossAConcurrentRelease' \
+            --runs 50 \
+            --pkg ./tests/tier7a_load_local/... \
+            --tag load_local \
+            --timeout-seconds 600 \
+            | tee stress-tier7a.log
+          {
+            echo "## Tier-7a pod-coordination race sweep"
+            echo ""
+            echo '```'
+            tail -100 stress-tier7a.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
         continue-on-error: true
@@ -60,5 +82,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: flake-budget-log
-          path: stress.log
+          path: |
+            stress.log
+            stress-tier7a.log
           retention-days: 90

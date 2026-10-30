@@ -1,0 +1,216 @@
+suite: prometheusrule §16.5 bundled alerting rules
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - prometheusrule.yaml
+# spec: §16.9 R8 / F-16.9.4 — the default monitoring.format=prometheusrule
+# renders a PrometheusRule CRD only when the Prometheus Operator CRDs are
+# present, degrading to a ConfigMap otherwise. Declare monitoring.coreos.-
+# com/v1 so these tests exercise the operator-present PrometheusRule path;
+# the operator-absent ConfigMap fallback is covered by
+# monitoring-fallback_test.yaml.
+capabilities:
+  apiVersions:
+    - monitoring.coreos.com/v1
+tests:
+  - it: renders a PrometheusRule by default
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: PrometheusRule
+      - equal:
+          path: apiVersion
+          value: monitoring.coreos.com/v1
+      - equal:
+          path: metadata.name
+          value: lenny-alerting-rules
+
+  - it: renders the PrometheusRule into the monitoring namespace
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: monitoring
+
+  # spec: §25.13 — F-25.13.9. The catalog renders one rule
+  # group per §16.5 severity (critical, warning, info) so Prometheus
+  # evaluates each bucket in parallel rather than serialising the full
+  # catalog through a single group. The "~40 rules at ~10ms p95" budget
+  # in §25.13 applies per group; with the catalog now well past forty
+  # alerts, the split protects the per-group evaluation budget.
+  - it: splits the rule set into per-severity groups per §25.13
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.groups[0].name
+          value: lenny.critical
+      - equal:
+          path: spec.groups[1].name
+          value: lenny.warning
+
+  - it: bundles the WarmPoolExhausted critical alert from the §16.5 catalog
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.groups[0].rules[0].alert
+          value: WarmPoolExhausted
+      - equal:
+          path: spec.groups[0].rules[0].labels.severity
+          value: critical
+      - equal:
+          path: spec.groups[0].rules[0].for
+          value: 1m
+
+  - it: carries the runbook_url annotation on bundled critical alerts
+    documentIndex: 0
+    asserts:
+      - exists:
+          path: spec.groups[0].rules[0].annotations.runbook_url
+
+  - it: renders nothing when bundleRules is disabled
+    set:
+      monitoring:
+        bundleRules: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders a ConfigMap when format is configmap
+    set:
+      monitoring:
+        format: configmap
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: lenny-alerting-rules
+      - exists:
+          path: data["rules.yaml"]
+
+  - it: renders both a PrometheusRule and a ConfigMap when format is both
+    set:
+      monitoring:
+        format: both
+    asserts:
+      - hasDocuments:
+          count: 2
+
+  # spec: §16.9 / §25.13 — F-16.9.8. An out-of-range monitoring.format
+  # (typo) must fail the render loudly rather than silently emit no
+  # alerting manifest. The guard runs ahead of the bundleRules gate so it
+  # fires regardless of whether the catalog would otherwise render.
+  - it: fails the render when monitoring.format is not in the allow-list
+    set:
+      monitoring:
+        format: prometheus-rule
+    asserts:
+      - failedTemplate:
+          errorMessage: 'monitoring.format must be one of [prometheusrule configmap both]; got "prometheus-rule"'
+
+  - it: places the PrometheusRule in an explicit prometheusRule namespace
+    set:
+      monitoring:
+        prometheusRule:
+          namespace: observability
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: observability
+
+  - it: applies operator-discoverable additionalLabels for ruleSelector matching
+    set:
+      monitoring:
+        prometheusRule:
+          additionalLabels:
+            release: kube-prometheus-stack
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: metadata.labels.release
+          value: kube-prometheus-stack
+
+  - it: places the ConfigMap in lenny-system by default
+    set:
+      monitoring:
+        format: configmap
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: lenny-system
+
+  # spec: §25.13 — configMap.namespace defaults to lenny-system
+  # literally, not the release namespace. Installing the chart into a
+  # non-default release namespace must still emit the ConfigMap into
+  # lenny-system unless configMap.namespace is set explicitly.
+  - it: defaults ConfigMap to lenny-system even when release namespace differs
+    release:
+      name: lenny
+      namespace: lenny-prod
+    set:
+      monitoring:
+        format: configmap
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: lenny-system
+
+  - it: honors configMap.namespace override when set
+    set:
+      monitoring:
+        format: configmap
+        configMap:
+          namespace: lenny-alerts
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: lenny-alerts
+
+  # spec: §25.13 / F-25.13.1 — monitoring.alertOverrides
+  # merges per-rule replacements into the bundled manifest. Field-level
+  # overrides leave the bundled annotations and other fields in place;
+  # only the supplied fields are replaced.
+  - it: merges expr/for from monitoring.alertOverrides into the bundled manifest
+    set:
+      monitoring:
+        alertOverrides:
+          WarmPoolExhausted:
+            expr: "operator-customised-expr"
+            for: "42s"
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.groups[0].rules[0].alert
+          value: WarmPoolExhausted
+      - equal:
+          path: spec.groups[0].rules[0].expr
+          value: operator-customised-expr
+      - equal:
+          path: spec.groups[0].rules[0].for
+          value: 42s
+      # Bundled annotations remain because mergeOverwrite only replaces
+      # explicit fields. F-25.13.1.
+      - exists:
+          path: spec.groups[0].rules[0].annotations.runbook_url
+
+  # spec: §25.13 / F-25.13.1 — `enabled: false` prunes the
+  # bundled rule from the rendered manifest entirely.
+  - it: prunes a bundled rule when monitoring.alertOverrides sets enabled false
+    set:
+      monitoring:
+        alertOverrides:
+          WarmPoolExhausted:
+            enabled: false
+    documentIndex: 0
+    asserts:
+      - notEqual:
+          path: spec.groups[0].rules[0].alert
+          value: WarmPoolExhausted

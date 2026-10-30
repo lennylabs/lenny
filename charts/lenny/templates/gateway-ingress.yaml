@@ -1,0 +1,60 @@
+{{- /*
+The lenny-gateway Ingress (§17.1 row 7: "Deployment + Service +
+Ingress"). External clients reach the gateway through this Ingress; the
+Ingress controller terminates TLS and forwards to the lenny-gateway
+ClusterIP Service on its named http port (gateway.internalPort). The
+companion allow-gateway-ingress NetworkPolicy (system-network-policies)
+admits the controller pods in ingressControllerNamespace to that port.
+
+The object is opt-in via gateway.ingress.enabled so a stock development
+render (in-memory backends, no external entry point) emits nothing,
+matching the opt-in posture of gateway.topologySpread and
+gateway.podAntiAffinity. When an operator runs their own Ingress
+controller out of band they leave it disabled and bring their own
+Ingress definition.
+*/ -}}
+{{- with .Values.gateway.ingress }}
+{{- if .enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: lenny-gateway
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+    lenny.dev/component: gateway
+  {{- with .annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .className }}
+  ingressClassName: {{ .className | quote }}
+  {{- end }}
+  {{- if and .tls .tls.enabled .host }}
+  # §17.1 row 7 — the Ingress controller terminates external HTTPS. The
+  # secret holds the public-facing serving certificate for .host; it is
+  # deployer-supplied (or cert-manager-issued out of band) and is
+  # distinct from the §10.3 lenny-gateway-tls mTLS material.
+  tls:
+    - hosts:
+        - {{ .host | quote }}
+      {{- if .tls.secretName }}
+      secretName: {{ .tls.secretName | quote }}
+      {{- end }}
+  {{- end }}
+  rules:
+    - {{- if .host }}
+      host: {{ .host | quote }}
+      {{- end }}
+      http:
+        paths:
+          - path: {{ .path | default "/" | quote }}
+            pathType: {{ .pathType | default "Prefix" }}
+            backend:
+              service:
+                name: lenny-gateway
+                port:
+                  name: http
+{{- end }}
+{{- end }}

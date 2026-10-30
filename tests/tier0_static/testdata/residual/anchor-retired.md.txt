@@ -1,0 +1,8 @@
+# Carrier
+
+The matrix is published at
+[the translation fidelity matrix](https://github.com/lennylabs/lenny/blob/main/spec/28_communication-channels.md#283-registers),
+which is an absolute URL the anchor pass does not read.
+
+The envelope is stated in §15.4.1, which the anchor pass reads as a bare
+citation of a retired section.

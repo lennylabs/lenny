@@ -40,16 +40,16 @@ func TestTaskRecordShape(t *testing.T) {
 	})
 }
 
-// spec: 18.2 (OutputPart generator covers every kind)
+// spec: 18.2 (MessagePart generator covers every kind)
 // diagnosis: A kind beyond the documented enum slipped through.
-func TestOutputPartKinds(t *testing.T) {
+func TestMessagePartKinds(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
-		part := generators.OutputPart().Draw(rt, "part")
+		part := generators.MessagePart().Draw(rt, "part")
 		kind := part["type"].(string)
 		switch kind {
 		case "text", "tool_use", "tool_result", "reasoning", "file":
 		default:
-			rt.Errorf("OutputPart emitted unknown kind %q", kind)
+			rt.Errorf("MessagePart emitted unknown kind %q", kind)
 		}
 	})
 }

@@ -1,0 +1,1 @@
+// The gate is described in §15.1 (tenant-admin gate, line 823) of the section.

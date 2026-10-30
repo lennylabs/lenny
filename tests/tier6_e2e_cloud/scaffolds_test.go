@@ -2,114 +2,70 @@
 
 //go:build e2e_cloud
 
-// Tier-6 e2e cloud scaffolds. Each test maps to one of the §12.6
-// suites from TESTING.md and skips with a precise diagnosis until
-// the cloud harness lands. Bring-up is automated by
-// scripts/cloud/<provider>/{up,down}.sh; the harness is built around
-// `tests/testinfra/cloud/` which will wrap that automation when it
-// ships.
+// Tier-6 e2e_cloud package entry point. Each test lives in a
+// dedicated file (aws_resources_test.go, cluster_assertions_test.go,
+// behavior_test.go, eks_platform_test.go, managed_elasticache_test.go,
+// managed_rds_test.go, session_lifecycle_test.go).
+//
+// # Multi-provider iteration
+//
+// The package's TestMain (below) reads LENNY_CLOUD_PROVIDERS
+// (comma-separated `aws,gcp,azure`) and runs the full tier-6 suite
+// once per provider. Each iteration sets LENNY_CLOUD_PROVIDER for
+// the duration of that run, so individual tests pick it up via
+// cloud.FromEnv. Per-provider env bundles (LENNY_AWS_KMS_KEY_ARN,
+// LENNY_GCP_PROJECT, etc.) are provisioned by
+// scripts/cloud/<provider>/up.sh and sourced by the operator before
+// running the suite; the operator provides only the cloud-auth
+// credentials (AWS_PROFILE / gcloud auth / az login).
+//
+// When LENNY_CLOUD_PROVIDERS is unset, TestMain runs the suite
+// once with an empty provider; cloud.SkipUnlessAvailable then
+// fails each test with the documented "configure a provider"
+// diagnosis. The user-facing contract: tier-6 fails (not skip,
+// not vacuous-pass) when no provider is configured, and fails
+// per-provider when a configured provider isn't reachable.
 
 package tier6_e2e_cloud_test
 
 import (
+	"fmt"
 	"os"
 	"testing"
+
+	"github.com/lennylabs/lenny/tests/testinfra/cloud"
 )
 
-// requireCloudProvider gates every tier-6 test on the presence of an
-// authenticated provider context. The harness ships per-provider
-// helpers in tests/testinfra/cloud/ later; for now we read the
-// LENNY_CLOUD_PROVIDER env var as the marker and skip otherwise.
-func requireCloudProvider(t *testing.T) {
+// requireCloud is the cloud-guard every tier-6 test starts with. It
+// fails the test when LENNY_CLOUD_PROVIDER is unset (set by
+// TestMain for each iteration), the provider CLI is missing, or
+// the CLI is unauthenticated.
+func requireCloud(t *testing.T) cloud.Provider {
 	t.Helper()
-	if os.Getenv("LENNY_CLOUD_PROVIDER") == "" {
-		t.Skip("not implemented: §12.6 cloud harness — set LENNY_CLOUD_PROVIDER=gke|eks|aks and ship tests/testinfra/cloud/ before this runs")
+	p := cloud.FromEnv()
+	cloud.SkipUnlessAvailable(t, p)
+	return p
+}
+
+// TestMain iterates the tier-6 suite once per provider listed in
+// LENNY_CLOUD_PROVIDERS. The non-zero exit codes across iterations
+// are OR'd so a single bad provider fails the run.
+func TestMain(m *testing.M) {
+	providers := cloud.ConfiguredProviders()
+	if len(providers) == 0 {
+		// No provider configured — let SkipUnlessAvailable inside
+		// each test report the missing-provider diagnosis as a
+		// FAIL (the helper is fail-closed since the operator owns
+		// the contract).
+		os.Exit(m.Run())
 	}
-}
-
-// TestGvisorIsolation — default isolation profile (sandboxed) creates
-// pods on the gVisor (or provider-equivalent) node pool.
-func TestGvisorIsolation(t *testing.T) {
-	requireCloudProvider(t)
-	t.Skip("not implemented: §12.6 gvisor_isolation — requires gVisor or provider-equivalent sandbox node pool + the isolation-profile-sandboxed pool config")
-}
-
-// TestKataIsolation — Kata or microVM RuntimeClass pods boot, accept
-// claims, and tear down within the documented latency budget.
-func TestKataIsolation(t *testing.T) {
-	requireCloudProvider(t)
-	t.Skip("not implemented: §12.6 kata_isolation — requires Kata RuntimeClass (GKE/AKS) or Firecracker-via-Fargate (EKS) + the matching pool config")
-}
-
-// TestMultiZoneDR — Postgres failover across zones with RPO=0 and
-// RTO under 30 seconds. Session in-flight survives.
-func TestMultiZoneDR(t *testing.T) {
-	requireCloudProvider(t)
-	t.Skip("not implemented: §12.6 multi_zone_dr — requires provider-native HA Postgres (Cloud SQL HA, RDS Multi-AZ, Azure Database for PostgreSQL Flexible Server) and a failover injector")
-}
-
-// TestManagedIngress — provider-native external LB with TLS
-// termination and real cert-manager or provider-managed certs.
-func TestManagedIngress(t *testing.T) {
-	requireCloudProvider(t)
-	t.Skip("not implemented: §12.6 managed_ingress — requires the provider-native ingress controller (GCP HTTPS LB / AWS ALB / Azure App Gateway) + cert issuer")
-}
-
-// TestExternalDNS — External-DNS-driven CNAME entries for the gateway
-// and playground against Cloud DNS, Route 53, or Azure DNS.
-func TestExternalDNS(t *testing.T) {
-	requireCloudProvider(t)
-	t.Skip("not implemented: §12.6 external_dns — requires the external-dns deployment + a per-provider DNS zone reachable from the test runner")
-}
-
-// TestCloudCSI — ArtifactStore against the provider's native object
-// storage: GCS / S3 / Azure Blob.
-func TestCloudCSI(t *testing.T) {
-	requireCloudProvider(t)
-	t.Skip("not implemented: §12.6 cloud_csi — requires the pluggable ArtifactStore backend per provider and provider-side service-account binding")
-}
-
-// TestCloudKMS — T4 per-tenant keys against the provider's native KMS.
-// KMS probe, key rotation, key-unavailable fail-closed validated.
-func TestCloudKMS(t *testing.T) {
-	requireCloudProvider(t)
-	t.Skip("not implemented: §12.6 cloud_kms — requires the per-provider KMS adapter (Cloud KMS / AWS KMS / Azure Key Vault) + the T4 per-tenant key allocator")
-}
-
-// TestCloudOIDC — workload identity / IRSA / Workload Identity
-// Federation: pods receive provider-issued tokens that map to cloud
-// IAM roles.
-func TestCloudOIDC(t *testing.T) {
-	requireCloudProvider(t)
-	t.Skip("not implemented: §12.6 cloud_oidc — requires the provider-side IAM binding + the OIDC service-account configuration in the Helm chart")
-}
-
-// TestCloudSecretStore — native secret backend integration: Secret
-// Manager / Secrets Manager / Key Vault as alternative TokenStore
-// backends.
-func TestCloudSecretStore(t *testing.T) {
-	requireCloudProvider(t)
-	t.Skip("not implemented: §12.6 cloud_secret_store — requires the per-provider TokenStore adapter and the documented credential plumbing")
-}
-
-// TestMultiAZMinIO — if using self-managed MinIO, multi-zone
-// replication and near-zero RPO.
-func TestMultiAZMinIO(t *testing.T) {
-	requireCloudProvider(t)
-	t.Skip("not implemented: §12.6 multi_az_minio — optional per provider; requires the MinIO chart with cross-zone replication enabled")
-}
-
-// TestCloudObservability — OTLP delivery to the provider-native
-// collector (Cloud Trace + Cloud Logging / X-Ray + CloudWatch /
-// Application Insights + Log Analytics).
-func TestCloudObservability(t *testing.T) {
-	requireCloudProvider(t)
-	t.Skip("not implemented: §12.6 cloud_observability — requires the OTLP exporter wired to the provider-native collector + the per-provider observability bundle")
-}
-
-// TestCloudBillingExport — per-tenant usage events flow to the
-// provider's billing-export sink (BigQuery / Athena / Azure Data Lake).
-func TestCloudBillingExport(t *testing.T) {
-	requireCloudProvider(t)
-	t.Skip("not implemented: §12.6 cloud_billing_export — requires the billing-event publisher and the per-provider sink configuration")
+	overallCode := 0
+	for _, p := range providers {
+		_ = os.Setenv("LENNY_CLOUD_PROVIDER", string(p))
+		fmt.Fprintf(os.Stderr, "tier-6: running suite against LENNY_CLOUD_PROVIDER=%s (out of %d configured)\n", p, len(providers))
+		if code := m.Run(); code != 0 {
+			overallCode = code
+		}
+	}
+	os.Exit(overallCode)
 }

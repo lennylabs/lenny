@@ -1,0 +1,709 @@
+{
+  "kind": "claim-register",
+  "version": 1,
+  "claims": [
+    {
+      "claim": "Adapter metric names carrying the retired channel spelling",
+      "status": "ABSENT",
+      "spec_anchor": "#naming-table",
+      "deferral_id": "R12",
+      "surface": "pkg/adapter/metrics.go:71, pkg/adapter/metrics.go:79",
+      "note": "the two metric names keep the retired spelling until R12 adds the adapter metrics endpoint and the catalog entries"
+    },
+    {
+      "claim": "Adapter session seal keyed on the session's last activity",
+      "status": "WIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`pkg/adapter/sessionseal.go` `Server.SealSession`, `pkg/adapter/activity.go` `observeRuntimeFrame`, `pkg/gateway/sessionserver/session_seal.go` `sealSession`",
+      "note": "the adapter seals a session only when its last activity is older than the requested idle bound, answers the activity age otherwise, and refuses every later message to a sealed session until it is unsealed"
+    },
+    {
+      "claim": "Adapter-to-runtime heartbeat with SIGTERM escalation",
+      "status": "WIRED",
+      "spec_anchor": "#2853-intra-pod",
+      "surface": "`pkg/adapter/attach.go:78`, escalation `:141-147`, monitor `pkg/adapter/heartbeat.go:34-45`"
+    },
+    {
+      "claim": "Agent podspec mTLS certificate material",
+      "status": "ABSENT",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "deferral_id": "R14",
+      "surface": "spec/04_system-components.md \u00a74.4",
+      "note": "the agent-pod mTLS client identity step supplies the certificate volumes"
+    },
+    {
+      "claim": "Agent-pod eviction checkpoint",
+      "status": "ABSENT",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "no trigger on that edge",
+      "deferral_id": "R16"
+    },
+    {
+      "claim": "Agent-pod mTLS client identity",
+      "status": "ABSENT",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "no TLS flags in `podspec.go`",
+      "deferral_id": "R14"
+    },
+    {
+      "claim": "Agent-pod preStop hook",
+      "status": "WIRED",
+      "spec_anchor": "#2852-pod-to-gateway",
+      "surface": "`podspec.go:607`, `cmd/lenny-adapter/prestop.go:68-94`"
+    },
+    {
+      "claim": "AttachRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
+      "claim": "Backlog resume of a suspended session that holds messages",
+      "status": "WIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`pkg/gateway/sessionserver/suspended_backlog.go` `Server.ResumeBacklog`, `pkg/gateway/sessionserver/suspend_release.go` `checkBacklogOnce`, `pkg/gateway/sessionserver/suspended_backlog.go` `BacklogRechecker.Pass`, `cmd/lenny-gateway/leader_sweeps.go` `addSuspendedBacklogRecheck`",
+      "note": "the coordinating replica's sweep resumes a held-pod suspended session with held messages, the suspension release checks once after it releases the pod, and the gateway leader re-checks podless suspended sessions"
+    },
+    {
+      "claim": "Barrier target set from the mirror, with cache fallback",
+      "status": "WIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`barrier/wiring.go:97-124`"
+    },
+    {
+      "claim": "Best-effort eviction snapshot",
+      "status": "UNWIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`pkg/adapter/checkpoint.go:179`, `:192`",
+      "deferral_id": "R16"
+    },
+    {
+      "claim": "CH-BINDRELEASE binding-release fan-out",
+      "status": "WIRED",
+      "spec_anchor": "#2857-gateway-to-store",
+      "surface": "`cmd/lenny-gateway/adminrouter.go` propagator construction over `cmd/lenny-gateway/user_revocation.go` `bindReleaseFanOut.TerminateUserSessions`",
+      "note": "the full_revoke handler releases the bindings its replica holds and publishes the session list, and each peer replica's subscriber releases the bindings of those sessions it holds without re-publishing"
+    },
+    {
+      "claim": "CH-SUPERVISE launch and end of the runtime process",
+      "status": "WIRED",
+      "spec_anchor": "#2853-intra-pod",
+      "surface": "`pkg/adapter/supervisedruntime.go` `SupervisedRuntime.Start`, `SupervisedRuntime.EndProcess`, `pkg/adapter/supervisewiring.go` `Server.UseSupervisedRuntime`, `cmd/lenny-adapter/main.go` `main`",
+      "note": "the adapter launches each runtime process through the supervisor under the launch permit and ends it with end; the adapter reaches the path when the pod builder renders --supervise-socket"
+    },
+    {
+      "claim": "CH-SUPERVISE ping while no other request is outstanding",
+      "status": "WIRED",
+      "spec_anchor": "#2853-intra-pod",
+      "surface": "`pkg/adapter/supervise.go` `SupervisorLink.RunPing`, `cmd/lenny-adapter/main.go` `preReadyConfig`",
+      "note": "a missed pong is a link failure, which sets the adapter's not-live state"
+    },
+    {
+      "claim": "CH-SUPERVISE single accept before READY",
+      "status": "WIRED",
+      "spec_anchor": "#2853-intra-pod",
+      "surface": "`pkg/adapter/supervise.go` `AwaitSupervisor`, `pkg/adapter/preready.go` `RunPreReady`, `cmd/lenny-adapter/main.go` `preReadyConfig`",
+      "note": "the adapter accepts one connection through the agent-UID check, closes its listener, and reads ready before it binds the gRPC listener"
+    },
+    {
+      "claim": "CH-SUPERVISE sweep after each boundary end on a restart pod",
+      "status": "WIRED",
+      "spec_anchor": "#2853-intra-pod",
+      "surface": "`pkg/adapter/supervisedruntime.go` `SupervisedRuntime.EndAndSweep`, `pkg/adapter/podscrub.go` `Server.applySupervisedScrub`, `pkg/adapter/scrub/scrub.go` `Run`"
+    },
+    {
+      "claim": "Checkpoint restore onto a concurrent pod",
+      "status": "WIRED",
+      "spec_anchor": "#286-exclusivity-and-concurrency-model",
+      "surface": "`pkg/adapter/resume.go` resolves the restore's checkpoint roots from the request's session identifier through `checkpointRootsForSession` (`pkg/adapter/slot.go`)",
+      "note": "the request addresses its session by the session identifier and the restore extracts into that session's own slot tree, so the per-slot restore runs on every pod"
+    },
+    {
+      "claim": "CheckpointBarrierRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
+      "claim": "CheckpointRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
+      "claim": "Concurrent-session count excludes suspended sessions, and a resume of a suspended session passes the admission check",
+      "status": "WIRED",
+      "spec_anchor": "#2857-gateway-to-store",
+      "surface": "`pkg/api/v1/session/session.go` `CountsTowardConcurrencyCaps`, `pkg/gateway/session/sessionstore/pgstore/pgstore.go` `Store.CountActiveSessions`, `pkg/gateway/sessionserver/quota.go` `Server.admitResume`, `pkg/gateway/mcpfabric/mcptools/send_delivery.go` `mcpSend.admitResume`",
+      "note": "the tenant, user, runtime, and global counts leave suspended sessions out, and a resume that would exceed a cap is refused with the quota error while the session stays suspended"
+    },
+    {
+      "claim": "Coordinating replica reports a CH-ATTACH stream failure as runtime_crash, releases the pod with the failed disposition, and does not redial Attach",
+      "status": "WIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`pkg/gateway/session/executor/podstream.go` `endConn`, `pkg/gateway/sessionserver/stream_failure.go` `ReportAttachStreamFailure`, `pkg/gateway/sessionserver/failure.go` `applyFailureFromActive`",
+      "note": "endConn evicts the ended stream and hands its failure to the injected handler, which confirms this replica still coordinates the session and files a runtime_crash report that the failure funnel applies by releasing the pod with the failed disposition, with no new Attach dialed"
+    },
+    {
+      "claim": "Coordination lease adoption in the recovering and pod-holding states, with no lease and a released mirror for a podless suspended session",
+      "status": "WIRED",
+      "spec_anchor": "#register-entry-register",
+      "surface": "`pkg/gateway/coordination/coordination/coordination.go` `adoptedState`, `pkg/gateway/coordination/coordination/coordination.go` `podlessSuspended`, `pkg/gateway/coordination/coordination/coordination.go` `Sweeper.RecordHandoff`, `pkg/gateway/coordination/coordination/coordination.go` `Sweeper.releaseMirror`",
+      "note": "a peer adopts a lapsed REG-COORDLEASE on a resume_pending, awaiting_client_action, or pod-holding running, input_required, or suspended row through the generation compare-and-swap, and releases the lease and the mirror entry of a suspended row whose pod was released"
+    },
+    {
+      "claim": "Coordination sweeper and crash-takeover re-adopt",
+      "status": "WIRED",
+      "spec_anchor": "#register-entry-register",
+      "surface": "`cmd/lenny-gateway/workers.go:1298-1300`, `coordination_seams.go:199-251`"
+    },
+    {
+      "claim": "Coordinator-loss hold state",
+      "status": "WIRED",
+      "spec_anchor": "#2852-pod-to-gateway",
+      "surface": "interceptors `pkg/adapter/transport.go:46-47`; sole arm `pkg/adapter/adapterevents.go:125`"
+    },
+    {
+      "claim": "Credential lease extension addressed to the session's own lease set",
+      "status": "WIRED",
+      "spec_anchor": "#2853-intra-pod",
+      "surface": "`pkg/adapter/credentials.go` `ExtendCredentialLease` into `extendCredentialLeaseSlot` (`pkg/adapter/slotcreds.go`), reached from `cmd/lenny-gateway/cred_renewal.go` `(*credRenewalWiring).onExtend` through `pkg/gateway/runtime/adapterclient/client.go` `ExtendCredentialLease`",
+      "note": "the extension re-arms the addressed session's own expiry timer and touches neither its credential file nor a co-tenant's deadline"
+    },
+    {
+      "claim": "Credential revocation addressed to the session's own lease file",
+      "status": "UNWIRED",
+      "spec_anchor": "#2853-intra-pod",
+      "deferral_id": "R14",
+      "surface": "`pkg/adapter/credentials.go` `RevokeCredentials` into `revokeCredentialsSlot` (`pkg/adapter/slotcreds.go`)",
+      "note": "the handler drops the named providers from the addressed session's own credential file, and no gateway caller invokes the adapter's RevokeCredentials; the Token Service revocation the gateway does call is a separate service and is not part of this claim"
+    },
+    {
+      "claim": "Credential rotation addressed to the session's own lease file",
+      "status": "WIRED",
+      "spec_anchor": "#2853-intra-pod",
+      "surface": "`pkg/adapter/credentials.go` `RotateCredentials` into `rotateCredentialsSlot` (`pkg/adapter/slotcreds.go`), reached from `cmd/lenny-gateway/cred_renewal.go` `(*credRenewalWiring).onRenewed` and `cmd/lenny-gateway/cred_fallback.go` `proxyFallbackRotator.Rotate` through `pkg/gateway/runtime/adapterclient/client.go` `RotateCredentials`",
+      "note": "the rotation rewrites the addressed session's own /run/lenny/slots/{sessionId}/credentials.json first, so a co-tenant's file is untouched; the pod-wide per-provider in-flight completion gate and its 300s ceiling run after that rewrite, inside rotateProviderFull, on Full-level runtimes only, and carry no session dimension"
+    },
+    {
+      "claim": "Dead-connection binding eviction",
+      "status": "WIRED",
+      "spec_anchor": "#register-entry-register",
+      "surface": "`pkg/gateway/coordination/coordination/coordination.go:332-338`"
+    },
+    {
+      "claim": "Eviction-API admission gate on `pods/eviction`",
+      "status": "WIRED",
+      "spec_anchor": "#2856-control-plane",
+      "surface": "`charts/lenny/templates/admission-policies/drain-readiness-webhook.yaml:11`, `charts/lenny/values.yaml:1696`"
+    },
+    {
+      "claim": "ExportPathsRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
+      "claim": "ExtendCredentialLeaseRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
+      "claim": "Gateway preStop drain, barrier plus tiered per-session loop",
+      "status": "WIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`cmd/lenny-gateway/httpsurface.go:642-643`, `pkg/gateway/podlifecycle/prestop/prestop.go:390-451`"
+    },
+    {
+      "claim": "Idle suspension seals, checkpoints, and suspends an idle running session and releases its pod or slot",
+      "status": "WIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`pkg/gateway/runtime/watchdog/watchdog.go` `sweepIdle`, `pkg/gateway/sessionserver/suspend_release.go` `SuspendIdle`",
+      "note": "a running session with no qualifying activity for maxClientIdleSeconds is sealed on the adapter, checkpointed, and written suspended, and its pod or slot is released at once"
+    },
+    {
+      "claim": "In-flight RPC cancellation on a generation gap",
+      "status": "ABSENT",
+      "spec_anchor": "#286-exclusivity-and-concurrency-model",
+      "surface": "conceded at `pkg/adapter/coordination.go:81-82`",
+      "deferral_id": "R16"
+    },
+    {
+      "claim": "Input-wait resolution across replicas",
+      "status": "ABSENT",
+      "spec_anchor": "#2854-inter-replica",
+      "surface": "`pkg/gateway/session/inputwait/inputwait.go:41-49` is process-local",
+      "deferral_id": "R20",
+      "note": "the pending lenny/request_input call waits on the replica the pod's LNK-GWCONTROL connection reached, and no store carries it to another replica"
+    },
+    {
+      "claim": "Inter-replica forward listener with gateway peer validation (NET-072)",
+      "status": "WIRED",
+      "spec_anchor": "#2854-inter-replica",
+      "surface": "`pkg/gateway/sessionserver/holder_forward_listener.go` `HolderForwardServerTLS` validates the gateway peer, and `cmd/lenny-gateway/holder_forward_listener.go` `buildHolderForwardServer` serves the listener on gateway.holderForwardPort",
+      "note": "\u00a710.3 NET-072: both replicas present the gateway replica certificate, the listener rejects plaintext, one-way TLS, and any other cluster-CA certificate at handshake, and outside dev mode a gateway with a lease store refuses to start without the material"
+    },
+    {
+      "claim": "InterruptRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
+      "claim": "Kubelet probes on agent-pod containers",
+      "status": "ABSENT",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "no probe field anywhere in `podspec.go`",
+      "deferral_id": "R6"
+    },
+    {
+      "claim": "LLM proxy (gateway)",
+      "status": "WIRED",
+      "spec_anchor": "#2855-pod-egress",
+      "surface": "`cmd/lenny-gateway/main.go:475`, `charts/lenny/values.yaml:1695`"
+    },
+    {
+      "claim": "LLM proxy (pod client)",
+      "status": "ABSENT",
+      "spec_anchor": "#2855-pod-egress",
+      "surface": "`cmd/lenny-gateway/main.go:475`, `charts/lenny/values.yaml:1695`",
+      "deferral_id": "R11"
+    },
+    {
+      "claim": "Lease or mirror release on gateway drain",
+      "status": "ABSENT",
+      "spec_anchor": "#register-entry-register",
+      "surface": "`cmd/lenny-gateway/runserver.go:213-252` closes stores only",
+      "deferral_id": "R16"
+    },
+    {
+      "claim": "Lifecycle drain releases the pod of a session bound on another gateway replica before the drained scope's rows are erased",
+      "status": "WIRED",
+      "spec_anchor": "#2857-gateway-to-store",
+      "surface": "`pkg/gateway/externalapi/admin/drain.go` `DrainSessions` publishes its transitioned sessions on CH-BINDRELEASE through `bindReleaseFanOut.TerminateUserSessions`",
+      "note": "after its forced transitions the drain hands the transitioned session identifiers to the binding-release fan-out, which releases the bindings this replica holds and publishes the list so each peer's subscriber releases the bindings it holds; the erasure, tenant-deletion, and tenant-suspension drains share the one fan-out the full_revoke step uses, and a lost publish is not redelivered"
+    },
+    {
+      "claim": "Mirror seed at bind",
+      "status": "ABSENT",
+      "spec_anchor": "#register-entry-register",
+      "surface": "no `coordlease` reference in `pkg/gateway/sessionserver/`",
+      "deferral_id": "R13"
+    },
+    {
+      "claim": "Object-store chunk upload and restore",
+      "status": "WIRED",
+      "spec_anchor": "#2855-pod-egress",
+      "surface": "`pkg/adapter/checkpointtransport.go:76-117`"
+    },
+    {
+      "claim": "Off-holder request forward on CH-HOLDERFORWARD",
+      "status": "WIRED",
+      "spec_anchor": "#2854-inter-replica",
+      "surface": "`pkg/gateway/sessionserver/holder_forward.go` `forwardToHolder`, called by `handleTerminalWrite`, `handleInterrupt`, `handleUploadToSession`, `resumeHeldPodRequest`, and `parseMessageBatch`, and `ForwardToolCall`, called by the lenny/send_message and lenny/cancel_session handlers in `pkg/gateway/mcpfabric/mcptools/mcptools_register.go` `registerSessionLifecycleTools`",
+      "note": "each forwarded route and MCP tool site replays an off-holder request to the coordinating replica after its entry read and precondition and before any write, and answers 409 TARGET_NOT_READY when the forward is not delivered or its outcome is unknown"
+    },
+    {
+      "claim": "Orphan-claim garbage collector",
+      "status": "WIRED",
+      "spec_anchor": "#register-entry-register",
+      "surface": "`pkg/controller/warmpool/gc.go:231-283`"
+    },
+    {
+      "claim": "Orphan-session reconciler",
+      "status": "WIRED",
+      "spec_anchor": "#2852-pod-to-gateway",
+      "surface": "`pkg/gateway/session/orphansession/orphansession.go:45`, `:58`, launched ungated at `cmd/lenny-gateway/workers.go:1088`"
+    },
+    {
+      "claim": "Platform and connector MCP sockets",
+      "status": "WIRED",
+      "spec_anchor": "#2853-intra-pod",
+      "surface": "`pkg/adapter/platformmcp.go:16-51`, `connectormcp.go:59-92`"
+    },
+    {
+      "claim": "Pod release returns only the credential leases at or below the binding's coordination generation",
+      "status": "WIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`pkg/gateway/podlifecycle/podsession/credentiallease.go` `Binder.releasePodCredentials`, `pkg/gateway/credentials/credassign/credassign.go` `Service.ReleaseThrough`",
+      "note": "a pod release returns the leases its own binding minted and the session's leases recorded at or below its generation, so a later incarnation's leases stay in place"
+    },
+    {
+      "claim": "PodDisruptionBudget for a busy pod",
+      "status": "ABSENT",
+      "spec_anchor": "#2856-control-plane",
+      "surface": "`pkg/controller/warmpool/pdb.go:70-76`",
+      "deferral_id": "R16"
+    },
+    {
+      "claim": "Postgres `coordination_lease` mirror write",
+      "status": "WIRED",
+      "spec_anchor": "#register-entry-register",
+      "surface": "`pkg/gateway/coordination/coordination/coordination.go:569`"
+    },
+    {
+      "claim": "Proxy SPIFFE lease binding",
+      "status": "UNWIRED",
+      "spec_anchor": "#2855-pod-egress",
+      "surface": "`pkg/credential/lease.go:335`; `PodSpiffeURI` never set",
+      "deferral_id": "R14"
+    },
+    {
+      "claim": "Quiesce enforcement against operational RPCs",
+      "status": "ABSENT",
+      "spec_anchor": "#286-exclusivity-and-concurrency-model",
+      "surface": "`coord.quiesced` has no reader in any handler",
+      "deferral_id": "R16"
+    },
+    {
+      "claim": "Redis coordination lease",
+      "status": "WIRED",
+      "spec_anchor": "#register-entry-register",
+      "surface": "`leasestore.go:98-105`, acquired at four bind sites"
+    },
+    {
+      "claim": "Redis hot routing cache",
+      "status": "UNWIRED",
+      "spec_anchor": "#2857-gateway-to-store",
+      "surface": "zero callers outside its package",
+      "deferral_id": "R13"
+    },
+    {
+      "claim": "Replica address in the REG-COORDLEASE holder value",
+      "status": "WIRED",
+      "spec_anchor": "#2854-inter-replica",
+      "surface": "`pkg/gateway/sessionserver/holder_forward.go` `HolderValue` builds the holder value, which `cmd/lenny-gateway/coordination_identity.go` `coordinationHolder` passes to every lease and mirror consumer",
+      "note": "\u00a710.1.1 Replica address: the holder value carries the replica identity, a per-process token, and the forward-listener address, and a gateway with a lease store refuses to start without a valid advertise address"
+    },
+    {
+      "claim": "ReportUsageRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
+      "claim": "Resume driver restores a resume_pending session onto a replacement pod and re-attaches CH-ATTACH",
+      "status": "WIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`pkg/gateway/runtime/watchdog/watchdog.go` `sweepResumePending`, `pkg/gateway/sessionserver/resume_driver.go` `DriveResume`, `pkg/gateway/sessionserver/resume_rebind.go` `resumeOnPod`",
+      "note": "the watchdog hands each resume_pending row to the driver, which starts one restore attempt only on the replica holding the session's coordination lease, writes resuming, claims a replacement pod, re-attaches the session on it, and commits running"
+    },
+    {
+      "claim": "ResumeRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
+      "claim": "RevokeCredentialsRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
+      "claim": "RotateCredentialsRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
+      "claim": "Runtime lifecycle channel (at deployment)",
+      "status": "UNWIRED",
+      "spec_anchor": "#2853-intra-pod",
+      "surface": "`cmd/lenny-adapter/main.go:373`; no `--runtime-ops-socket` setter",
+      "deferral_id": "R12"
+    },
+    {
+      "claim": "Runtime lifecycle channel (in the binary)",
+      "status": "WIRED",
+      "spec_anchor": "#2853-intra-pod",
+      "surface": "`cmd/lenny-adapter/main.go:373`; no `--runtime-ops-socket` setter"
+    },
+    {
+      "claim": "Runtime message socket",
+      "status": "WIRED",
+      "spec_anchor": "#2853-intra-pod",
+      "surface": "`pkg/adapter/socketruntime.go:60`, `cmd/lenny-adapter/main.go:354`"
+    },
+    {
+      "claim": "Runtime-operations events schema asserted by the external-adapter compliance suite",
+      "status": "ABSENT",
+      "spec_anchor": "#287-wire-contract-artifact-register",
+      "deferral_id": "R8",
+      "surface": "cmd/lenny-compliance/schemavalidate.go",
+      "note": "the suite compiles two schema files and reads no third, while spec/24, the adapter-contract reference, and the publishing guide all name schemas/runtime-ops-events.schema.json as an artifact it asserts against"
+    },
+    {
+      "claim": "SDK-warm `ConfigureWorkspace` and `DemoteSDK` at the pod",
+      "status": "WIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`pkg/adapter/sdkwarm.go:211-214`, `:267-270`; no `SDKWarmRuntime` in a rendered pod"
+    },
+    {
+      "claim": "SSE backlog across replicas",
+      "status": "WIRED",
+      "spec_anchor": "#2857-gateway-to-store",
+      "surface": "`pkg/gateway/session/sessionevents/events.go:420-425`, relay at `cmd/lenny-gateway/stores.go:2270`"
+    },
+    {
+      "claim": "SSE live tail across replicas",
+      "status": "UNWIRED",
+      "spec_anchor": "#2857-gateway-to-store",
+      "surface": "`pkg/gateway/session/sessionevents/redisrelay.go:157` has no caller",
+      "deferral_id": "R19"
+    },
+    {
+      "claim": "SealSession unary RPC on the CH-ATTACH service",
+      "status": "WIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`pkg/adapter/sessionseal.go` `Server.SealSession`, `pkg/gateway/runtime/adapterclient/client.go` `Client.SealSession`",
+      "note": "the gateway calls SealSession with the session's coordination generation before an idle suspension, and the adapter answers sealed or the session's idle age"
+    },
+    {
+      "claim": "SendMessageRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
+      "claim": "Service-account token credential on `GatewayControl`",
+      "status": "UNWIRED",
+      "spec_anchor": "#link-register",
+      "surface": "`gatewaycontrol/satoken.go:64`",
+      "deferral_id": "R12"
+    },
+    {
+      "claim": "Session age measured as active time",
+      "status": "WIRED",
+      "spec_anchor": "#2857-gateway-to-store",
+      "surface": "`pkg/gateway/session/sessionstore/sessionstore.go` `ActiveAge`, `pkg/gateway/runtime/watchdog/watchdog.go` `Watchdog.sweepMaxAge`",
+      "note": "the watchdog compares the session's accumulated active time, which pauses in suspended and the recovery states, with maxSessionAgeSeconds"
+    },
+    {
+      "claim": "Session inbox redelivery",
+      "status": "WIRED",
+      "spec_anchor": "#2854-inter-replica",
+      "surface": "`pkg/gateway/sessionserver/messages_delivery.go` `forwardMessageBatch` and `pkg/gateway/sessionserver/held_delivery.go` `HoldUndeliveredForward` hold a message whose forward to the coordinator is not delivered in the session DLQ",
+      "note": "a message carrying no inReplyTo to a running or input_required session whose forward is not delivered is held in the session DLQ with the recovering-row TTL under \u00a729.3 Forwarding rule 6, and the coordinating replica delivers it at its next delivery point"
+    },
+    {
+      "claim": "ShutdownRequest bind_attempt and unconditional_teardown teardown precondition",
+      "status": "WIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`pkg/adapter/session.go` `Server.Shutdown` two-field precondition and bind-attempt comparison, `pkg/gateway/podlifecycle/podsession/slotbinder.go` `Binder.compensateFailedSlotBind`",
+      "note": "the adapter requires exactly one of the two fields, compares the carried token against the entry it holds, and performs neither teardown on a mismatch; the gateway's compensation names the token its own attempt minted and reads the outcome"
+    },
+    {
+      "claim": "ShutdownRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
+      "claim": "SignalDeadlineRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
+      "claim": "Single-consumer enforcement on `Attach` at the pod",
+      "status": "ABSENT",
+      "spec_anchor": "#286-exclusivity-and-concurrency-model",
+      "surface": "no registry or counter anywhere in `pkg/adapter/attach.go`",
+      "deferral_id": "R20"
+    },
+    {
+      "claim": "Supervised cleanupCommands at the agent UID in the runtime container",
+      "status": "WIRED",
+      "spec_anchor": "#2853-intra-pod",
+      "surface": "`pkg/adapter/supervisedruntime.go` `SupervisedRuntime.RunCleanup`, `pkg/adapter/podscrub.go` `Server.applySupervisedScrub`, `pkg/adapter/scrub/scrub.go` `Run`"
+    },
+    {
+      "claim": "Suspended-session lifetime expiry",
+      "status": "WIRED",
+      "spec_anchor": "#2857-gateway-to-store",
+      "surface": "`pkg/gateway/runtime/watchdog/suspended.go` `Watchdog.expireSuspendedIfDue`, `pkg/gateway/runtime/watchdog/watchdog.go` `EffectiveMaxSuspendedSessionSeconds`",
+      "note": "the watchdog expires a session that stayed suspended past the operator-tunable suspended-session lifetime"
+    },
+    {
+      "claim": "Suspension release checkpoints a held-pod suspended session at maxSuspendedPodHoldSeconds and releases its pod",
+      "status": "WIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`pkg/gateway/runtime/watchdog/suspended.go` `sweepSuspended`, `pkg/gateway/sessionserver/suspend_release.go` `ReleaseSuspendedPod`",
+      "note": "the watchdog hands a suspended session whose pod hold ended to the coordinating replica, which checkpoints the workspace, clears the row's pod assignment, and releases the pod while the session stays suspended"
+    },
+    {
+      "claim": "Tool-approval resolution across replicas",
+      "status": "WIRED",
+      "spec_anchor": "#2854-inter-replica",
+      "surface": "`pkg/gateway/sessionserver/toolapproval.go:158-167` store poll"
+    },
+    {
+      "claim": "UnsealSession unary RPC on the CH-ATTACH service",
+      "status": "WIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`pkg/adapter/sessionseal.go` `Server.UnsealSession`, `pkg/gateway/runtime/adapterclient/client.go` `Client.UnsealSession`",
+      "note": "the gateway lifts a seal when the idle suspension it guarded does not complete, and the adapter admits messages to the session again"
+    },
+    {
+      "claim": "User erasure deletes each session's message queues",
+      "status": "WIRED",
+      "spec_anchor": "#2857-gateway-to-store",
+      "surface": "`cmd/lenny-gateway/adminrouter.go` `buildSessionScopedErasers`, `pkg/gateway/session/sessioninbox/coordinator.go` `Coordinator.EraseSession`",
+      "note": "the user-erasure job deletes the DLQ and durable inbox keys of each of the user's sessions, and tenant deletion Phase 4 erases them too: its session_message_queues entry in `cmd/lenny-gateway/tenant_erasers.go` lists the tenant's sessions from the primary and calls `Coordinator.EraseSession` for each"
+    },
+    {
+      "claim": "`AdapterEvicting` producer and consumer (consumer)",
+      "status": "ABSENT",
+      "spec_anchor": "#2852-pod-to-gateway",
+      "surface": "`pkg/adapter/adapterevents.go:248`; no hit outside `pkg/adapter`",
+      "deferral_id": "R16"
+    },
+    {
+      "claim": "`AdapterEvicting` producer and consumer (producer)",
+      "status": "UNWIRED",
+      "spec_anchor": "#2852-pod-to-gateway",
+      "surface": "`pkg/adapter/adapterevents.go:248`; no hit outside `pkg/adapter`",
+      "deferral_id": "R16"
+    },
+    {
+      "claim": "`Adapter` gRPC service, gateway to pod",
+      "status": "WIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`pkg/adapter/transport.go:50`, client `cmd/lenny-gateway/stores.go:2097`"
+    },
+    {
+      "claim": "`Attach` content stream",
+      "status": "WIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`pkg/gateway/session/executor/pod.go` `streamFor`, `pkg/gateway/session/executor/podstream.go` `attachConn`, handler `pkg/adapter/attach.go` `Server.Attach`",
+      "note": "the gateway opens one Attach stream per session on a context detached from the opening request and keeps it across turns, with one reader that hands each response to the turn holding the stream, until the binding is released, the stream is evicted, or the stream ends"
+    },
+    {
+      "claim": "`CheckpointBarrier`",
+      "status": "WIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`pkg/gateway/coordination/barrier/wiring.go:49`, handler `pkg/adapter/coordination.go:212`"
+    },
+    {
+      "claim": "`Checkpoint` stream and the pod operation lock",
+      "status": "WIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`pkg/gateway/checkpoint/checkpointer/checkpointer.go:522`, `pkg/adapter/oplock.go:74`"
+    },
+    {
+      "claim": "`CoordinatorFence`",
+      "status": "WIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`pkg/gateway/coordination/coordfence/coordfence.go:160`, handler `pkg/adapter/coordination.go:85`"
+    },
+    {
+      "claim": "`GatewayControl` service",
+      "status": "WIRED",
+      "spec_anchor": "#link-register",
+      "surface": "`pkg/adapter/gatewaylink.go:36-79`, handlers under `leasecontrol/`"
+    },
+    {
+      "claim": "`agent_pod_state` mirror, controller write and gateway read",
+      "status": "WIRED",
+      "spec_anchor": "#register-entry-register",
+      "surface": "`pkg/controller/warmpool/controller.go:248`, read at `pkg/gateway/session/orphansession/orphansession.go:50-55`"
+    },
+    {
+      "claim": "`coordlease.GetBySession` routing read",
+      "status": "UNWIRED",
+      "spec_anchor": "#register-entry-register",
+      "surface": "definitions and tests only",
+      "deferral_id": "R13"
+    },
+    {
+      "claim": "`grpc.health.v1.Health` service on the pod (client)",
+      "status": "ABSENT",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`pkg/adapter/transport.go:52-54`; no health client anywhere in the gateway or the controller",
+      "deferral_id": "R23"
+    },
+    {
+      "claim": "`grpc.health.v1.Health` service on the pod (server)",
+      "status": "WIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`pkg/adapter/transport.go:52-54`; no health client anywhere in the gateway or the controller"
+    },
+    {
+      "claim": "`ready_for_input` signal",
+      "status": "ABSENT",
+      "spec_anchor": "#2853-intra-pod",
+      "surface": "comments only",
+      "deferral_id": "R20"
+    },
+    {
+      "claim": "bind_attempt carried on the six slot-entry requests and stamped once on create",
+      "status": "WIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`pkg/adapter/slot.go` `Server.ensureSlotStateLocked`, `pkg/gateway/podlifecycle/podsession/bindattempt.go` `newBindAttempt`",
+      "note": "the adapter writes the token on the create branch alone and compares it on every resolve"
+    },
+    {
+      "claim": "gRPC control stream `Adapter/AdapterEvents` (client)",
+      "status": "UNWIRED",
+      "spec_anchor": "#2852-pod-to-gateway",
+      "surface": "handler `pkg/adapter/adapterevents.go:108`; one comment in `pkg/gateway`",
+      "deferral_id": "R12"
+    },
+    {
+      "claim": "gRPC control stream `Adapter/AdapterEvents` (server)",
+      "status": "WIRED",
+      "spec_anchor": "#2852-pod-to-gateway",
+      "surface": "handler `pkg/adapter/adapterevents.go:108`; one comment in `pkg/gateway`"
+    },
+    {
+      "claim": "heartbeat frame names its session in sessionId",
+      "status": "WIRED",
+      "spec_anchor": "#2853-intra-pod",
+      "surface": "`pkg/adapter/heartbeat.go` `heartbeatMonitor.frame`, `pkg/adapter/heartbeat.go` `Server.startHeartbeatLocked`",
+      "note": "the adapter runs one heartbeat monitor per session from its written session_start and stamps the session's identifier on every heartbeat"
+    },
+    {
+      "claim": "heartbeat_ack sessionId and busy fields, with the heartbeat busy compliance check",
+      "status": "WIRED",
+      "spec_anchor": "#2853-intra-pod",
+      "surface": "`pkg/adapter/activity.go` `observeHeartbeatAck`, `sdks/runtime/go/runtime/session.go` `busyCounts`, `cmd/lenny-compliance/heartbeatbusy.go` `checkHeartbeatBusy`",
+      "note": "the runtime SDK answers busy true for a session while it does work for it, the adapter counts a busy ack that names a session as that session's activity, and the compliance suite checks the busy report"
+    },
+    {
+      "claim": "third-party adapter conformance harness for the \u00a715.4 slot-bind rules",
+      "status": "ABSENT",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "deferral_id": "R8",
+      "surface": "`tests/tier3_contract/adapter_bind_attempt/`, `tests/tier10_conformance/slot_bind_attempt_conformance_test.go`",
+      "note": "the rules are normative for any adapter implementation; cmd/lenny-compliance drives a runtime binary over JSONL against a fake adapter and imports no gRPC, so the project runs the clauses against its own adapter only"
+    }
+  ]
+}

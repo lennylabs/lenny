@@ -1,0 +1,391 @@
+// SPDX-License-Identifier: MIT
+
+package adapter_test
+
+import (
+	"context"
+	"encoding/json"
+	"net"
+	"os"
+	"path/filepath"
+	"sync"
+	"testing"
+
+	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/adapter/mcp"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+)
+
+func TestPlatformMCP(t *testing.T) {
+	s, _, _ := sessionServer(t)
+	manifestDir := t.TempDir()
+	s.ManifestDir = manifestDir
+	s.MCPSocket = shortSocketName(t, "m")
+	s.PeerAuth = adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
+
+	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+			UnconditionalTeardown: true,
+			SessionId:             &adapterv1.SessionId{Value: "sess-1"},
+		})
+	})
+
+	// The manifest advertises the platform MCP socket.
+	b, err := os.ReadFile(filepath.Join(manifestDir, adapter.ManifestFilename))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var m adapter.Manifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	if m.PlatformMcpServer == nil || m.PlatformMcpServer.Socket != s.MCPSocket {
+		t.Fatalf("manifest platformMcpServer = %+v, want socket %q", m.PlatformMcpServer, s.MCPSocket)
+	}
+
+	// The platform MCP server is listening: a connection presenting the
+	// manifest nonce completes the initialize handshake.
+	conn, err := net.Dial("unix", s.MCPSocket)
+	if err != nil {
+		t.Fatalf("dial platform MCP socket: %v", err)
+	}
+	defer conn.Close()
+	enc, dec := json.NewEncoder(conn), json.NewDecoder(conn)
+	if err := enc.Encode(map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "initialize",
+		"params": map[string]any{
+			"_lennyNonce":     m.MCPNonce,
+			"protocolVersion": "2025-03-26",
+		},
+	}); err != nil {
+		t.Fatalf("send initialize: %v", err)
+	}
+	var resp map[string]json.RawMessage
+	if err := dec.Decode(&resp); err != nil {
+		t.Fatalf("read initialize response: %v", err)
+	}
+	if _, isErr := resp["error"]; isErr {
+		t.Errorf("platform MCP initialize errored: %s", resp["error"])
+	}
+	if resp["result"] == nil {
+		t.Error("platform MCP initialize returned no result")
+	}
+}
+
+// spec: §4.7 — with SO_PEERCRED disabled (nonce-only mode),
+// the platform MCP server supplements the manifest nonce with a
+// per-connection HMAC challenge before completing initialize.
+func TestPlatformMCPNonceOnlyChallenge_spec_4_7(t *testing.T) {
+	s, _, _ := sessionServer(t)
+	s.ManifestDir = t.TempDir()
+	s.MCPSocket = shortSocketName(t, "m")
+	// Nonce-only mode applies no peer check, so an expected UID the test
+	// process does not run as still admits its dial, as the §4.7.11
+	// nonce-only fallback states.
+	s.PeerAuth = adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid()) + 1, NonceOnly: true}
+
+	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+			UnconditionalTeardown: true,
+			SessionId:             &adapterv1.SessionId{Value: "sess-1"},
+		})
+	})
+
+	b, err := os.ReadFile(filepath.Join(s.ManifestDir, adapter.ManifestFilename))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var m adapter.Manifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+
+	conn, err := net.Dial("unix", s.MCPSocket)
+	if err != nil {
+		t.Fatalf("dial platform MCP socket: %v", err)
+	}
+	defer conn.Close()
+	enc, dec := json.NewEncoder(conn), json.NewDecoder(conn)
+	if err := enc.Encode(map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "initialize",
+		"params": map[string]any{"_lennyNonce": m.MCPNonce, "protocolVersion": "2025-03-26"},
+	}); err != nil {
+		t.Fatalf("send initialize: %v", err)
+	}
+
+	// The server's next frame is the adapterChallenge, not the initialize
+	// result.
+	var challengeFrame map[string]string
+	if err := dec.Decode(&challengeFrame); err != nil {
+		t.Fatalf("read challenge frame: %v", err)
+	}
+	challenge := challengeFrame[mcp.ChallengeParamKey]
+	if challenge == "" {
+		t.Fatalf("nonce-only server sent %v, want a %s frame", challengeFrame, mcp.ChallengeParamKey)
+	}
+	if err := enc.Encode(map[string]string{
+		mcp.ChallengeResponseParamKey: mcp.ExpectedChallengeResponse(m.MCPNonce, challenge),
+	}); err != nil {
+		t.Fatalf("send challenge response: %v", err)
+	}
+
+	var resp map[string]json.RawMessage
+	if err := dec.Decode(&resp); err != nil {
+		t.Fatalf("read initialize response after challenge: %v", err)
+	}
+	if resp["result"] == nil {
+		t.Errorf("initialize after challenge returned no result: %v", resp)
+	}
+}
+
+// fakePlatformForwarder records the calls it is forwarded and returns a
+// canned catalog / result. The mutex guards the captured calls so a test
+// reading them after a concurrent server-goroutine forward stays
+// race-free. The Attach loop's set_tracing_context path is one such
+// concurrent writer, and it forwards only when the frame addresses the
+// stream that delivered it (§28.5.3), so the recorded call count is what
+// an addressing test asserts against. spec: §9.1. F-9.1.1.
+type fakePlatformForwarder struct {
+	list       []mcp.Tool
+	result     json.RawMessage
+	mu         sync.Mutex
+	gotSession string
+	gotTool    string
+	gotArgs    json.RawMessage
+	callCount  int
+	sessions   []string
+}
+
+func (f *fakePlatformForwarder) ListPlatformTools(_ context.Context, sessionID string) ([]mcp.Tool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.gotSession = sessionID
+	return f.list, nil
+}
+
+func (f *fakePlatformForwarder) CallPlatformTool(_ context.Context, sessionID, toolName string, arguments json.RawMessage) (json.RawMessage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.gotSession = sessionID
+	f.gotTool = toolName
+	f.gotArgs = append(json.RawMessage(nil), arguments...)
+	f.callCount++
+	f.sessions = append(f.sessions, sessionID)
+	return f.result, nil
+}
+
+// calls returns the number of CallPlatformTool forwards and the session id
+// of each, under the lock, so a test can assert that a frame produced
+// exactly one call against exactly one session.
+func (f *fakePlatformForwarder) calls() (int, []string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.callCount, append([]string(nil), f.sessions...)
+}
+
+// lastCall returns the most recent CallPlatformTool arguments under the
+// lock, for assertions in tests that forward from a server goroutine.
+func (f *fakePlatformForwarder) lastCall() (session, tool string, args json.RawMessage) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.gotSession, f.gotTool, f.gotArgs
+}
+
+// spec: §9.1 — when a PlatformForwarder is wired, the platform
+// MCP server advertises the gateway's platform tool catalog on tools/list
+// and forwards a runtime's tools/call to the gateway scoped to this pod's
+// session. F-9.1.1.
+func TestPlatformMCPForwardsToGateway_spec_9_1(t *testing.T) {
+	s, _, _ := sessionServer(t)
+	s.ManifestDir = t.TempDir()
+	s.MCPSocket = shortSocketName(t, "m")
+	s.PeerAuth = adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
+	fwd := &fakePlatformForwarder{
+		list:   []mcp.Tool{{Name: "lenny/delegate_task", Description: "delegate"}},
+		result: json.RawMessage(`{"content":[{"type":"text","text":"forwarded"}]}`),
+	}
+	s.PlatformForwarder = fwd
+
+	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+			UnconditionalTeardown: true,
+			SessionId:             &adapterv1.SessionId{Value: "sess-1"},
+		})
+	})
+
+	b, err := os.ReadFile(filepath.Join(s.ManifestDir, adapter.ManifestFilename))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var m adapter.Manifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+
+	conn, err := net.Dial("unix", s.MCPSocket)
+	if err != nil {
+		t.Fatalf("dial platform MCP socket: %v", err)
+	}
+	defer conn.Close()
+	enc, dec := json.NewEncoder(conn), json.NewDecoder(conn)
+	mustSend := func(id int, method string, params any) {
+		if err := enc.Encode(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
+			t.Fatalf("send %s: %v", method, err)
+		}
+	}
+	mustRead := func() map[string]json.RawMessage {
+		var resp map[string]json.RawMessage
+		if err := dec.Decode(&resp); err != nil {
+			t.Fatalf("read response: %v", err)
+		}
+		return resp
+	}
+
+	mustSend(1, "initialize", map[string]any{"_lennyNonce": m.MCPNonce, "protocolVersion": "2025-03-26"})
+	mustRead()
+
+	// tools/list returns the gateway catalog (fetched via the forwarder).
+	mustSend(2, "tools/list", nil)
+	listResp := mustRead()
+	var list struct {
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(listResp["result"], &list); err != nil {
+		t.Fatalf("decode tools/list: %v", err)
+	}
+	if len(list.Tools) != 1 || list.Tools[0].Name != "lenny/delegate_task" {
+		t.Errorf("tools/list = %+v, want the forwarder catalog", list.Tools)
+	}
+	if fwd.gotSession != "sess-1" {
+		t.Errorf("forwarder list session = %q, want sess-1", fwd.gotSession)
+	}
+
+	// tools/call forwards to the gateway scoped to this session.
+	mustSend(3, "tools/call", map[string]any{"name": "lenny/delegate_task", "arguments": map[string]any{}})
+	callResp := mustRead()
+	if _, isErr := callResp["error"]; isErr {
+		t.Fatalf("tools/call errored: %s", callResp["error"])
+	}
+	if fwd.gotSession != "sess-1" || fwd.gotTool != "lenny/delegate_task" {
+		t.Errorf("forwarder call = (%q, %q), want (sess-1, lenny/delegate_task)", fwd.gotSession, fwd.gotTool)
+	}
+	if string(callResp["result"]) != `{"content":[{"type":"text","text":"forwarded"}]}` {
+		t.Errorf("tools/call result = %s, want the gateway result verbatim", callResp["result"])
+	}
+}
+
+func TestPlatformMCPRejectsBadNonce(t *testing.T) {
+	s, _, _ := sessionServer(t)
+	s.ManifestDir = t.TempDir()
+	s.MCPSocket = shortSocketName(t, "m")
+	s.PeerAuth = adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
+
+	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+			UnconditionalTeardown: true,
+			SessionId:             &adapterv1.SessionId{Value: "sess-1"},
+		})
+	})
+
+	conn, err := net.Dial("unix", s.MCPSocket)
+	if err != nil {
+		t.Fatalf("dial platform MCP socket: %v", err)
+	}
+	defer conn.Close()
+	enc, dec := json.NewEncoder(conn), json.NewDecoder(conn)
+	if err := enc.Encode(map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "initialize",
+		"params": map[string]any{"_lennyNonce": "the-wrong-nonce"},
+	}); err != nil {
+		t.Fatalf("send initialize: %v", err)
+	}
+	// The server rejects the bad nonce with an immediate close.
+	var resp map[string]json.RawMessage
+	if err := dec.Decode(&resp); err == nil {
+		t.Error("platform MCP server answered an initialize with a bad nonce")
+	}
+}
+
+// initializeOverMCP dials socket, sends one initialize with nonce, and
+// returns the decoded response, or ok=false when the server closed the
+// connection without answering.
+func initializeOverMCP(t *testing.T, socket, nonce string) (map[string]json.RawMessage, bool) {
+	t.Helper()
+	conn, err := net.Dial("unix", socket)
+	if err != nil {
+		t.Fatalf("dial platform MCP socket: %v", err)
+	}
+	defer conn.Close()
+	enc, dec := json.NewEncoder(conn), json.NewDecoder(conn)
+	if err := enc.Encode(map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "initialize",
+		"params": map[string]any{"_lennyNonce": nonce, "protocolVersion": "2025-03-26"},
+	}); err != nil {
+		t.Fatalf("send initialize: %v", err)
+	}
+	var resp map[string]json.RawMessage
+	if err := dec.Decode(&resp); err != nil {
+		return nil, false
+	}
+	return resp, true
+}
+
+// spec: 4.7.11 (Separate UIDs and connection authentication)
+func TestEmbeddedPostureAppliesNoPeerCheckAndKeepsTheNonce_spec_4_7_11(t *testing.T) {
+	s, _, _ := sessionServer(t)
+	s.ManifestDir = t.TempDir()
+	s.MCPSocket = shortSocketName(t, "m")
+	// The embedded posture names no agent UID. The zero-value posture admits
+	// only UID 0, so on a Linux host a non-root test process reaching the
+	// server shows that no peer check runs.
+	s.PeerAuth = adapter.EmbeddedPeerAuth()
+	if s.PeerAuth.NonceOnly {
+		t.Fatal("EmbeddedPeerAuth set NonceOnly, which adds the challenge-response")
+	}
+
+	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+			UnconditionalTeardown: true,
+			SessionId:             &adapterv1.SessionId{Value: "sess-1"},
+		})
+	})
+	b, err := os.ReadFile(filepath.Join(s.ManifestDir, adapter.ManifestFilename))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var m adapter.Manifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+
+	// The manifest nonce authenticates, and initialize completes with no
+	// challenge step.
+	resp, ok := initializeOverMCP(t, s.MCPSocket, m.MCPNonce)
+	if !ok {
+		t.Fatal("the embedded MCP server closed a connection presenting the manifest nonce")
+	}
+	if _, isErr := resp["error"]; isErr || resp["result"] == nil {
+		t.Fatalf("initialize with the manifest nonce = %v, want a result with no challenge", resp)
+	}
+	// A wrong nonce is still refused.
+	if _, ok := initializeOverMCP(t, s.MCPSocket, "the-wrong-nonce"); ok {
+		t.Error("the embedded MCP server answered an initialize with a bad nonce")
+	}
+}

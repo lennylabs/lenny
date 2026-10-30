@@ -1,0 +1,183 @@
+suite: lenny-controller rbac
+templates:
+  - controller-rbac.yaml
+tests:
+  - it: renders the service account, cluster role, and bindings
+    asserts:
+      - hasDocuments:
+          count: 5
+
+  - it: creates the lenny-controller service account
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: ServiceAccount
+      - equal:
+          path: metadata.name
+          value: lenny-controller
+
+  - it: defines a cluster role carrying access rules
+    documentIndex: 1
+    asserts:
+      - isKind:
+          of: ClusterRole
+      - isNotEmpty:
+          path: rules
+
+  - it: grants read-only Node and NetworkPolicy access for CIDR drift detection
+    documentIndex: 1
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["nodes"]
+            verbs: ["get", "list", "watch"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["networking.k8s.io"]
+            resources: ["networkpolicies"]
+            verbs: ["get", "list", "watch"]
+
+  - it: grants read-only Service access for the §13.2 NET-065 service-CIDR drift probe
+    documentIndex: 1
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["services"]
+            verbs: ["get", "list", "watch"]
+
+  # spec: §4.6.3 (RBAC enforcement) / §4.6.1 (occupancy projection,
+  # orphan-claim GC) / §4.7 (nonce-only carrier SSA write) — the
+  # WarmPoolController create/update/delete on Sandbox serves §4.6.1
+  # cert-expiry replacement and pod-failed retire, its patch on Sandbox
+  # backs the §4.7 nonce-only carrier SSA apply, and its
+  # get/list/watch/delete on SandboxClaim serves both the claim-existence
+  # occupancy projection (the `watch` drives Sandbox.status.phase) and the
+  # orphan-claim garbage collection (the `list`/`delete`).
+  - it: grants Sandbox create/update/patch/delete and SandboxClaim get/watch+list/delete for §4.6.1 occupancy projection and orphan-claim GC
+    documentIndex: 1
+    asserts:
+      # patch backs the §4.7 nonce-only carrier SSA write of the render
+      # decision onto Sandbox.spec.requireSoPeercred (recordNonceOnlyCarrier /
+      # clearNonceOnlyCarrier); SSA issues an HTTP PATCH, for which update is
+      # insufficient — same reason the sandboxes/status rule below needs patch.
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["lenny.dev"]
+            resources: ["sandboxes"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["lenny.dev"]
+            resources: ["sandboxclaims"]
+            verbs: ["get", "list", "watch", "delete"]
+      # The WarmPoolController retains the sandboxes/status write (it is
+      # the sole writer of Sandbox.status under §4.6.3).
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["lenny.dev"]
+            resources: ["sandboxtemplates/status", "sandboxwarmpools/status", "sandboxes/status", "runtimes/status"]
+            verbs: ["get", "update", "patch"]
+
+  - it: grants PodDisruptionBudget management for per-pool warm-pod PDBs (§4.6.1)
+    documentIndex: 1
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["policy"]
+            resources: ["poddisruptionbudgets"]
+            verbs: ["get", "list", "watch", "create", "update", "delete"]
+
+  - it: grants Pod and Pod-status writes for backing-pod lifecycle and the §6.1 readiness gate
+    documentIndex: 1
+    asserts:
+      # The Sandbox-to-Pod reconciler creates/deletes backing pods and
+      # patches the §4.6.1 lenny.dev/state label on the main pods resource.
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["pods"]
+            verbs: ["get", "list", "watch", "create", "patch", "delete"]
+      # §6.1 syncReadinessGate flips the lenny.dev/sandbox-ready readiness
+      # gate (a PodCondition write) through the pods/status subresource, a
+      # distinct RBAC resource. Without this grant the gate is never set, so
+      # every warm pod stays NotReady and the pool never fills.
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["pods/status"]
+            verbs: ["get", "patch", "update"]
+
+  - it: binds the cluster role to the controller service account
+    documentIndex: 2
+    asserts:
+      - isKind:
+          of: ClusterRoleBinding
+      - equal:
+          path: roleRef.name
+          value: lenny-controller
+      - equal:
+          path: subjects[0].name
+          value: lenny-controller
+
+  - it: grants leader-election lease access
+    documentIndex: 3
+    asserts:
+      - isKind:
+          of: Role
+      - equal:
+          path: metadata.name
+          value: lenny-controller-leader-election
+
+  # spec: §4.6.1 "Orphaned SandboxClaim detection", §4.6.3 "RBAC enforcement
+  # (coarse-grained backstop)" — the orphan-claim GC lists and deletes
+  # SandboxClaims and drains Sandboxes in every agent namespace, and the
+  # mirror reconciler lists Sandboxes and gets their SandboxWarmPool and
+  # SandboxTemplate. The grant is a ClusterRole bound by a ClusterRoleBinding,
+  # so it covers every namespace named in agentNamespaces without a
+  # per-namespace Role. Adding agent namespaces renders no extra RBAC object.
+  - it: covers every agent namespace through the cluster-scoped binding
+    set:
+      agentNamespaces:
+        - name: acme-agents
+        - name: globex-agents
+        - name: initech-agents
+    asserts:
+      - hasDocuments:
+          count: 5
+
+  - it: binds the GC and mirror grants cluster-wide rather than per namespace
+    documentIndex: 2
+    set:
+      agentNamespaces:
+        - name: acme-agents
+        - name: globex-agents
+    asserts:
+      - isKind:
+          of: ClusterRoleBinding
+      - equal:
+          path: roleRef.kind
+          value: ClusterRole
+      - equal:
+          path: subjects[0].namespace
+          value: NAMESPACE
+
+  - it: grants the mirror reconciler read access to pools and templates
+    documentIndex: 1
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["lenny.dev"]
+            resources: ["sandboxtemplates", "sandboxwarmpools"]
+            verbs: ["get", "list", "watch"]

@@ -1,0 +1,61 @@
+# {{.Name}}
+
+A Lenny agent runtime, scaffolded by `lenny runtime init`.
+
+- Language: {{.Language}}
+- Template: {{.Template}}
+- Integration level: {{.IntegrationLevel}}
+
+## Layout
+
+| File | Purpose |
+|---|---|
+| `{{.EntrypointFile}}` | Runtime entrypoint. The message handler is an echo placeholder; replace it with the agent logic. |
+| `runtime.yaml` | Runtime definition (§5.1). Declares `integrationLevel: {{.IntegrationLevel}}`. |
+| `Dockerfile` | Container image build. |
+| `Makefile` | `build`, `test`, and `push` targets. |
+| `.github/workflows/ci.yml` | CI workflow that builds, tests, and publishes the image. |
+
+## Build and test
+
+```
+make build IMAGE={{.Image}}
+make test
+```
+
+## Validate
+
+`lenny runtime validate` checks the repository against the Runtime
+Adapter Specification (§15.4) and the `runtime.yaml` contract:
+
+```
+lenny runtime validate
+```
+
+## Publish
+
+`lenny runtime publish` pushes the image and registers the runtime with
+a gateway. It requires `LENNY_API_URL` and an admin token:
+
+```
+make push IMAGE={{.Image}}
+lenny runtime publish {{.Name}} --image {{.Image}}
+```
+
+## Becoming a reference runtime
+
+The §26.12 "Reference Runtime Proposal Process" describes the path a
+community-authored runtime takes to join the first-party reference
+slate. Proposals are submitted to `github.com/lennylabs/runtime-templates`
+with three artifacts:
+
+- (a) The scaffolded runtime from `lenny runtime init` (this directory).
+- (b) Conformance test results at the claimed level, produced by
+  `lenny runtime validate` against the §15.4.6 conformance test suite.
+- (c) An appendix entry for the reference catalog, reviewed by Lenny
+  maintainers.
+
+See [`spec/26_reference-runtime-catalog.md`](https://github.com/lennylabs/lenny/blob/main/spec/26_reference-runtime-catalog.md)
+§26.12 for the current process. Community runtimes that do not seek
+reference status publish directly via the steps above without filing
+a §26.12 proposal.

@@ -43,7 +43,7 @@ func TestForbiddenEntryKinds(t *testing.T) {
 }
 
 func TestValidateEntryAcceptsRegularInWorkspace(t *testing.T) {
-	allow := RuntimeAllow{WorkspaceRoot: "/workspace/current"}
+	allow := RuntimeAllow{WorkspaceRoot: "/workspace/slots/sess-1/current"}
 	cases := []Entry{
 		{Path: "src/main.go", Kind: KindRegular, Size: 1024},
 		{Path: "docs/README.md", Kind: KindRegular, Size: 4096},
@@ -67,14 +67,19 @@ func TestValidateEntryRejectsForbiddenKinds(t *testing.T) {
 	}
 }
 
+// spec: §7.4 zip-slip / §15.1 — an absolute entry path is a
+// path_escapes_root rejection (the §15.1 client-visible sub-code), not
+// the source-compat-only path_traversal label. F-13.4.9.
 func TestValidateEntryRejectsAbsolutePath(t *testing.T) {
 	err := ValidateEntry(Entry{Path: "/etc/passwd", Kind: KindRegular, Size: 1}, RuntimeAllow{})
 	var ve *ValidationError
-	if !errors.As(err, &ve) || ve.Reason != ReasonPathTraversal {
-		t.Errorf("absolute path: want path_traversal, got %v", err)
+	if !errors.As(err, &ve) || ve.Reason != ReasonPathEscapesRoot {
+		t.Errorf("absolute path: want path_escapes_root, got %v", err)
 	}
 }
 
+// spec: §7.4 zip-slip / §15.1 — `..`-bearing paths surface the
+// path_escapes_root sub-code. F-13.4.9.
 func TestValidateEntryRejectsTraversal(t *testing.T) {
 	cases := []string{
 		"../etc/passwd",
@@ -85,8 +90,8 @@ func TestValidateEntryRejectsTraversal(t *testing.T) {
 	for _, p := range cases {
 		err := ValidateEntry(Entry{Path: p, Kind: KindRegular, Size: 1}, RuntimeAllow{})
 		var ve *ValidationError
-		if !errors.As(err, &ve) || ve.Reason != ReasonPathTraversal {
-			t.Errorf("traversal path %q: want path_traversal, got %v", p, err)
+		if !errors.As(err, &ve) || ve.Reason != ReasonPathEscapesRoot {
+			t.Errorf("traversal path %q: want path_escapes_root, got %v", p, err)
 		}
 	}
 }
@@ -123,7 +128,7 @@ func TestValidateEntryRejectsOversizedEntry(t *testing.T) {
 }
 
 func TestValidateEntryRejectsSymlinkByDefault(t *testing.T) {
-	err := ValidateEntry(Entry{Path: "link", Kind: KindSymlink, LinkTarget: "target"}, RuntimeAllow{WorkspaceRoot: "/workspace/current"})
+	err := ValidateEntry(Entry{Path: "link", Kind: KindSymlink, LinkTarget: "target"}, RuntimeAllow{WorkspaceRoot: "/workspace/slots/sess-1/current"})
 	var ve *ValidationError
 	if !errors.As(err, &ve) || ve.Reason != ReasonSymlink {
 		t.Errorf("symlink default reject: want symlink, got %v", err)
@@ -131,7 +136,7 @@ func TestValidateEntryRejectsSymlinkByDefault(t *testing.T) {
 }
 
 func TestValidateEntrySymlinkOptInWorkspaceLocalTarget(t *testing.T) {
-	allow := RuntimeAllow{AllowSymlinks: true, WorkspaceRoot: "/workspace/current"}
+	allow := RuntimeAllow{AllowSymlinks: true, WorkspaceRoot: "/workspace/slots/sess-1/current"}
 	err := ValidateEntry(Entry{Path: "src/link", Kind: KindSymlink, LinkTarget: "../docs/README.md"}, allow)
 	if err != nil {
 		t.Errorf("workspace-local symlink with opt-in: want nil, got %v", err)
@@ -139,14 +144,14 @@ func TestValidateEntrySymlinkOptInWorkspaceLocalTarget(t *testing.T) {
 }
 
 func TestValidateEntrySymlinkRejectsEscape(t *testing.T) {
-	allow := RuntimeAllow{AllowSymlinks: true, WorkspaceRoot: "/workspace/current"}
+	allow := RuntimeAllow{AllowSymlinks: true, WorkspaceRoot: "/workspace/slots/sess-1/current"}
 	cases := []string{
 		"/etc/passwd",
 		"../../etc/passwd",
 		"/proc/self/environ",
 		"/sys/kernel/debug",
 		"/dev/null",
-		"/run/lenny/credentials.json",
+		"/run/lenny/slots/sess-1/credentials.json",
 	}
 	for _, target := range cases {
 		err := ValidateEntry(Entry{Path: "link", Kind: KindSymlink, LinkTarget: target}, allow)
@@ -162,7 +167,7 @@ func TestValidateEntrySymlinkRejectsEscape(t *testing.T) {
 }
 
 func TestValidateSymlinkTargetRejectsEmpty(t *testing.T) {
-	err := ValidateSymlinkTarget("link", "", "/workspace/current")
+	err := ValidateSymlinkTarget("link", "", "/workspace/slots/sess-1/current")
 	var ve *ValidationError
 	if !errors.As(err, &ve) || ve.Reason != ReasonSymlink {
 		t.Errorf("empty target: want symlink, got %v", err)
@@ -209,5 +214,65 @@ func TestValidateArchiveAcceptsBoundaryRatio(t *testing.T) {
 	a := Archive{CompressedBytes: 100_000, DecompressedBytes: 10_000_000, EntryCount: 1}
 	if err := ValidateArchive(a); err != nil {
 		t.Errorf("100:1 ratio at boundary should admit, got %v", err)
+	}
+}
+
+// spec: §13.4 — a ratio just above the integer boundary must be
+// rejected; integer division previously truncated it to the boundary and
+// admitted it (F-13.4.14).
+func TestValidateArchiveRejectsRatioJustOverBoundary_spec_13_4(t *testing.T) {
+	cases := []struct {
+		name    string
+		archive Archive
+		wantErr bool
+	}{
+		{name: "exactly 100:1 admitted", archive: Archive{CompressedBytes: 100, DecompressedBytes: 10_000, EntryCount: 1}},
+		{name: "100.5:1 rejected", archive: Archive{CompressedBytes: 100, DecompressedBytes: 10_050, EntryCount: 1}, wantErr: true},
+		{name: "one byte over boundary rejected", archive: Archive{CompressedBytes: 1000, DecompressedBytes: 100_001, EntryCount: 1}, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateArchive(tc.archive)
+			if tc.wantErr {
+				var ve *ValidationError
+				if !errors.As(err, &ve) || ve.Reason != ReasonMaxDecompressionRatio {
+					t.Fatalf("want max_decompression_ratio, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("want admit, got %v", err)
+			}
+		})
+	}
+}
+
+// spec: §13.4 — ValidateSymlinkTarget must reject a workspace root
+// that is not a clean absolute slash path so the containment check cannot
+// silently misbehave on a relative or OS-native root (F-13.4.13).
+func TestValidateSymlinkTargetRejectsMalformedRoot_spec_13_4(t *testing.T) {
+	roots := []struct {
+		name string
+		root string
+	}{
+		{name: "relative root", root: "workspace/current"},
+		{name: "windows root", root: `C:\workspace\current`},
+		{name: "empty root", root: ""},
+		{name: "trailing slash", root: "/workspace/slots/sess-1/current/"},
+		{name: "dotdot in root", root: "/workspace/../current"},
+		{name: "dot in root", root: "/workspace/./current"},
+	}
+	for _, rt := range roots {
+		t.Run(rt.name, func(t *testing.T) {
+			err := ValidateSymlinkTarget("link", "sub/file.txt", rt.root)
+			var ve *ValidationError
+			if !errors.As(err, &ve) || ve.Reason != ReasonPathEscapesRoot {
+				t.Fatalf("want path_escapes_root for root %q, got %v", rt.root, err)
+			}
+		})
+	}
+	// The canonical §13.4 root must remain valid.
+	if err := ValidateSymlinkTarget("link", "sub/file.txt", "/workspace/slots/sess-1/current"); err != nil {
+		t.Fatalf("canonical root must be accepted, got %v", err)
 	}
 }

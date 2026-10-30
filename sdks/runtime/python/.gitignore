@@ -1,0 +1,11 @@
+# Python bytecode cache.
+__pycache__/
+*.pyc
+
+# Virtual environments.
+.venv/
+
+# Build and packaging output.
+build/
+dist/
+*.egg-info/

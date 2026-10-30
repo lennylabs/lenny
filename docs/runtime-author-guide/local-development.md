@@ -7,15 +7,19 @@ nav_order: 4
 
 # Local Development
 
-There are three ways to run Lenny locally while you work on a runtime. Pick whichever matches what you're doing:
+To develop a runtime, use `lenny up`. It runs the full Lenny platform from a single binary on your machine, against the same Kubernetes code path production uses, with the reference runtimes pre-installed. Build your image, register it, and start a session.
 
-| Command | What it is | Best for |
-|---------|------------|----------|
-| **`lenny up`** | The whole platform running in a single binary. The default. | Testing your runtime against the real platform; end-to-end demos; anything you don't specifically need a different mode for. |
-| **`make run`** | The gateway running as a single Go process with an in-memory backend and a lightweight controller that spawns one agent process. | Contributors iterating on the gateway or adapter source code; Basic-level runtimes on macOS. |
-| **`docker compose up`** | Real Postgres, Redis, and artifact storage running in containers, plus Docker containers for the gateway and your agent. | Standard- and Full-level runtimes on macOS; exercising the real credential code path; integration CI. |
+On Linux, `lenny up` needs no external services: it downloads a pinned k3s and supervises it as a managed child process. On macOS and Windows, the embedded k3s needs a Linux kernel the binary cannot embed, so it runs the same pinned k3s version as a container under Docker Desktop's Linux VM. Docker Desktop is therefore a prerequisite on macOS and Windows; start it before you run `lenny up`. The gateway, controllers, CRDs, and storage interfaces are identical across operating systems, and only the substrate that hosts the embedded cluster differs by host.
 
-`lenny up` is the fastest path to seeing your runtime in context -- it runs the same code as production with nothing else to set up. `make run` and `docker compose up` exist mainly so contributors modifying core Lenny components get a tighter iteration loop.
+Two other local modes exist mainly for contributors working on Lenny itself. A runtime author rarely needs them, but each gives a tighter loop in a specific case, so all three are documented here.
+
+| Mode | What it runs | Use it to | Limitations |
+|------|--------------|-----------|-------------|
+| **`lenny up`** (recommended) | The whole platform from one binary: an embedded k3s running the gateway, the controllers, and the reference runtime catalog as pods, rendered from the production chart under a development profile. The data stores (Postgres, Redis, and artifacts) are in-process in-memory backends inside the gateway pod. Your runtime runs in a real Kubernetes pod. On Linux the k3s runs as a managed child process; on macOS and Windows it runs as a container under Docker Desktop's Linux VM. | Develop and test your runtime against the real platform, and run end-to-end demos. | Local only, with insecure development credentials and keys. Not for production. Requires Docker Desktop on macOS and Windows. The single-node cluster does not reproduce the production isolation surface (see [Local isolation fidelity](#local-isolation-fidelity)). |
+| **`make run`** | The Lenny source tree with Kubernetes stubbed out: the gateway, an in-process controller, and one agent, all as goroutines in a single process, backed by SQLite and in-memory stores. Your agent runs as a host process rather than in a pod. | Iterate on the gateway or controller source, or run a Basic-level runtime through a fast host-process loop. | No real pod lifecycle, scaling, or isolation. The host-side adapter connects Standard- and Full-level runtimes over Linux abstract Unix sockets, so under `make run` those levels work only on a Linux host. |
+| **`docker compose up`** | The gateway, a controller, and one agent container, plus Postgres, Redis, and MinIO as containers. | Iterate on gateway or controller logic against real storage backends, or run integration tests in CI. | Plain HTTP by default; enable TLS before configuring real credentials. A single agent container, with no scaling. The gateway claims no pod in this mode, so a session left idle past its idle timeout (`maxClientIdleSeconds`) expires with the `max_idle_time` reason rather than being idle-suspended. |
+
+The difference between the first two is what runs underneath. `lenny up` is a released binary that starts a real single-node Kubernetes (k3s) and runs your runtime in an actual pod, so it exercises the production code path. `make run` runs the source tree with no Kubernetes at all and launches your agent as a plain host process, which rebuilds faster but does not reproduce pod scheduling, isolation, or scaling.
 
 ---
 
@@ -25,9 +29,9 @@ There are three ways to run Lenny locally while you work on a runtime. Pick whic
 lenny up
 ```
 
-Starts everything in-process: an embedded Kubernetes (k3s), Postgres, Redis, a development key-management shim, an identity provider, the gateway, the management plane, the controllers, and the full reference runtime catalog. The first run downloads k3s to `~/.lenny/k3s/`; every run after that starts in seconds.
+`lenny up` renders the production chart under a development profile and runs the gateway, the management plane, the controllers, and the reference runtime catalog as pods in an embedded Kubernetes (k3s). The application data stores (Postgres, Redis, and artifact storage) are in-process in-memory backends inside the gateway pod, so there is no separate Postgres, Redis, KMS, or identity-provider process. The local KMS provider derives its keys, including the JWT signing key, from a master key Secret that `lenny up` generates in the embedded cluster when none exists, so the keys persist with the cluster. The CLI authenticates by minting a development bearer from a persisted local key, and the in-cluster gateway trusts it in development mode. The k3s runs as a managed child process on Linux, where the first run downloads it to `~/.lenny/k3s/`; on macOS and Windows it runs as a container under Docker Desktop's Linux VM. The first run imports the platform and runtime images once and may take longer; every run after the first reuses the persisted substrate and image store and starts in seconds.
 
-**What you need:** the `lenny` binary. Nothing else.
+**What you need:** on Linux, the `lenny` binary and nothing else. On macOS and Windows, the `lenny` binary plus Docker Desktop, which supplies the Linux VM the embedded k3s runs in. Start Docker Desktop before `lenny up`.
 
 **Use it for:**
 
@@ -56,23 +60,35 @@ cd my-agent && make image && lenny runtime publish my-agent --image my-agent:dev
 ### Shutting it down
 
 ```bash
-lenny down             # stop everything; keep state in ~/.lenny/
-lenny down --purge     # also wipe ~/.lenny/ for a fresh start
+lenny down             # stop everything; keep the persisted substrate and image store
+lenny down --purge     # also remove the persisted substrate and image store for a fresh start
 ```
+
+The in-memory application stores are ephemeral and not preserved across `lenny down`. A non-`--purge` `lenny down` keeps the persisted substrate and the imported-image store, so the next `lenny up` reuses them; `--purge` removes them.
 
 ### Not for production
 
-Every `lenny up` prints a banner you can't suppress: "Local mode. NOT for production use. Credentials, master keys, and identities are insecure." The embedded identity provider refuses any audience claim that isn't `dev.local`, and any attempt to expose the gateway beyond localhost fails closed with `EMBEDDED_MODE_LOCAL_ONLY`.
+`lenny up` is for local development only. Its credentials, master keys, and identities are insecure. In development mode the gateway rejects any token whose audience claim is not `dev.local`, even when signed by the trusted development key, and it fails closed with `EMBEDDED_MODE_LOCAL_ONLY` if you try to expose it beyond localhost.
+
+### Local isolation fidelity
+{: #local-isolation-fidelity }
+
+The embedded single-node cluster cannot reproduce the full production isolation surface, on any host. Two limits hold equally on the Linux child-process substrate and the Docker-backed substrate:
+
+- **Isolation profiles degrade to runc.** In production the `sandboxed` profile wraps each pod in a gVisor sandbox and the `microvm` profile in a Kata virtual machine. Locally, the `sandboxed` profile runs under standard `runc` because the embedded cluster installs no gVisor runtime class, and the `microvm` profile runs under `runc` because it needs hardware virtualization the local substrate cannot nest. Each profile degrades for its own reason.
+- **NetworkPolicy is not enforced.** The embedded k3s runs with NetworkPolicy enforcement disabled, so the default-deny egress boundary that isolates pods in production is not exercised locally.
+
+Treat the local stack as a functional preview rather than the production isolation boundary. The runtime your agent sees is the same; the kernel- and network-level isolation around it is not.
 
 ---
 
-## `make run` -- zero dependencies, for gateway contributors
+## `make run` -- zero dependencies, for platform contributors
 
 ```bash
 make run
 ```
 
-A single binary that embeds everything the gateway would normally talk to:
+Unlike `lenny up`, which runs the released binary against a real Kubernetes cluster, `make run` runs the Lenny source tree in a single process with Kubernetes left out entirely. Everything the gateway would normally talk to is replaced by an embedded equivalent:
 
 | Component | What it's replaced with |
 |-----------|-------------------------|
@@ -88,10 +104,9 @@ A single binary that embeds everything the gateway would normally talk to:
 
 **Use it for:**
 
-- Iterating on runtime code against the gateway's contract
+- Iterating on the gateway or controller source while running a runtime against it
+- A fast host-process loop on a Basic-level agent binary
 - Getting oriented as a first-time Lenny contributor
-- Quick demos
-- Fast local iteration on an agent binary
 
 ### Using your own agent binary
 
@@ -99,7 +114,7 @@ A single binary that embeds everything the gateway would normally talk to:
 make run LENNY_AGENT_BINARY=/path/to/my-agent-binary
 ```
 
-The in-process controller spawns your binary directly. It has to speak the stdin/stdout JSON-lines contract. There's no runtime registration step -- the binary is used as-is.
+The in-process controller spawns your binary directly. The binary must speak the stdin/stdout JSON Lines contract. There is no runtime registration step under `make run`; the binary is used as-is.
 
 ### The default runtime
 
@@ -111,15 +126,17 @@ Without `LENNY_AGENT_BINARY`, `make run` uses a built-in echo runtime. It replay
 make test-smoke
 ```
 
-Creates a session with the echo runtime, sends a prompt, checks the response, and exits. Validates the whole pipeline end-to-end in under 10 seconds.
+It creates a session with the echo runtime, sends a prompt, checks the response, and exits. The run validates the pipeline from gateway to agent binary in under 10 seconds.
 
 ### Observability
 
 Traces go to stdout; Prometheus metrics are exposed on `:9090/metrics`.
 
-### macOS
+### Limitations
 
-`make run` works on macOS for **Basic-level runtimes** -- those that only use stdin/stdout. Standard and Full runtimes need Linux abstract Unix sockets, which macOS doesn't have, so use `docker compose up` for those.
+`make run` has no Kubernetes underneath, so it does not reproduce pod scheduling, isolation, scaling, or the warm pool. It runs your agent as a host process, which connects over Linux abstract Unix sockets for Standard- and Full-level features. Those sockets are a Linux kernel feature, so a host-side adapter has them only on Linux. On macOS or Windows use `make run` for Basic-level runtimes only. For Standard- and Full-level work on those hosts, use `lenny up`, which runs the adapter inside an in-cluster Linux pod (under Docker Desktop's Linux VM on macOS and Windows), so abstract sockets are available there. `docker compose up`, which runs the adapter inside a Linux container, also works.
+
+The gateway under `make run` claims no pod, so it has no pod to release. A session left idle past its idle timeout (`maxClientIdleSeconds`) expires with the `max_idle_time` reason rather than being idle-suspended.
 
 ---
 
@@ -198,11 +215,11 @@ Grafana is at `http://localhost:3000`, Jaeger at `http://localhost:16686`.
 
 ### Plain HTTP by default
 
-With `docker compose up`, traffic between the gateway and agent containers goes over plain HTTP. **Don't configure real LLM credentials in this mode -- turn on TLS first.**
+With `docker compose up`, traffic between the gateway and agent containers goes over plain HTTP. **Turn on TLS before you configure live LLM credentials in this mode.**
 
 ### Credential testing
 
-When you want to test real LLM credentials or the mTLS code path:
+To test live LLM credentials or the mTLS code path:
 
 ```bash
 make compose-tls
@@ -254,7 +271,7 @@ Certificates are regenerated if deleted; no manual key management is required.
 make run LENNY_AGENT_BINARY=./my-agent
 ```
 
-The in-process controller starts with your updated binary right away. Session state doesn't survive a restart -- this is development mode.
+The in-process controller starts with your updated binary right away. Session state does not survive a restart in this mode.
 
 ### Standard and Full runtimes (Docker)
 
@@ -317,7 +334,7 @@ docker compose logs -f gateway
 
 ### Reading the sidecar's manifest
 
-The sidecar writes its manifest before your binary starts. With `docker compose`, you can read it inside the agent container:
+The sidecar writes its manifest before your binary starts. The manifest carries only pod-scoped fields, such as the socket names and `mcpNonce`; a session's own context arrives in its `session_start` frame on stdin, which the debug log above shows. A binary that dials a sidecar socket (the message channel or the CH-RUNTIMEOPS) waits for the manifest, sends `{"_lennyNonce":"<nonce_hex>"}` with the manifest's `mcpNonce` as its first line, answers a nonce-only `_lennyChallenge` that arrives before the first protocol frame, and reads the manifest again and redials when the sidecar closes the connection before that frame (see the [connection handshake](../reference/adapter-contract.md#connection-handshake)). With `docker compose`, you can read the manifest inside the agent container:
 
 ```bash
 docker compose exec agent cat /run/lenny/adapter-manifest.json | jq .
@@ -327,11 +344,13 @@ docker compose exec agent cat /run/lenny/adapter-manifest.json | jq .
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Session hangs after your binary writes a response | stdout not flushed | Flush explicitly after every write (see your language's guidance in the Adapter Contract) |
-| Your binary gets SIGTERM after 10 seconds | Heartbeat wasn't acknowledged | Handle `heartbeat` by immediately writing `heartbeat_ack` |
+| Session hangs after your binary writes a response | stdout not flushed | Flush explicitly after every write (see your language's guidance in the [Adapter Contract](../reference/adapter-contract.md)) |
+| The session leaves `running` about 10 seconds after a `heartbeat` | Heartbeat wasn't acknowledged. The adapter treats the runtime as hung for the session the heartbeat names: it ends the session's stream to the gateway when one is open and refuses each later stream for the session until the adapter releases the session, the runtime process receives no signal, and the gateway handles the session as a runtime crash | Handle `heartbeat` by immediately writing `heartbeat_ack`; while the runtime does work for the session, include the heartbeat's `sessionId` and `busy: true` |
+| A session becomes `suspended` and loses its pod while your runtime is still working for it (under `lenny up` or a cluster deployment) | The work produced no activity the adapter counts and no `busy` report for the idle window. Without a report, the adapter counts only the following traffic as activity for a session: each frame it writes to the runtime for the session other than `heartbeat` and `session_end`; each `message`, `tool_call`, `tool_result`, `response`, `set_tracing_context`, or `status` frame it reads from the runtime that names the session, or that carries no `sessionId` on a pod holding at most one [slot](../reference/glossary#slot); each CH-RUNTIMEOPS `llm_request_completed` that names the session; and each platform or connector MCP tool call for the session while it is in flight. When the gateway's idle clock (`maxClientIdleSeconds`, default 900s) fires for a session, the adapter seals the session only when it had none of that activity and no `busy` report in the window, and the gateway then idle-suspends the session and releases its pod or slot. | A runtime reports `busy: true` with the heartbeat's `sessionId` on its `heartbeat_ack` while it does any work for the session the heartbeat names, as in `{"type":"heartbeat_ack","sessionId":"sess_abc","busy":true}`. The runtime SDKs do this while a message for the session is pending or being handled and while a busy hold (`HoldBusy` in Go, `hold_busy` in Python, `holdBusy` in TypeScript) is held. Work after a handler returns that takes no hold, including the rest of a streaming turn whose reply is not yet final, is not reported. See [Idle suspension](lifecycle.md#idle-suspension). |
 | `tool_result` never arrives | `tool_call` referenced an invalid tool | Stick to `read_file`, `write_file`, `list_dir`, `delete_file` at the Basic level |
-| MCP connection refused (Standard level) | You're on macOS with `make run` | Use `docker compose up` -- abstract Unix sockets only exist on Linux |
-| MCP nonce rejected | You cached the manifest too early | Re-read `/run/lenny/adapter-manifest.json` at startup -- the nonce is regenerated per task |
+| MCP connection refused (Standard level) | You're on macOS with `make run`, where the host-side adapter has no Linux abstract Unix sockets | Use `lenny up` (the adapter runs in an in-cluster Linux pod) or `docker compose up` (the adapter runs in a Linux container) |
+| MCP nonce rejected | The presented value is not the one the running server was armed with | Read `/run/lenny/adapter-manifest.json` at startup and present the nonce it carried then; the intra-pod MCP servers are pod-wide and started at most once per pod, so a later session's manifest write does not re-arm a running server |
+| Socket connection closed before the first frame | The nonce line was missing or stale, or a nonce-only challenge went unanswered | Send the `_lennyNonce` line with the manifest's `mcpNonce` first, answer a `_lennyChallenge` that arrives before the first protocol frame, and read the manifest again and redial when the sidecar closes the connection |
 
 ---
 
@@ -394,7 +413,7 @@ curl http://localhost:8080/v1/admin/pools/echo-pool
 Dev mode relaxes security defaults so you can iterate locally, but guardrails keep it from leaking into production:
 
 1. **Hard startup assertion.** The gateway refuses to start with TLS off unless `LENNY_DEV_MODE=true` is set explicitly.
-2. **Loud warning.** When dev mode is on, the gateway logs `"WARNING: TLS disabled -- dev mode active. Do not use in production."` on startup and every 60 seconds.
+2. **Loud warning.** When dev mode is on, the gateway logs a warning that TLS is disabled and the deployment is not for production, on startup and every 60 seconds.
 3. **One switch for everything.** `LENNY_DEV_MODE` gates every security relaxation. You can't disable individual security features one at a time.
 
 ---

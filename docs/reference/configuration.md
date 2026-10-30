@@ -27,7 +27,9 @@ Complete reference for all Helm `values.yaml` configuration fields, organized by
 |:------|:-----|:--------|:------------|:-----------|
 | `gateway.maxSessionsPerReplica` | int | 50 (Starter), 200 (Growth), 400 (Scale/Platform) | Maximum concurrent sessions per gateway replica. Used for `GatewaySessionBudgetNearExhaustion` alert (capacity ceiling, not an HPA trigger). Values are provisional -- must be calibrated by the first-working-slice benchmark harness. The Scale-size value (400) assumes the gateway's LLM routing subsystem has been extracted to a dedicated service. | Must be > 0. |
 | `gateway.maxCreatedStateTimeoutSeconds` | int | 300 | Maximum time a session can remain in `created` state before automatic cleanup. Also governs upload token TTL. | Must be > 0. |
-| `gateway.maxSuspendedPodHoldSeconds` | int | 900 | Platform-wide ceiling on how long a suspended session holds its pod before the gateway releases it. Deployer-set; tenant policy may further restrict. | Must be > 0. |
+| `gateway.maxSuspendedPodHoldSeconds` | int | 900 | Platform-wide ceiling on how long a session suspended by an interrupt holds its pod. When the hold ends, the gateway checkpoints the workspace and releases the pod, and the session stays `suspended`. When the checkpoint fails, the gateway keeps the pod held, emits `session.suspension_checkpoint_failed`, and retries the checkpoint at the next evaluation 60 seconds later. When the session's dead-letter queue holds a message the gateway accepted after the session entered `suspended`, the gateway resumes the session rather than releasing the pod. When the concurrent-session admission check refuses that resume, the gateway still checkpoints the workspace and releases the pod, the session stays `suspended`, and the gateway leader resumes it at a later `gateway.suspendedBacklogRecheckSeconds` evaluation once the check admits it. An idle suspension holds no pod. Deployer-set; tenant policy may further restrict. | Must be > 0. |
+| `gateway.maxSuspendedSessionSeconds` | int | 604800 | Suspended-session lifetime. A session that stays `suspended` this long after entering `suspended`, with or without its pod, is transitioned to `expired` with the `max_idle_time` reason. Default 7 days. | Must be > 0, and less than `delegation.budgetKeyTTLSeconds`. |
+| `gateway.suspendedBacklogRecheckSeconds` | int | 300 | Interval at which the gateway leader evaluates each `suspended` session whose pod was released. The leader resumes the session when it was idle-suspended and its dead-letter queue or inbox holds a message, or when it was suspended for another reason, such as an interrupt, and its dead-letter queue holds a message the gateway accepted after the session entered `suspended`. The concurrent-session admission check governs each resume, and the leader evaluates a refused session again at the next interval. | Must be >= 30. |
 | `gateway.partialRecoveryThresholdFraction` | float | 0.5 | Fraction of expected manifest entries that must be recovered during partial-manifest recovery before the gateway declares recovery successful. Values below this fraction leave the gateway in degraded mode and emit `lenny_gateway_partial_recovery_below_threshold_total`. | 0.0-1.0. |
 
 ### Subsystem concurrency limits
@@ -63,6 +65,7 @@ For pools configured with `deliveryMode: proxy` (the default), the gateway's LLM
 | `gateway.llmProxy.proxyDialects` | string[] | `["openai", "anthropic"]` | Proxy dialects enabled for runtime-facing endpoints. Must cover every `Runtime.credentialCapabilities.proxyDialect` in use. | Subset of `openai`, `anthropic`. |
 | `gateway.llmProxy.anthropicVersion` | string | (latest stable as of each Lenny release) | Default `anthropic-version` header value the translator injects when the runtime does not supply one. | Valid Anthropic API version string. |
 | `gateway.llmProxy.upstreamTLSVerify` | bool | `true` | Verify upstream provider TLS certificates on outbound calls from the gateway process. | -- |
+| `gateway.leaseExtension.proxyExtensionWaitTimeout` | duration | `5s` | For a proxy-mode session that exhausts its token budget, how long the gateway waits in-path for an automatic lease extension to resolve before returning `BUDGET_EXHAUSTED` for the current request. A fast automatic or quick-approval extension resolves within this window and stays transparent to the runtime; a slower human approval continues out of band, and the session recovers on a later request once the extension resolves. Operator-tunable. | Valid Go duration; must be > 0. |
 
 ---
 
@@ -75,7 +78,34 @@ For pools configured with `deliveryMode: proxy` (the default), the gateway's LLM
 | `pool.runtimeClass` | string | Derived from `isolationProfile` | Explicit Kubernetes `RuntimeClass` override. Normally leave unset and let `isolationProfile` select the default: `runc` | `gvisor` | `kata`. | Must be a valid `RuntimeClass` name on the cluster. |
 | `pool.resources.cpu` | string | `"250m"` (request), `"2"` (limit) | CPU request and limit for agent containers. | Valid Kubernetes resource quantity. |
 | `pool.resources.memory` | string | `"256Mi"` (request), `"2Gi"` (limit) | Memory request and limit for agent containers. | Valid Kubernetes resource quantity. |
-| `pool.executionMode` | string | `session` | Pod execution mode: `session` (one session per pod), `task` (sequential reuse), `concurrent` (parallel slots). | One of `session`, `task`, `concurrent`. |
+| `pool.executionMode` | string | `session` | Pod execution mode: `session` (a managed session bound to a claimed pod, parameterized by `sessionPolicy`) or `service` (each message routed to any ready replica). | One of `session`, `service`. |
+
+### sessionPolicy (session mode)
+
+The `sessionPolicy` block parameterizes session mode. `taskPolicy` and `concurrentWorkspacePolicy` are removed; their fields are relocated here. Service mode does not use `sessionPolicy`; it keeps a per-pod [slot](glossary#slot) bound through `pool.maxConcurrent`.
+
+| Field | Type | Default | Description | Validation |
+|:------|:-----|:--------|:------------|:-----------|
+| `sessionPolicy.maxConcurrentSessions` | int | 1 | Simultaneous sessions per pod. | `> 1` requires `acknowledgeProcessLevelIsolation: true`. |
+| `sessionPolicy.acknowledgeProcessLevelIsolation` | bool | `false` | Acknowledges process-level co-tenancy, and on a recycling pool under `recycle.runtimeProcess: keep` acknowledges that a later session can run in the runtime process that served an earlier one. | Required when `maxConcurrentSessions > 1`, and on a pool with `recycle.enabled: true`, `recycle.maxSessionsPerPod` above 1, a `recycle.scrubProfile` other than `vm-restart`, and `recycle.runtimeProcess: keep`; pool admission refuses such a pool without it. |
+| `sessionPolicy.recycle.enabled` | bool | `false` | Reuse the pod across sequential sessions with a whole-pod scrub at the occupancy-zero boundary. | `true` requires `acknowledgeBestEffortScrub: true`. |
+| `sessionPolicy.recycle.acknowledgeBestEffortScrub` | bool | `false` | Acknowledges that the recycle scrub is best-effort. | Required when `recycle.enabled: true`. |
+| `sessionPolicy.recycle.maxSessionsPerPod` | int | none | Sessions served before the pod retires. Counts every session served. | Required when `recycle.enabled: true`. |
+| `sessionPolicy.recycle.maxPodUptimeSeconds` | int | unset | Wall-clock uptime cap before the pod retires. | Optional; must be `> 0` when set. |
+| `sessionPolicy.recycle.maxScrubFailures` | int | 3 | Cumulative scrub failures before the pod retires. | Must be `> 0`. |
+| `sessionPolicy.recycle.onScrubFailure` | string | `warn` | Disposition on a failed scrub below the limit. | One of `warn`, `fail`. |
+| `sessionPolicy.recycle.scrubProfile` | string | `standard` | Scrub procedure. `vm-restart` retires the pod at the recycle boundary and provisions a fresh replacement pod, which is a fresh guest VM, from the warm pool; `in-place` runs the standard scrub inside the continuing VM guest. | One of `standard`, `vm-restart`, `in-place`. |
+| `sessionPolicy.recycle.runtimeProcess` | string | none | The runtime-process lifetime of the pods the pool creates. `keep` keeps a pod's runtime process across the recycle boundary; `restart` ends it in each whole-pod scrub, and the next session runs in a newly launched process. Each pod keeps the lifetime it was created with. See [Runtime process lifetime](execution-modes.md#runtime-process-lifetime). | One of `keep`, `restart`. Required, with no default, when `recycle.enabled: true`, `recycle.maxSessionsPerPod` is above 1, and `scrubProfile` is not `vm-restart`; rejected on every other pool. `restart` is rejected on a runtime that is not restartable (one that carries no `command`, runs in `service` mode, or declares `capabilities.preConnect: true`). |
+| `sessionPolicy.recycle.acknowledgeMicrovmResidualState` | bool | `false` | Acknowledges that guest-kernel residual state persists across the pinned tenant's sessions in the continuing guest. | Required when `scrubProfile: in-place`. |
+| `sessionPolicy.recycle.allowCrossTenantReuse` | bool | `false` | Applies only to the sequential-reuse path under `microvm` isolation. A recycled pod stays pinned to its tenant and is never reused across tenants (see [Multi-Tenancy](../operator-guide/multi-tenancy.md)). | Requires `isolationProfile: microvm`; never permitted when `maxConcurrentSessions > 1`. |
+| `sessionPolicy.cleanupCommands` | string[] | `[]` | Deployer cleanup commands run at the recycle boundary. On a sidecar pod of a `type: agent` runtime the runtime supervisor runs them in the runtime image at the agent UID, with the workspace base as working directory; on every other pod the adapter runs them in its own container. | -- |
+| `sessionPolicy.cleanupTimeoutSeconds` | int | 60 | Timeout for `cleanupCommands` plus the scrub-report grace. | Must be `> 0`. |
+| `sessionPolicy.maxSessionAgeSeconds` | int | 7200 | Active-time session age cap. Paused while the session is `suspended` and in the recovery states. | Must be `> 0`. |
+| `sessionPolicy.maxClientIdleSeconds` | int | 900 | Inactivity bound before idle suspension, or before expiry for a session that cannot be idle-suspended. | Must be `> 0`. |
+| `sessionPolicy.slotRetries` | int | 1 | Retries for failed slots when `maxConcurrentSessions > 1`. | Must be `>= 0`. |
+| `sessionPolicy.onPoolExhausted` | string | `reject` | Pool-exhaustion behavior. `queue` holds the request in the per-pool FIFO. | One of `reject`, `queue`. |
+| `sessionPolicy.maxQueueWaitSeconds` | int | 30 | Queue wait bound when `onPoolExhausted: queue`. | Must be `> 0`. |
+| `pool.maxConcurrent` | int | none | Service-mode per-pod slot bound; readiness-driven routing selects a new pod when a pod reaches capacity. | Service mode only. |
 
 ### Checkpointing configuration
 
@@ -100,7 +130,7 @@ For pools configured with `deliveryMode: proxy` (the default), the gateway's LLM
 |:------|:-----|:--------|:------------|:-----------|
 | `pool.scalingPolicy.podWarmupSecondsBaseline` | int | 30 | Expected pod warmup duration. Used to compute `WarmPoolReplenishmentSlow` alert threshold (2x this value). | Must be > 0. |
 | `pool.scalingPolicy.sdkConnectTimeoutSeconds` | int | 60 | Maximum time for SDK warm connection establishment before marking pod as failed. | Must be > 0. |
-| `pool.maxWorkspaceSealDurationSeconds` | int | 300 | Maximum retry window for workspace seal-and-export. | Must be > 0. |
+| `pool.maxWorkspaceSealDurationSeconds` | int | 300 | Maximum retry window for workspace seal-and-export. | Must be > 0. The gateway refuses to start when the seal window it runs with (the gateway flag `--workspace-seal-max-duration-seconds`) is not greater than the usage quiescence timeout set by the gateway flag `--delegation-usage-quiescence-timeout-seconds` (default 5 s). Pool admission does not refuse a pool on this bound. |
 
 ---
 
@@ -111,7 +141,7 @@ For pools configured with `deliveryMode: proxy` (the default), the gateway's LLM
 | `runtime.name` | string | Required | Unique name for the runtime. | Non-empty, alphanumeric with hyphens. |
 | `runtime.image` | string | Required | Container image reference (digest recommended for production). | Valid image reference. |
 | `runtime.type` | string | `agent` | Runtime type: `agent` (participates in Lenny's task lifecycle) or `mcp` (hosts an MCP server; no task lifecycle, no `capabilities`). | One of `agent`, `mcp`. |
-| `runtime.executionMode` | string | `session` | Pod reuse mode: `session` (one session per pod), `task` (sequential task reuse with workspace scrub between tasks — requires deployer acknowledgment), or `concurrent` (multiple concurrent sessions per pod). | One of `session`, `task`, `concurrent`. |
+| `runtime.executionMode` | string | `session` | Execution mode: `session` (a managed session bound to a claimed pod, parameterized by `sessionPolicy`) or `service` (each message routed to any ready replica with no conversation continuity). | One of `session`, `service`. |
 | `runtime.capabilities` | object | `{}` | Runtime capability declarations. | See capabilities table below. |
 | `runtime.agentInterface` | object | `{}` | A2A-style agent card metadata published for clients: `description`, `inputModes`, `outputModes`, `supportsWorkspaceFiles`, `skills`, `examples`. Not a protocol selector. | -- |
 | `runtime.publishedMetadata` | object | `{}` | Metadata published in the runtime registry for client discovery. | -- |
@@ -133,11 +163,11 @@ For pools configured with `deliveryMode: proxy` (the default), the gateway's LLM
 
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|
-| `session.maxSessionAgeSeconds` | int | 7200 | Maximum wall-clock age of a session before automatic expiry. Timer paused during `suspended` and `resume_pending`. | Must be > 0. |
-| `session.maxIdleTimeSeconds` | int | 600 | Maximum time without qualifying activity before automatic expiry. Qualifying events: agent output, tool call, tool result, elicitation request, message send. | Must be > 0. |
+| `session.maxSessionAgeSeconds` | int | 7200 | Maximum active time of a session before automatic expiry. Age counts while the session is `starting`, `running`, or `input_required`, and is paused while it is `suspended`, `resume_pending`, `resuming`, or `awaiting_client_action`. | Must be > 0. |
+| `session.maxClientIdleSeconds` | int | 900 | Maximum time a `running` session goes without qualifying activity. When it elapses, the gateway idle-suspends the session: it checkpoints the workspace, releases the pod or slot, and the session stays `suspended` until a message or a resume call. A session that cannot be idle-suspended (a `type: mcp` runtime or an `executionMode: service` pool) is expired with the `max_idle_time` reason instead. A session whose runtime adapter observed activity within the window, including a runtime's `busy` report, stays `running`. Qualifying events: a message the runtime adapter writes to the runtime, a tool approval or denial, an elicitation response, an attach, an `agent_output` or `tool_use` event, a `lenny/await_children` call and each partial result from its stream, each upstream LLM chunk proxied to the pod (proxy delivery mode), and each `ReportUsage` pull that returns a non-zero token delta (direct delivery mode). Not evaluated during `input_required`; paused during `suspended`, `resume_pending`, `resuming`, and `awaiting_client_action`. | Must be > 0. |
 | `session.maxElicitationsPerSession` | int | 50 | Maximum elicitation requests per session. Prevents agents from spamming the user. | Must be > 0. |
 | `session.maxElicitationWait` | int | 600 | Maximum time (seconds) a session waits for a human response to an elicitation. If exceeded, the elicitation is dismissed and the pod receives a timeout error. | Must be > 0. |
-| `session.maxResumeWindowSeconds` | int | 900 | Maximum time to wait for pod allocation during `resume_pending`. | Must be > 0. |
+| `session.maxResumeWindowSeconds` | int | 900 | Maximum time a session stays in `resume_pending` before it moves to `awaiting_client_action`. | Must be > 0. |
 | `session.maxAwaitingClientActionSeconds` | int | 900 | Maximum time in `awaiting_client_action` before automatic expiry. Timer starts fresh on entry. | Must be > 0. |
 | `session.maxRequestInputWaitSeconds` | int | 600 | Maximum time a `lenny/request_input` call blocks before timeout. | Must be > 0. |
 | `session.retryPolicy.maxRetries` | int | 2 | Maximum automatic retry attempts for retryable failures. | Must be >= 0. |
@@ -237,23 +267,26 @@ Lenny authenticates client requests with OIDC (OpenID Connect), the standard ide
 
 `/v1/oauth/token` is the canonical endpoint for token issuance, rotation, and delegation token minting via RFC 8693. Grant type URN: `urn:ietf:params:oauth:grant-type:token-exchange`.
 
+A rotation or scope-narrowing request that carries no `expires_in` issues a JWT whose holder obtains a new token before expiry, and that JWT receives the default lifetime that `auth.capabilityTokenTtlSeconds` sets (see [Web Playground configuration](#web-playground-configuration)). A request that carries `expires_in` of at least 60 seconds receives that lifetime, and a smaller value is rejected with `invalid_request`. The issued token's lifetime is then capped by the subject token's expiry and by the per-dialect cap. A delegation child token minted with an `actor_token` and no `expires_in` does not take the `auth.capabilityTokenTtlSeconds` default: its lifetime is the earliest of the subject token's expiry, the actor token's expiry, and the per-dialect cap. A delegation child token minted with `expires_in` is also capped by the actor token's expiry. Tokens whose holder has no refresh path do not take the default.
+
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|
-| `tokenExchange.defaultTokenTTLSeconds` | int | 3600 | Default lifetime for newly minted access tokens. Narrowed child tokens inherit a cap from the parent's remaining lifetime. | Must be > 0. |
-| `tokenExchange.maxTokenTTLSeconds` | int | 28800 | Absolute maximum lifetime for any token issued by `/v1/oauth/token`. Parent lifetime caps child lifetime. | Must be >= `defaultTokenTTLSeconds`. |
-| `tokenExchange.rateLimitPerUser` | int | 60 | Maximum `/v1/oauth/token` requests per user per minute. Rotation + delegation minting share this budget. | Must be > 0. |
-| `tokenExchange.requireActorToken` | bool | `true` | Require `actor_token` on delegation child-token minting. Enforces the parent→child chain of custody. | -- |
+| `tokenExchange.rateLimitPerUser` | int | 60 | Maximum `/v1/oauth/token` requests per user per minute. Token rotation and `a2a_delegation` child-token minting share this budget. | Must be > 0. |
+| `tokenExchange.requireActorToken` | bool | `true` | Require `actor_token` on `a2a_delegation` child-token minting. Enforces the parent→child chain of custody. | -- |
 | `tokenExchange.supportedSubjectTokenTypes` | string[] | `["urn:ietf:params:oauth:token-type:access_token", "urn:ietf:params:oauth:token-type:jwt"]` | Accepted `subject_token_type` values. | Subset of IANA-registered token types. |
 
 ---
 
 ### KMS
 
-Lenny uses a Key Management Service (KMS) to wrap and unwrap data-encryption keys for sensitive at-rest data.
+Lenny uses a Key Management Service (KMS) to wrap and unwrap data-encryption keys for sensitive at-rest data and to sign every Lenny-issued JWT with ES256. The gateway and the Token Service sign with one key, and the gateway, the Token Service, and `lenny-ops` verify with the public keys they fetch from the KMS at startup. See [JWT key rotation](../runbooks/jwt-key-rotation.md) for the rotation procedure.
 
 | Field | Type | Default | Description |
 |:------|:-----|:--------|:------------|
-| `kms.provider` | string | -- | KMS provider: `aws-kms`, `gcp-kms`, `azure-keyvault`, `vault`. |
+| `kms.provider` | string | `local` | KMS provider: `aws`, `gcp`, `azure`, or `local`. `local` derives its keys from a master key and is for development only; the gateway, the Token Service, and `lenny-ops` refuse to start with `local` in a production deployment. |
+| `kms.aliases` | string | `""` | Comma-separated `alias=key` mapping. Two entries are reserved for JWT signing: `platform:jwt-signing` names the P-256 key that signs every Lenny-issued JWT, and the optional `platform:jwt-verify` names a second key that verifies and never signs, which is mapped only during a key rotation. On a cloud provider each entry must name an immutable key version: an AWS key ID or key ARN, a GCP CryptoKeyVersion name ending in `/cryptoKeyVersions/<n>`, or an Azure key identifier with a non-empty `@<version>` suffix. A process refuses to start when either entry names a repointable reference, such as an AWS alias, a GCP CryptoKey without a version, or an Azure key without a version. |
+| `kms.signQuotaPerSecond` | int | -- | The provider's asymmetric `Sign` quota per second for the account and region. Required when `kms.provider` is not `local`, and the chart refuses to render without it. It has no default because provider quotas vary by account and region. The `KMSSignQuotaApproaching` alert fires when the fleet sign rate exceeds 80% of this value. Must be at least 1. |
+| `kms.endpointCIDR` | string | `0.0.0.0/0` | Destination CIDR of the KMS HTTPS endpoint (TCP 443). The Token Service egress NetworkPolicy always carries it, and the gateway and `lenny-ops` egress NetworkPolicies carry it when `kms.provider` is not `local`. When `kms.provider` is not `local`, the chart refuses to render while the value is `0.0.0.0/0` or `::/0`, because an unrestricted peer would cancel the private-range and metadata-service exclusions of the external HTTPS egress rule. A cloud deployment sets it to the subnet of the provider's private KMS endpoint. |
 | `kms.keyId` | string | -- | KMS key identifier for envelope encryption. |
 
 ---
@@ -338,6 +371,7 @@ Workload profile assumptions used by scaling formulas. Operators must update the
 | `delegation.maxDepth` | int | 10 | Maximum delegation tree depth. Delegations that would exceed this depth are rejected with `BUDGET_EXHAUSTED`. | Must be > 0. |
 | `delegation.maxChildrenTotal` | int | 100 | Maximum total children across the entire delegation tree. | Must be > 0. |
 | `delegation.maxParallelChildren` | int | 10 | Maximum concurrent children per parent session. | Must be > 0. |
+| `delegation.budgetKeyTTLSeconds` | int | 691200 | Redis TTL on a delegation tree's budget keys. The budget reservation script sets it on every budget key it creates, including a per-parent key that a later reservation creates, and the budget return script keeps the remaining TTL of every key it writes. The gateway re-arms it when the root session enters or leaves `suspended`, or leaves `awaiting_client_action` for `resume_pending`. When a root spends longer than the TTL outside `suspended` since the last re-arm, its tree's next `delegate_task` reservation detects `BUDGET_KEYS_EXPIRED`, fails with `INVALID_STATE_TRANSITION`, and the root fails with `BUDGET_KEYS_EXPIRED`. Default 8 days. | Must exceed `gateway.maxSuspendedSessionSeconds`. |
 | `delegation.maxTreeMemoryBytes` | int | 2097152 | Memory limit (bytes) for delegation tree metadata tracked on the gateway. Prevents runaway trees from consuming excessive coordinator memory. Default: 2 MiB. | Must be > 0. |
 | `gateway.cycleDetection.mode` | string | `enforce` | Outer gate for runtime-identity cycle detection. `enforce`: the §8.2 three-layer self-recursion AND gate decides admission. `warn`: every self-recursive hop is admitted; `delegation.cycle_warning` is audited and `lenny_delegation_would_have_blocked_total{mode="warn"}` is incremented. `permissive`: no check runs (development only; raises the standing `CycleDetectionModeUnsafe` warning alert). | One of `enforce`, `warn`, `permissive`. |
 | `gateway.allowSelfRecursion` | string | `yes` | Layer 1 of the §8.2 three-layer AND gate (master platform gate). `no` rejects every self-recursive hop regardless of `Runtime.spec.allowSelfRecursion` or `DelegationPolicy.allowSelfRecursion`. Only consulted when `gateway.cycleDetection.mode: enforce`. Transitions emit a `gateway.allow_self_recursion_changed` audit event; `no → yes` requires Helm `--set gateway.cycleDetection.justification=<text>`. | One of `yes`, `no`. |
@@ -387,18 +421,18 @@ Lenny routes external variant-assignment lookups through the OpenFeature Go SDK 
 
 ## Web Playground configuration
 
-The web playground is an optional browser-based UI for testing runtimes. It is gated behind `playground.enabled` and is `false` by default. See [§27 Web Playground](../developer-guide/web-playground.md) for protocol details.
+The web playground is an optional browser-based UI for testing runtimes. It is gated behind `playground.enabled` and is `false` by default. See [Web Playground](../operator-guide/web-playground.md) for protocol details.
 
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|
 | `playground.enabled` | bool | `false` | When `false`, `/playground/*` returns `404` and the asset bundle is unmounted. | -- |
 | `playground.authMode` | string | `oidc` | Authentication mode for the playground UI. One of `oidc` (redirect to OIDC provider), `apiKey` (user pastes a standard gateway bearer token), or `dev` (no auth; dev-mode only). | One of `oidc`, `apiKey`, `dev`. |
-| `playground.devTenantId` | string | `default` | Tenant bound to the dev HMAC JWT `tenant_id` claim when `authMode=dev`. Format-gated at startup; tenant existence is Ready-gated per-request, returning a transient `503 LENNY_PLAYGROUND_DEV_TENANT_NOT_SEEDED` while `lenny-bootstrap` is still running. | Must match `^[a-zA-Z0-9_-]{1,128}$`. |
+| `playground.devTenantId` | string | `default` | Tenant bound to the `tenant_id` claim of the dev-mode playground JWT when `authMode=dev`. Format-gated at startup; tenant existence is Ready-gated per-request, returning a transient `503 LENNY_PLAYGROUND_DEV_TENANT_NOT_SEEDED` while `lenny-bootstrap` is still running. | Must match `^[a-zA-Z0-9_-]{1,128}$`. |
 | `playground.allowedRuntimes` | string[] | `["*"]` | Glob list of runtime IDs visible in the playground runtime picker. | Valid glob patterns. |
-| `playground.maxSessionMinutes` | int | 30 | Hard cap on playground-initiated session duration. | Must be > 0. |
-| `playground.maxIdleTimeSeconds` | int | 300 | Hard override of the runtime's `maxIdleTimeSeconds` for playground-initiated sessions. | `60 <= v <= runtime.maxIdleTimeSeconds`. |
+| `playground.maxSessionMinutes` | int | 30 | Hard cap on a playground-initiated session's active time. The cap counts active time as `maxSessionAgeSeconds` does: it pauses while the session is `suspended` and resumes when the session returns to `running`. | Must be > 0. |
+| `playground.maxIdleTimeSeconds` | int | 300 | Hard override of the runtime's `maxClientIdleSeconds` for playground-initiated sessions. The effective bound is `min(runtime.maxClientIdleSeconds, playground.maxIdleTimeSeconds)`. When it elapses, the gateway idle-suspends the session and releases its pod, or expires a session that cannot be idle-suspended. | `60 <= v <= runtime.maxClientIdleSeconds`. |
 | `playground.oidcSessionTtlSeconds` | int | 3600 | Lifetime of the server-side playground session record and the `lenny_playground_session` cookie. | Must be > 0. |
-| `playground.bearerTtlSeconds` | int | 900 | TTL of MCP bearer tokens minted by `POST /v1/playground/token`. | `60 <= ttl <= 3600`. |
+| `auth.capabilityTokenTtlSeconds` | int | 900 | Default lifetime, in seconds, of every Lenny-issued JWT whose holder obtains a new token before expiry by requesting one: the MCP bearer tokens minted by `POST /v1/playground/token`, and the JWTs `POST /v1/oauth/token` issues from a request without `expires_in`. A token's expiry is fixed at mint and never extended. The gateway and the Token Service refuse to start outside the bounds. | `120 <= ttl <= 3600`. |
 | `playground.sessionLabels` | map[string]string | `{origin: "playground"}` | Labels applied to playground sessions for audit and accounting. | -- |
 | `playground.acknowledgeApiKeyMode` | bool | `false` | Set `true` to acknowledge the `apiKey`-mode paste-form phishing surface. When `playground.enabled=true`, `playground.authMode=apiKey`, and `global.devMode=false`, `lenny-preflight` emits a non-blocking `WARNING` unless this value is `true`. Acknowledgement is install-time only; the gateway does not gate startup on it. | -- |
 

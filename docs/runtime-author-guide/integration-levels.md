@@ -17,19 +17,20 @@ Lenny gives `type: agent` runtimes three levels of integration. Each level adds 
 |-----------|---------|----------|------|
 | **stdin/stdout JSON-lines protocol** | Yes | Yes | Yes |
 | **Heartbeat / shutdown handling** | Yes | Yes | Yes |
+| **Session frames** (`session_start` and `session_end` bracket each session on one long-lived process) | Yes; a runtime that keeps per-session context answers `session_start` with `session_started` | Yes; same as Basic | Yes; the runtime answers every `session_start` with `session_started` |
 | **Built-in file tools** (`read_file`, `write_file`, `list_dir`, `delete_file`) | Yes | Yes | Yes |
-| **Simple response shorthand** (`{"type":"response","text":"..."}`) | Yes | Yes | Yes |
+| **Simple response shorthand** (`{"type":"response","sessionId":"...","text":"..."}`) | Yes | Yes | Yes |
 | **Minimal output part fields** (only `type` + `inline` required) | Yes | Yes | Yes |
-| **Minimal message fields** (only `type`, `id`, `input` needed) | Yes | Yes | Yes |
-| **Platform tool server** (delegation, discovery, user input, streaming output, memory, messaging) | -- | Yes | Yes |
+| **Minimal message fields** (only `type`, `id`, `input`, and `sessionId` needed; a runtime echoes `sessionId` on the frames it emits in response, other than `heartbeat_ack`) | Yes | Yes | Yes |
+| **Platform tool server** (delegation, discovery, user input, streaming output, memory, messaging, tracing-context propagation) | -- | Yes | Yes |
 | **Connector tool servers** (GitHub, Jira, Slack, etc.) | -- | Yes | Yes |
-| **Lifecycle channel** | -- | -- | Yes |
+| **CH-RUNTIMEOPS** | -- | -- | Yes |
 | **Checkpoint and restore** | None -- pod failure loses context | Best-effort -- minor inconsistencies possible | Cooperative handshake -- consistent snapshots |
-| **Interrupt** | SIGTERM only, no safe stop point | SIGTERM only | Clean `interrupt_request` / `interrupt_acknowledged` |
-| **Credential rotation** | Pod restart, context lost unless checkpointed | Pod restart, brief pause | Rotated in place, no interruption |
-| **Advance deadline warning** | `shutdown` only, no advance notice | `shutdown` only | `deadline_approaching` signal before expiry |
-| **Graceful drain** | `shutdown` + SIGTERM | `shutdown` + SIGTERM | Coordinated via the lifecycle channel |
-| **Pod reuse in task mode** | No (effectively `maxTasksPerPod: 1`) | No | Yes, via `task_complete` / `task_ready` handshake |
+| **Interrupt** | No clean interrupt; the runtime process receives no signal | No clean interrupt; same as Basic | Clean `interrupt_request` / `interrupt_acknowledged` |
+| **Credential rotation** | Pod restart, in-flight context lost (no checkpoint) | Pod restart, brief pause (best-effort checkpoint) | Rotated in place, no interruption |
+| **Advance deadline warning** | No advance notice of a session's expiry | No advance notice; same as Basic | `deadline_approaching`, addressed to the session by `sessionId`, before that session's expiry; the runtime keeps running |
+| **Graceful drain** | `shutdown` + SIGTERM | `shutdown` + SIGTERM | No drain coordination at pod exit |
+| **Pod recycling (`recycle.enabled`)** | Yes -- platform-executed, no CH-RUNTIMEOPS exchange; reuse requires a runtime that serves sequential sessions | Yes | Yes |
 
 ---
 
@@ -39,16 +40,23 @@ Lenny gives `type: agent` runtimes three levels of integration. Each level adds 
 
 1. **Read one JSON object per line from stdin.** Dispatch on the `type` field.
 2. **Handle `message`** by writing a `response` back on stdout.
-3. **Handle `heartbeat`** by writing `{"type":"heartbeat_ack"}` right away.
+3. **Handle `heartbeat`** by writing a `heartbeat_ack` right away. The adapter sends a `heartbeat` for each session, naming the session in `sessionId`. While your runtime does any work for that session, the ack carries the heartbeat's `sessionId` and `busy: true`; otherwise `{"type":"heartbeat_ack"}` is enough. [Heartbeats and busy reporting](#heartbeats-and-busy-reporting) below states the rule.
 4. **Handle `shutdown`** by wrapping up and exiting within `deadline_ms`.
-5. **Ignore unknown types** so the platform can add things later without breaking you.
-6. **Flush stdout** after every write.
+5. **Handle `session_start` and `session_end`**, which open and release each session on your one long-lived process. A runtime that keeps per-session context creates it from `session_start`, answers with `session_started`, and releases it on `session_end`. A runtime that keeps none may ignore both frames under the unknown-type rule.
+6. **Ignore unknown types** so the platform can add things later without breaking you.
+7. **Flush stdout** after every write.
+
+When your binary dials the message channel as a socket rather than reading stdin, it also performs the [connection handshake](../reference/adapter-contract.md#connection-handshake): it waits for the manifest, sends `{"_lennyNonce":"<nonce_hex>"}` with the manifest's `mcpNonce` as its first line, answers a nonce-only `_lennyChallenge` that arrives before the first protocol frame, and reads the manifest again and redials when the adapter closes the connection before that frame. That nonce is the only manifest field a Basic-level runtime reads for core operation.
+
+### Heartbeats and busy reporting
+
+A runtime reports `busy: true` with the heartbeat's `sessionId` on its `heartbeat_ack` while it does any work for the session the heartbeat names, as in `{"type":"heartbeat_ack","sessionId":"sess_abc","busy":true}`. The runtime SDKs do this while a message for the session is pending or being handled and while a busy hold (`HoldBusy` in Go, `hold_busy` in Python, `holdBusy` in TypeScript) is held. Work after a handler returns that takes no hold, including the rest of a streaming turn whose reply is not yet final, is not reported. Without a report, the adapter counts only the following traffic as activity for a session: each frame it writes to the runtime for the session other than `heartbeat` and `session_end`; each `message`, `tool_call`, `tool_result`, `response`, `set_tracing_context`, or `status` frame it reads from the runtime that names the session, or that carries no `sessionId` on a pod holding at most one [slot](../reference/glossary#slot); each CH-RUNTIMEOPS `llm_request_completed` that names the session; and each platform or connector MCP tool call for the session while it is in flight. When the gateway's idle clock (`maxClientIdleSeconds`, default 900s) fires for a session, the adapter seals the session only when it had none of that activity and no `busy` report in the window, and the gateway then idle-suspends the session and releases its pod or slot. See [Idle suspension](lifecycle.md#idle-suspension). If no acknowledgment arrives within 10 seconds, the adapter treats the runtime as hung for the session the heartbeat names: it ends the session's stream to the gateway when one is open and refuses each later stream for the session until the adapter releases the session, and the runtime process receives no signal. The gateway handles the session as a runtime crash under its retry policy.
 
 ### What the platform gives you
 
-- **Workspace files** at `/workspace/current/` -- that's your working directory.
+- **Workspace files** at `/workspace/slots/{sessionId}/current/` -- the session's working directory, derived from its own session identifier.
 - **Built-in file tools** (`read_file`, `write_file`, `list_dir`, `delete_file`) through the `tool_call` / `tool_result` stdin/stdout exchange.
-- **Process lifecycle management** -- the sidecar starts your binary, delivers messages, and coordinates shutdown.
+- **Process lifecycle management** -- the sidecar delivers messages, opens and releases each session with the session frames, and coordinates shutdown. A session's own context, such as the path of its credential file, arrives in its `session_start` frame.
 
 ### What's off the table at this level
 
@@ -56,10 +64,9 @@ Lenny gives `type: agent` runtimes three levels of integration. Each level adds 
 - No platform tools like asking the user a question or streaming incremental output.
 - No connector access (GitHub, Jira, and so on).
 - No inter-session messaging.
-- No clean interrupt handling -- you only get SIGTERM.
+- No clean interrupt handling -- the runtime process receives no signal when a session is interrupted.
 - No cooperative checkpointing -- a pod failure loses everything in flight.
-- No advance deadline warnings -- you just get `shutdown` when time's up.
-- No pod reuse across tasks.
+- No advance deadline warnings -- there is no advance notice of a session's expiry.
 
 ### What happens if the pod dies
 
@@ -76,8 +83,8 @@ About 50 lines in any language. See the [Echo Runtime Sample](echo-runtime.md) f
 ### What you add on top of Basic
 
 1. **Read the manifest** the sidecar writes to `/run/lenny/adapter-manifest.json` at startup. Extract `platformMcpServer.socket`, `connectorServers`, and `mcpNonce`.
-2. **Connect to the platform tool server** over the Unix socket named in the manifest. Present the `mcpNonce` in the MCP `initialize` handshake.
-3. **Optionally connect to connector tool servers** -- one per connector the operator has authorized for your tenant.
+2. **Connect to the platform tool server** over the Unix socket named in the manifest. Present the `mcpNonce` in the MCP `initialize` handshake. The intra-pod MCP servers are pod-wide and started at most once per pod, so the nonce a server validates against is the one the manifest carried at the start that bound it, and a later session's manifest write does not re-arm a running server.
+3. **Optionally connect to connector tool servers** -- one per connector the operator has authorized for your tenant. A connector is an external MCP server registered with Lenny; the gateway proxies its tools into your pod, scoped by the session's DelegationPolicy. This is how an agent runtime reaches external MCP tools. A `type: mcp` runtime's tools are not reachable this way; an agent cannot call them in v1 (see [`type: mcp` runtimes](#type-mcp-runtimes)).
 4. **Use the platform tools** for delegation, streaming output, asking the user questions, memory, and messaging.
 
 ### About the connection
@@ -97,6 +104,8 @@ About 50 lines in any language. See the [Echo Runtime Sample](echo-runtime.md) f
 }
 ```
 
+The nonce authenticates the connection to the pod's intra-pod MCP servers. It does not scope the connection to a session: the server resolves the calling session at call time and refuses the call unless the pod's shared runtime process has been given exactly one session and that session is the caller.
+
 - **Tool discovery:** once connected, call `tools/list` on each server to see what's available.
 - **Client libraries:** use whichever MCP client library your language already has -- `mcp-go` for Go, `@modelcontextprotocol/sdk` for TypeScript, `mcp` for Python.
 
@@ -113,16 +122,17 @@ About 50 lines in any language. See the [Echo Runtime Sample](echo-runtime.md) f
 | `lenny/memory_write` | Write to the persistent memory store |
 | `lenny/memory_query` | Query the memory store |
 | `lenny/request_input` | Block until the user answers |
-| `lenny/send_message` | Send a message to any task by task ID |
+| `lenny/send_message` | Send a point-to-point message to another session by ID (same-tenant only, scoped by `messagingScope`); the target receives it through its gateway-managed inbox. There is no broadcast. See [Platform Tools](platform-tools.md). |
 | `lenny/get_task_tree` | Get the task hierarchy with current states |
+| `lenny/set_tracing_context` | Register tracing identifiers the gateway propagates to child tasks, so delegated spans link back to the parent's trace |
 
 ### What happens if the pod dies
 
 At Standard, Lenny takes **best-effort snapshots** without pausing your runtime. The workspace is tarred up while your binary is still running, so files written during the snapshot can end up in an inconsistent state. On resume, you may see minor workspace drift. For most workloads that's fine.
 
-### A note on macOS
+### A note on the local socket transport
 
-Standard and Full use Linux abstract Unix sockets (names that start with `@`), which only exist on Linux. If you're developing on macOS, run your runtime inside `docker compose up` -- that gives you a Linux environment. `make run` works on macOS for Basic-level runtimes, since those only use stdin/stdout.
+Standard and Full use Linux abstract Unix sockets (names that start with `@`), which exist only on Linux. Where this matters is the local-development mode you run under. Under `lenny up` and `docker compose up`, your runtime runs in a Linux pod or container, so the sockets work whatever your host OS is. Under `make run`, your runtime runs as a plain host process, which can host those sockets only when the host itself is Linux. On a non-Linux host, use `make run` for Basic-level runtimes, which need only stdin/stdout, and `lenny up` or `docker compose up` for Standard and Full. See [Local Development](local-development.md) for the development modes.
 
 ### How much code
 
@@ -134,9 +144,10 @@ Somewhere around 150-200 lines, plus an MCP client library.
 
 ### What you add on top of Standard
 
-1. **Open the lifecycle channel** by connecting to the socket named in `manifest.lifecycleChannel.socket` (usually `@lenny-lifecycle`).
+1. **Open the CH-RUNTIMEOPS** by connecting to the socket named in `manifest.runtimeOps.socket` (usually `@lenny-runtime-ops`), and open the connection with the [connection handshake](../reference/adapter-contract.md#connection-handshake): wait for the manifest, send the `_lennyNonce` line first, answer a nonce-only `_lennyChallenge` that arrives before the first protocol frame, and read the manifest again and redial when the adapter closes the connection before that frame.
 2. **Do the capability handshake:** you'll receive `lifecycle_capabilities` from the sidecar; reply with `lifecycle_support` naming which of them you actually implement.
-3. **Handle lifecycle signals** in a background goroutine or thread, running alongside the main stdin loop.
+3. **Answer each `session_start` with `session_started`** on stdout, for every session, once the session's context exists (see [`session_started`](../reference/adapter-contract.md#outbound-messages-your-runtime-writes-to-stdout) and the [CH-RUNTIMEOPS ordering](../reference/adapter-contract.md#ch-runtimeops-full-level-only)).
+4. **Handle lifecycle signals** in a background thread or task, running alongside the main stdin loop. Each session-scoped signal names its session by `sessionId`.
 
 ### The lifecycle capabilities
 
@@ -145,16 +156,15 @@ Somewhere around 150-200 lines, plus an MCP client library.
 | `checkpoint` | Cooperative `checkpoint_request` / `checkpoint_ready` / `checkpoint_complete` handshake |
 | `interrupt` | Clean `interrupt_request` / `interrupt_acknowledged` so the runtime stops at a safe point |
 | `credential_rotation` | In-place `credentials_rotated` / `credentials_acknowledged` -- the session keeps going |
-| `deadline_signal` | `deadline_approaching` so the runtime can wrap up before it's terminated |
-| `task_lifecycle` | `task_complete` / `task_complete_acknowledged` / `task_ready` for pod reuse in task-mode pools |
+| `deadline_signal` | `deadline_approaching`, addressed to a session by `sessionId`, so the runtime can wrap up that session's work before the session is terminated. The runtime keeps running and serving its other sessions. |
 
-Declare only the capabilities you implement. Anything you don't declare falls back to Standard-level behavior -- an unimplemented checkpoint becomes best-effort, an unimplemented interrupt becomes SIGTERM.
+Declare only the capabilities you implement. Anything you don't declare falls back to Standard-level behavior -- an unimplemented checkpoint becomes best-effort, and an unimplemented interrupt is not clean and sends the runtime process no signal.
 
 ### What a cooperative checkpoint looks like
 
 ```
 1. Sidecar sends:
-   {"type":"checkpoint_request","checkpointId":"chk_42","deadlineMs":60000}
+   {"type":"checkpoint_request","sessionId":"sess_abc","checkpointId":"chk_42","deadlineMs":60000}
 
 2. Your runtime:
    - Finishes the current output write
@@ -168,7 +178,7 @@ Declare only the capabilities you implement. Anything you don't declare falls ba
 4. Sidecar snapshots the workspace filesystem.
 
 5. Sidecar sends:
-   {"type":"checkpoint_complete","checkpointId":"chk_42","status":"ok"}
+   {"type":"checkpoint_complete","sessionId":"sess_abc","checkpointId":"chk_42","status":"ok"}
 
 6. Your runtime resumes normal operation.
 ```
@@ -200,15 +210,15 @@ The stdin/stdout contract doesn't change. `message` / `response` / `heartbeat` /
 
 ### From Standard to Full
 
-1. Connect to the lifecycle channel (`@lenny-lifecycle`) at startup.
+1. Connect to the CH-RUNTIMEOPS (`@lenny-runtime-ops`) at startup, sending the `_lennyNonce` line first as the [connection handshake](../reference/adapter-contract.md#connection-handshake) states.
 2. Do the capability handshake (`lifecycle_capabilities` / `lifecycle_support`), declaring only what you implement.
-3. Read lifecycle messages in a background goroutine or thread, alongside the stdin loop.
-4. Implement the handlers you need:
-   - `checkpoint`: quiesce, reply `checkpoint_ready`, wait for `checkpoint_complete`, resume.
-   - `interrupt`: reach a safe stop point, reply `interrupt_acknowledged`.
-   - `credential_rotation`: reload credentials from the new path, reply `credentials_acknowledged`.
-   - `deadline_signal`: start wrapping up long-running work.
-   - `task_lifecycle`: release task resources on `task_complete`, prepare for the next one on `task_ready`.
+3. Answer each `session_start` with `session_started` (see [`session_started`](../reference/adapter-contract.md#outbound-messages-your-runtime-writes-to-stdout) and the [CH-RUNTIMEOPS ordering](../reference/adapter-contract.md#ch-runtimeops-full-level-only)).
+4. Read lifecycle messages in a background thread or task, alongside the stdin loop, and route each session-scoped message by its `sessionId`.
+5. Implement the handlers you need:
+   - `checkpoint`: quiesce the named session, reply `checkpoint_ready`, wait for `checkpoint_complete`, resume.
+   - `interrupt`: bring the named session to a safe stop point, reply `interrupt_acknowledged`.
+   - `credential_rotation`: reload the named session's credentials from the new path, reply `credentials_acknowledged`.
+   - `deadline_signal`: start wrapping up the named session's long-running work, and keep running.
 
 MCP doesn't change between Standard and Full -- the platform tool server behaves the same way.
 
@@ -220,11 +230,11 @@ When an LLM provider rate-limits or revokes a credential, Lenny rotates it. What
 
 | Level | How rotation happens | What the session sees |
 |-------|---------------------|----------------------|
-| Full | The platform sends `credentials_rotated` on the lifecycle channel; your runtime rebinds in place. | Nothing -- the session keeps running. |
-| Standard | The platform checkpoints, terminates the pod, allocates a new one, assigns new credentials, and resumes. | A brief pause; the client sees a reconnect. |
-| Basic | Same as Standard, but if there's no checkpoint, the in-flight context is lost. | A pause, and potentially some lost context. |
+| Full | The platform sends `credentials_rotated` on the CH-RUNTIMEOPS; your runtime rebinds in place. | Nothing -- the session keeps running. |
+| Standard | The platform checkpoints, terminates the pod, allocates a new one, assigns new credentials, and resumes. This is a force restart; context is preserved by the best-effort checkpoint. | A brief pause; the client sees a reconnect. |
+| Basic | The platform terminates the pod, allocates a new one, assigns new credentials, and restarts the session. This is a force restart; there is no checkpoint at this level, so any in-flight context is lost. | A pause, and the loss of in-flight context. |
 
-The platform picks the right strategy automatically -- based on the capabilities you declared in `lifecycle_support`, or the absence of a lifecycle channel.
+So at Full level your runtime is never force-restarted for a credential change, while at Standard and Basic a credential change always restarts the pod. The platform picks the strategy automatically, based on the capabilities you declared in `lifecycle_support` or the absence of a CH-RUNTIMEOPS. The [Credential Rotation section of Pod Lifecycle](lifecycle.md#credential-rotation) covers the same behavior in the context of the pod state machine.
 
 ---
 
@@ -236,7 +246,9 @@ A `type: mcp` runtime hosts an MCP server behind Lenny's infrastructure. You get
 
 Your server just needs to speak MCP. It doesn't receive `message`, `heartbeat`, or `shutdown` -- Lenny manages the pod lifecycle from the outside.
 
-Each `type: mcp` runtime gets its own endpoint on the gateway at `/mcp/runtimes/{runtime-name}`. Clients connect directly over standard MCP; Lenny creates a session record per connection for audit and billing.
+Each `type: mcp` runtime gets its own endpoint on the gateway at `/mcp/runtimes/{runtime-name}`. External MCP clients connect directly over standard MCP; Lenny creates a session record per connection for audit and billing.
+
+In v1, an agent runtime cannot invoke a `type: mcp` runtime's tools from inside its pod. The adapter-manifest slot that would proxy them (`runtimeMcpServers`) is reserved and empty in v1, so a `type: mcp` runtime is reachable only by external MCP clients at `/mcp/runtimes/{runtime-name}`. For an agent runtime to reach external MCP tools, register the MCP server as a connector instead; connectors are proxied into the pod and scoped by the session's DelegationPolicy (see the Connector tool servers note under Standard above).
 
 How it differs from `type: agent`:
 

@@ -1,0 +1,286 @@
+// SPDX-License-Identifier: MIT
+
+package sessionserver_test
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+)
+
+// cancelTrackingExecutor implements Executor and SessionReleaser so a test can
+// assert the §6.2 disposition recorded at teardown keyed by session id. The
+// cascade-drain (F-11.3.9) must release every cancelled descendant, not just
+// the directly-terminated parent.
+type cancelTrackingExecutor struct {
+	mu       sync.Mutex
+	released map[string]executor.Disposition
+}
+
+func newCancelTrackingExecutor() *cancelTrackingExecutor {
+	return &cancelTrackingExecutor{released: map[string]executor.Disposition{}}
+}
+
+func (e *cancelTrackingExecutor) Send(context.Context, string, []executor.Message) (executor.Response, error) {
+	return executor.Response{}, nil
+}
+
+func (e *cancelTrackingExecutor) Close(_ context.Context, id string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.released[id] = ""
+	return nil
+}
+
+func (e *cancelTrackingExecutor) Release(_ context.Context, id string, d executor.Disposition) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.released[id] = d
+	return nil
+}
+
+func (e *cancelTrackingExecutor) dispositionOf(id string) (executor.Disposition, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	d, ok := e.released[id]
+	return d, ok
+}
+
+// awaitDisposition waits for the session's release, which a cascade's
+// post-terminal hook runs on a goroutine, and returns what it recorded.
+func (e *cancelTrackingExecutor) awaitDisposition(id string) (executor.Disposition, bool) {
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		d, ok := e.dispositionOf(id)
+		if ok || time.Now().After(deadline) {
+			return d, ok
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+func seedRunningChild(t *testing.T, store sessionstore.Store, id, parent string) {
+	t.Helper()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: id, TenantID: "acme", State: session.StateRunning,
+		ParentSessionID: parent, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed %s: %v", id, err)
+	}
+}
+
+// TestCascadeCancelDrainsDescendantRuntimes_spec_11_3_9 asserts that a cancel
+// cascade (DELETE of a parent under the default cancel_all policy) drains every
+// descendant's pod, not merely the directly-terminated parent's. Before
+// F-11.3.9 the cascade flipped each descendant row to cancelled but never
+// released the executor, so the descendant runtimes kept running until the
+// watchdog's maxSessionAge clock fired hours later. spec: §11.3; §11.4; §8.10 cascade.
+func TestCascadeCancelDrainsDescendantRuntimes_spec_11_3_9(t *testing.T) {
+	store := memstore.New()
+	exec := newCancelTrackingExecutor()
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec})
+
+	// parent → child → grandchild, all running, default cancel_all cascade.
+	seedRunning(t, store, "p")
+	seedRunningChild(t, store, "c1", "p")
+	seedRunningChild(t, store, "c2", "c1")
+
+	req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/p", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("DELETE status = %d, want 200", rr.Code)
+	}
+
+	// The parent and both descendants must each be released with the §6.2
+	// cancelled disposition (the parent via recordSessionCompleted, the
+	// descendants via the cascade).
+	for _, id := range []string{"p", "c1", "c2"} {
+		d, ok := exec.awaitDisposition(id)
+		if !ok || d != executor.DispositionCancelled {
+			t.Errorf("F-11.3.9: session %s released disposition = %q (present=%v), want cancelled", id, d, ok)
+		}
+		row, err := store.Get(context.Background(), "acme", id)
+		if err != nil {
+			t.Fatalf("get %s: %v", id, err)
+		}
+		if row.State != session.StateCancelled {
+			t.Errorf("F-11.3.9: session %s state = %q, want cancelled", id, row.State)
+		}
+	}
+}
+
+// TestSessionModePodDrainedOnTerminalTransition_spec_6_1 asserts the §6.1
+// "pods are one-session-only" invariant has an automatic pod-drain on every
+// terminal transition. The gateway's single terminal funnel
+// (recordSessionCompleted, reached here through the watchdog / orphan-cleanup
+// OnSessionTerminal hook) releases the session-mode pod through the executor
+// with the matching §6.2 disposition; a pod-backed executor (SessionReleaser)
+// records the disposition and then drains the pod, so it is reclaimed rather
+// than left resident for the next session. spec: §6.1 (one-session-only);
+// §6.2; §11.4. F-6.1.25.
+func TestSessionModePodDrainedOnTerminalTransition_spec_6_1(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		state session.State
+		want  executor.Disposition
+	}{
+		{session.StateCompleted, executor.DispositionCompleted},
+		{session.StateFailed, executor.DispositionFailed},
+		{session.StateExpired, executor.DispositionExpired},
+	} {
+		store := memstore.New()
+		exec := newCancelTrackingExecutor()
+		srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec})
+		now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		sess := sessionstore.Session{ID: "sm", TenantID: "acme", State: tc.state, CreatedAt: now, UpdatedAt: now}
+		if err := store.Create(ctx, sess); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+
+		// The watchdog / force-terminate path drives the terminal funnel. The
+		// pre-terminal state is running, so the teardown follows the §6.2
+		// executor recycle path rather than the pre-running by-name reclaim.
+		srv.OnSessionTerminal(ctx, session.StateRunning, sess)
+		if err := srv.WaitTerminalWork(context.Background()); err != nil {
+			t.Fatalf("WaitTerminalWork: %v", err)
+		}
+
+		d, ok := exec.dispositionOf("sm")
+		if !ok || d != tc.want {
+			t.Fatalf("F-6.1.25: terminal %s released disposition = %q (present=%v), want %q",
+				tc.state, d, ok, tc.want)
+		}
+	}
+}
+
+// TestTerminalTransitionStampsTerminatedConditionOnRow_spec_7_2 asserts that a
+// terminal writer records the §7.2 / §8.8 Terminated session-condition fact
+// (TerminatedAt + TerminatedReason) on the session row in the same write that
+// sets the terminal state, for DELETE (cancelled) and POST /terminate
+// (completed). The gateway writes no Sandbox.status field for the terminal
+// disposition (§4.6.3), so the fact lives on the session row and is read
+// through the session API (§7.2). The post-terminal funnel stamps nothing
+// itself. F-6.2.12.
+func TestTerminalTransitionStampsTerminatedConditionOnRow_spec_7_2(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		method, path string
+		state        session.State
+		wantReason   string
+	}{
+		{http.MethodDelete, "/v1/sessions/tc", session.StateCancelled, "Cancelled"},
+		{http.MethodPost, "/v1/sessions/tc/terminate", session.StateCompleted, "Completed"},
+	} {
+		store := memstore.New()
+		srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
+		seedRunning(t, store, "tc")
+
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s %s = %d, want 200; body %s", tc.method, tc.path, rr.Code, rr.Body.String())
+		}
+		row, err := store.Get(ctx, "acme", "tc")
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		if row.State != tc.state || row.TerminatedAt.IsZero() || row.TerminatedReason != tc.wantReason {
+			t.Errorf("F-6.2.12: row after %s = %q at %v reason %q, want %q stamped with %q",
+				tc.path, row.State, row.TerminatedAt, row.TerminatedReason, tc.state, tc.wantReason)
+		}
+	}
+}
+
+// TestTerminalConditionStampIsIdempotent_spec_7_2 asserts that the stamp is
+// written once: a second terminal pass through the funnel (a watchdog firing
+// after a REST terminate) leaves TerminatedAt and TerminatedReason unchanged,
+// because only the terminal write stamps them. spec: §7.2 / §8.8.
+func TestTerminalConditionStampIsIdempotent_spec_7_2(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
+	seedRunning(t, store, "idem")
+
+	req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/idem", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	srv.Handler().ServeHTTP(httptest.NewRecorder(), req)
+	first, err := store.Get(ctx, "acme", "idem")
+	if err != nil {
+		t.Fatalf("get after first: %v", err)
+	}
+	if first.TerminatedAt.IsZero() {
+		t.Fatalf("the DELETE did not stamp TerminatedAt")
+	}
+
+	srv.OnSessionTerminal(ctx, session.StateRunning, first)
+	if err := srv.WaitTerminalWork(context.Background()); err != nil {
+		t.Fatalf("WaitTerminalWork: %v", err)
+	}
+	second, err := store.Get(ctx, "acme", "idem")
+	if err != nil {
+		t.Fatalf("get after second: %v", err)
+	}
+	if !second.TerminatedAt.Equal(first.TerminatedAt) || second.TerminatedReason != first.TerminatedReason {
+		t.Errorf("re-entrant terminal funnel churned the stamp: first=%v/%q second=%v/%q",
+			first.TerminatedAt, first.TerminatedReason, second.TerminatedAt, second.TerminatedReason)
+	}
+}
+
+// TestCascadeCancelDetachLeavesGrandchildRuntimeRunning_spec_11_3_9 asserts the
+// cascade-drain respects the per-node §8.10 policy: a detach child shields its
+// own subtree, so the cascade neither cancels nor drains a grandchild under a
+// detach node. Only the descendants the cascade actually cancels are drained.
+func TestCascadeCancelDetachLeavesGrandchildRuntimeRunning_spec_11_3_9(t *testing.T) {
+	store := memstore.New()
+	exec := newCancelTrackingExecutor()
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec})
+
+	seedRunning(t, store, "p")
+	// c1 detaches, so its child gc must stay running and undrained.
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "c1", TenantID: "acme", State: session.StateRunning,
+		ParentSessionID: "p", CascadeOnFailure: session.CascadeDetach,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed c1: %v", err)
+	}
+	seedRunningChild(t, store, "gc", "c1")
+
+	req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/p", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("DELETE status = %d, want 200", rr.Code)
+	}
+
+	// c1 is cancelled+drained; gc (under the detach node) is neither.
+	if d, ok := exec.awaitDisposition("c1"); !ok || d != executor.DispositionCancelled {
+		t.Errorf("F-11.3.9: c1 released = %q (present=%v), want cancelled", d, ok)
+	}
+	if _, ok := exec.dispositionOf("gc"); ok {
+		t.Errorf("F-11.3.9: detach grandchild gc must not be drained, but it was released")
+	}
+	gc, err := store.Get(context.Background(), "acme", "gc")
+	if err != nil {
+		t.Fatalf("get gc: %v", err)
+	}
+	if gc.State != session.StateRunning {
+		t.Errorf("F-11.3.9: detach grandchild gc state = %q, want running", gc.State)
+	}
+}

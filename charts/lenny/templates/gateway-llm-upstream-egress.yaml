@@ -1,0 +1,88 @@
+{{- /*
+allow-gateway-egress-llm-upstream is the gateway pod's external-HTTPS
+egress NetworkPolicy (§4.9 Upstream egress / §13.2 NET-046). The
+lenny-system default-deny otherwise blocks every gateway-initiated
+outbound HTTPS call; this policy re-admits TCP 443 to upstream LLM
+provider APIs, connector callbacks, and webhook targets, while keeping
+cluster-internal CIDRs, RFC1918 private ranges, link-local, and cloud
+instance-metadata endpoints blocked (the SSRF boundary shared with
+lenny-ops-egress, NET-057).
+
+Two parallel ipBlock peers are emitted — one per address family —
+because an ipBlock `except` entry must match the family of its enclosing
+`cidr`; mixing families is rejected by strict CNIs and silently drops
+entries under lenient ones (NET-062). The chart partitions
+egressCIDRs.excludePrivate by family at render time.
+
+When egressCIDRs.llmProviders is non-empty the broad 0.0.0.0/0 default
+is replaced (not supplemented) by exactly those provider CIDRs (§13.2
+default-scope caveat), the tighter posture strict-compliance deployers
+pin. NetworkPolicy cannot resolve DNS, so the values carry CIDRs only.
+*/}}
+{{- if .Values.gateway.llmUpstreamEgress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-egress-llm-upstream
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: gateway
+  policyTypes: [Egress]
+  egress:
+    {{- if .Values.egressCIDRs.llmProviders }}
+    - to:
+        {{- range .Values.egressCIDRs.llmProviders }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 443
+    {{- else }}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              # Cluster-internal IPv4 CIDRs (preflight discovers actual).
+              - {{ .Values.egressCIDRs.excludeClusterPodCIDR | quote }}
+              - {{ .Values.egressCIDRs.excludeClusterServiceCIDR | quote }}
+              # RFC1918 + IPv4 link-local from the shared exclusion list.
+              {{- range .Values.egressCIDRs.excludePrivate }}
+              {{- if not (contains ":" .) }}
+              - {{ . | quote }}
+              {{- end }}
+              {{- end }}
+              # IPv4 cloud instance metadata endpoints.
+              - 169.254.169.254/32
+              - 100.100.100.200/32
+      ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - ipBlock:
+            cidr: ::/0
+            except:
+              # Cluster-internal IPv6 CIDRs, dual-stack clusters only.
+              {{- with .Values.egressCIDRs.excludeClusterPodCIDRv6 }}
+              - {{ . | quote }}
+              {{- end }}
+              {{- with .Values.egressCIDRs.excludeClusterServiceCIDRv6 }}
+              - {{ . | quote }}
+              {{- end }}
+              # IPv6 ULA + IPv6 link-local from the shared exclusion list.
+              {{- range .Values.egressCIDRs.excludePrivate }}
+              {{- if contains ":" . }}
+              - {{ . | quote }}
+              {{- end }}
+              {{- end }}
+              # IPv6 cloud instance metadata endpoint.
+              - fd00:ec2::254/128
+      ports:
+        - protocol: TCP
+          port: 443
+    {{- end }}
+{{- end }}

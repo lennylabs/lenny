@@ -1,0 +1,220 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
+    lenny.dev/schema-version: "1"
+  name: sandboxclaims.lenny.dev
+spec:
+  group: lenny.dev
+  names:
+    kind: SandboxClaim
+    listKind: SandboxClaimList
+    plural: sandboxclaims
+    shortNames:
+    - sbxc
+    singular: sandboxclaim
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.sandboxRef
+      name: Sandbox
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          SandboxClaim is the lenny.dev/v1alpha1 record of a per-pod-occupancy
+          claim on a Sandbox pod (§4.6). Gateway replicas create it with the
+          deterministic name `claim-<podName>` so exactly one wins a contested
+          pod through the API server's CREATE uniqueness.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              SandboxClaimSpec is the desired state of a SandboxClaim — the §4.6
+              per-pod-occupancy claim on a Sandbox pod. A gateway replica acquires a
+              pod by creating a SandboxClaim with the deterministic name
+              `claim-<podName>`; exactly one CREATE wins and the others receive an
+              AlreadyExists conflict. The session-to-pod binding lives on the
+              Postgres session row's `pod_assignment` column, so the claim carries no
+              session identifier. A SandboxClaim deliberately omits an ownerReference
+              so its deletion is an explicit step of the claim lifecycle (hold expiry,
+              a hold the acquisition path ends, a release that ends the occupancy
+              without reuse, orphan GC, or pod termination) rather than a cascade from
+              pod deletion; the WarmPoolController garbage-collects orphaned claims.
+              spec: §4.6.3 (CRD field ownership), §5.2 (execution modes).
+            properties:
+              sandboxRef:
+                description: |-
+                  SandboxRef names the Sandbox this claim binds. The
+                  lenny-sandboxclaim-guard webhook rejects a second CREATE for the
+                  same sandboxRef to prevent a double-claim.
+                type: string
+              tenantId:
+                description: |-
+                  TenantID is the tenant the claimed pod is pinned to. spec: §5.2 —
+                  a recycling or concurrent-session pod is pinned to a single tenant
+                  for its lifetime; the claim records the pin the gateway enforces.
+                type: string
+            required:
+            - sandboxRef
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+          status:
+            description: |-
+              SandboxClaimStatus is the observed state of a SandboxClaim. Per §4.6.3
+              the status carries the gateway-owned binding state of the pod-occupancy
+              claim, distinct from the Sandbox pod lifecycle state machine (§6.2) that
+              the WarmPoolController projects from this binding state.
+            properties:
+              bindingStateTransitionTime:
+                description: |-
+                  BindingStateTransitionTime is the time of the last `Phase`
+                  (binding-state) transition. The WarmPoolController orphan GC keys
+                  the §4.6.3 live-binding-state reclaim predicate on this stamp rather
+                  than `metadata.creationTimestamp`, because a per-pod claim's creation
+                  time marks the start of the whole occupancy episode rather than the
+                  start of the orphan window. spec: §4.6.3 (orphan claim detection).
+                format: date-time
+                type: string
+              conditions:
+                description: Conditions is the standard Kubernetes condition list.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              holdExpiresAt:
+                description: |-
+                  HoldExpiresAt is the §4.6.3 reserved-hold deadline the gateway
+                  stamps when it patches the claim to `reserved`: the reservation time
+                  plus the deployment-level hold TTL (`gateway.claimHoldTTLSeconds`,
+                  default 10s). A same-tenant session arriving before this deadline
+                  rebinds the claim (`reserved → bound`); when an acquisition refuses
+                  the reserved pod under the runtime-process acknowledgment, it ends the
+                  hold by deleting the claim instead. After the deadline the
+                  holder deletes the claim and the pod returns to `idle`. Empty until
+                  the claim enters `reserved`. spec: §4.6.3 (reserved hold), §4.6.1
+                  (Reserved hold), §5.2 (Deployer acknowledgment (runtime process kept
+                  across sessions)), §6.2 (pod state machine).
+                format: date-time
+                type: string
+              observedGeneration:
+                description: ObservedGeneration is the .metadata.generation last reconciled.
+                format: int64
+                type: integer
+              phase:
+                description: |-
+                  Phase is the §4.6.3 binding state of the per-pod-occupancy claim:
+                  `bound` once the claim is bound to a claimed pod; `recycling` while
+                  the occupancy-zero whole-pod scrub (and, on preConnect pools, the
+                  SDK re-warm) runs; `reserved` while the scrubbed pod is held for its
+                  pinned tenant through the hold TTL; `released` is the limit-reached
+                  retirement disposition (`recycle.maxSessionsPerPod` or
+                  `recycle.maxPodUptimeSeconds` reached) under which the
+                  WarmPoolController projects the pod to `draining` then `terminated`,
+                  retiring it rather than returning it to the pool; `failed` on a
+                  scrub-failure retirement (`onScrubFailure: fail`), which likewise
+                  drains and terminates the pod. Per §4.6.3 only `released` and
+                  `failed` are terminal. Returning a pod to the pool (`reserved → idle`
+                  on hold expiry) is the claim DELETE edge, not a phase value.
+                  spec: §4.6.3 (SandboxClaim.status.phase enumeration)
+                enum:
+                - bound
+                - recycling
+                - reserved
+                - released
+                - failed
+                type: string
+              rewarmStartedAt:
+                description: |-
+                  RewarmStartedAt is the §4.6.3 re-warm-start stamp the gateway writes
+                  on a preConnect pool when the whole-pod scrub report arrives and the
+                  recycle disposition begins the SDK re-warm. The `sdkConnectTimeoutSeconds`
+                  watchdog (§6.1) measures only the re-warm leg from this stamp, so
+                  neither the prior occupancy episode nor the whole-pod scrub counts
+                  against the re-warm budget. Empty on non-preConnect pools and before
+                  the re-warm begins. spec: §4.6.3 (occupancy projection), §6.1, §6.2.
+                format: date-time
+                type: string
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

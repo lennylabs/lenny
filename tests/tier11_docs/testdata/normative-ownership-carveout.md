@@ -1,0 +1,1 @@
+The artifacts are versioned by Lenny release tag. Breaking changes to the `.proto` file follow buf-style breaking-change rules; JSON Schema changes follow the `additionalProperties` discipline documented per message. A Go reference implementation of the adapter (`examples/runtimes/echo/`) is built from the same `.proto` file and serves as the executable reference.

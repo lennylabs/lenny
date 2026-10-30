@@ -21,8 +21,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 )
 
 // Token-claim anchors. The jwt package compares Expiry against real
@@ -48,7 +48,7 @@ func newTestServer(t *testing.T, opts authmw.Options) (*httptest.Server, *jwt.HM
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	opts.Verifier = signer
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	wrapped := authmw.Wrap(srv.Handler(), opts)
 	ts := httptest.NewServer(wrapped)
 	t.Cleanup(ts.Close)
@@ -261,10 +261,13 @@ func TestTamperedTokenReturns401(t *testing.T) {
 	}
 }
 
-// spec: 10.2 (auth required when RequireAuth is true)
-// diagnosis: A request with no credentials proceeded. The middleware
-//
-//	must return AUTH_REQUIRED before any handler runs.
+// spec: §10.2 + §15.1 — a no-credentials request must reject
+// with the canonical UNAUTHORIZED code (401) and carry details.reason
+// = "auth_required" so callers can discriminate the missing-bearer
+// case while scripting against the §15.1 catalog.
+// diagnosis: a failure means a no-credentials request is not rejected
+// with the canonical UNAUTHORIZED code and auth_required reason, so the
+// missing-bearer case would be indistinguishable from other auth errors.
 func TestNoCredentialsRejectedWhenAuthRequired(t *testing.T) {
 	ts, _ := newTestServer(t, authmw.Options{
 		MultiTenant: false,
@@ -275,8 +278,12 @@ func TestNoCredentialsRejectedWhenAuthRequired(t *testing.T) {
 		t.Fatalf("want 401, got %d", resp.StatusCode)
 	}
 	envelope, _ := body["error"].(map[string]any)
-	if envelope["code"] != "AUTH_REQUIRED" {
-		t.Errorf("error code: want AUTH_REQUIRED, got %v", envelope["code"])
+	if envelope["code"] != "UNAUTHORIZED" {
+		t.Errorf("error code: want UNAUTHORIZED, got %v", envelope["code"])
+	}
+	details, _ := envelope["details"].(map[string]any)
+	if details == nil || details["reason"] != "auth_required" {
+		t.Errorf("details.reason: want auth_required, got %v", details)
 	}
 }
 

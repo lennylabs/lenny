@@ -110,12 +110,20 @@ func (p ComplianceProfile) IsValid() bool {
 	return false
 }
 
+// IsRegulated reports whether the profile is one of the regulated
+// values (soc2, fedramp, hipaa). The regulated profiles trigger the
+// §11.7 SIEM hard-requirement and the §12.8 audit.gdprRetentionDays
+// compliance floor. spec: §12.8.
+func (p ComplianceProfile) IsRegulated() bool {
+	return p == ComplianceSOC2 || p == ComplianceFedRAMP || p == ComplianceHIPAA
+}
+
 // RequiresSIEM reports whether the profile mandates a configured
 // `audit.siem.endpoint`. Without one, the gateway refuses to start
 // per §16.4 / §11.7 — except under ComplianceNone, where the
 // AuditSIEMNotConfigured warning fires but the gateway starts.
 func (p ComplianceProfile) RequiresSIEM() bool {
-	return p == ComplianceSOC2 || p == ComplianceFedRAMP || p == ComplianceHIPAA
+	return p.IsRegulated()
 }
 
 // RetentionPreset names a Postgres-retention bundle from §16.4. Each
@@ -177,6 +185,25 @@ func (p RetentionPreset) PresetDays() int {
 // duration for PresetCustom.
 func (p RetentionPreset) PresetWindow() time.Duration {
 	return time.Duration(p.PresetDays()) * 24 * time.Hour
+}
+
+// ResolveRetentionDays returns the effective §16.4 general
+// audit-log retention window in days for a configured preset. A
+// named preset (soc2, fedramp-high, hipaa, nis2-dora) fixes the
+// window via PresetDays and ignores customDays. PresetCustom (or an
+// unrecognised value) uses the explicit customDays. A non-positive
+// customDays under the custom preset falls back to the PresetSOC2
+// default (365) so the resolved window is always a usable positive
+// value the GC and the lenny_audit_retention_days alert gauge can
+// consume. F-16.4.10.
+func ResolveRetentionDays(p RetentionPreset, customDays int) int {
+	if d := p.PresetDays(); d > 0 {
+		return d
+	}
+	if customDays > 0 {
+		return customDays
+	}
+	return PresetSOC2.PresetDays()
 }
 
 // CompatibleProfiles returns the compliance profiles a preset is a
@@ -265,4 +292,57 @@ func (s OCSFTranslationState) IsValid() bool {
 // terminal; pending and retry_pending are not.
 func (s OCSFTranslationState) IsTerminal() bool {
 	return s == OCSFSucceeded || s == OCSFDeadLettered
+}
+
+// GDPRRetentionDefaultDays is the §12.8 audit.gdprRetentionDays default:
+// 2555 days (7 years). gdpr.* audit rows (erasure receipts, legal-hold
+// ledger events) are retained at least this long, on a window separate
+// from the general audit.retentionDays setting. spec: §12.8.
+const GDPRRetentionDefaultDays = 2555
+
+// GDPRRetentionComplianceFloorDays is the §12.8 minimum
+// audit.gdprRetentionDays under any regulated complianceProfile (soc2,
+// fedramp, hipaa): 2190 days (6 years). A configured value below this
+// floor is rejected at startup. spec: §12.8.
+const GDPRRetentionComplianceFloorDays = 2190
+
+// GDPRRetentionFloorError reports that the configured
+// audit.gdprRetentionDays is below the §12.8 compliance floor a
+// regulated complianceProfile mandates. Its Error() is the §12.8 CONFIG_INVALID startup message verbatim; the struct fields carry
+// the configured value, the binding profile, and the floor for logging.
+type GDPRRetentionFloorError struct {
+	RetentionDays int
+	Profile       string
+	FloorDays     int
+}
+
+func (e *GDPRRetentionFloorError) Error() string {
+	return "CONFIG_INVALID: audit.gdprRetentionDays below compliance floor"
+}
+
+// ValidateGDPRRetentionDays enforces the §12.8 audit.gdprRetentionDays
+// compliance floor. profiles is the set of complianceProfile values
+// active across the deployment's tenants. It returns a
+// *GDPRRetentionFloorError when any regulated profile is present and
+// gdprRetentionDays is below GDPRRetentionComplianceFloorDays, and nil
+// otherwise. A non-positive gdprRetentionDays is treated as
+// GDPRRetentionDefaultDays before the comparison so an unset value
+// cannot bypass the floor. spec: §12.8.
+func ValidateGDPRRetentionDays(gdprRetentionDays int, profiles []string) error {
+	if gdprRetentionDays <= 0 {
+		gdprRetentionDays = GDPRRetentionDefaultDays
+	}
+	if gdprRetentionDays >= GDPRRetentionComplianceFloorDays {
+		return nil
+	}
+	for _, p := range profiles {
+		if ComplianceProfile(p).IsRegulated() {
+			return &GDPRRetentionFloorError{
+				RetentionDays: gdprRetentionDays,
+				Profile:       p,
+				FloorDays:     GDPRRetentionComplianceFloorDays,
+			}
+		}
+	}
+	return nil
 }

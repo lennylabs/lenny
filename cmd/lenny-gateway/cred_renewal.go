@@ -1,0 +1,469 @@
+// SPDX-License-Identifier: MIT
+
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"sync"
+	"time"
+
+	sessionapi "github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+)
+
+// This file wires the §4.9 Proactive Lease Renewal loop into the
+// gateway. The credrenewal.Worker tracks each active credential lease
+// by its renewBefore deadline and issues a replacement lease before the
+// original expires; the wiring here connects the worker to the §4.9
+// credential-assignment service that mints the replacement and to the
+// §4.7 RotateCredentials RPC that pushes it to the lease's pod.
+//
+// Every dependency is optional. A gateway with no credential pools runs
+// no renewal worker at all (newCredRenewalWiring returns nil), and a
+// gateway without warm-pod placement renews leases without a pod to
+// push to. The nil receiver methods keep those degraded modes from
+// branching at every call site.
+
+// credRotateRPCTimeout bounds each §4.7 RotateCredentials RPC the
+// renewal loop sends to a pod. A Full-level runtime's
+// credentials_rotated handshake is bounded by the §4.7 unbounded
+// in-flight wait for a proactive_renewal trigger, but the gateway-side
+// RPC still needs an upper bound so a wedged pod does not pin the
+// renewal sweep goroutine.
+const credRotateRPCTimeout = 30 * time.Second
+
+// renewalProvider is the per-provider §4.9 pool binding the renewal
+// worker needs to re-mint a lease. credrenewal.Lease carries only the
+// renewBefore/expiresAt windows the worker schedules on, so the wiring
+// records the pool name and provider key a tracked lease was minted
+// from and replays them when the worker asks for a replacement.
+type renewalProvider struct {
+	// pool is the §4.9 credential pool the lease was minted from.
+	pool string
+	// provider is the §4.7 AssignCredentials leases-map key (the
+	// runtime-facing provider name) the lease serves.
+	provider string
+	// tenantID is the owning tenant the original lease was minted for,
+	// replayed so the replacement carries the same tenant attribution
+	// (spec: §4.9 — proxy-extracted usage attribution).
+	tenantID string
+}
+
+// credRenewalWiring binds the §4.9 credrenewal.Worker to the gateway's
+// credential-assignment service and warm-pod registry. It satisfies
+// credrenewal.Renewer and supplies the worker's OnRenewed and
+// OnExhausted hooks.
+type credRenewalWiring struct {
+	// assign mints replacement leases — the §4.9 AssignCredentials path
+	// the renewal worker reuses (spec §4.9 Proactive Lease Renewal,
+	// step 2). The interface lets the wiring run against either the
+	// in-process credassign.Service (used by lenny-token-service) or
+	// the gateway-side credassign.Client (the §4.3 mTLS gRPC client).
+	assign credassign.Assigner
+	// registry resolves a session's pod so a rotated credential can be
+	// pushed to it. Nil without warm-pod placement.
+	registry *podsession.Registry
+	// emitter, when set, publishes §16.6 credential_rotated and
+	// credential_pool_exhausted events on the renewal lifecycle. §4.0
+	// requires the credential pool manager to emit both events; a nil
+	// emitter is a no-op.
+	emitter events.EventEmitter
+	// leases is the §4.9 gateway credential-lease store the LLM Proxy
+	// reads. The proxy-mode branch of the §4.9 Token Service
+	// unavailability guard advances a still-valid lease's
+	// ExpiresAt/RenewBefore here so the proxy's server-side expiry check
+	// honors the extension. Typed as the interface so it can hold the
+	// Postgres-backed pgstore.Store the proxy reads under a durable
+	// deployment. spec: §4.9.
+	leases credleasestore.LeaseStore
+	// terminator force-transitions a session to its §8.8 expired terminal
+	// state. The §4.9 cumulative-extension cap routes a capped lease's
+	// session here with the expired:lease reason rather than into the
+	// Fallback Flow, so a permanently-open breaker tears the session down
+	// without re-minting against the still-open breaker. spec: §4.9.
+	terminator sessionbudget.Terminator
+
+	mu sync.Mutex
+	// pools maps a tracked lease ID to the pool/provider it was minted
+	// from, so a replacement can be leased from the same pool.
+	pools map[string]renewalProvider
+}
+
+// newCredRenewalWiring returns the renewal wiring, or nil when no
+// credential pools are registered. registry may be nil when the gateway
+// runs without warm-pod placement; a renewal then refreshes the lease
+// record without a RotateCredentials push. emitter is the §4.0 events
+// sink for credential_rotated / credential_pool_exhausted; nil disables
+// emission without affecting the renewal lifecycle. leases is the §4.9
+// credential-lease store the LLM Proxy reads (the proxy-mode extension
+// target); terminator drives the §4.9 cumulative-extension-cap teardown.
+func newCredRenewalWiring(assign credassign.Assigner, registry *podsession.Registry, emitter events.EventEmitter, leases credleasestore.LeaseStore, terminator sessionbudget.Terminator) *credRenewalWiring {
+	if assign == nil {
+		return nil
+	}
+	return &credRenewalWiring{
+		assign:     assign,
+		registry:   registry,
+		emitter:    emitter,
+		leases:     leases,
+		terminator: terminator,
+		pools:      make(map[string]renewalProvider),
+	}
+}
+
+// track records the pool and provider a lease was minted from and
+// registers the lease with the worker for proactive renewal. The
+// session-start path calls it for each lease the §4.7 binder assigned,
+// so the worker can renew the lease and re-mint a replacement from the
+// same pool.
+func (w *credRenewalWiring) track(worker *credrenewal.Worker, pool, provider string, lease credential.Lease) {
+	if w == nil || worker == nil {
+		return
+	}
+	w.mu.Lock()
+	w.pools[lease.LeaseID] = renewalProvider{pool: pool, provider: provider, tenantID: lease.TenantID}
+	w.mu.Unlock()
+	worker.Track(renewalLease(lease))
+}
+
+// renewalLease projects an assigned §4.9 credential.Lease onto the subset
+// the renewal worker tracks, stamping LeaseTTL from the lease's own minted
+// lifetime (ExpiresAt - IssuedAt, i.e. min(leaseTTLSeconds, providerMaxTTL)
+// per spec/04 line 1145) so the §4.9 cumulative-extension cap is
+// TTL-derived rather than falling back to DefaultMaxExtensions.
+// spec: §4.9.
+func renewalLease(lease credential.Lease) credrenewal.Lease {
+	return credrenewal.Lease{
+		LeaseID:      lease.LeaseID,
+		SessionID:    lease.SessionID,
+		CredentialID: lease.CredentialID,
+		RenewBefore:  lease.RenewBefore,
+		ExpiresAt:    lease.ExpiresAt,
+		LeaseTTL:     lease.ExpiresAt.Sub(lease.IssuedAt),
+	}
+}
+
+// Renew issues a replacement lease for a lease approaching its
+// renewBefore deadline. It leases a fresh credential from the same §4.9
+// pool the original lease was minted from (spec §4.9 Proactive Lease
+// Renewal, step 2), records the replacement's pool binding, and drops
+// the spent lease's binding. It satisfies credrenewal.Renewer.
+//
+// Renewal never re-mints a lease that was released on purpose. Renew mints
+// nothing and returns credrenewal.ErrLeaseReleased when the lease store holds
+// no record of the spent lease (a nil store counts as none) or the spent lease
+// has no pool binding. A failed lookup is an ordinary error the worker
+// retries. After Assign returns, Renew looks the spent lease up again: when it
+// is gone, a release ran while the replacement was minted, so Renew releases
+// the replacement, deletes both leases' pool bindings, and returns the
+// sentinel; when the lookup fails, it releases the replacement, deletes only
+// the replacement's binding, and returns the error. The replacement records
+// the spent lease's coordination generation, so the session's pod release
+// scopes it as it scoped the spent lease.
+//
+// spec: §4.9 (Proactive Lease Renewal), §7.3 (Credential leases on the
+// replacement pod).
+func (w *credRenewalWiring) Renew(_ context.Context, lease credrenewal.Lease) (credrenewal.Lease, error) {
+	spent, recorded, err := w.lookupLease(lease.LeaseID)
+	if err != nil {
+		return credrenewal.Lease{}, err
+	}
+	w.mu.Lock()
+	rp, bound := w.pools[lease.LeaseID]
+	w.mu.Unlock()
+	if !recorded || !bound {
+		return credrenewal.Lease{}, credrenewal.ErrLeaseReleased
+	}
+
+	// §4.9 step 2: the renewal worker calls the same path as
+	// AssignCredentials, selecting a credential from the same pool. The
+	// SPIFFE-binding identity is re-derived at proxy-request time from
+	// the lease record, so the renewal mint does not need it here.
+	next, err := w.assign.Assign(rp.pool, lease.SessionID, "", rp.tenantID, spent.CoordinationGeneration)
+	if err != nil {
+		if errors.Is(err, credassign.ErrTokenServiceUnavailable) {
+			// spec: §4.9 — Token Service unavailability guard.
+			// Surface the breaker-open failure as the credrenewal sentinel
+			// so the worker holds and reschedules the still-valid lease
+			// instead of exhausting it into the Fallback Flow. The
+			// underlying cause is preserved so callers can still inspect it.
+			return credrenewal.Lease{}, fmt.Errorf("%w: %w", credrenewal.ErrRenewInfraUnavailable, err)
+		}
+		return credrenewal.Lease{}, err
+	}
+
+	if _, still, lerr := w.lookupLease(lease.LeaseID); lerr != nil || !still {
+		w.releaseReplacement(next.LeaseID)
+		if lerr != nil {
+			return credrenewal.Lease{}, lerr
+		}
+		w.mu.Lock()
+		delete(w.pools, lease.LeaseID)
+		w.mu.Unlock()
+		return credrenewal.Lease{}, credrenewal.ErrLeaseReleased
+	}
+
+	w.mu.Lock()
+	delete(w.pools, lease.LeaseID)
+	w.pools[next.LeaseID] = rp
+	w.mu.Unlock()
+
+	return credrenewal.Lease{
+		LeaseID:      next.LeaseID,
+		SessionID:    next.SessionID,
+		CredentialID: next.CredentialID,
+		RenewBefore:  next.RenewBefore,
+		ExpiresAt:    next.ExpiresAt,
+		// §4.9 cumulative-extension cap: carry the replacement lease's own
+		// TTL so the reset after a normal renewal grants the fresh lease's
+		// TTL-derived extension budget rather than DefaultMaxExtensions.
+		LeaseTTL: next.ExpiresAt.Sub(next.IssuedAt),
+	}, nil
+}
+
+// lookupLease reads the lease store's record of leaseID. A nil store holds
+// no record.
+func (w *credRenewalWiring) lookupLease(leaseID string) (credential.Lease, bool, error) {
+	if w.leases == nil {
+		return credential.Lease{}, false, nil
+	}
+	return w.leases.Lookup(leaseID)
+}
+
+// releaseReplacement returns, by identifier, a replacement lease Renew minted
+// and could not hand over, outside w.mu, and drops its pool binding.
+// spec: §4.9 (Proactive Lease Renewal).
+func (w *credRenewalWiring) releaseReplacement(leaseID string) {
+	if err := w.assign.Release(leaseID); err != nil {
+		log.Printf("lenny-gateway: §4.9 proactive renewal: release replacement lease %s: %v", leaseID, err)
+	}
+	w.mu.Lock()
+	delete(w.pools, leaseID)
+	w.mu.Unlock()
+}
+
+// onRenewed pushes a proactively renewed lease to its session's pod via
+// the §4.7 RotateCredentials RPC (spec §4.9 Proactive Lease Renewal,
+// step 3 — "Push the replacement credential to the runtime via the
+// standard RotateCredentials RPC"). The push targets the pod this
+// replica holds the binding for; a lease whose pod is bound on another
+// replica, or already released, is skipped. The rotated credential is
+// converted to the §4.7 wire form before the push. The same call also
+// emits the §16.6 credential_rotated event for §4.0.
+func (w *credRenewalWiring) onRenewed(renewed credrenewal.Lease) {
+	if w == nil {
+		return
+	}
+	w.emitCredentialRotated(renewed)
+	if w.registry == nil {
+		return
+	}
+	bind, ok := w.registry.Get(renewed.SessionID)
+	if !ok || bind.Adapter == nil {
+		// No pod binding on this replica: the renewal worker still
+		// tracks the fresh lease, and the lease record is updated, but
+		// there is no local pod to push the rotation to.
+		return
+	}
+
+	wire, err := w.assign.ProtoLeaseByID(renewed.LeaseID)
+	if err != nil {
+		log.Printf("lenny-gateway: §4.9 proactive renewal: encode rotated lease %s for session %s: %v",
+			renewed.LeaseID, renewed.SessionID, err)
+		return
+	}
+
+	w.mu.Lock()
+	rp := w.pools[renewed.LeaseID]
+	w.mu.Unlock()
+	// The §4.7 RotateCredentials leases map is keyed by the
+	// runtime-facing provider; the adapter rewrites only that provider's
+	// credential-file entry and retains the rest.
+	provider := rp.provider
+	if provider == "" {
+		provider = wire.GetProvider()
+	}
+	wire.Provider = provider
+
+	ctx, cancel := context.WithTimeout(context.Background(), credRotateRPCTimeout)
+	defer cancel()
+	// §4.9 rotationTrigger: proactive_renewal. The trigger rides the RPC
+	// so the adapter keeps the unbounded §4.7 in-flight wait (the old
+	// credential is still valid) instead of applying the fault ceiling.
+	// spec: §4.9 / §4.7. F-13.3.10.
+	if err := bind.Adapter.RotateCredentials(ctx, renewed.SessionID,
+		map[string]*adapterv1.CredentialLease{provider: wire},
+		credential.TriggerProactiveRenewal); err != nil {
+		log.Printf("lenny-gateway: §4.9 proactive renewal: RotateCredentials push to session %s pod failed: %v",
+			renewed.SessionID, err)
+	}
+}
+
+// onExhausted handles a lease whose proactive renewal cannot proceed —
+// the lease expired, or the retry budget is exhausted, or its
+// credential was revoked. It drops the spent lease's pool binding and
+// emits §16.6 credential_pool_exhausted for §4.0. The §4.9 fall-through
+// to fault rotation and the cross-replica deny-list fan-out are driven
+// by the caller's OnExhausted composition in main.
+func (w *credRenewalWiring) onExhausted(lease credrenewal.Lease) {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	rp := w.pools[lease.LeaseID]
+	delete(w.pools, lease.LeaseID)
+	w.mu.Unlock()
+	w.emitCredentialPoolExhausted(lease, rp.pool, rp.provider)
+}
+
+// onExtend is the §4.9 Token Service unavailability guard's extension
+// hook. It extends a still-valid lease's enforced deadline to
+// newExpiresAt without any Token Service call. On both delivery modes it
+// first advances the lease store record's ExpiresAt and RenewBefore through
+// LeaseStore.Advance, which updates an existing record and inserts none; a
+// direct-mode lease then re-arms the adapter expiry timer over the
+// ExtendCredentialLease RPC. A lease with no record, or whose Advance finds no
+// row, was released on purpose, and onExtend returns
+// credrenewal.ErrLeaseReleased so the worker stops tracking it. Any other
+// error signals the worker that the enforcement point was unreachable, so it
+// does not advance its own view of the deadline and the lease falls through to
+// the retry and Fallback path.
+//
+// spec: §4.9 (Proactive Lease Renewal).
+func (w *credRenewalWiring) onExtend(lease credrenewal.Lease, newExpiresAt time.Time) error {
+	if w == nil {
+		return nil
+	}
+	rec, recorded, err := w.lookupLease(lease.LeaseID)
+	if err != nil {
+		return err
+	}
+	if !recorded {
+		return credrenewal.ErrLeaseReleased
+	}
+	// The pre-extension ExpiresAt becomes the new RenewBefore, so the
+	// rescheduled renewal fires one buffer later. This mirrors the worker's
+	// own arithmetic (RenewBefore = old ExpiresAt).
+	rec.ExpiresAt = newExpiresAt
+	rec.RenewBefore = lease.ExpiresAt
+	advanced, err := w.leases.Advance(rec)
+	if err != nil {
+		return err
+	}
+	if !advanced {
+		return credrenewal.ErrLeaseReleased
+	}
+	if rec.DeliveryMode == credential.DeliveryProxy {
+		return nil
+	}
+	if w.registry == nil {
+		return fmt.Errorf("§4.9 extend: no pod registry for direct-mode lease %s", lease.LeaseID)
+	}
+	w.mu.Lock()
+	rp := w.pools[lease.LeaseID]
+	w.mu.Unlock()
+	bind, ok := w.registry.Get(lease.SessionID)
+	if !ok || bind.Adapter == nil {
+		return fmt.Errorf("§4.9 extend: no pod binding for session %s", lease.SessionID)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), credRotateRPCTimeout)
+	defer cancel()
+	return bind.Adapter.ExtendCredentialLease(ctx, lease.SessionID, rp.provider, lease.LeaseID, newExpiresAt)
+}
+
+// onExtensionCapReached is the §4.9 cumulative-extension-cap terminal
+// teardown. When a lease's breaker-open extension has reached its
+// original leaseTTLSeconds and the breaker is still open, the worker
+// drops the lease and calls this hook. It force-transitions the lease's
+// session to its §8.8 expired terminal state with the existing
+// expired:lease FailureReason (already the §8.8 reason for a §4.9
+// credential-lease expiry), which the §8.8 MCP adapter surfaces to
+// clients as a failed task carrying the expired:lease error code. It does
+// NOT enter the Fallback Flow: a re-mint against the still-open breaker
+// would re-enter the restart loop the guard prevents. spec: §4.9; §8.8.
+func (w *credRenewalWiring) onExtensionCapReached(lease credrenewal.Lease) {
+	if w == nil || w.terminator == nil {
+		return
+	}
+	w.mu.Lock()
+	delete(w.pools, lease.LeaseID)
+	w.mu.Unlock()
+	w.terminator.TerminateSession(lease.SessionID, string(sessionapi.FailureExpiredLease))
+}
+
+// emitCredentialRotated publishes the §16.6 credential_rotated event
+// per §4.0 with pool, credentialId, sessionId, leaseId, and the
+// proactive_renewal trigger that drives the renewal worker.
+func (w *credRenewalWiring) emitCredentialRotated(renewed credrenewal.Lease) {
+	if w.emitter == nil {
+		return
+	}
+	w.mu.Lock()
+	rp := w.pools[renewed.LeaseID]
+	w.mu.Unlock()
+	data, _ := json.Marshal(map[string]any{
+		"pool":         rp.pool,
+		"credentialId": renewed.CredentialID,
+		"sessionId":    renewed.SessionID,
+		"leaseId":      renewed.LeaseID,
+		"provider":     rp.provider,
+		"reason":       string(credential.TriggerProactiveRenewal),
+	})
+	_ = w.emitter.Emit(context.Background(), events.OperationalEvent{
+		Source:          "//lenny.dev/credential-pool",
+		Type:            events.EventCredentialRotated.CloudEventsType(),
+		Severity:        "info",
+		DataContentType: "application/json",
+		Data:            data,
+	})
+}
+
+// emitCredentialPoolExhausted publishes the §16.6
+// credential_pool_exhausted event per §4.0. pool and provider may be
+// empty when the lease was never registered through track (the pool
+// binding had already been dropped); the event still surfaces the lease
+// and session so an ops agent can correlate the fall-through.
+func (w *credRenewalWiring) emitCredentialPoolExhausted(lease credrenewal.Lease, pool, provider string) {
+	if w.emitter == nil {
+		return
+	}
+	data, _ := json.Marshal(map[string]any{
+		"pool":         pool,
+		"credentialId": lease.CredentialID,
+		"sessionId":    lease.SessionID,
+		"leaseId":      lease.LeaseID,
+		"provider":     provider,
+	})
+	_ = w.emitter.Emit(context.Background(), events.OperationalEvent{
+		Source:          "//lenny.dev/credential-pool",
+		Type:            events.EventCredentialPoolExhausted.CloudEventsType(),
+		Severity:        "warning",
+		DataContentType: "application/json",
+		Data:            data,
+	})
+}
+
+// logCredentialExpiryWarning emits the §11.3 expiry-warning
+// log line once per lease when the renewal worker reports the lease has
+// entered its `credentials.expiryWarningLeadSeconds` window. The log is
+// the deployer-facing surface for impending lease expiry — operators
+// pipe stdout into the cluster logging stack to drive alerts before the
+// §4.9 fault-rotation fall-through is consumed. F-11.3.20.
+func logCredentialExpiryWarning(lease credrenewal.Lease) {
+	log.Printf(
+		"lenny-gateway: §11.3 credential lease %s for session %s (credential %s) expires at %s — expiry warning lead reached",
+		lease.LeaseID, lease.SessionID, lease.CredentialID,
+		lease.ExpiresAt.UTC().Format(time.RFC3339),
+	)
+}

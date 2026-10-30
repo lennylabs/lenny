@@ -22,39 +22,63 @@ import (
 func TestEveryGoFileHasSPDXHeader(t *testing.T) {
 	t.Parallel()
 	root := schematest.RepoRoot(t)
-	roots := []string{"pkg", "cmd", "tests"}
+	// Enumerate git-tracked files rather than walking the filesystem so
+	// that generated, gitignored artifacts (build output, the Kind
+	// bootstrap overlay) are never flagged. The check applies to files
+	// committed under pkg/, cmd/, and tests/.
+	roots := []string{"pkg/", "cmd/", "tests/"}
 	var missing []string
-	for _, top := range roots {
-		base := filepath.Join(root, top)
-		if _, err := os.Stat(base); os.IsNotExist(err) {
+	for _, rel := range schematest.TrackedFiles(t) {
+		if filepath.Ext(rel) != ".go" {
 			continue
 		}
-		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
-				return err
-			}
-			if filepath.Ext(path) != ".go" {
-				return nil
-			}
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			if !strings.Contains(string(data), "SPDX-License-Identifier: MIT") {
-				rel, _ := filepath.Rel(root, path)
-				missing = append(missing, rel)
-			}
-			return nil
-		})
+		if !underAny(rel, roots) {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
-			t.Fatalf("walk %s: %v", top, err)
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		if !strings.Contains(string(data), "SPDX-License-Identifier: MIT") {
+			missing = append(missing, rel)
 		}
 	}
-	if len(missing) > 0 {
-		for _, m := range missing {
-			t.Errorf("missing SPDX header: %s", m)
+	for _, m := range missing {
+		t.Errorf("missing SPDX header: %s", m)
+	}
+}
+
+// underAny reports whether rel sits under any of the given top-level
+// prefixes (each prefix ends in a slash).
+func underAny(rel string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(rel, p) {
+			return true
 		}
 	}
+	return false
+}
+
+// spdxHeaderExempt reports whether a tracked non-Go file is exempt from the
+// SPDX header requirement. The prefixes cover generated output, vendored
+// trees, and the fixture tree under tests/testdata/ whose bytes predate the
+// check. A fixture elsewhere carries the header like any other tracked file:
+// the header is a comment in every format the check covers, so seeding it
+// keeps the fixture loadable. GitHub action workflows have their own license
+// tooling.
+func spdxHeaderExempt(rel string) bool {
+	for _, prefix := range []string{
+		"tests/results/",
+		"tests/testdata/",
+		"sdks/vendor/",
+		"compose/otel-config.yaml",          // upstream-style config; SPDX would clutter
+		"tests/tier7b_load_kind/baselines/", // generated baselines
+	} {
+		if strings.HasPrefix(rel, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // spec: 13.0 (license headers on non-Go files: shell, YAML, Python, TypeScript)
@@ -67,7 +91,6 @@ func TestEveryGoFileHasSPDXHeader(t *testing.T) {
 func TestEveryNonGoFileHasSPDXHeader(t *testing.T) {
 	t.Parallel()
 	root := schematest.RepoRoot(t)
-	roots := []string{"scripts", "compose", "sdks", "tests"}
 	// Extensions and the syntactic comment marker that may carry
 	// the SPDX header. Each entry: (ext, requiredPrefix).
 	exts := map[string]string{
@@ -77,57 +100,61 @@ func TestEveryNonGoFileHasSPDXHeader(t *testing.T) {
 		".py":   "# SPDX-License-Identifier:",
 		".ts":   "// SPDX-License-Identifier:",
 	}
-	// Files exempt from the header (generated, vendored, fixtures).
-	exempt := func(rel string) bool {
-		for _, prefix := range []string{
-			"tests/results/",
-			"tests/testdata/",
-			"sdks/vendor/",
-			"compose/otel-config.yaml",    // upstream-style config; SPDX would clutter
-			"tests/tier7_load/baselines/", // generated baselines
-		} {
-			if strings.HasPrefix(rel, prefix) {
-				return true
-			}
-		}
-		// .github action workflows have their own license tooling.
-		return false
-	}
+	// Enumerate git-tracked files so generated, gitignored artifacts
+	// (build output under dist/ and node_modules/, the Kind bootstrap
+	// overlay, cloud values overrides) are never flagged.
+	rootPrefixes := []string{"scripts/", "compose/", "sdks/", "tests/"}
 	var missing []string
-	for _, top := range roots {
-		base := filepath.Join(root, top)
-		if _, err := os.Stat(base); os.IsNotExist(err) {
+	for _, rel := range schematest.TrackedFiles(t) {
+		marker, ok := exts[filepath.Ext(rel)]
+		if !ok {
 			continue
 		}
-		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
-				return err
-			}
-			ext := filepath.Ext(path)
-			marker, ok := exts[ext]
-			if !ok {
-				return nil
-			}
-			rel, _ := filepath.Rel(root, path)
-			if exempt(rel) {
-				return nil
-			}
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			if !strings.Contains(string(data), marker) {
-				missing = append(missing, rel)
-			}
-			return nil
-		})
+		if !underAny(rel, rootPrefixes) {
+			continue
+		}
+		if spdxHeaderExempt(rel) {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
-			t.Fatalf("walk %s: %v", top, err)
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		if !strings.Contains(string(data), marker) {
+			missing = append(missing, rel)
 		}
 	}
-	if len(missing) > 0 {
-		for _, m := range missing {
-			t.Errorf("missing SPDX header: %s", m)
+	for _, m := range missing {
+		t.Errorf("missing SPDX header: %s", m)
+	}
+}
+
+// spec: 13.0 (license headers on non-Go files: shell, YAML, Python, TypeScript)
+// diagnosis: The SPDX header exemption covers a tracked file that must carry
+//
+//	the header, or it has stopped covering one of the generated,
+//	vendored, or legacy-fixture trees it is written for. A gate
+//	lands green by seeding the header into the files it reaches,
+//	so a fixture directory outside tests/testdata/ is inside the
+//	check rather than exempt from it.
+func TestSPDXHeaderExemptionIsLimitedToGeneratedAndVendoredTrees(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		rel  string
+		want bool
+	}{
+		{"tests/tier0_static/testdata/citation-resolution/baselines/empty.yaml", false},
+		{"scripts/specshift/testdata/registers/valid.yaml", false},
+		{"tests/testdata/example.yaml", true},
+		{"tests/results/run.yaml", true},
+		{"sdks/vendor/pkg/config.yaml", true},
+		{"tests/tier7b_load_kind/baselines/latency.yaml", true},
+		{"tests/tier0_static/license_check.yaml", false},
+		{"scripts/specshift/config.yaml", false},
+	}
+	for _, tc := range cases {
+		if got := spdxHeaderExempt(tc.rel); got != tc.want {
+			t.Errorf("spdxHeaderExempt(%q) = %v, want %v", tc.rel, got, tc.want)
 		}
 	}
 }

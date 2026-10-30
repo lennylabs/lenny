@@ -1,0 +1,382 @@
+// SPDX-License-Identifier: MIT
+
+// Package userstore is the per-tenant user registry. It backs the
+// §11.4 user-invalidation surface and the §15.1 admin user CRUD
+// endpoints.
+//
+// Users are tenant-scoped per §10.2: every Get / Update / List /
+// Delete call carries the tenant_id and the store asserts the row's
+// tenant_id matches before returning. Cross-tenant reads return
+// ErrNotFound — the store never leaks the existence of a user in
+// another tenant.
+package userstore
+
+import (
+	"context"
+	"errors"
+	"regexp"
+	"sort"
+	"sync"
+	"time"
+
+	"github.com/lennylabs/lenny/pkg/auth"
+)
+
+// User captures the §11.4 / §15.1 user registry row.
+type User struct {
+	// Subject is the JWT `sub` claim. Acts as the registry key.
+	Subject string
+
+	// TenantID is the tenant the user belongs to. Cross-tenant reads
+	// return ErrNotFound per §10.2.
+	TenantID string
+
+	// Email is the human-readable identifier for audit + admin UI.
+	Email string
+
+	// DisplayName is the human-readable label.
+	DisplayName string
+
+	// Roles is the §10.2 RBAC role set assigned to the user. Empty
+	// slice means the default `user` role at runtime.
+	Roles []auth.Role
+
+	// RoleAssigned reports whether a platform-managed role assignment is
+	// present on the row. When true, Roles fully replace the user's
+	// OIDC-derived role claim (the §10.2 precedence rule). When
+	// false — the state left by `DELETE /v1/admin/tenants/{id}/users/
+	// {userId}/role` — the row is retained (so the user still lists) but
+	// the OIDC claim is authoritative again.
+	// spec: §15.1, §10.2.
+	RoleAssigned bool
+
+	// RoleAssignedBy / RoleAssignedAt record the §15.1
+	// provenance of the platform-managed role assignment: the operator
+	// subject that set it and when. They are empty/zero on a row with no
+	// assignment.
+	RoleAssignedBy string
+	RoleAssignedAt time.Time
+
+	// Disabled, when true, indicates the user is in the §11.4
+	// `soft_disable` state — sessions are not terminated but new
+	// session creation is blocked.
+	Disabled bool
+
+	// CreatedAt is when the row was committed.
+	CreatedAt time.Time
+
+	// UpdatedAt is the last admin mutation.
+	UpdatedAt time.Time
+
+	// DeletedAt is the §11.4 `hard_disable` / soft-delete tombstone.
+	DeletedAt time.Time
+
+	// ProcessingRestricted is the §12.8 / GDPR Article 18
+	// restriction-of-processing flag. It is set when a GDPR erasure job
+	// is initiated for the user and cleared when that job completes.
+	// While set, new session creation is rejected with
+	// ERASURE_IN_PROGRESS. A failed erasure job leaves the flag set.
+	ProcessingRestricted bool
+
+	// ErasureJobID is the id of the erasure job that raised
+	// ProcessingRestricted, surfaced in the ERASURE_IN_PROGRESS error so
+	// the caller can poll the job. It is empty when the user is not
+	// restricted.
+	ErasureJobID string
+
+	// Version is the §15.1 ETag-based optimistic-concurrency counter: it
+	// starts at 1 and increments on every successful admin Update. The
+	// quoted decimal version is the resource's strong entity tag, enforced
+	// on PUT via the If-Match precondition and exposed on GET/list.
+	// spec: §15.1.
+	Version int64
+}
+
+// IsActive reports whether the user is neither disabled nor
+// soft-deleted.
+func (u User) IsActive() bool { return !u.Disabled && u.DeletedAt.IsZero() }
+
+// Store is the §11.4 / §15.1 user registry contract.
+//
+// spec: §12.1 — DeleteByUser and DeleteByTenant are the
+// mandatory erasure primitives every storage role exposes at the
+// interface level. The user is the primary entity of this store, so
+// DeleteByUser purges the row hard rather than soft-deleting;
+// DeleteByTenant hard-deletes every user row belonging to the tenant.
+type Store interface {
+	Create(ctx context.Context, u User) error
+	Get(ctx context.Context, tenantID, subject string) (User, error)
+	Update(ctx context.Context, tenantID, subject string, mutate func(*User) error) (User, error)
+	List(ctx context.Context, tenantID string, filter ListFilter) ([]User, error)
+	SoftDelete(ctx context.Context, tenantID, subject string, at time.Time) error
+
+	// DeleteByUser implements the §12.1 mandatory-erasure primitive.
+	// Hard-deletes the user row keyed by (tenantID, userID); returns
+	// the number of rows removed (0 if no such row).
+	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
+
+	// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
+	// Removes every user row belonging to tenantID.
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
+}
+
+// ListFilter narrows List results.
+type ListFilter struct {
+	IncludeDeleted  bool
+	IncludeDisabled bool
+}
+
+// Sentinel errors.
+var (
+	ErrNotFound      = errors.New("userstore: user not found")
+	ErrAlreadyExists = errors.New("userstore: user already exists")
+	// ErrRestrictionHeldByOtherJob reports that the operator clear of a
+	// failed erasure job's processing restriction found the user's
+	// erasure_job_id naming a different job. The clear writes nothing,
+	// because lifting that job's restriction would reopen the creation
+	// fence while the other job runs.
+	//
+	// spec: §12.8 (Processing restriction during erasure (GDPR Article 18)),
+	// §15.1 (REST API).
+	ErrRestrictionHeldByOtherJob = errors.New("userstore: processing restriction is held by another erasure job")
+)
+
+// subjectPattern is the §10.2 JWT-subject pattern — printable ASCII
+// up to 256 chars (no whitespace, no control).
+var subjectPattern = regexp.MustCompile(`^[!-~]{1,256}$`)
+
+// ValidateSubject reports whether subject satisfies the §10.2 JWT
+// subject format.
+func ValidateSubject(subject string) error {
+	if subject == "" {
+		return errors.New("userstore: subject is required")
+	}
+	if !subjectPattern.MatchString(subject) {
+		return errors.New("userstore: subject must be printable ASCII (1-256 chars)")
+	}
+	return nil
+}
+
+// Memory is the in-memory Store implementation.
+type Memory struct {
+	mu    sync.RWMutex
+	users map[string]User // key: tenantID + "/" + subject
+}
+
+// NewMemory returns an empty Memory store.
+func NewMemory() *Memory { return &Memory{users: map[string]User{}} }
+
+// spec: §12.1 — compile-time satisfaction of the mandatory
+// erasure-bearing Store interface.
+var _ Store = (*Memory)(nil)
+
+func key(tenantID, subject string) string { return tenantID + "/" + subject }
+
+// Create implements Store.
+func (m *Memory) Create(_ context.Context, u User) error {
+	if err := auth.ValidateTenantID(u.TenantID); err != nil {
+		return err
+	}
+	if err := ValidateSubject(u.Subject); err != nil {
+		return err
+	}
+	for _, r := range u.Roles {
+		if !auth.IsWellFormedRoleName(string(r)) {
+			return errors.New("userstore: role " + string(r) + " is not a well-formed role name")
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := key(u.TenantID, u.Subject)
+	if _, exists := m.users[k]; exists {
+		return ErrAlreadyExists
+	}
+	now := time.Now().UTC()
+	if u.CreatedAt.IsZero() {
+		u.CreatedAt = now
+	}
+	if u.UpdatedAt.IsZero() {
+		u.UpdatedAt = u.CreatedAt
+	}
+	// spec: §15.1 — a new resource is born at version 1.
+	if u.Version == 0 {
+		u.Version = 1
+	}
+	m.users[k] = u
+	return nil
+}
+
+// Get implements Store.
+func (m *Memory) Get(_ context.Context, tenantID, subject string) (User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	row, ok := m.users[key(tenantID, subject)]
+	if !ok || row.TenantID != tenantID {
+		return User{}, ErrNotFound
+	}
+	return row, nil
+}
+
+// Update implements Store.
+func (m *Memory) Update(_ context.Context, tenantID, subject string, mutate func(*User) error) (User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := key(tenantID, subject)
+	row, ok := m.users[k]
+	if !ok || row.TenantID != tenantID {
+		return User{}, ErrNotFound
+	}
+	prev := row.UpdatedAt
+	if err := mutate(&row); err != nil {
+		return User{}, err
+	}
+	for _, r := range row.Roles {
+		if !auth.IsWellFormedRoleName(string(r)) {
+			return User{}, errors.New("userstore: role " + string(r) + " is not a well-formed role name")
+		}
+	}
+	now := time.Now().UTC()
+	if !now.After(prev) {
+		now = prev.Add(time.Nanosecond)
+	}
+	row.UpdatedAt = now
+	// spec: §15.1 — bump the entity-tag version on every write.
+	row.Version++
+	m.users[k] = row
+	return row, nil
+}
+
+// SetErasureRestriction is the in-memory form of the Postgres store's
+// SetErasureRestrictionTx: the one write path the erasure job store uses for
+// the §12.8 / GDPR Article 18 flag. It sets processing_restricted to
+// restricted and erasure_job_id to jobID (empty when restricted is false),
+// advances UpdatedAt monotonically, and increments Version. When
+// requireJobID is non-empty it writes only when the row's ErasureJobID
+// equals it, and otherwise returns 0 rows. A missing row returns
+// ErrNotFound.
+//
+// spec: §12.8 (Processing restriction during erasure (GDPR Article 18)).
+func (m *Memory) SetErasureRestriction(_ context.Context, tenantID, subject, jobID string, restricted bool, requireJobID string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.setRestrictionLocked(tenantID, subject, jobID, restricted, requireJobID)
+}
+
+// ClearProcessingRestrictionForJob is the in-memory form of the Postgres
+// store's ClearProcessingRestrictionTx, the operator clear of a failed
+// erasure job's restriction. It returns ErrRestrictionHeldByOtherJob and
+// writes nothing when the row's ErasureJobID names a job other than jobID,
+// and otherwise clears the flag through the same write path as
+// SetErasureRestriction. The in-memory store has no Article 18 trigger, so
+// there is no bypass to set.
+//
+// spec: §12.8 (Processing restriction during erasure (GDPR Article 18)),
+// §15.1 (REST API).
+func (m *Memory) ClearProcessingRestrictionForJob(_ context.Context, tenantID, subject, jobID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.users[key(tenantID, subject)]
+	if !ok || row.TenantID != tenantID {
+		return ErrNotFound
+	}
+	if row.ErasureJobID != "" && row.ErasureJobID != jobID {
+		return ErrRestrictionHeldByOtherJob
+	}
+	_, err := m.setRestrictionLocked(tenantID, subject, "", false, "")
+	return err
+}
+
+// setRestrictionLocked applies one restriction write; m.mu must be held.
+func (m *Memory) setRestrictionLocked(tenantID, subject, jobID string, restricted bool, requireJobID string) (int64, error) {
+	k := key(tenantID, subject)
+	row, ok := m.users[k]
+	if !ok || row.TenantID != tenantID {
+		return 0, ErrNotFound
+	}
+	if requireJobID != "" && row.ErasureJobID != requireJobID {
+		return 0, nil
+	}
+	if !restricted {
+		jobID = ""
+	}
+	row.ProcessingRestricted = restricted
+	row.ErasureJobID = jobID
+	now := time.Now().UTC()
+	if !now.After(row.UpdatedAt) {
+		now = row.UpdatedAt.Add(time.Nanosecond)
+	}
+	row.UpdatedAt = now
+	// spec: §15.1 — bump the entity-tag version on every write.
+	row.Version++
+	m.users[k] = row
+	return 1, nil
+}
+
+// List implements Store.
+func (m *Memory) List(_ context.Context, tenantID string, filter ListFilter) ([]User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]User, 0)
+	for _, row := range m.users {
+		if row.TenantID != tenantID {
+			continue
+		}
+		if !filter.IncludeDeleted && !row.DeletedAt.IsZero() {
+			continue
+		}
+		if !filter.IncludeDisabled && row.Disabled {
+			continue
+		}
+		out = append(out, row)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Subject < out[j].Subject })
+	return out, nil
+}
+
+// SoftDelete implements Store.
+func (m *Memory) SoftDelete(_ context.Context, tenantID, subject string, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := key(tenantID, subject)
+	row, ok := m.users[k]
+	if !ok || row.TenantID != tenantID {
+		return ErrNotFound
+	}
+	if !row.DeletedAt.IsZero() {
+		return nil
+	}
+	row.DeletedAt = at
+	row.UpdatedAt = at
+	m.users[k] = row
+	return nil
+}
+
+// DeleteByUser implements the §12.1 mandatory-erasure interface.
+// Removes the user row identified by (tenantID, userID); the user
+// is the primary entity of this store, so DeleteByUser purges the
+// row hard rather than soft-deleting.
+func (m *Memory) DeleteByUser(_ context.Context, tenantID, userID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := key(tenantID, userID)
+	if _, ok := m.users[k]; !ok {
+		return 0, nil
+	}
+	delete(m.users, k)
+	return 1, nil
+}
+
+// DeleteByTenant implements the §12.1 mandatory-erasure interface.
+// Removes every user row belonging to tenantID.
+func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for k, row := range m.users {
+		if row.TenantID == tenantID {
+			delete(m.users, k)
+			n++
+		}
+	}
+	return n, nil
+}

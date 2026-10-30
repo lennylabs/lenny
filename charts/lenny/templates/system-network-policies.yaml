@@ -1,0 +1,992 @@
+{{- /*
+lenny-system control-plane NetworkPolicy (§13.2). default-deny-all is
+rendered into the release namespace, which houses the gateway, Token
+Service, controllers, and dedicated CoreDNS, and denies all ingress
+and egress for every pod. The §13.2 component-specific allow-lists are
+rendered alongside it as the control-plane network surface is
+completed; until then the namespace is network-isolated by default,
+the fail-closed posture §13.2 requires, mirroring the agent-namespace
+policy set.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+{{/*
+allow-admission-webhooks re-admits, for the admission webhook pods, the
+two flows the §13.2 default-deny otherwise blocks: kube-apiserver
+ingress so the API server can invoke the webhook callbacks, and
+kube-system CoreDNS egress for name resolution. Without the ingress
+rule every fail-closed webhook silently rejects all admissions. The
+per-webhook gateway-egress sub-rules (§13.2 (b) drain-readiness-only and
+(c) sandboxtemplate-deletion-guard-only, each narrowed by an additive
+lenny.dev/webhook-name label) are rendered by those webhooks' own
+templates rather than here, so this shared policy grants no gateway
+reachability to the in-process validators.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-admission-webhooks
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: admission-webhook
+  ingress:
+    # The kube-apiserver connects from a node or control-plane IP, so
+    # the source CIDR is operator-tunable; the webhook pods listen on
+    # 8443 (the Service maps :443 to this container port).
+    - from:
+        - ipBlock:
+            cidr: {{ .Values.webhookIngressCIDR | quote }}
+      ports:
+        - port: 8443
+          protocol: TCP
+  egress:
+    # The §4.6.1 lenny-sandboxclaim-guard webhook reads sibling
+    # SandboxClaims from the kube-apiserver to enforce the ADR-007
+    # one-claim-per-slot rule, and lenny-drain-readiness reads pod
+    # state. Without kube-apiserver egress the webhook handler's API
+    # call hangs and the fail-closed webhook times out on every
+    # request. The CIDR is operator-tunable, bounded by the
+    # kubeApiServerPorts rule, exactly as in allow-controller-egress.
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.kubeApiServerCIDR | quote }}
+      ports:
+        {{- range .Values.kubeApiServerPorts }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  policyTypes: [Ingress, Egress]
+---
+{{/*
+allow-controller-egress re-admits the Warm Pool Controller and
+PoolScalingController egress the §13.2 default-deny otherwise blocks:
+the kube-apiserver (the controllers watch and write CRDs), PgBouncer
+(pool configuration), and kube-system CoreDNS. The controllers accept
+no unsolicited ingress, so the policy is egress-only.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-controller-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: controller
+  egress:
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.kubeApiServerCIDR | quote }}
+      ports:
+        {{- range .Values.kubeApiServerPorts }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: pgbouncer
+      ports:
+        - port: 5432
+          protocol: TCP
+    {{- if .Values.postgres.gatewayEgressCIDR }}
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.postgres.gatewayEgressCIDR | quote }}
+      ports:
+        - port: 5432
+          protocol: TCP
+    {{- end }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  policyTypes: [Egress]
+---
+{{/*
+allow-pool-scaling-controller-egress re-admits the §4.6.2
+PoolScalingController egress the §13.2 default-deny otherwise blocks. The
+§13.2 component table groups the WarmPoolController and PoolScalingController
+in one row (kube-apiserver, PgBouncer, kube-system CoreDNS), but the PSC runs
+as its own Deployment labelled lenny.dev/component: pool-scaling-controller
+(§4.6.2), not lenny.dev/component: controller, so the allow-controller-egress
+policy above does not select it. Without this policy the PSC cannot reach the
+kube-apiserver to watch and write its SandboxTemplate / SandboxWarmPool CRD
+pair, nor PgBouncer to read the Postgres-authoritative pool definitions it
+reconciles, and the §13.2 default-deny breaks pool reconciliation. The PSC
+accepts no unsolicited ingress, so the policy is egress-only. The DNS peers
+pair the namespaceSelector with the concrete k8s-app: kube-dns podSelector
+per NET-067.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pool-scaling-controller-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: pool-scaling-controller
+  egress:
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.kubeApiServerCIDR | quote }}
+      ports:
+        {{- range .Values.kubeApiServerPorts }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: pgbouncer
+      ports:
+        - port: 5432
+          protocol: TCP
+    {{- if .Values.postgres.gatewayEgressCIDR }}
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.postgres.gatewayEgressCIDR | quote }}
+      ports:
+        - port: 5432
+          protocol: TCP
+    {{- end }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  policyTypes: [Egress]
+---
+{{/*
+allow-token-service re-admits the §4.3 Token Service flows the §13.2
+default-deny otherwise blocks: ingress from the gateway pods on the
+mTLS gRPC port, and egress to PgBouncer, Redis, the KMS endpoint, and
+kube-system CoreDNS. Redis is matched by component label for the
+self-managed profile; an external Redis is reached by a deployer-added
+CIDR rule.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-token-service
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: token-service
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+      ports:
+        - port: {{ .Values.tokenService.grpcPort }}
+          protocol: TCP
+        # §4.3 canonical token endpoint (F-4.3.12). The gateway
+        # reverse-proxies /v1/oauth/* to the Token Service's HTTP
+        # listener, so the NetworkPolicy must admit the HTTP port
+        # alongside the gRPC port.
+        - port: {{ .Values.tokenService.httpPort }}
+          protocol: TCP
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: pgbouncer
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: redis
+      ports:
+        - port: {{ .Values.redis.tlsPort }}
+          protocol: TCP
+    {{- if .Values.postgres.gatewayEgressCIDR }}
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.postgres.gatewayEgressCIDR | quote }}
+      ports:
+        - port: 5432
+          protocol: TCP
+    {{- end }}
+    {{- if .Values.redis.gatewayEgressCIDR }}
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.redis.gatewayEgressCIDR | quote }}
+      ports:
+        - port: {{ .Values.redis.gatewayEgressPort }}
+          protocol: TCP
+    {{- end }}
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.kms.endpointCIDR | quote }}
+      ports:
+        - port: 443
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  policyTypes: [Ingress, Egress]
+---
+{{/*
+allow-controller-metrics-scrape admits Prometheus scrape requests from
+the monitoring namespace to the controller's metrics port (§13.2 supplemental ingress). Without it the lenny-system
+default-deny silently drops every controller metrics scrape.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-controller-metrics-scrape
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: controller
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.monitoring.namespace }}
+      ports:
+        - port: {{ .Values.controller.metricsPort }}
+          protocol: TCP
+  policyTypes: [Ingress]
+---
+{{/*
+allow-dedicated-coredns re-admits the §13.2 dedicated CoreDNS flows the
+lenny-system default-deny otherwise blocks: ingress from agent-namespace
+pods for DNS resolution and from the monitoring namespace for the
+metrics scrape, and egress to kube-system CoreDNS for upstream
+forwarding.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dedicated-coredns
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: coredns
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              lenny.dev/agent-namespace: "true"
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.monitoring.namespace }}
+      ports:
+        - port: 9153
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  policyTypes: [Ingress, Egress]
+---
+{{/*
+allow-gateway-metrics-scrape and allow-token-service-metrics-scrape
+admit Prometheus scrape requests from the monitoring namespace to the
+gateway and Token Service metrics ports (§13.2.3 supplemental
+ingress). Without them the lenny-system default-deny silently drops
+those component metrics scrapes.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-metrics-scrape
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: gateway
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.monitoring.namespace }}
+      ports:
+        - port: {{ .Values.gateway.metricsPort }}
+          protocol: TCP
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-token-service-metrics-scrape
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: token-service
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.monitoring.namespace }}
+      ports:
+        - port: {{ .Values.tokenService.metricsPort }}
+          protocol: TCP
+  policyTypes: [Ingress]
+---
+{{/*
+allow-pgbouncer re-admits the §13.2 PgBouncer flows the lenny-system
+default-deny otherwise blocks (§13.2.3, self-managed profile):
+ingress from the gateway, Token Service, controller, and lenny-ops
+pods on 5432, and egress to Postgres (the postgres.cidr block, and the
+CloudNativePG pods when postgres.deploy renders them) and kube-system
+CoreDNS. lenny-ops
+pods carry app: lenny-ops (the §13.2.3 selector exception), so that peer
+pairs the label with the release-namespace selector; lenny-ops reads its
+§25.4 revocation set and its audit, backup, and upgrade state through
+PgBouncer.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pgbouncer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: pgbouncer
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: token-service
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: controller
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              app: lenny-ops
+      ports:
+        - port: 5432
+          protocol: TCP
+  egress:
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.postgres.cidr | quote }}
+        {{- if .Values.postgres.deploy }}
+        # §17.9.5 — the CloudNativePG pods the [databases] entry and
+        # the readiness probe reach. A CNI need not match a pod address
+        # against an ipBlock, so the in-cluster Postgres is named by
+        # its component label, the peer allow-postgres-self-managed
+        # admits.
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: postgres
+        {{- end }}
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  policyTypes: [Ingress, Egress]
+---
+{{/*
+allow-minio re-admits the §13.2 MinIO flows the lenny-system
+default-deny otherwise blocks (§13.2.3, self-managed profile):
+ingress from the gateway pods on the TLS port, and egress to
+kube-system CoreDNS.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-minio
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: minio
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+      ports:
+        - port: {{ .Values.minio.tlsPort }}
+          protocol: TCP
+    {{- if .Values.minio.deploy }}
+    # §13.2 NET-071 — admit agent-namespace checkpoint chunk PUT/GET on the
+    # MinIO TLS port, paired with the allow-pod-egress-objectstore in-cluster
+    # arm rendered under the same minio.deploy condition. Without this clause
+    # the lenny-system default-deny drops the agent-namespace egress on the
+    # MinIO side. Self-managed-profile-only: cloud-managed object storage has
+    # no MinIO pod and no ingress-side row.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              lenny.dev/agent-namespace: "true"
+          podSelector:
+            matchLabels:
+              lenny.dev/managed: "true"
+      ports:
+        - port: {{ .Values.minio.tlsPort }}
+          protocol: TCP
+    {{- end }}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  policyTypes: [Ingress, Egress]
+---
+{{/*
+allow-gateway-egress re-admits the gateway's in-cluster egress the
+§13.2.3 default-deny otherwise blocks (§13.2): the agent-pod
+adapters, the Token Service, PgBouncer, Redis, MinIO, the
+kube-apiserver, the gateway pods on gateway.holderForwardPort for
+CH-HOLDERFORWARD (§10.3 NET-072), kube-system CoreDNS, and, when kms.provider is not
+local, the KMS endpoint at kms.endpointCIDR (§13.2.4 Gateway row). The external-HTTPS egress
+with its §13.2 NET-062 dual-family IMDS/private-range exclusions is
+rendered with the LLM proxy.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: gateway
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              lenny.dev/agent-namespace: "true"
+          podSelector:
+            matchLabels:
+              lenny.dev/managed: "true"
+      ports:
+        - port: {{ .Values.adapter.grpcPort }}
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: token-service
+      ports:
+        - port: {{ .Values.tokenService.grpcPort }}
+          protocol: TCP
+        # §4.3 canonical token endpoint: the gateway reverse-proxies
+        # /v1/oauth/* to the Token Service's HTTP listener, the egress
+        # counterpart of the HTTP port allow-token-service admits.
+        - port: {{ .Values.tokenService.httpPort }}
+          protocol: TCP
+    # §13.2.4 Gateway row: gateway pods on the CH-HOLDERFORWARD
+    # inter-replica forward port (§10.3 NET-072), the egress counterpart
+    # of the self-peer rule in allow-gateway-ingress.
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+      ports:
+        - port: {{ .Values.gateway.holderForwardPort }}
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: pgbouncer
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: redis
+      ports:
+        - port: {{ .Values.redis.tlsPort }}
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: minio
+      ports:
+        - port: {{ .Values.minio.tlsPort }}
+          protocol: TCP
+    {{- if .Values.postgres.gatewayEgressCIDR }}
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.postgres.gatewayEgressCIDR | quote }}
+      ports:
+        - port: 5432
+          protocol: TCP
+    {{- end }}
+    {{- if .Values.redis.gatewayEgressCIDR }}
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.redis.gatewayEgressCIDR | quote }}
+      ports:
+        - port: {{ .Values.redis.gatewayEgressPort }}
+          protocol: TCP
+    {{- end }}
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.kubeApiServerCIDR | quote }}
+      ports:
+        {{- range .Values.kubeApiServerPorts }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+    {{- /* §13.2.4 Gateway row: KMS endpoint for Sign and GetPublicKey,
+    rendered only when kms.provider is not local. */}}
+    {{- with include "lenny.kmsEgressRule" . }}
+    {{- . | nindent 4 }}
+    {{- end }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  policyTypes: [Egress]
+---
+{{/*
+allow-gateway-ingress re-admits the gateway's in-cluster and external
+ingress the §13.2 default-deny otherwise blocks (§13.2 Gateway row,
+counterparty ingress column): external HTTPS from the Ingress
+controller namespace; agent-namespace pods on the gateway gRPC port
+and the LLM-proxy port; admission-webhook pods on the gateway internal
+HTTP port for the lenny-drain-readiness GET /internal/drain-readiness
+callbacks (NET-037); lenny-ops pods on the gateway internal TLS and
+HTTP ports for the §25.3 admin-API (NET-051, NET-070); gateway pods,
+and only gateway pods, on gateway.holderForwardPort for the
+CH-HOLDERFORWARD inter-replica forward (§10.3 NET-072); and the
+lenny-bootstrap Job on the internal HTTP port, which POSTs the §17.6
+Day-1 seed to the admin API. The lenny-ops peer is rendered with an
+explicit namespaceSelector plus podSelector matchLabels app: lenny-ops
+per the §13.2.3 selector exception (lenny-ops uses app:
+lenny-ops, not lenny.dev/component). The Prometheus metrics-scrape
+ingress is rendered separately by allow-gateway-metrics-scrape and is
+not duplicated here.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: gateway
+  ingress:
+    # spec: §13.2. F-13.2.8. The from: clause pairs the
+    # namespaceSelector with a podSelector matching the configured
+    # ingress controllerPodLabel so only Ingress controller pods reach
+    # the gateway TLS listener; sidecars, cert-manager validators, and
+    # debug containers co-located in the same namespace are denied.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.ingressControllerNamespace }}
+          podSelector:
+            matchLabels:
+              {{ .Values.ingress.controllerPodLabel.key | quote }}: {{ .Values.ingress.controllerPodLabel.value | quote }}
+      ports:
+        - port: {{ .Values.gateway.httpsPort }}
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              lenny.dev/agent-namespace: "true"
+      ports:
+        - port: {{ .Values.gateway.grpcPort }}
+          protocol: TCP
+        - port: {{ .Values.gateway.llmProxyPort }}
+          protocol: TCP
+    - from:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: admission-webhook
+      ports:
+        - port: {{ .Values.gateway.internalPort }}
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              app: lenny-ops
+      ports:
+        - port: {{ .Values.gateway.internalTLSPort }}
+          protocol: TCP
+        - port: {{ .Values.gateway.internalPort }}
+          protocol: TCP
+    - from:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: bootstrap
+      ports:
+        - port: {{ .Values.gateway.internalPort }}
+          protocol: TCP
+    # §13.2.4 Gateway row: gateway pods are the only source admitted on
+    # the CH-HOLDERFORWARD inter-replica forward port (§10.3 NET-072).
+    - from:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+      ports:
+        - port: {{ .Values.gateway.holderForwardPort }}
+          protocol: TCP
+  policyTypes: [Ingress]
+---
+{{/*
+allow-bootstrap-egress re-admits the §17.6 lenny-bootstrap Job egress
+the §13.2 default-deny otherwise blocks. The Job is a transient
+post-install/post-upgrade hook that runs lenny-ctl bootstrap against
+the gateway admin API: it needs egress to the gateway on the internal
+HTTP port and to CoreDNS for name resolution. Both the kube-system
+CoreDNS and the dedicated CoreDNS Deployment are listed because the
+Job's DNS path depends on the cluster's resolver configuration.
+Without this policy the post-install helm hook hangs and the install
+fails.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-bootstrap-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: bootstrap
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+      ports:
+        - port: {{ .Values.gateway.internalPort }}
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              lenny.dev/component: coredns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  policyTypes: [Egress]
+---
+{{- if .Values.deploymentAudit.enabled }}
+{{- /*
+allow-deployment-config-sync-egress re-admits the §16.7
+lenny-deployment-config-sync Job egress the §13.2 default-deny otherwise
+blocks. Like the bootstrap Job, this transient post-install/post-upgrade
+hook runs lenny-ctl against the gateway admin API
+(admin deployment sync-config), so it needs egress to the gateway on the
+internal HTTP port and to CoreDNS for name resolution. The Job carries
+lenny.dev/component: deployment-config-sync, which the bootstrap egress
+policy does not select, so without this policy the post-install helm hook
+hangs on "gateway not ready" and the install fails. It renders only when
+the config-sync Job renders (deploymentAudit.enabled).
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-deployment-config-sync-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: deployment-config-sync
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+      ports:
+        - port: {{ .Values.gateway.internalPort }}
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              lenny.dev/component: coredns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  policyTypes: [Egress]
+---
+{{- end }}
+{{- /*
+lenny-ops-deny-all-ingress is the §25.4 baseline default-deny for the
+operability control plane: it selects the lenny-ops pods (app: lenny-ops,
+the §13.2.3 selector exception) and admits no ingress. The
+lenny-system namespace default-deny-all already denies ingress, but §17.2 and the §17 NetworkPolicy inventory name this policy explicitly as
+the agent-vs-operability boundary enforcer; rendering it by name lets
+operator runbooks and the §13.2 selector-consistency audit assert its
+presence. NetworkPolicies are additive, so the allow-ops Prometheus-scrape
+ingress below still applies. spec: §25.4; §17.2. F-17.2.16.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lenny-ops-deny-all-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: lenny-ops
+  policyTypes: [Ingress]
+  ingress: []
+---
+{{/*
+allow-ops re-admits the §25.4 lenny-ops Deployment's egress and
+ingress the §13.2 default-deny otherwise blocks. lenny-ops pods carry
+app: lenny-ops (the §13.2.3 selector exception), so this policy
+keys on that label. Egress: the gateway admin-API on the internal TLS
+and HTTP ports (NET-051, NET-070), and CoreDNS for name resolution.
+Ingress: per the §13.2 lenny-ops ingress note and §25.4, lenny-ops is
+external-only — no in-cluster workload reaches it — so the sole
+in-cluster ingress is the Prometheus metrics scrape from the
+monitoring namespace (§25.4 Pattern 1, NET-045). The external Ingress
+traffic is admitted by the §25.4 lenny-ops chart-scope policies.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ops
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: lenny-ops
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.monitoring.namespace }}
+      ports:
+        - port: {{ .Values.ops.metricsPort }}
+          protocol: TCP
+  egress:
+    # lenny-ops is leader-elected (§25.4): it holds a coordination.k8s.io
+    # Lease and reconciles platform state, so it needs kube-apiserver
+    # egress. Without it the lenny-ops pods cannot acquire their Lease
+    # and never report Ready. The CIDR is operator-tunable, bounded by
+    # the kubeApiServerPorts rule, as in allow-controller-egress.
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.kubeApiServerCIDR | quote }}
+      ports:
+        {{- range .Values.kubeApiServerPorts }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+      ports:
+        - port: {{ .Values.gateway.internalTLSPort }}
+          protocol: TCP
+        - port: {{ .Values.gateway.internalPort }}
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              lenny.dev/component: coredns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  policyTypes: [Ingress, Egress]
+{{- /*
+allow-gateway-egress-interceptor-<ns> re-admits gateway egress to
+in-cluster external interceptors (§13.2 NET-039 / NET-058). One
+NetworkPolicy is rendered per namespace declared in
+gateway.interceptorNamespaces (default: []). The lenny-system
+default-deny otherwise blocks every gateway-to-interceptor gRPC call,
+causing fail-closed interceptors to reject all requests. The
+podSelector pairs the namespaceSelector so only interceptor pods
+(labelled lenny.dev/component: interceptor) are reachable — other
+tenant pods co-located in the namespace remain isolated.
+*/}}
+{{- range $namespace := .Values.gateway.interceptorNamespaces }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-egress-interceptor-{{ $namespace }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: gateway
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $namespace | quote }}
+          podSelector:
+            matchLabels:
+              lenny.dev/component: interceptor
+      ports:
+        - port: {{ $.Values.gateway.interceptorGRPCPort }}
+          protocol: TCP
+  policyTypes: [Egress]
+{{- end }}

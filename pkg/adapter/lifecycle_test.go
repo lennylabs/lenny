@@ -1,0 +1,379 @@
+// SPDX-License-Identifier: MIT
+
+package adapter_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"github.com/lennylabs/lenny/pkg/adapter"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+)
+
+// startedSession builds an adapter Server with a session already
+// assigned, returning the server and its fake runtime.
+func startedSession(t *testing.T, sessionID string) (*adapter.Server, *fakeRuntime) {
+	t.Helper()
+	s, rt, _ := sessionServer(t)
+	if _, err := s.StartSession(context.Background(), startReq(sessionID)); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	return s, rt
+}
+
+// twoStartedSessions builds a concurrent-pool adapter Server with two
+// sessions bound to the pod's one shared runtime, so a test can assert
+// that a session-scoped CH-RUNTIMEOPS frame names the session its RPC
+// addressed rather than its co-tenant.
+func twoStartedSessions(t *testing.T, first, second string) (*adapter.Server, *fakeRuntime) {
+	t.Helper()
+	s, rt := concurrentServer(t)
+	for _, id := range []string{first, second} {
+		if _, err := s.StartSession(context.Background(), slotStartReq(id)); err != nil {
+			t.Fatalf("StartSession(%s): %v", id, err)
+		}
+	}
+	return s, rt
+}
+
+func TestInterruptCleanSignalsTheRuntime(t *testing.T) {
+	s, rt := startedSession(t, "sess-1")
+
+	resp, err := s.Interrupt(context.Background(), &adapterv1.InterruptRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		Mode:      adapterv1.InterruptRequest_MODE_CLEAN,
+	})
+	if err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	if !resp.GetAcknowledged() {
+		t.Error("Interrupt did not acknowledge")
+	}
+	if len(rt.interrupts) != 1 || rt.interrupts[0] {
+		t.Errorf("runtime interrupts = %v, want one clean interrupt", rt.interrupts)
+	}
+}
+
+func TestInterruptHardSignalsTheRuntime(t *testing.T) {
+	s, rt := startedSession(t, "sess-1")
+
+	if _, err := s.Interrupt(context.Background(), &adapterv1.InterruptRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		Mode:      adapterv1.InterruptRequest_MODE_HARD,
+	}); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	if len(rt.interrupts) != 1 || !rt.interrupts[0] {
+		t.Errorf("runtime interrupts = %v, want one hard interrupt", rt.interrupts)
+	}
+}
+
+func TestInterruptRequiresASessionID(t *testing.T) {
+	s, _ := startedSession(t, "sess-1")
+
+	_, err := s.Interrupt(context.Background(), &adapterv1.InterruptRequest{
+		Mode: adapterv1.InterruptRequest_MODE_CLEAN,
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Errorf("error code = %v, want InvalidArgument", status.Code(err))
+	}
+}
+
+func TestInterruptRequiresAMode(t *testing.T) {
+	s, _ := startedSession(t, "sess-1")
+
+	_, err := s.Interrupt(context.Background(), &adapterv1.InterruptRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Errorf("error code = %v, want InvalidArgument for an unspecified mode", status.Code(err))
+	}
+}
+
+func TestInterruptRejectsAnUnassignedSession(t *testing.T) {
+	s, _, _ := sessionServer(t) // no StartSession ran.
+
+	_, err := s.Interrupt(context.Background(), &adapterv1.InterruptRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-absent"},
+		Mode:      adapterv1.InterruptRequest_MODE_CLEAN,
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("error code = %v, want FailedPrecondition for a pod with no session", status.Code(err))
+	}
+}
+
+func TestDemoteSDKReturnsUnimplementedForAPodWarmAdapter(t *testing.T) {
+	s := adapter.New("test")
+
+	_, err := s.DemoteSDK(context.Background(), &adapterv1.DemoteSDKRequest{
+		Reason: "incoming WorkspacePlan matched an sdkWarmBlockingPaths pattern",
+	})
+	if status.Code(err) != codes.Unimplemented {
+		t.Errorf("error code = %v, want Unimplemented for a pod-warm adapter", status.Code(err))
+	}
+}
+
+func TestInterruptReportsARuntimeFailure(t *testing.T) {
+	s, rt := startedSession(t, "sess-1")
+	rt.interruptErr = errors.New("signal delivery failed")
+
+	_, err := s.Interrupt(context.Background(), &adapterv1.InterruptRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		Mode:      adapterv1.InterruptRequest_MODE_HARD,
+	})
+	if status.Code(err) != codes.Internal {
+		t.Errorf("error code = %v, want Internal when the runtime signal fails", status.Code(err))
+	}
+}
+
+// startLifecycle creates a CH-RUNTIMEOPS on a temporary socket and
+// runs it; Run is torn down on test cleanup.
+func startLifecycle(t *testing.T) *adapter.RuntimeOps {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "lc-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	lc, err := newRuntimeOps(t, filepath.Join(dir, "lifecycle.sock"), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("NewRuntimeOps: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	runErr := make(chan error, 1)
+	go func() { runErr <- lc.Run(ctx) }()
+	t.Cleanup(func() {
+		_ = lc.Close()
+		<-runErr
+	})
+	return lc
+}
+
+// lifecycleRuntime is a scripted fake runtime for the §4.7 CH-RUNTIMEOPS, exercising the adapter's Full-level RPC paths.
+type lifecycleRuntime struct {
+	t    *testing.T
+	conn net.Conn
+	dec  *json.Decoder
+	enc  *json.Encoder
+}
+
+// dialLifecycle dials lc as a runtime, completes the handshake, and
+// blocks until the adapter has recorded the runtime's capabilities.
+func dialLifecycle(t *testing.T, lc *adapter.RuntimeOps) *lifecycleRuntime {
+	t.Helper()
+	conn, err := net.Dial("unix", lc.SocketPath())
+	if err != nil {
+		t.Fatalf("dial lifecycle socket: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	if err := writeListenerNonce(conn, lc.SocketPath()); err != nil {
+		t.Fatalf("nonce line: %v", err)
+	}
+	lr := &lifecycleRuntime{t: t, conn: conn, dec: json.NewDecoder(conn), enc: json.NewEncoder(conn)}
+
+	caps := lr.recv()
+	if caps["type"] != "lifecycle_capabilities" {
+		t.Fatalf("first adapter frame = %v, want lifecycle_capabilities", caps["type"])
+	}
+	lr.send(map[string]any{"type": "lifecycle_support", "capabilities": caps["capabilities"]})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for !lc.Supports("interrupt") {
+		if time.Now().After(deadline) {
+			t.Fatal("adapter did not complete the lifecycle handshake")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return lr
+}
+
+func (lr *lifecycleRuntime) recv() map[string]any {
+	lr.t.Helper()
+	_ = lr.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	var m map[string]any
+	if err := lr.dec.Decode(&m); err != nil {
+		lr.t.Fatalf("lifecycle runtime recv: %v", err)
+	}
+	return m
+}
+
+func (lr *lifecycleRuntime) send(m map[string]any) {
+	lr.t.Helper()
+	if err := lr.enc.Encode(m); err != nil {
+		lr.t.Fatalf("lifecycle runtime send: %v", err)
+	}
+}
+
+// spec: §4.7, §28.5.3 (CH-RUNTIMEOPS, Messages)
+// A clean interrupt of a Full-level runtime goes over CH-RUNTIMEOPS, and
+// with two sessions bound to the pod the interrupt_request names the
+// session the RPC addressed.
+func TestInterruptCleanUsesRuntimeOps(t *testing.T) {
+	s, rt := twoStartedSessions(t, "sess-1", "sess-2")
+	lc := startLifecycle(t)
+	s.Lifecycle = lc
+	lr := dialLifecycle(t, lc)
+
+	respc := make(chan *adapterv1.InterruptResponse, 1)
+	go func() {
+		resp, err := s.Interrupt(context.Background(), &adapterv1.InterruptRequest{
+			SessionId:  &adapterv1.SessionId{Value: "sess-2"},
+			Mode:       adapterv1.InterruptRequest_MODE_CLEAN,
+			DeadlineMs: 2000,
+		})
+		if err != nil {
+			t.Errorf("Interrupt: %v", err)
+			respc <- nil
+			return
+		}
+		respc <- resp
+	}()
+
+	req := lr.recv()
+	if req["type"] != "interrupt_request" {
+		t.Fatalf("runtime saw %v, want interrupt_request", req["type"])
+	}
+	if req["sessionId"] != "sess-2" {
+		t.Errorf("interrupt_request sessionId = %v, want sess-2", req["sessionId"])
+	}
+	lr.send(map[string]any{"type": "interrupt_acknowledged", "interruptId": req["interruptId"]})
+
+	resp := <-respc
+	if resp == nil {
+		return
+	}
+	if resp.GetStatus() != adapterv1.InterruptResponse_STATUS_ACKNOWLEDGED {
+		t.Errorf("status = %v, want STATUS_ACKNOWLEDGED", resp.GetStatus())
+	}
+	// The clean Full-level interrupt goes over the channel, not the signal path.
+	if len(rt.interrupts) != 0 {
+		t.Errorf("runtime received %d signal interrupts, want 0 (lifecycle path)", len(rt.interrupts))
+	}
+}
+
+// spec: §11.3, §28.5.3 (CH-RUNTIMEOPS, Messages) — DEADLINE_APPROACHING
+// is delivered over the CH-RUNTIMEOPS, and with two sessions bound to the
+// pod the frame names the session the RPC addressed. F-11.3.5.
+func TestSignalDeadlineDeliversOverRuntimeOps_spec_11_3_240(t *testing.T) {
+	s, _ := twoStartedSessions(t, "sess-1", "sess-2")
+	lc := startLifecycle(t)
+	s.Lifecycle = lc
+	lr := dialLifecycle(t, lc)
+
+	resp, err := s.SignalDeadline(context.Background(), &adapterv1.SignalDeadlineRequest{
+		SessionId:   &adapterv1.SessionId{Value: "sess-2"},
+		RemainingMs: 300000,
+		Trigger:     "session_age",
+	})
+	if err != nil {
+		t.Fatalf("SignalDeadline: %v", err)
+	}
+	if !resp.GetDelivered() {
+		t.Error("delivered = false, want true for a Full-level runtime")
+	}
+	frame := lr.recv()
+	if frame["type"] != "deadline_approaching" {
+		t.Fatalf("runtime saw %v, want deadline_approaching", frame["type"])
+	}
+	if frame["sessionId"] != "sess-2" {
+		t.Errorf("deadline_approaching sessionId = %v, want sess-2", frame["sessionId"])
+	}
+	if frame["trigger"] != "session_age" {
+		t.Errorf("trigger = %v, want session_age", frame["trigger"])
+	}
+	if got := frame["remainingMs"]; got != float64(300000) {
+		t.Errorf("remainingMs = %v, want 300000", got)
+	}
+}
+
+// spec: §15 — a Basic/Standard runtime with no CH-RUNTIMEOPS
+// receives no advance notice; the adapter reports delivered=false rather than
+// erroring. F-11.3.5.
+func TestSignalDeadlineWithoutLifecycleReturnsNotDelivered_spec_11_3_240(t *testing.T) {
+	s, _ := startedSession(t, "sess-1")
+
+	resp, err := s.SignalDeadline(context.Background(), &adapterv1.SignalDeadlineRequest{
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
+		RemainingMs: 300000,
+		Trigger:     "session_age",
+	})
+	if err != nil {
+		t.Fatalf("SignalDeadline: %v", err)
+	}
+	if resp.GetDelivered() {
+		t.Error("delivered = true, want false for a runtime without CH-RUNTIMEOPS")
+	}
+}
+
+// spec: §11.3 — an empty trigger defaults to session_age, the only
+// trigger the maxSessionAge warning uses. F-11.3.5.
+func TestSignalDeadlineDefaultsTriggerToSessionAge_spec_11_3_240(t *testing.T) {
+	s, _ := startedSession(t, "sess-1")
+	lc := startLifecycle(t)
+	s.Lifecycle = lc
+	lr := dialLifecycle(t, lc)
+
+	if _, err := s.SignalDeadline(context.Background(), &adapterv1.SignalDeadlineRequest{
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
+		RemainingMs: 120000,
+	}); err != nil {
+		t.Fatalf("SignalDeadline: %v", err)
+	}
+	frame := lr.recv()
+	if frame["trigger"] != "session_age" {
+		t.Errorf("trigger = %v, want session_age default", frame["trigger"])
+	}
+}
+
+func TestSignalDeadlineRequiresASessionID_spec_11_3_240(t *testing.T) {
+	s, _ := startedSession(t, "sess-1")
+
+	_, err := s.SignalDeadline(context.Background(), &adapterv1.SignalDeadlineRequest{
+		RemainingMs: 300000,
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Errorf("error code = %v, want InvalidArgument", status.Code(err))
+	}
+}
+
+func TestSignalDeadlineRejectsAnUnassignedSession_spec_11_3_240(t *testing.T) {
+	s, _, _ := sessionServer(t) // no StartSession ran.
+
+	_, err := s.SignalDeadline(context.Background(), &adapterv1.SignalDeadlineRequest{
+		SessionId:   &adapterv1.SessionId{Value: "sess-absent"},
+		RemainingMs: 300000,
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("error code = %v, want FailedPrecondition for a pod with no session", status.Code(err))
+	}
+}
+
+func TestInterruptCleanTimesOutOnRuntimeOps(t *testing.T) {
+	s, _ := startedSession(t, "sess-1")
+	lc := startLifecycle(t)
+	s.Lifecycle = lc
+	// The runtime connects and handshakes but never acknowledges.
+	dialLifecycle(t, lc)
+
+	resp, err := s.Interrupt(context.Background(), &adapterv1.InterruptRequest{
+		SessionId:  &adapterv1.SessionId{Value: "sess-1"},
+		Mode:       adapterv1.InterruptRequest_MODE_CLEAN,
+		DeadlineMs: 150,
+	})
+	if err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	if resp.GetStatus() != adapterv1.InterruptResponse_STATUS_INTERRUPT_TIMEOUT {
+		t.Errorf("status = %v, want STATUS_INTERRUPT_TIMEOUT", resp.GetStatus())
+	}
+}

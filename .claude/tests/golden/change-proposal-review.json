@@ -1,0 +1,567 @@
+[
+  {
+    "label": "bootstrap",
+    "phase": "Bootstrap",
+    "model": "opus",
+    "schema": "",
+    "blocks": [
+      "file-ownership"
+    ]
+  },
+  {
+    "label": "conventions",
+    "phase": "",
+    "model": "opus",
+    "schema": "",
+    "blocks": [
+      "file-ownership"
+    ]
+  },
+  {
+    "label": "probe:spec-changes",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "stagesSpecChanges+why",
+    "blocks": []
+  },
+  {
+    "label": "r1:review:single-source",
+    "phase": "spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:review:citations",
+    "phase": "spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:review:edit-sites",
+    "phase": "spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:review:mechanism",
+    "phase": "spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:review:security",
+    "phase": "spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:review:kubernetes",
+    "phase": "spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:review:performance",
+    "phase": "spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:review:reliability",
+    "phase": "spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:review:client-surface",
+    "phase": "spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:review:docs-alignment",
+    "phase": "spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:review:applicability",
+    "phase": "spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:review:fresh",
+    "phase": "spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:round-boundary",
+    "phase": "spec R1: fix",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "hash:spec:spec-loop",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "spec-nonspec-handoff",
+    "phase": "Review",
+    "model": "opus",
+    "schema": "",
+    "blocks": [
+      "file-ownership"
+    ]
+  },
+  {
+    "label": "workflow:/repo/.claude/workflows/change-proposal-decisions.js",
+    "phase": "",
+    "model": "",
+    "schema": "",
+    "blocks": []
+  },
+  {
+    "label": "save-state:decisions:0",
+    "phase": "Decisions",
+    "model": "haiku",
+    "schema": "",
+    "blocks": []
+  },
+  {
+    "label": "save-state:decisions:check",
+    "phase": "Decisions",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "save-state:decisions:0:retry2",
+    "phase": "Decisions",
+    "model": "haiku",
+    "schema": "",
+    "blocks": []
+  },
+  {
+    "label": "save-state:decisions:check:2",
+    "phase": "Decisions",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "save-state:decisions:0:retry3",
+    "phase": "Decisions",
+    "model": "haiku",
+    "schema": "",
+    "blocks": []
+  },
+  {
+    "label": "save-state:decisions:check:3",
+    "phase": "Decisions",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "hash:firing:after:1",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "hash:spec:after-first-firing",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "r1:review:single-source",
+    "phase": "non-spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:review:citations",
+    "phase": "non-spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:review:edit-sites",
+    "phase": "non-spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:review:mechanism",
+    "phase": "non-spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:review:security",
+    "phase": "non-spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:review:kubernetes",
+    "phase": "non-spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:review:performance",
+    "phase": "non-spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:review:reliability",
+    "phase": "non-spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:review:client-surface",
+    "phase": "non-spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:review:docs-alignment",
+    "phase": "non-spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:review:applicability",
+    "phase": "non-spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:review:test-coverage",
+    "phase": "non-spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:review:fresh",
+    "phase": "non-spec R1: review",
+    "model": "opus",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r1:round-boundary",
+    "phase": "non-spec R1: fix",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "hash:non-spec:non-spec-loop",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "hash:non-spec-readset:non-spec-loop",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "hash:firing:before:post-non-spec-loop",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "hash:spec:after-non-spec-loop",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "hash:non-spec:after-non-spec-loop",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "verify-checklist",
+    "phase": "Review",
+    "model": "opus",
+    "schema": "",
+    "blocks": [
+      "file-ownership"
+    ]
+  },
+  {
+    "label": "status:set-reviewed",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "status:record-run",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "file-ownership"
+    ]
+  },
+  {
+    "label": "log:unclosed-markers",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  }
+]

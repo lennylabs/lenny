@@ -4,6 +4,16 @@
 // pure-function check that a pod template satisfies every §13.1 Pod
 // Security row plus the §13.1 host-sharing prohibition.
 //
+// The checks cover host sharing, the pod-level fsGroup,
+// supplementalGroups, and runAsNonRoot, the per-container
+// securityContext baseline (privilege, privilege escalation, root
+// filesystem, capabilities, and seccomp), the lenny-cred-readers
+// membership boundary (runAsGroup and credential-volume mounts), and
+// the §13.1 container identity clause: every container sets a nonzero
+// container-level runAsUser and runAsGroup, the adapter UID belongs to
+// the regular container named adapter, and the agent UID belongs to the
+// regular container named runtime.
+//
 // The validator is keyed off a transport-agnostic PodSpec struct so
 // callers do not have to pull in the Kubernetes API types. Production
 // code paths translate `k8s.io/api/core/v1.PodSpec` and its
@@ -16,6 +26,31 @@
 package podsecurity
 
 import "fmt"
+
+// SeccompRuntimeDefault is the only seccomp profile type the §13.1
+// pod-security baseline accepts on an agent pod. It matches the
+// Kubernetes SeccompProfileType value RuntimeDefault, which engages the
+// container runtime's default syscall filter. §17.2 records that the
+// seccompType: RuntimeDefault requirement is enforced at admission for
+// runc pods; the agent podspec sets it at the pod level.
+const SeccompRuntimeDefault = "RuntimeDefault"
+
+// CredMountPathPrefix is the in-pod directory carrying the §4.7
+// per-session credential files (`/run/lenny/slots/{sessionId}/credentials.json`)
+// and the adapter manifest. A volume mount at this path or below reaches
+// every session's credential file. §13.1 confines that read boundary to the adapter
+// and agent containers; a non-credential container that mounts this
+// prefix is rejected with POD_SPEC_CRED_GROUP_OVERBROAD. It mirrors the
+// lenny-ephemeral-container-cred-guard condition (iv) for the regular
+// (non-ephemeral) containers the lenny-pod-security webhook validates.
+const CredMountPathPrefix = "/run/lenny"
+
+// SupervisorStageContainerName is the init container that copies the runtime
+// supervisor into the supervisor volume. §13.1 (Runtime supervisor volume)
+// admits a read-write mount of that volume on this init container alone,
+// and only while it is not a restartable (`restartPolicy: Always`) init
+// container. The pod builder names the container with this constant.
+const SupervisorStageContainerName = "lenny-supervisor-stage"
 
 // PodSpec is the subset of a Kubernetes pod spec the §13.1 validator
 // consults. Fields not in §13.1 are intentionally omitted.
@@ -30,10 +65,74 @@ type PodSpec struct {
 	RunAsNonRoot *bool
 	FSGroup      *int64
 
+	// SeccompProfileType is the pod-level
+	// securityContext.seccompProfile.type. A container that sets no
+	// seccomp profile of its own inherits this value. An empty string
+	// means no pod-level profile was set; §13.1 requires the effective
+	// per-container profile to be RuntimeDefault, so an empty pod-level
+	// profile combined with an empty container profile is a violation.
+	SeccompProfileType string
+
 	// SupplementalGroups present on the pod-level SecurityContext.
 	// §13.1 requires the lenny-cred-readers GID to be present so the
 	// cross-UID file-delivery path works.
 	SupplementalGroups []int64
+
+	// RuntimeClassName is the pod's spec.runtimeClassName. §17.2
+	// applies a RuntimeClass-aware split-enforcement model: a gVisor
+	// pod skips the seccomp profile check (RuntimeDefault is a no-op
+	// under gVisor's userspace syscall interception) and a Kata pod may
+	// set allowPrivilegeEscalation: true for its device plugins. Every
+	// other §13.1 control still applies. An empty or unrecognized
+	// RuntimeClass receives full enforcement (fail-closed). The
+	// validator maps the name to a relaxation through the
+	// RuntimeClassPolicy passed to ValidateAgentPod.
+	RuntimeClassName string
+
+	// CredentialContainerNames lists the containers that may mount the
+	// credential volume and declare the lenny-cred-readers GID in
+	// runAsGroup. In the sidecar deployment model the list holds the
+	// adapter container, which writes the credential file, and the agent
+	// runtime container, which reads it. In the embedded model no adapter
+	// container exists, and the list holds only the runtime container,
+	// which both writes and reads the file. Under §13.1 the read boundary
+	// is the GID together with a mount of the credential volume, because
+	// the pod-level fsGroup gives the GID to every container, and any
+	// other container that declares the GID in runAsGroup or mounts the
+	// credential volume is rejected. The webhook populates this from the
+	// agent-pod container convention; when the list is empty every
+	// container is treated as non-credential.
+	//
+	// spec: §13.1 (lenny-cred-readers membership boundary)
+	CredentialContainerNames []string
+
+	// CredVolumeName is the name of the pod-level credential tmpfs
+	// volume carrying the per-session credential files under
+	// /run/lenny/slots/. §13.1: a
+	// non-adapter, non-agent container that mounts this volume (by name)
+	// or mounts the /run/lenny path prefix reaches the credential file
+	// and is rejected with POD_SPEC_CRED_GROUP_OVERBROAD. Empty disables
+	// the by-name match, leaving the by-path match in force.
+	CredVolumeName string
+
+	// AdapterUID is the adapter container's UID, carried by the chart
+	// value security.podUIDs.adapter. §13.1 (Container identity)
+	// reserves it for the regular container named adapter: any other
+	// container whose runAsUser equals it is rejected.
+	AdapterUID int64
+
+	// SupervisorVolumeName is the name of the runtime supervisor volume.
+	// §13.1 (Runtime supervisor volume): no container other than the init
+	// container lenny-supervisor-stage mounts it read-write, so the runtime
+	// container executes a supervisor binary no running container can
+	// rewrite. Empty disables the rule.
+	SupervisorVolumeName string
+
+	// AgentUID is the runtime container's UID, carried by the chart
+	// value security.podUIDs.agent. §13.1 (Container identity) reserves it
+	// for the regular container named runtime, which is what lets the
+	// §4.7.11 SO_PEERCRED check identify the agent by UID.
+	AgentUID int64
 
 	// Containers describes every container in the pod (init + main
 	// + sidecars). Each must satisfy the §13.1 container-level
@@ -46,17 +145,108 @@ type PodSpec struct {
 type ContainerSpec struct {
 	Name string
 
+	// Init reports an entry of the pod's initContainers list.
+	// RestartPolicyAlways reports an init container whose restartPolicy is
+	// Always (a restartable, or sidecar, init container), which runs for
+	// the pod's life. §13.1 (Runtime supervisor volume) admits a read-write
+	// supervisor volume mount only on a non-restartable init container.
+	Init                bool
+	RestartPolicyAlways bool
+
 	// SecurityContext fields enforced by §13.1.
 	AllowPrivilegeEscalation *bool
 	Privileged               *bool
 	ReadOnlyRootFilesystem   *bool
 	RunAsNonRoot             *bool
 
+	// RunAsUser is the container-level securityContext.runAsUser. §13.1
+	// (Container identity) requires it to be set and nonzero on every
+	// container; a pod-level runAsUser is not translated into this field
+	// and does not satisfy the rule.
+	RunAsUser *int64
+
+	// RunAsGroup is the container-level securityContext.runAsGroup.
+	// §13.1 forbids a non-adapter, non-agent container from declaring
+	// the lenny-cred-readers GID here. The read boundary is that GID
+	// together with a mount of the credential volume; the pod-level
+	// fsGroup gives the GID to every container regardless of this field.
+	// supplementalGroups has no container-level field in the Kubernetes
+	// API, so runAsGroup is the per-container vector for this control.
+	RunAsGroup *int64
+
+	// SeccompProfileType is the container-level
+	// securityContext.seccompProfile.type. An empty string means the
+	// container set no profile of its own and inherits the pod-level
+	// PodSpec.SeccompProfileType. The validator checks the effective
+	// profile — container value when set, pod-level value otherwise.
+	SeccompProfileType string
+
 	// CapabilitiesDrop is the capabilities.drop list. §13.1 mandates
 	// "All dropped"; the validator requires this to contain "ALL"
 	// exactly.
 	CapabilitiesDrop []string
 	CapabilitiesAdd  []string
+
+	// VolumeMounts is the container's volume mounts. §13.1: a
+	// non-adapter, non-agent container that mounts the credential volume
+	// or the /run/lenny path prefix reaches the credential file. This is
+	// the operative attack surface the validator inspects, because the
+	// pod-level fsGroup grants every container lenny-cred-readers
+	// supplementary-group membership regardless of its explicit
+	// runAsGroup — so group membership alone is insufficient to access
+	// the file, but membership plus a credential-volume mount is not.
+	VolumeMounts []VolumeMount
+}
+
+// VolumeMount is the credential-boundary-relevant projection of one of
+// a container's volume mounts: the volume it references and the path it
+// is mounted at.
+type VolumeMount struct {
+	Name      string
+	MountPath string
+	// ReadOnly is the mount's readOnly field. An unset readOnly is a
+	// read-write mount.
+	ReadOnly bool
+}
+
+// RuntimeClassPolicy maps the cluster's RuntimeClass names onto the
+// §17.2 split-enforcement relaxations. RuntimeClass names are
+// deployer-configurable (the chart's runtimeClasses.profiles.*.name
+// values; default gvisor/kata/runc from isolation.RuntimeClassName), so
+// the webhook supplies the names it is configured with and the
+// validator owns the §17.2 policy (which relaxation each profile gets).
+//
+// A pod whose RuntimeClassName matches neither name receives full
+// §13.1 enforcement.
+type RuntimeClassPolicy struct {
+	// GVisorRuntimeClass is the RuntimeClass name mapped to the
+	// sandboxed (gVisor) profile. §17.2: a pod with this
+	// runtimeClassName skips the seccomp profile check. Empty disables
+	// the gVisor relaxation (every pod is seccomp-checked).
+	GVisorRuntimeClass string
+	// KataRuntimeClass is the RuntimeClass name mapped to the microvm
+	// (Kata) profile. §17.2: a pod with this runtimeClassName may set
+	// allowPrivilegeEscalation: true for its device plugins. Empty
+	// disables the Kata relaxation (every pod must set
+	// allowPrivilegeEscalation: false).
+	KataRuntimeClass string
+}
+
+// relaxations resolves the §17.2 per-RuntimeClass exemptions for spec.
+// A gVisor pod is seccomp-exempt; a Kata pod is
+// privilege-escalation-exempt. An empty policy name never matches, so
+// the corresponding relaxation stays off.
+func (p RuntimeClassPolicy) relaxations(runtimeClass string) (seccompExempt, privEscExempt bool) {
+	if runtimeClass == "" {
+		return false, false
+	}
+	if p.GVisorRuntimeClass != "" && runtimeClass == p.GVisorRuntimeClass {
+		seccompExempt = true
+	}
+	if p.KataRuntimeClass != "" && runtimeClass == p.KataRuntimeClass {
+		privEscExempt = true
+	}
+	return seccompExempt, privEscExempt
 }
 
 // ValidateAgentPod applies the §13.1 invariants to spec. Returns nil
@@ -64,10 +254,19 @@ type ContainerSpec struct {
 // every violation otherwise.
 //
 // LennyCredReadersGID is the supplementary GID the §13.1 cross-UID
-// file-delivery path requires on the pod-level fsGroup. Pass the GID
-// from the chart's `agent.credReadersGID` Helm value.
-func ValidateAgentPod(spec PodSpec, lennyCredReadersGID int64) error {
+// file-delivery path requires on the pod-level fsGroup. Production
+// callers pass podspec.CredReadersGID (the Go constant in
+// pkg/controller/sandbox/podspec); spec §13.1 leaves the specific GID
+// to the implementation and the constant is the single source of truth
+// shared by the controller's pod builder and this validator.
+//
+// rcPolicy carries the §17.2 RuntimeClass-aware relaxations: a gVisor
+// pod skips the seccomp check, a Kata pod may allow privilege
+// escalation. A zero-value policy applies full enforcement to every
+// pod regardless of RuntimeClass.
+func ValidateAgentPod(spec PodSpec, lennyCredReadersGID int64, rcPolicy RuntimeClassPolicy) error {
 	violations := []string{}
+	seccompExempt, privEscExempt := rcPolicy.relaxations(spec.RuntimeClassName)
 
 	// §13.1 host-sharing prohibitions.
 	if spec.ShareProcessNamespace {
@@ -91,9 +290,38 @@ func ValidateAgentPod(spec PodSpec, lennyCredReadersGID int64) error {
 		violations = append(violations, fmt.Sprintf("fsGroup must equal lenny-cred-readers GID %d, got %d (POD_SPEC_CRED_FSGROUP_MISSING)", lennyCredReadersGID, *spec.FSGroup))
 	}
 
+	// §13.1: the adapter and agent UIDs are declared in the
+	// pod's spec.securityContext.supplementalGroups list, making
+	// lenny-cred-readers a shared group both containers are members of.
+	// §13.1 **Cross-UID file delivery without `CAP_CHOWN`
+	// (fsGroup-based).** further states that the admission webhooks
+	// "validate the presence and immutability of the `fsGroup` and
+	// `supplementalGroups` settings on every agent-pod template", so the
+	// explicit declaration is required, not merely the kubelet's implicit
+	// fsGroup-to-supplementary-group propagation. A pod that sets the fsGroup but
+	// omits the supplementalGroups declaration would still deliver the
+	// file today (via that propagation side-effect), but the spec
+	// mandates the explicit membership so a future kubelet that decouples
+	// fsGroup from supplementary groups cannot silently break delivery.
+	if !containsGID(spec.SupplementalGroups, lennyCredReadersGID) {
+		violations = append(violations, fmt.Sprintf("pod securityContext.supplementalGroups must include the lenny-cred-readers GID %d for the cross-UID credential-delivery path (POD_SPEC_CRED_FSGROUP_MISSING)", lennyCredReadersGID))
+	}
+
 	// §13.1 pod-level runAsNonRoot: every agent pod is non-root.
 	if spec.RunAsNonRoot == nil || !*spec.RunAsNonRoot {
 		violations = append(violations, "runAsNonRoot must be true (§13.1 User row)")
+	}
+
+	// §13.1 lenny-cred-readers membership boundary: the pod-level fsGroup
+	// gives the GID to every container, so the boundary is the GID
+	// together with a mount of the credential volume. Only the regular
+	// containers named adapter and runtime may mount the credential
+	// volume or a /run/lenny path, or declare the lenny-cred-readers GID
+	// in container-level runAsGroup. Build the allow-set that the
+	// credential-volume, /run/lenny mount, and runAsGroup checks consult.
+	credentialContainer := make(map[string]bool, len(spec.CredentialContainerNames))
+	for _, name := range spec.CredentialContainerNames {
+		credentialContainer[name] = true
 	}
 
 	// §13.1 per-container invariants.
@@ -104,17 +332,73 @@ func ValidateAgentPod(spec PodSpec, lennyCredReadersGID int64) error {
 		if c.Privileged != nil && *c.Privileged {
 			violations = append(violations, fmt.Sprintf("container %q: privileged is forbidden", c.Name))
 		}
-		if c.AllowPrivilegeEscalation == nil || *c.AllowPrivilegeEscalation {
+		// §17.2: Kata pods permit the privilege-escalation paths their
+		// device plugins need; every other RuntimeClass must set
+		// allowPrivilegeEscalation: false.
+		if !privEscExempt && (c.AllowPrivilegeEscalation == nil || *c.AllowPrivilegeEscalation) {
 			violations = append(violations, fmt.Sprintf("container %q: allowPrivilegeEscalation must be false", c.Name))
 		}
 		if c.ReadOnlyRootFilesystem == nil || !*c.ReadOnlyRootFilesystem {
 			violations = append(violations, fmt.Sprintf("container %q: readOnlyRootFilesystem must be true (§13.1 Root filesystem row)", c.Name))
 		}
-		if !dropsAllCapabilities(c.CapabilitiesDrop) {
+		if !CapabilitiesDropped(c.CapabilitiesDrop) {
 			violations = append(violations, fmt.Sprintf("container %q: capabilities.drop must contain ALL (§13.1 Capabilities row)", c.Name))
 		}
 		if len(c.CapabilitiesAdd) > 0 {
 			violations = append(violations, fmt.Sprintf("container %q: capabilities.add must be empty (§13.1 Capabilities row)", c.Name))
+		}
+		// §13.1 / §17.2 seccomp baseline: the effective seccomp profile
+		// must be RuntimeDefault. The effective profile is the
+		// container-level value when set, otherwise the pod-level value.
+		// §17.2 exempts gVisor pods: RuntimeDefault is a no-op under
+		// gVisor's userspace syscall interception, so the check is
+		// skipped for them while every other §13.1 control still applies.
+		if !seccompExempt {
+			if effective := effectiveSeccompProfile(c.SeccompProfileType, spec.SeccompProfileType); effective != SeccompRuntimeDefault {
+				violations = append(violations, fmt.Sprintf(
+					"container %q: seccompProfile.type must be %s, got %s (§13.1 pod-security baseline)",
+					c.Name, SeccompRuntimeDefault, describeSeccomp(effective),
+				))
+			}
+		}
+		// §13.1 lenny-cred-readers membership boundary: a container that
+		// is not the adapter or agent must not declare the cred-readers
+		// GID in runAsGroup.
+		if c.RunAsGroup != nil && *c.RunAsGroup == lennyCredReadersGID && !credentialContainer[c.Name] {
+			violations = append(violations, fmt.Sprintf(
+				"container %q declares the lenny-cred-readers GID %d in runAsGroup but is not the adapter or agent container (POD_SPEC_CRED_GROUP_OVERBROAD)",
+				c.Name, lennyCredReadersGID,
+			))
+		}
+		violations = append(violations, identityViolations(c, spec, credentialContainer)...)
+		violations = append(violations, supervisorVolumeViolations(c, spec.SupervisorVolumeName)...)
+		// §13.1: the operative credential-read surface is the
+		// volume mount, not the group membership. The pod-level fsGroup
+		// grants every container lenny-cred-readers membership regardless
+		// of its explicit runAsGroup, so the runAsGroup check above cannot
+		// close the fsGroup-inheritance side-channel on its own. A
+		// non-adapter, non-agent container that mounts the credential
+		// volume by name, or mounts a path at or under /run/lenny, reaches
+		// every session's credential file under /run/lenny/slots/ and is
+		// rejected. This mirrors the
+		// lenny-ephemeral-container-cred-guard condition (iv) for the
+		// regular containers this webhook validates.
+		if !credentialContainer[c.Name] {
+			for _, m := range c.VolumeMounts {
+				if spec.CredVolumeName != "" && m.Name == spec.CredVolumeName {
+					violations = append(violations, fmt.Sprintf(
+						"container %q mounts the credential volume %q but is not the adapter or agent container (POD_SPEC_CRED_GROUP_OVERBROAD)",
+						c.Name, m.Name,
+					))
+					continue
+				}
+				if m.MountPath == CredMountPathPrefix || hasPathPrefix(m.MountPath, CredMountPathPrefix) {
+					violations = append(violations, fmt.Sprintf(
+						"container %q mounts %q under the credential path %s but is not the adapter or agent container (POD_SPEC_CRED_GROUP_OVERBROAD)",
+						c.Name, m.MountPath, CredMountPathPrefix,
+					))
+				}
+			}
 		}
 	}
 
@@ -124,16 +408,143 @@ func ValidateAgentPod(spec PodSpec, lennyCredReadersGID int64) error {
 	return &PodSecurityError{Violations: violations}
 }
 
-// dropsAllCapabilities reports whether the drop list contains "ALL".
-// The check is case-sensitive matching the Kubernetes capability
-// value the API server emits.
-func dropsAllCapabilities(drops []string) bool {
+// adapterContainerName and runtimeContainerName are the regular
+// container names §13.1 (Container identity) binds the reserved adapter
+// and agent UIDs to.
+const (
+	adapterContainerName = "adapter"
+	runtimeContainerName = "runtime"
+)
+
+// identityViolations applies the §13.1 container identity clause to c.
+//
+// It reports a container whose container-level runAsUser or runAsGroup
+// is unset or 0, and a container whose runAsUser equals a reserved UID it
+// does not own. The adapter UID is owned only by a
+// container named adapter that is also in the credential set, and the
+// agent UID only by a container named runtime in the credential set. The
+// credential set holds regular containers only, so an init or ephemeral
+// container that borrows either name holds no reservation; keying on the
+// name alone would let an init container named adapter in an embedded
+// pod (whose credential set is runtime only) run at the adapter UID.
+//
+// No RuntimeClass relaxes this clause. When a reserved UID is 0, the
+// nonzero check already rejects every container at UID 0, so the
+// reservation check needs no zero guard.
+//
+// spec: §13.1 (Container identity)
+func identityViolations(c ContainerSpec, spec PodSpec, credentialContainer map[string]bool) []string {
+	var out []string
+	if c.RunAsUser == nil || *c.RunAsUser == 0 || c.RunAsGroup == nil || *c.RunAsGroup == 0 {
+		out = append(out, fmt.Sprintf("container %q must set non-zero runAsUser and runAsGroup (§13.1 Container identity)", c.Name))
+	}
+	if c.RunAsUser == nil {
+		return out
+	}
+	uid := *c.RunAsUser
+	owns := func(owner string) bool { return c.Name == owner && credentialContainer[c.Name] }
+	if uid == spec.AdapterUID && !owns(adapterContainerName) {
+		out = append(out, reservedUIDViolation(c.Name, uid, adapterContainerName))
+	}
+	if uid == spec.AgentUID && !owns(runtimeContainerName) {
+		out = append(out, reservedUIDViolation(c.Name, uid, runtimeContainerName))
+	}
+	return out
+}
+
+// supervisorVolumeViolations applies the §13.1 Runtime supervisor volume
+// mount rule to c: a read-write mount of the supervisor volume is refused on
+// every container except an init container named lenny-supervisor-stage
+// whose restartPolicy is not Always. A restartable init container runs for
+// the pod's life, so admitting one by name would keep a writer on the
+// volume the runtime container executes the supervisor from. A regular or
+// ephemeral container that borrows the stage name holds no exemption.
+//
+// spec: §13.1 (Runtime supervisor volume)
+func supervisorVolumeViolations(c ContainerSpec, volume string) []string {
+	if volume == "" {
+		return nil
+	}
+	stageWriter := c.Init && !c.RestartPolicyAlways && c.Name == SupervisorStageContainerName
+	var out []string
+	for _, m := range c.VolumeMounts {
+		if m.Name != volume || m.ReadOnly || stageWriter {
+			continue
+		}
+		out = append(out, fmt.Sprintf(
+			"container %q mounts the runtime supervisor volume %q read-write; only the non-restartable init container %q may (§13.1 Runtime supervisor volume)",
+			c.Name, volume, SupervisorStageContainerName,
+		))
+	}
+	return out
+}
+
+// reservedUIDViolation renders the §13.1 (Container identity) message
+// for a container running at a UID reserved for another container.
+func reservedUIDViolation(name string, uid int64, owner string) string {
+	return fmt.Sprintf("container %q runAsUser %d is reserved for the %q container (§13.1 Container identity)", name, uid, owner)
+}
+
+// effectiveSeccompProfile resolves the seccomp profile that applies to
+// a container: the container-level type when it set one, otherwise the
+// pod-level type the container inherits. This mirrors the kubelet's
+// resolution, where a container securityContext.seccompProfile
+// overrides the pod-level securityContext.seccompProfile.
+func effectiveSeccompProfile(containerType, podType string) string {
+	if containerType != "" {
+		return containerType
+	}
+	return podType
+}
+
+// describeSeccomp renders a seccomp profile type for a violation
+// message, naming the absent case so the operator sees that neither the
+// pod nor the container set a profile.
+func describeSeccomp(profileType string) string {
+	if profileType == "" {
+		return "no profile set"
+	}
+	return profileType
+}
+
+// CapabilitiesDropped reports whether drops satisfies the §13.1
+// "Capabilities: All dropped" row: the list must contain "ALL". The
+// check is case-sensitive, matching the Kubernetes capability value
+// the API server emits. Exported so callers outside this package
+// (for example the tier-6 cloud cluster assertions, which read a live
+// pod's securityContext.capabilities.drop off the Kubernetes API
+// rather than building a PodSpec) can apply the same §13.1 rule
+// ValidateAgentPod enforces instead of re-deriving it.
+func CapabilitiesDropped(drops []string) bool {
 	for _, d := range drops {
 		if d == "ALL" {
 			return true
 		}
 	}
 	return false
+}
+
+// containsGID reports whether gids includes want. §13.1 uses it to
+// check the lenny-cred-readers GID is declared in the pod-level
+// supplementalGroups list.
+func containsGID(gids []int64, want int64) bool {
+	for _, g := range gids {
+		if g == want {
+			return true
+		}
+	}
+	return false
+}
+
+// hasPathPrefix reports whether path is nested under prefix — that is,
+// path equals prefix followed by a path separator and at least one more
+// segment. The exact-equality case (path == prefix) is handled by the
+// caller so that a sibling path such as /run/lenny-capture, which shares
+// the textual prefix /run/lenny but is not nested under /run/lenny/, is
+// not falsely matched.
+func hasPathPrefix(path, prefix string) bool {
+	p := prefix + "/"
+	return len(path) >= len(p) && path[:len(p)] == p
 }
 
 // PodSecurityError carries the full set of §13.1 violations found on

@@ -7,8 +7,16 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
+	"path"
 	"path/filepath"
+	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/lennylabs/lenny/cmd/lenny-test/changegraph"
+	"github.com/lennylabs/lenny/cmd/lenny-test/skipreason"
 )
 
 // runValidateMaps validates that tests/spec-map.json and tests/change-graph.json
@@ -36,6 +44,10 @@ func runValidateMaps(args []string) int {
 	specMapPath := filepath.Join(root, "tests", "spec-map.json")
 	changeGraphPath := filepath.Join(root, "tests", "change-graph.json")
 	groupsPath, subsetsPath, exceptionsPath, flakeBudgetPath, parityMatrixPath := yamlPaths(root)
+	// One set of register rules serves both the spec-map exceptions and
+	// the register sweep, so a blocker resolves against the same
+	// open-item domain wherever it is written.
+	regRules := repoRegisterRules(root)
 
 	results := []checkResult{
 		validateJSONFile(specMapPath, "tests/spec-map.json"),
@@ -45,12 +57,21 @@ func runValidateMaps(args []string) int {
 		validateSpecMapPaths(specMapPath, root),
 		validateChangeGraphPaths(changeGraphPath, root),
 		validateChangeGraphFileExistence(changeGraphPath, root),
+		validateChangeGraphCompleteness(changeGraphPath,
+			filepath.Join(root, changeGraphCoverageBaseline), root),
+		validateTestDirsKeyed(changeGraphPath, root),
 		validateTestFilesMapped(specMapPath, root),
+		validateSpecMapCoverage(specMapPath, exceptionsPath),
+		validateSpecMapTestFiles(specMapPath, exceptionsPath,
+			filepath.Join(root, "tests", "spec-map-pending.txt"), root),
+		validateSpecMapTestFuncs(specMapPath,
+			filepath.Join(root, "tests", "spec-map-pending.txt"), root),
 		validateGroupsYAML(groupsPath),
 		validateGroupsSubsetsYAML(subsetsPath),
-		validateSpecMapExceptionsYAML(exceptionsPath),
+		validateSpecMapExceptionsYAML(exceptionsPath, regRules),
 		validateFlakeBudgetYAML(flakeBudgetPath),
 		validateParityMatrixYAML(parityMatrixPath),
+		validateRegistersDir(filepath.Join(root, registersDir), regRules),
 	}
 
 	failed := 0
@@ -89,13 +110,35 @@ func runValidateMaps(args []string) int {
 // Phase 0 implementation:
 //   - Walks tests/ recursively looking for *_test.go files under tier
 //     directories at or above component (tier2_component, tier3_contract,
-//     tier4_integration, tier5_e2e_kind, tier6_e2e_cloud, tier7_load,
+//     tier4_integration, tier5_e2e_kind, tier6_e2e_cloud, tier7b_load_kind,
 //     tier8_chaos, tier9_security, tier10_conformance).
 //   - For each, scans for top-level Test functions and confirms a //
 //     diagnosis: comment appears within the 10 lines preceding the function.
 //
 // In Phase 0 there are no tests yet, so this is effectively a no-op that
 // confirms the validator runs without error. As tests are added it gains teeth.
+// componentAndAboveTierDirs returns the tier directories at or above
+// component, relative to the repository root. Both tier-0 predicates
+// over test files range over this one list: every file in it must
+// appear in the spec map and must carry the spec and diagnosis
+// annotations, so a directory added to one predicate is added to the
+// other.
+func componentAndAboveTierDirs() []string {
+	return []string{
+		"tests/tier2_component",
+		"tests/tier3_contract",
+		"tests/tier4_integration",
+		"tests/tier5_e2e_kind",
+		"tests/tier6_e2e_cloud",
+		"tests/tier7a_load_local",
+		"tests/tier7b_load_kind",
+		"tests/tier8_chaos",
+		"tests/tier9_security",
+		"tests/tier10_conformance",
+		"tests/tier12_load_cloud",
+	}
+}
+
 func runValidateDiagnosis(args []string) int {
 	fs := flag.NewFlagSet("validate-diagnosis", flag.ExitOnError)
 	jsonOut := fs.Bool("json", false, "machine-readable output")
@@ -104,17 +147,7 @@ func runValidateDiagnosis(args []string) int {
 	}
 
 	root := repoRoot()
-	tierDirs := []string{
-		"tests/tier2_component",
-		"tests/tier3_contract",
-		"tests/tier4_integration",
-		"tests/tier5_e2e_kind",
-		"tests/tier6_e2e_cloud",
-		"tests/tier7_load",
-		"tests/tier8_chaos",
-		"tests/tier9_security",
-		"tests/tier10_conformance",
-	}
+	tierDirs := componentAndAboveTierDirs()
 
 	totalFiles := 0
 	totalFuncs := 0
@@ -261,52 +294,417 @@ func validateSpecMapPaths(specMapPath, root string) checkResult {
 	return newResult("spec-map paths", true, fmt.Sprintf("%d section(s); every spec_file resolves", len(doc.Sections)))
 }
 
-// validateChangeGraphFileExistence walks every change-graph glob
-// key and confirms it points at a file or directory that actually
-// exists. Catches typos and renames that leave stale entries.
+// changeGraphPathResolves reports whether a change-graph path, either a
+// glob key or one of the per-tier targets that key selects, names
+// something that exists under root. A trailing `/...` (Go-style
+// recursive) or `/` (directory hint) is stripped so the directory itself
+// is probed; any other path matches either a directory or a file.
+func changeGraphPathResolves(root, p string) bool {
+	probe := strings.TrimSuffix(p, "/...")
+	probe = strings.TrimSuffix(probe, "/")
+	_, err := os.Stat(filepath.Join(root, probe))
+	return err == nil
+}
+
+// validateChangeGraphFileExistence walks tests/change-graph.json and
+// confirms that every path it names exists: each glob key, and each
+// per-tier target that key selects. Both sides carry the same failure
+// mode. A key that resolves to nothing selects no tests for the tree it
+// claims to cover, and a target that resolves to nothing makes
+// `--changed` run a tier over a package pattern matching nothing, so the
+// graph asserts coverage at that tier which never executes. The check
+// catches typos and renames that leave stale entries on either side.
 //
-// Globs ending with `/...` (Go-style recursive) or `/` (directory
-// hint) are matched against directories; other entries are matched
-// against either a directory or a file. Entries that legitimately
-// reference yet-to-land paths are tolerated when explicitly listed
-// in tests/change-graph-pending.txt (one path per line); this lets
-// the change graph commit ahead of the implementation.
+// A path that legitimately references something not yet landed is
+// tolerated when listed in tests/change-graph-pending.txt (one path per
+// line, spelled exactly as the graph spells it); this lets the change
+// graph commit ahead of the implementation.
+//
+// tests/change-graph.json maps source packages,
+// schemas, migrations, and chart templates to the tests that exercise
+// them)
 func validateChangeGraphFileExistence(changeGraphPath, root string) checkResult {
+	const name = "change-graph file-existence"
 	data, err := os.ReadFile(changeGraphPath)
 	if err != nil {
-		return newResult("change-graph file-existence", false, err.Error())
+		return newResult(name, false, err.Error())
 	}
 	var doc struct {
-		Globs map[string]any `json:"globs"`
+		Globs map[string]map[string][]string `json:"globs"`
 	}
 	if err := json.Unmarshal(data, &doc); err != nil {
-		return newResult("change-graph file-existence", false, err.Error())
+		return newResult(name, false, err.Error())
 	}
 	pending := readPendingPaths(filepath.Join(root, "tests", "change-graph-pending.txt"))
 	missing := []string{}
-	for key := range doc.Globs {
-		if pending[key] {
-			continue
-		}
-		// Strip trailing `/...` or `/` to test the directory itself.
-		probe := strings.TrimSuffix(key, "/...")
-		probe = strings.TrimSuffix(probe, "/")
-		if _, err := os.Stat(filepath.Join(root, probe)); err != nil {
+	targets := 0
+	for key, tiers := range doc.Globs {
+		if !pending[key] && !changeGraphPathResolves(root, key) {
 			missing = append(missing, key)
 		}
+		for tier, tierTargets := range tiers {
+			for _, target := range tierTargets {
+				targets++
+				if pending[target] || changeGraphPathResolves(root, target) {
+					continue
+				}
+				missing = append(missing, fmt.Sprintf("%s [%s] → %s", key, tier, target))
+			}
+		}
 	}
+	sort.Strings(missing)
 	if len(missing) > 0 {
 		preview := missing
 		if len(preview) > 5 {
 			preview = append(preview[:5], fmt.Sprintf("... (%d more)", len(missing)-5))
 		}
-		return newResult("change-graph file-existence", false,
-			fmt.Sprintf("%d glob(s) point at missing paths: %s",
+		return newResult(name, false,
+			fmt.Sprintf("%d path(s) missing: %s",
 				len(missing), strings.Join(preview, "; ")))
 	}
-	return newResult("change-graph file-existence", true,
-		fmt.Sprintf("%d glob(s); every path resolves on disk", len(doc.Globs)))
+	return newResult(name, true,
+		fmt.Sprintf("%d glob(s) and %d target(s); every path resolves on disk",
+			len(doc.Globs), targets))
 }
+
+// changeGraphCoverageBaseline is the repo-relative path of the coverage
+// baseline validateChangeGraphCompleteness reads and rewrites.
+const changeGraphCoverageBaseline = "tests/registers/change-graph-coverage.yaml"
+
+// validateChangeGraphCompleteness is the reverse predicate of
+// validateChangeGraphFileExistence. That check walks the glob keys of
+// tests/change-graph.json and fails a key that resolves to nothing on
+// disk. This one walks the tracked source tree and fails a source path
+// that no glob key covers, so a change to a package the graph does not
+// know about cannot pass unnoticed with `--changed` selecting nothing
+// for it.
+//
+// The tracked source domain is exactly:
+//
+//   - the paths git tracks, as reported by `git ls-files`. Membership
+//     comes from the index rather than from a filesystem walk, because
+//     the only remedy the check names is a glob key in
+//     tests/change-graph.json, and that remedy is wrong for a file git
+//     does not track. A scratch script, an ignored generated tree, or
+//     any other untracked source file is therefore outside the gate.
+//   - the top-level trees cmd/, pkg/, scripts/, and tests/. tests/ and
+//     scripts/ are in the domain because the change graph already keys
+//     entries under both (tests/testinfra/containers,
+//     scripts/lint-schema.sh, scripts/lint-queries.sh), so a harness or
+//     script change propagates to a test selection the same way a pkg/
+//     change does. Every other tree (schemas/, migrations/, charts/,
+//     sdks/, docs/, spec/, deploy/, compose/) is outside this check and
+//     is keyed in the graph without being gated by it.
+//   - the file extensions .go and .sh, excluding _test.go. A test file
+//     is a target of the graph rather than a source of it, and the
+//     spec-map gates already account for it. Data, configuration, and
+//     documentation files under those trees are outside the domain, so
+//     a YAML register (this baseline included) needs no glob key.
+//
+// A path is covered when a glob key of tests/change-graph.json names it
+// or an ancestor directory of it, or when a prefix in
+// tests/registers/change-graph-coverage.yaml matches it. The baseline
+// carries the population that was already unmapped when the check
+// landed, keyed by directory prefix rather than by file path: an
+// identifier pass that renames a file inside a baselined directory has
+// no glob key to re-key for it, and a file-keyed entry would leave the
+// renamed path covered by nothing while the downward-only rewrite has
+// no way to accept the new name. A directory entry covers the files
+// directly inside that directory, so a source tree created later under
+// a baselined directory is uncovered and needs its own glob key. It is
+// rewritten downward only: a path
+// that gains a glob key,
+// or that leaves the tree, drops out of the baseline in the same run,
+// and the check never adds an entry, so an uncovered path that a later
+// change creates fails until the change graph gains its key.
+//
+// The check fails rather than reporting coverage when the change graph
+// or the baseline is missing or malformed, and when a source tree is
+// absent, unreadable, or contributes no tracked source path, because a
+// gate that inspects nothing must not certify the tree, and because the
+// downward rewrite would otherwise retire every baseline prefix under a
+// tree the run never inspected.
+func validateChangeGraphCompleteness(changeGraphPath, baselinePath, root string) checkResult {
+	const name = "change-graph completeness"
+
+	globs, err := readChangeGraphGlobKeys(changeGraphPath)
+	if err != nil {
+		return newResult(name, false, err.Error())
+	}
+	baseline, err := readChangeGraphCoverageBaseline(baselinePath)
+	if err != nil {
+		return newResult(name, false, err.Error())
+	}
+	sources, err := trackedSourcePaths(root)
+	if err != nil {
+		return newResult(name, false, err.Error())
+	}
+	unmapped := []string{}
+	for _, p := range sources {
+		if coveredByChangeGraphGlob(p, globs) {
+			continue
+		}
+		unmapped = append(unmapped, p)
+	}
+
+	uncovered := []string{}
+	kept := map[string]bool{}
+	for _, p := range unmapped {
+		prefix, ok := matchingCoveragePrefix(p, baseline)
+		if !ok {
+			uncovered = append(uncovered, p)
+			continue
+		}
+		kept[prefix] = true
+	}
+	if len(uncovered) > 0 {
+		sort.Strings(uncovered)
+		preview := uncovered
+		if len(preview) > 5 {
+			preview = append(append([]string{}, preview[:5]...),
+				fmt.Sprintf("... (%d more)", len(uncovered)-5))
+		}
+		return newResult(name, false,
+			fmt.Sprintf("%d tracked source path(s) covered by no change-graph glob and no coverage-baseline prefix: %s",
+				len(uncovered), strings.Join(preview, "; ")))
+	}
+
+	retired := len(baseline) - len(kept)
+	if retired > 0 {
+		remaining := make([]string, 0, len(kept))
+		for prefix := range kept {
+			remaining = append(remaining, prefix)
+		}
+		sort.Strings(remaining)
+		if err := writeChangeGraphCoverageBaseline(baselinePath, remaining); err != nil {
+			return newResult(name, false, err.Error())
+		}
+	}
+	detail := fmt.Sprintf("%d tracked source path(s); %d covered by the baseline",
+		len(sources), len(unmapped))
+	if retired > 0 {
+		detail += fmt.Sprintf("; %d baseline prefix(es) retired", retired)
+	}
+	return newResult(name, true, detail)
+}
+
+// readChangeGraphGlobKeys returns the glob keys of the change graph,
+// read through the shared statement of that reading in
+// cmd/lenny-test/changegraph, so the completeness check, the
+// `--changed` selector, and the tier-0 residual scan resolve a key the
+// same way.
+func readChangeGraphGlobKeys(path string) (map[string]bool, error) {
+	return changegraph.ReadGlobKeys(path)
+}
+
+// changeGraphGlobPrefix normalizes a change-graph glob key to the path
+// prefix it names, read from the same shared statement.
+func changeGraphGlobPrefix(key string) string { return changegraph.GlobPrefix(key) }
+
+// coveredByChangeGraphGlob reports whether a glob key names the path or
+// one of its ancestor directories.
+func coveredByChangeGraphGlob(p string, keys map[string]bool) bool {
+	return changegraph.CoveredByGlob(p, keys)
+}
+
+// matchingCoveragePrefix returns the baseline prefix that covers the
+// path. The baseline holds a directory prefix for each directory that
+// carried an unmapped path, and each path is attributed to its own
+// directory, so a nested directory keeps its own prefix matching rather
+// than counting against its ancestor's. Attributing the path to an
+// ancestor would leave the nested prefix matching nothing, and the
+// downward rewrite would retire it on the first run, irreversibly
+// widening the remaining exemption to the ancestor directory. When more
+// than one entry matches, the longest one wins, so a file-keyed entry
+// takes the path over the directory entry that also holds it.
+func matchingCoveragePrefix(p string, prefixes []string) (string, bool) {
+	best := ""
+	for _, prefix := range prefixes {
+		if coveragePrefixMatches(p, prefix) && len(prefix) > len(best) {
+			best = prefix
+		}
+	}
+	return best, best != ""
+}
+
+// coveragePrefixMatches reports whether one baseline prefix covers the
+// path. An entry ending in `/` covers the files directly inside the
+// directory it names and nothing deeper. The baseline was seeded with
+// one entry per directory that held an unmapped path, so reading an
+// entry as its whole subtree would extend the seeded exemption to
+// directories that did not exist when it was measured: a source tree
+// created later under a baselined directory would land with no glob key
+// in tests/change-graph.json, and a change under it would select no
+// tiers under `--changed`, which is the outcome this check exists to
+// close. An entry that does not end in `/` names one file and covers
+// that path alone.
+func coveragePrefixMatches(p, prefix string) bool {
+	if strings.HasSuffix(prefix, "/") {
+		return path.Dir(p)+"/" == prefix
+	}
+	return p == prefix
+}
+
+// changeGraphCoverageDoc is the baseline's schema. The file is a
+// baseline rather than an exception register (tests/registers/README.md):
+// a path with no change-graph glob key names no open item a blocker
+// could resolve to and carries no date on which it becomes wrong, so the
+// shared entry schema does not fit it.
+type changeGraphCoverageDoc struct {
+	Kind     string    `yaml:"kind"`
+	Version  int       `yaml:"version"`
+	Prefixes *[]string `yaml:"prefixes"`
+}
+
+const changeGraphCoverageKind = "change-graph-coverage-baseline"
+
+// readChangeGraphCoverageBaseline reads the coverage baseline. A missing,
+// unparseable, or misdeclared file is an error rather than an empty
+// baseline, so a lost file cannot silently turn the check into a
+// no-op-passing gate over an unmapped tree.
+func readChangeGraphCoverageBaseline(path string) ([]string, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read coverage baseline: %w", err)
+	}
+	var doc changeGraphCoverageDoc
+	if err := yaml.Unmarshal(body, &doc); err != nil {
+		return nil, fmt.Errorf("parse coverage baseline %s: %w", path, err)
+	}
+	if doc.Kind != changeGraphCoverageKind {
+		return nil, fmt.Errorf("coverage baseline %s: expected kind %q, got %q",
+			path, changeGraphCoverageKind, doc.Kind)
+	}
+	if doc.Version != 1 {
+		return nil, fmt.Errorf("coverage baseline %s: expected version 1, got %d", path, doc.Version)
+	}
+	if doc.Prefixes == nil {
+		return nil, fmt.Errorf("coverage baseline %s: carries no prefixes block", path)
+	}
+	out := make([]string, 0, len(*doc.Prefixes))
+	for _, p := range *doc.Prefixes {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			return nil, fmt.Errorf("coverage baseline %s: carries an empty prefix", path)
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+// writeChangeGraphCoverageBaseline rewrites the baseline with the
+// prefixes that still cover an unmapped path. The check calls it only
+// when the set shrank.
+func writeChangeGraphCoverageBaseline(path string, prefixes []string) error {
+	var b strings.Builder
+	b.WriteString("# SPDX-License-Identifier: MIT\n")
+	b.WriteString("#\n")
+	b.WriteString("# Change-graph coverage baseline.\n")
+	b.WriteString("#\n")
+	b.WriteString("# Every directory listed here carried tracked source paths that no\n")
+	b.WriteString("# glob key in tests/change-graph.json covered when the completeness\n")
+	b.WriteString("# check in cmd/lenny-test/cmd_validate.go landed. Entries are\n")
+	b.WriteString("# directory prefixes, so a file renamed inside a listed directory\n")
+	b.WriteString("# stays covered. An entry covers the files directly inside the\n")
+	b.WriteString("# directory it names and nothing deeper, so a source tree created\n")
+	b.WriteString("# later under a listed directory needs its own glob key in\n")
+	b.WriteString("# tests/change-graph.json. The check rewrites this file downward: a prefix\n")
+	b.WriteString("# whose paths all gain a glob key drops out on the next run, and a\n")
+	b.WriteString("# path covered by neither a glob key nor a prefix here fails the run\n")
+	b.WriteString("# rather than being added here.\n")
+	fmt.Fprintf(&b, "kind: %s\nversion: 1\n", changeGraphCoverageKind)
+	if len(prefixes) == 0 {
+		// An explicit empty list, so an exhausted baseline stays
+		// distinguishable from a file whose prefixes block was lost.
+		b.WriteString("prefixes: []\n")
+	} else {
+		b.WriteString("prefixes:\n")
+		for _, p := range prefixes {
+			fmt.Fprintf(&b, "  - %s\n", p)
+		}
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		return fmt.Errorf("rewrite coverage baseline %s: %w", path, err)
+	}
+	return nil
+}
+
+// trackedSourcePaths returns every repo-relative path in the tracked
+// source domain, sorted. A source tree that is absent, unreadable, or
+// that contributes no tracked source path is a failure rather than a
+// skip: the run that inspects less than the tree would still rewrite the
+// baseline downward, retiring every prefix under the tree it never
+// looked at, and the rewrite is one-way.
+//
+// The per-tree count is what enforces that, rather than the directory
+// existing on disk. The domain comes from the git index, so a tree that
+// exists but is untracked or wholly ignored (an export, a partially
+// added clone) yields nothing while its directory stats fine, and the
+// rewrite would then drop every baseline prefix beneath it.
+func trackedSourcePaths(root string) ([]string, error) {
+	for _, tree := range changegraph.SourceTrees() {
+		if _, err := os.Stat(filepath.Join(root, tree)); err != nil {
+			return nil, fmt.Errorf(
+				"change-graph completeness: source tree %s/ is absent or unreadable: %w", tree, err,
+			)
+		}
+	}
+	tracked, err := gitTrackedPaths(root, changegraph.SourceTrees())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(tracked))
+	perTree := map[string]int{}
+	for _, p := range tracked {
+		if !isTrackedSourceFile(path.Base(p)) {
+			continue
+		}
+		out = append(out, p)
+		if i := strings.Index(p, "/"); i > 0 {
+			perTree[p[:i]]++
+		}
+	}
+	for _, tree := range changegraph.SourceTrees() {
+		if perTree[tree] == 0 {
+			return nil, fmt.Errorf(
+				"change-graph completeness: source tree %s/ contributed no tracked source path; "+
+					"a gate that inspects less than the tree cannot certify it, and the coverage "+
+					"baseline is rewritten downward only", tree,
+			)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// gitTrackedPaths returns the paths git tracks under the given trees,
+// relative to root and slash-separated. It fails closed when git is
+// unavailable or the listing errors, so a run that cannot establish
+// what is tracked cannot certify the tree.
+func gitTrackedPaths(root string, trees []string) ([]string, error) {
+	if _, err := exec.LookPath("git"); err != nil {
+		return nil, fmt.Errorf("change-graph completeness: locate git to list tracked sources: %w", err)
+	}
+	args := append([]string{"ls-files", "-z", "--"}, trees...)
+	cmd := exec.Command("git", args...)
+	cmd.Dir = root
+	body, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("change-graph completeness: list tracked files under %s: %w",
+			strings.Join(trees, ", "), err)
+	}
+	out := []string{}
+	for _, p := range strings.Split(string(body), "\x00") {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+// isTrackedSourceFile reports whether a file name is in the tracked
+// source domain, read from the shared statement of that domain.
+func isTrackedSourceFile(name string) bool { return changegraph.IsSourceFile(name) }
 
 // validateTestFilesMapped walks tests/tier{2..10}_*/ for _test.go
 // files and confirms each is referenced from at least one section's
@@ -346,17 +744,7 @@ func validateTestFilesMapped(specMapPath, root string) checkResult {
 	}
 
 	// Walk every _test.go under the tier dirs at or above component.
-	tierDirs := []string{
-		"tests/tier2_component",
-		"tests/tier3_contract",
-		"tests/tier4_integration",
-		"tests/tier5_e2e_kind",
-		"tests/tier6_e2e_cloud",
-		"tests/tier7_load",
-		"tests/tier8_chaos",
-		"tests/tier9_security",
-		"tests/tier10_conformance",
-	}
+	tierDirs := componentAndAboveTierDirs()
 	orphans := []string{}
 	for _, dir := range tierDirs {
 		base := filepath.Join(root, dir)
@@ -405,6 +793,225 @@ func validateTestFilesMapped(specMapPath, root string) checkResult {
 	return newResult("test files mapped", true, "every tier-2+ test file appears in spec-map")
 }
 
+// validateSpecMapCoverage confirms every spec section in the map
+// carries at least one test reference, or is listed in
+// tests/spec-map-exceptions.yaml with a reason. A section with
+// neither is an unexplained spec-map gap: the spec map then no
+// longer accounts for every normative section, and `lenny-test
+// --spec <section>` would silently select nothing for it.
+func validateSpecMapCoverage(specMapPath, exceptionsPath string) checkResult {
+	data, err := os.ReadFile(specMapPath)
+	if err != nil {
+		return newResult("spec-map coverage", false, err.Error())
+	}
+	var doc struct {
+		Sections map[string]struct {
+			Tests []string `json:"tests"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return newResult("spec-map coverage", false, err.Error())
+	}
+	excepted := readExceptionSections(exceptionsPath)
+	gaps := []string{}
+	for section, entry := range doc.Sections {
+		if len(entry.Tests) > 0 || excepted[section] {
+			continue
+		}
+		gaps = append(gaps, section)
+	}
+	if len(gaps) > 0 {
+		sort.Strings(gaps)
+		preview := gaps
+		if len(preview) > 8 {
+			preview = append(append([]string{}, preview[:8]...),
+				fmt.Sprintf("... (%d more)", len(gaps)-8))
+		}
+		return newResult("spec-map coverage", false,
+			fmt.Sprintf("%d section(s) have no test reference and no exception: %s",
+				len(gaps), strings.Join(preview, ", ")))
+	}
+	return newResult("spec-map coverage", true,
+		fmt.Sprintf("%d section(s); every section has a test reference or an exception", len(doc.Sections)))
+}
+
+// validateSpecMapTestFiles confirms every concrete test-file path
+// listed under a section's `tests` array resolves to an extant file
+// on disk. A dangling reference (a rename or a typo left in the map)
+// silently drops a section's coverage: `lenny-test --spec <section>`
+// selects a file that is not there, and a maintainer reading the map
+// believes a suite exists that does not. The spec-map file ("maps every
+// spec section to the tests ... that encode it"; validate-maps is the
+// spec-map integrity gate) requires the references to be real.
+//
+// Only entries that name a concrete `.go` file are checked; a
+// directory or package glob is not required to resolve to a file. A
+// trailing `::TestName` selector is stripped before the file is
+// probed. One exemption channel keeps the check reliable while later
+// phases are still landing:
+//
+//   - An individual path listed in tests/spec-map-pending.txt is
+//     skipped, mirroring the change-graph-pending.txt channel, for a
+//     reference committed ahead of the file or awaiting repair under
+//     a separately tracked finding.
+//
+// A section listed in tests/spec-map-exceptions.yaml is NOT skipped
+// here. That file waives only the has-a-test (coverage-completeness)
+// requirement that validateSpecMapCoverage enforces: an excepted
+// section is allowed to carry zero tests. It does not waive the
+// existence check on a tests[] reference the section does carry — a
+// deferred or non-normative section can still accumulate a dangling
+// reference to a renamed or deleted file, and that reference is exactly
+// as misleading to a maintainer reading the map as one under a
+// non-exempt section. Skipping excepted sections wholesale here would
+// leave such a reference invisible until the section unblocks.
+//
+// Package (`packages`) references are not probed here: many name a
+// package that a later phase ships, and distinguishing a deferred
+// package from a stale one is not reliable from the path alone.
+func validateSpecMapTestFiles(specMapPath, exceptionsPath, pendingPath, root string) checkResult {
+	data, err := os.ReadFile(specMapPath)
+	if err != nil {
+		return newResult("spec-map test files", false, err.Error())
+	}
+	var doc struct {
+		Sections map[string]struct {
+			Tests []string `json:"tests"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return newResult("spec-map test files", false, err.Error())
+	}
+	pending := readPendingPaths(pendingPath)
+	missing := []string{}
+	for section, entry := range doc.Sections {
+		for _, t := range entry.Tests {
+			path := t
+			if i := strings.Index(path, "::"); i >= 0 {
+				path = path[:i]
+			}
+			if !strings.HasSuffix(path, ".go") {
+				continue
+			}
+			if pending[path] {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(root, path)); err != nil {
+				missing = append(missing, fmt.Sprintf("%s → %s", section, path))
+			}
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		preview := missing
+		if len(preview) > 5 {
+			preview = append(append([]string{}, preview[:5]...),
+				fmt.Sprintf("... (%d more)", len(missing)-5))
+		}
+		return newResult("spec-map test files", false,
+			fmt.Sprintf("%d test-file reference(s) point at missing files: %s",
+				len(missing), strings.Join(preview, "; ")))
+	}
+	return newResult("spec-map test files", true,
+		"every concrete test-file reference resolves on disk")
+}
+
+// validateSpecMapTestFuncs confirms that every `path::TestName`
+// reference in a section's `tests` array names a test function that
+// actually exists in the referenced file. validateSpecMapTestFiles
+// only probes that the file exists; it strips the `::TestName`
+// selector before the stat and never checks that the named function
+// resolves. A rename that repoints or drops a test function (for
+// example renaming TestFoo to TestBar) therefore leaves the old
+// `file.go::TestFoo` entry compiling-but-dangling: the file still
+// exists, so the existence gate stays green, while the section now
+// maps to a function name that no longer exists and `lenny-test
+// --spec <section>` would select nothing for that name.
+//
+// Only entries that carry a `::TestName` selector on a concrete `.go`
+// file are checked. A file listed in the pending channel, or a file
+// that does not resolve on disk (already reported by
+// validateSpecMapTestFiles), is skipped so a single defect is
+// reported once. The check reads the file and requires a top-level
+// `func TestName(` declaration to be present.
+//
+// tests/spec-map.json maps every spec section to
+// the tests ... that encode it"). A reference that names a
+// nonexistent function is as misleading to a maintainer reading the
+// map as a reference to a nonexistent file.
+func validateSpecMapTestFuncs(specMapPath, pendingPath, root string) checkResult {
+	data, err := os.ReadFile(specMapPath)
+	if err != nil {
+		return newResult("spec-map test funcs", false, err.Error())
+	}
+	var doc struct {
+		Sections map[string]struct {
+			Tests []string `json:"tests"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return newResult("spec-map test funcs", false, err.Error())
+	}
+	pending := readPendingPaths(pendingPath)
+	dangling := []string{}
+	for section, entry := range doc.Sections {
+		for _, t := range entry.Tests {
+			i := strings.Index(t, "::")
+			if i < 0 {
+				continue
+			}
+			path, fn := t[:i], t[i+2:]
+			if !strings.HasSuffix(path, ".go") || fn == "" {
+				continue
+			}
+			// A whole-file waiver (path with the ::TestName stripped, the
+			// form validateSpecMapTestFiles honors) exempts every func in
+			// that file; a precise `path::TestName` waiver exempts only
+			// the one dangling reference so a new dangling entry in the
+			// same file is still caught.
+			if pending[path] || pending[t] {
+				continue
+			}
+			body, err := os.ReadFile(filepath.Join(root, path))
+			if err != nil {
+				// Missing file is validateSpecMapTestFiles' finding; do
+				// not double-report it here.
+				continue
+			}
+			if !hasTestFuncDecl(string(body), fn) {
+				dangling = append(dangling, fmt.Sprintf("%s → %s::%s", section, path, fn))
+			}
+		}
+	}
+	if len(dangling) > 0 {
+		sort.Strings(dangling)
+		preview := dangling
+		if len(preview) > 5 {
+			preview = append(append([]string{}, preview[:5]...),
+				fmt.Sprintf("... (%d more)", len(dangling)-5))
+		}
+		return newResult("spec-map test funcs", false,
+			fmt.Sprintf("%d test-function reference(s) name a function absent from the file: %s",
+				len(dangling), strings.Join(preview, "; ")))
+	}
+	return newResult("spec-map test funcs", true,
+		"every path::TestName reference resolves to a test function")
+}
+
+// hasTestFuncDecl reports whether src declares a top-level function
+// named fn (matched as `func fn(`). Whitespace between `func` and the
+// name is tolerated; a method receiver (`func (r T) fn(`) does not
+// match because a test function is a plain top-level declaration.
+func hasTestFuncDecl(src, fn string) bool {
+	needle := "func " + fn + "("
+	for _, line := range strings.Split(src, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), needle) {
+			return true
+		}
+	}
+	return false
+}
+
 // readPendingPaths reads tests/change-graph-pending.txt — one path
 // per line, '#' starts a comment. Returns an empty set when the
 // file is absent.
@@ -429,6 +1036,15 @@ func readPendingPaths(path string) map[string]bool {
 // reference yet-to-ship packages are tolerated with a per-glob
 // `phase:` marker (today simply accept anything under the canonical
 // roots).
+//
+// The canonical roots also cover the documentation trees the tier-11
+// batteries read, `proposals/` and the root-level `PROPOSAL-QUEUE.md`
+// among them, because a guard that reads a document fires under
+// `--changed` only when an edit to that document resolves to a key.
+// `supervisor/` and `Dockerfile.supervisor` hold the runtime supervisor's
+// C sources and image, which the tier-0 binary check and the tier-1 C
+// harness driver exercise; they sit outside the completeness domain,
+// which reads Go and shell sources only.
 func validateChangeGraphPaths(changeGraphPath, root string) checkResult {
 	data, err := os.ReadFile(changeGraphPath)
 	if err != nil {
@@ -443,11 +1059,12 @@ func validateChangeGraphPaths(changeGraphPath, root string) checkResult {
 	misshaped := []string{}
 	knownRoots := []string{
 		"pkg/", "schemas/", "migrations/", "charts/", "cmd/", "tests/", "docs/", "spec/",
-		"sdks/", "scripts/", "compose/", "deploy/", ".github/",
+		"sdks/", "scripts/", "compose/", "deploy/", ".github/", "proposals/", "supervisor/",
 	}
 	knownFiles := map[string]bool{
 		"buf.yaml": true, "buf.gen.yaml": true, "go.mod": true, "go.sum": true,
 		".golangci.yml": true, "Makefile": true, "TESTING.md": true, "README.md": true,
+		"PROPOSAL-QUEUE.md": true, "Dockerfile.supervisor": true,
 	}
 	for key := range doc.Globs {
 		if knownFiles[key] {
@@ -543,18 +1160,51 @@ func scanDiagnosis(path string) (int, []string) {
 	return funcs, missing
 }
 
-// hasAnnotationBefore returns true when one of the 10 lines preceding
-// idx contains the named annotation marker (e.g. "// spec:" or
-// "// diagnosis:").
+// hasAnnotationBefore returns true when the doc-comment block immediately
+// preceding the function at idx contains the named annotation marker (e.g.
+// "// spec:" or "// diagnosis:"). It scans upward over the contiguous run of
+// comment lines (and the blank lines that separate paragraphs within a
+// leading comment) that abut the function, stopping at the first line that is
+// neither a comment nor blank. Bounding by the function's own doc block rather
+// than a fixed line count keeps a thorough multi-paragraph `// spec:` plus
+// `// diagnosis:` header from pushing one annotation out of range, while a
+// trailing-blank-line gap before unrelated code still ends the scan so an
+// annotation on a different declaration is never mis-attributed.
 func hasAnnotationBefore(lines []string, idx int, marker string) bool {
-	start := idx - 10
-	if start < 0 {
-		start = 0
-	}
-	for i := start; i < idx; i++ {
+	for i := idx - 1; i >= 0; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" {
+			// A blank line inside a leading comment block separates
+			// paragraphs; keep scanning as long as a comment line still
+			// precedes it. A blank line with no comment above it (plain code
+			// gap) ends the block on the next iteration.
+			if !precedingCommentExists(lines, i) {
+				return false
+			}
+			continue
+		}
+		if !startsWith(trimmed, "//") {
+			// The first non-comment, non-blank line ends the doc block.
+			return false
+		}
 		if containsSubstr(lines[i], marker) {
 			return true
 		}
+	}
+	return false
+}
+
+// precedingCommentExists reports whether any line above idx, up to the first
+// non-comment/non-blank line, is a comment. It lets hasAnnotationBefore treat
+// a blank line as part of a leading comment block only when a comment still
+// sits above it.
+func precedingCommentExists(lines []string, idx int) bool {
+	for i := idx - 1; i >= 0; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" {
+			continue
+		}
+		return startsWith(trimmed, "//")
 	}
 	return false
 }
@@ -565,8 +1215,12 @@ func hasAnnotationBefore(lines []string, idx int, marker string) bool {
 //
 //   - t.Skip("not implemented: …")        → standard scaffold
 //   - t.Skipf("not implemented: …", …)    → Skipf variant
+//   - t.Skip("blocked: …")                 → scaffold blocked on
+//     missing infrastructure (e.g. no KMS adapter, no delegation
+//     primitive, no clock-injection harness). The reason text names
+//     the missing infrastructure precisely.
 //   - t.Skip("phase-gated: …")            → blocked behind a phase
-//   - t.Skip("flaky-time: …")              → §17.10 quarantine
+//   - t.Skip("flaky-time: …")              → flaky-time quarantine
 //   - kind.SkipUnlessAvailable(t)         → tier-5 e2e_kind one-liner
 //   - cloud.SkipUnlessAuthorized(t)       → tier-6 helper
 //   - any *.SkipUnless* harness helper that gates the test on an
@@ -584,17 +1238,13 @@ func hasNotImplementedSkipAfter(lines []string, idx int) bool {
 	if end >= len(lines) {
 		end = len(lines) - 1
 	}
-	// Both t.Skip(...) and t.Skipf(...) are acceptable. The prefix
-	// list names every reason category §17.9 allows on a scaffold.
-	prefixes := []string{
-		"\"not implemented:",
-		"\"phase-gated:",
-		"\"not-yet-applicable:",
-		"\"not yet applicable:",
-		"\"flaky-time:",
-		"\"flaky-network:",
-		"\"flaky-ordering:",
-		"\"quarantined:",
+	// Both t.Skip(...) and t.Skipf(...) are acceptable. The reason
+	// categories §17.9 allows come from cmd/lenny-test/skipreason,
+	// which the tier-0 skip-reason classifier reads as well, so the
+	// two readers of the convention cannot enumerate different sets.
+	prefixes := make([]string, 0, len(skipreason.Categories))
+	for _, category := range skipreason.Categories {
+		prefixes = append(prefixes, "\""+category)
 	}
 	for i := idx; i <= end; i++ {
 		line := lines[i]

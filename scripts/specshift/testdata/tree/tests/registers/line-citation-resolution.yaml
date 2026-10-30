@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: MIT
+#
+# Baselined non-resolving citations. The resolver consumes this file, so
+# it sits outside its own read domain.
+kind: line-citation-resolution
+version: 1
+files:
+  pkg/carrier/carrier.go:
+    - "spec: 4.6 line 12"

@@ -1,0 +1,47 @@
+{{- /*
+lenny-sandboxclaim-guard ValidatingAdmissionWebhook (§17.2 item 7,
+§4.6.1 ADR-007). Enforces per-pod claim uniqueness on CREATE against
+SandboxClaim resources: rejects a second non-terminal claim for the
+same .spec.sandboxRef. PATCH and PUT are admitted without inspection
+and are not registered here. Scoped to agent namespaces; fail-closed.
+*/ -}}
+{{- if .Values.admissionWebhooks.enabled }}
+{{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-sandboxclaim-guard") }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: lenny-sandboxclaim-guard
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/lenny-sandboxclaim-guard
+webhooks:
+  - name: sandboxclaim-guard.lenny.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    timeoutSeconds: 5
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchExpressions:
+        - key: lenny.dev/agent-namespace
+          operator: In
+          values: ["true"]
+    rules:
+      - apiGroups: ["lenny.dev"]
+        # The SandboxClaim CRD serves v1alpha1 and no other version, so
+        # a rule naming v1 matches no request and the webhook is never
+        # called. matchPolicy: Equivalent cannot bridge the gap either:
+        # it converts between served versions, and there is only one.
+        apiVersions: ["v1alpha1"]
+        resources: ["sandboxclaims"]
+        operations: ["CREATE"]
+        scope: Namespaced
+    clientConfig:
+      service:
+        name: lenny-sandboxclaim-guard
+        namespace: {{ .Release.Namespace }}
+        path: /sandboxclaim-guard
+        port: 443
+{{- end }}

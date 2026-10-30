@@ -7,10 +7,12 @@
 //
 // The webhook enforces two distinct rules on agent-pod labels:
 //
-//  1. Three labels are strictly immutable on existing agent pods:
+//  1. These labels are strictly immutable on existing agent pods:
 //     - lenny.dev/managed
 //     - lenny.dev/delivery-mode
 //     - lenny.dev/egress-profile
+//     - lenny.dev/dns-policy
+//     - lenny.dev/runtime-process
 //     Any mutation (including unset → value or value → value) is
 //     rejected with HTTP 403.
 //
@@ -18,7 +20,8 @@
 //     - unset → {tenant_id} : allowed only for the gateway SA on
 //     initial first-assignment of a pod to a tenant.
 //     - {tenant_id} → "unassigned" : allowed only for the
-//     WarmPoolController SA when a pod is returned to the pool.
+//     WarmPoolController SA. A recycled pod never takes this edge: the
+//     tenant pin persists for the pod's lifetime (§5.2).
 //     - {tenant_id} → {different_tenant_id} : always rejected.
 //     - {tenant_id} → unset, "unassigned" → {tenant_id} etc are
 //     outside the documented permitted transitions and are rejected.
@@ -31,6 +34,8 @@ package label_immutability
 import (
 	"errors"
 	"fmt"
+
+	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
 // Canonical label keys watched by the webhook.
@@ -38,12 +43,18 @@ const (
 	LabelManaged       = "lenny.dev/managed"
 	LabelDeliveryMode  = "lenny.dev/delivery-mode"
 	LabelEgressProfile = "lenny.dev/egress-profile"
+	LabelDNSPolicy     = "lenny.dev/dns-policy"
 	LabelTenantID      = "lenny.dev/tenant-id"
+	// LabelRuntimeProcess records the pod's runtime-process lifetime, which
+	// the WarmPoolController fixes at creation. spec: §5.2 (Runtime-process
+	// lifetime); §17.2 item 5.
+	LabelRuntimeProcess = state.LabelRuntimeProcess
 )
 
-// UnassignedTenantID is the sentinel tenant-id value used when a pod
-// has been returned to the warm pool. The transition
-// {tenant_id} → unassigned is the only legal teardown edge.
+// UnassignedTenantID is the sentinel tenant-id value the
+// {tenant_id} → unassigned transition writes. That transition is the
+// only legal teardown edge, and a recycled pod never takes it, because the
+// tenant pin persists for the pod's lifetime (§5.2).
 const UnassignedTenantID = "unassigned"
 
 // ServiceAccount usernames whose admission UserInfo grants the
@@ -99,12 +110,43 @@ var ErrMissingNewLabels = errors.New("label_immutability: NewLabels is required"
 //     the canonical instance of that transition).
 //   - For UPDATE (OldLabels != nil), the three strictly-immutable
 //     labels must not change, and the tenant-id transition rules apply.
+//
+// Decide is the composition of DecideImmutableLabels (the §17.2 item 5
+// rule set) and DecideTenantTransition (the §5.2 / NET-003
+// rule set). It is preserved as the single-call entry point for
+// callers that want both rule sets evaluated against one Request; the
+// production webhooks each call one of the two split deciders directly
+// so the two ValidatingWebhookConfigurations the spec names
+// (lenny-label-immutability and lenny-tenant-label-immutability) hold
+// independent decision paths.
 func Decide(r Request) (Decision, error) {
+	if d, err := DecideImmutableLabels(r); err != nil || !d.Allowed {
+		return d, err
+	}
+	return DecideTenantTransition(r)
+}
+
+// DecideImmutableLabels enforces the §17.2 item 5 rule that the
+// canonical egress-governing labels (lenny.dev/managed,
+// lenny.dev/delivery-mode, lenny.dev/egress-profile, lenny.dev/dns-policy)
+// and the runtime-process lifetime label (lenny.dev/runtime-process) are
+// immutable on existing agent pods. spec: §5.2 (Runtime-process lifetime) —
+// relabelling a used `keep` pod as `restart` would let an acquisition admit
+// it on a pool that does not require the runtime-process acknowledgment, so
+// an UPDATE that changes, adds, or removes the label is refused, and a
+// CREATE carries any value. spec: §13.2.2 — mutating
+// lenny.dev/egress-profile from `restricted` to `internet`, or adding
+// lenny.dev/dns-policy to a non-opted-out pod, would broaden egress or
+// bypass the dedicated CoreDNS instance without re-admission through the
+// pool controller. The gateway-tenant-id transition rules belong to
+// DecideTenantTransition.
+//
+// spec: §17.2 item 5; §13.2.
+func DecideImmutableLabels(r Request) (Decision, error) {
 	if r.NewLabels == nil {
 		return Decision{}, ErrMissingNewLabels
 	}
-
-	for _, key := range []string{LabelManaged, LabelDeliveryMode, LabelEgressProfile} {
+	for _, key := range []string{LabelManaged, LabelDeliveryMode, LabelEgressProfile, LabelDNSPolicy, LabelRuntimeProcess} {
 		if r.OldLabels == nil {
 			continue
 		}
@@ -118,7 +160,18 @@ func Decide(r Request) (Decision, error) {
 			}, nil
 		}
 	}
+	return Decision{Allowed: true, Code: 200}, nil
+}
 
+// DecideTenantTransition enforces the §5.2 / NET-003 rule set
+// on lenny.dev/tenant-id transitions. The webhook config that calls
+// this decider is the spec-named lenny-tenant-label-immutability.
+//
+// spec: §5.2; §13.2.
+func DecideTenantTransition(r Request) (Decision, error) {
+	if r.NewLabels == nil {
+		return Decision{}, ErrMissingNewLabels
+	}
 	var oldTenant string
 	if r.OldLabels != nil {
 		oldTenant = r.OldLabels[LabelTenantID]
@@ -129,7 +182,6 @@ func Decide(r Request) (Decision, error) {
 		return Decision{Allowed: true, Code: 200}, nil
 	}
 
-	// Transitions to enforce on tenant-id.
 	switch {
 	case oldTenant == "" && newTenant != "":
 		// Initial assignment: only the gateway SA may set tenant-id.
@@ -146,8 +198,9 @@ func Decide(r Request) (Decision, error) {
 		return Decision{Allowed: true, Code: 200}, nil
 
 	case oldTenant != "" && newTenant == UnassignedTenantID:
-		// Pool return: only the WarmPoolController SA may reset
-		// tenant-id to "unassigned".
+		// Tenant reset: only the WarmPoolController SA may reset
+		// tenant-id to "unassigned". A recycled pod never takes this edge
+		// (§5.2).
 		if r.UserInfoUsername != WarmPoolControllerSA {
 			return Decision{
 				Allowed: false,

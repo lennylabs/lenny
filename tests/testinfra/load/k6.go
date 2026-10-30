@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 
 // Package load wraps the §12.7 k6 load generator. Each scenario is
-// a k6 script under tests/tier7_load/scenarios/<name>/main.js (or
+// a k6 script under tests/tier7b_load_kind/scenarios/<name>/main.js (or
 // .ts); the Go wrapper invokes k6 with the canonical flag set and
-// writes a baseline JSON document to tests/tier7_load/baselines/.
+// writes a baseline JSON document to tests/tier7b_load_kind/baselines/.
 //
 // Usage:
 //
@@ -16,9 +16,9 @@
 //	})
 //	load.AssertBaseline(t, "streaming_reconnect", res, load.Threshold{P99: 0.15})
 //
-// The baseline file format mirrors the structure tests/tier7_load/
-// baselines/startup_latency.json already uses: a JSON document with
-// per-percentile latency, throughput, and error rate.
+// The baseline file format is a JSON document with per-percentile latency,
+// throughput, and error rate; see tests/tier7b_load_kind/baselines/
+// pod_claim_latency.json for an example.
 //
 // # Environment variables
 //
@@ -43,7 +43,12 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
-// Result is a scenario result.
+// Result is a scenario result. Notes is an operator-edited field
+// preserved across baseline refreshes — see writeBaseline. Use it to
+// record spec cross-references and known measurement gaps that the
+// numbers alone do not surface (for example the §6.3 100ms claim budget
+// vs the pod_claim_latency baseline's 113ms P95). spec-reviews:
+// F-6.3.17.
 type Result struct {
 	Scenario   string             `json:"scenario"`
 	Version    string             `json:"version"`
@@ -53,6 +58,7 @@ type Result struct {
 	MetricMS   map[string]float64 `json:"metric_ms"`
 	ErrorRate  float64            `json:"error_rate"`
 	Throughput float64            `json:"throughput_per_sec"`
+	Notes      string             `json:"notes,omitempty"`
 }
 
 // Options configures a scenario run.
@@ -61,6 +67,12 @@ type Options struct {
 	VUs      int
 	BaseURL  string
 	ExtraEnv map[string]string
+	// ScenarioRoot overrides the default scenario lookup directory
+	// (tests/tier7b_load_kind/scenarios). The cloud-load tier-7 suite
+	// stores its scenarios under tests/tier12_load_cloud/scenarios
+	// and sets this to that path; smoke callers leave it empty
+	// and the runner picks the smoke default.
+	ScenarioRoot string
 }
 
 // Threshold is the per-percentile regression budget.
@@ -97,7 +109,11 @@ func RunScenario(t testing.TB, scenario string, opts Options) Result {
 	if !K6Available(t) {
 		t.Skipf("RunScenario: k6 not on PATH; install via `brew install k6` or per https://k6.io")
 	}
-	scriptPath := filepath.Join(schematest.RepoRoot(t), "tests", "tier7_load", "scenarios", scenario, "main.js")
+	root := opts.ScenarioRoot
+	if root == "" {
+		root = filepath.Join("tests", "tier7b_load_kind", "scenarios")
+	}
+	scriptPath := filepath.Join(schematest.RepoRoot(t), root, scenario, "main.js")
 	if _, err := os.Stat(scriptPath); err != nil {
 		t.Skipf("RunScenario: scenario %s not present at %s", scenario, scriptPath)
 	}
@@ -133,8 +149,18 @@ func RunScenario(t testing.TB, scenario string, opts Options) Result {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 	out, err := cmd.CombinedOutput()
+	// k6 exits 99 when a threshold is crossed: the run completed and
+	// the summary was written, the SLO was simply not met. A Tier-7
+	// smoke run on a Kind cluster does not gate on the production SLO —
+	// AssertBaseline's regression diff is the gate — so a threshold
+	// cross is captured, not fatal. Any other non-zero exit is a real
+	// k6 failure (a bad script, an unreachable target).
 	if err != nil {
-		t.Fatalf("k6 run %s: %v\n%s", scenario, err, out)
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 99 {
+			t.Fatalf("k6 run %s: %v\n%s", scenario, err, out)
+		}
+		t.Logf("k6 run %s: a threshold was crossed (k6 exit 99); capturing the baseline regardless", scenario)
 	}
 	body, err := os.ReadFile(outFile.Name())
 	if err != nil {
@@ -144,9 +170,17 @@ func RunScenario(t testing.TB, scenario string, opts Options) Result {
 }
 
 // parseK6Summary extracts the canonical Result fields from a k6
-// summary-export JSON document. The k6 schema is stable across the
-// 0.4x line; if it drifts, this parser is the single point of
-// update.
+// summary-export JSON document.
+//
+// The k6 `--summary-export` document places each metric's statistics
+// directly on the metric object: `http_req_duration` carries `avg`,
+// `med`, `p(90)`, `p(95)` (and any percentile named in the script's
+// summaryTrendStats); `http_req_failed` carries `value` (the fail
+// rate); `http_reqs` carries `rate`. Some k6 builds and the test
+// fixtures wrap those statistics in a `values` sub-object instead.
+// metricStat reads a named statistic under either layout so the parser
+// tolerates both. If the k6 schema drifts further, this parser is the
+// single point of update.
 func parseK6Summary(t testing.TB, scenario string, opts Options, body []byte) Result {
 	t.Helper()
 	var raw map[string]any
@@ -155,13 +189,10 @@ func parseK6Summary(t testing.TB, scenario string, opts Options, body []byte) Re
 	}
 	metrics, _ := raw["metrics"].(map[string]any)
 	dur, _ := metrics["http_req_duration"].(map[string]any)
-	values, _ := dur["values"].(map[string]any)
 
 	pickMS := func(key string) float64 {
-		if v, ok := values[key].(float64); ok {
-			return v
-		}
-		return 0
+		v, _ := metricStat(dur, key)
+		return v
 	}
 
 	res := Result{
@@ -180,29 +211,49 @@ func parseK6Summary(t testing.TB, scenario string, opts Options, body []byte) Re
 		},
 	}
 	if errs, ok := metrics["http_req_failed"].(map[string]any); ok {
-		if v, ok := errs["values"].(map[string]any); ok {
-			if rate, ok := v["rate"].(float64); ok {
-				res.ErrorRate = rate
-			}
+		// The fail rate is `value` on the metric object; older fixtures
+		// place it as `rate` under `values`.
+		if rate, ok := metricStat(errs, "value"); ok {
+			res.ErrorRate = rate
+		} else if rate, ok := metricStat(errs, "rate"); ok {
+			res.ErrorRate = rate
 		}
 	}
 	if reqs, ok := metrics["http_reqs"].(map[string]any); ok {
-		if v, ok := reqs["values"].(map[string]any); ok {
-			if rate, ok := v["rate"].(float64); ok {
-				res.Throughput = rate
-			}
+		if rate, ok := metricStat(reqs, "rate"); ok {
+			res.Throughput = rate
 		}
 	}
 	return res
 }
 
+// metricStat reads a named statistic from a k6 metric object. k6's
+// summary-export places statistics directly on the metric object; some
+// builds and the test fixtures nest them under a `values` sub-object.
+// metricStat checks the direct key first, then the `values` sub-object,
+// and reports whether a float value was found.
+func metricStat(metric map[string]any, key string) (float64, bool) {
+	if metric == nil {
+		return 0, false
+	}
+	if v, ok := metric[key].(float64); ok {
+		return v, true
+	}
+	if values, ok := metric["values"].(map[string]any); ok {
+		if v, ok := values[key].(float64); ok {
+			return v, true
+		}
+	}
+	return 0, false
+}
+
 // AssertBaseline diffs res against the stored baseline at
-// tests/tier7_load/baselines/<scenario>.json. Regressions beyond
+// tests/tier7b_load_kind/baselines/<scenario>.json. Regressions beyond
 // the threshold fail the test. When LENNY_UPDATE_BASELINE=1 the
 // stored baseline is overwritten.
 func AssertBaseline(t testing.TB, scenario string, res Result, threshold Threshold) {
 	t.Helper()
-	path := filepath.Join(schematest.RepoRoot(t), "tests", "tier7_load", "baselines", scenario+".json")
+	path := filepath.Join(schematest.RepoRoot(t), "tests", "tier7b_load_kind", "baselines", scenario+".json")
 	if os.Getenv("LENNY_UPDATE_BASELINE") == "1" {
 		writeBaseline(t, path, res)
 		t.Logf("wrote baseline %s", path)
@@ -238,6 +289,16 @@ func writeBaseline(t testing.TB, path string, res Result) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir baseline dir: %v", err)
 	}
+	// Preserve any operator-edited Notes on the prior baseline. The
+	// k6 run does not produce Notes; without this carry-over a
+	// LENNY_UPDATE_BASELINE=1 refresh would silently strip spec
+	// cross-references and measurement-gap annotations.
+	// spec-reviews: F-6.3.17.
+	if res.Notes == "" {
+		if prior, err := readBaseline(path); err == nil {
+			res.Notes = prior.Notes
+		}
+	}
 	body, err := json.MarshalIndent(res, "", "  ")
 	if err != nil {
 		t.Fatalf("marshal baseline: %v", err)
@@ -270,4 +331,3 @@ func compareBaseline(stored, got Result, t Threshold) []string {
 	check("p999", stored.MetricMS["p999"], got.MetricMS["p999"], t.P999)
 	return regs
 }
-

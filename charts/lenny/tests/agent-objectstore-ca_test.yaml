@@ -1,0 +1,113 @@
+suite: §13.2 NET-071 object-store CA trust bundle for agent pods
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - agent-objectstore-ca.yaml
+tests:
+  # spec: §13.2 (NET-071) — agent pods need the object-store CA to complete
+  # the TLS handshake to a self-managed MinIO during checkpoint chunk
+  # PUT/GET. minio.tls.caBundle carries the CA PEM; the chart materializes
+  # it into one ConfigMap per agent namespace, which the controller projects
+  # into every agent pod. A stock install carries no PEM and renders nothing.
+  - it: renders nothing when minio.tls.caBundle is empty
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # spec: §13.2 (NET-071) — one lenny-objectstore-ca ConfigMap per agent
+  # namespace. The default chart declares two agent namespaces, so a
+  # populated caBundle fans out into exactly two ConfigMaps. This is the
+  # rendered half of the pair the podspec projection consumes: a template
+  # that rendered into the release namespace only, or into the wrong
+  # namespaces, would leave the agent fleet in ContainerCreating while the
+  # podspec projection test stayed green.
+  - it: materializes the CA PEM into one ConfigMap per agent namespace
+    set:
+      minio:
+        endpoint: "minio.acme.example:9443"
+        tls:
+          caBundle: |
+            -----BEGIN CERTIFICATE-----
+            MIIBdummyObjectStoreCAcertificatePEMforagentpodTLStrust
+            -----END CERTIFICATE-----
+    asserts:
+      - hasDocuments:
+          count: 2
+
+  - it: names each ConfigMap lenny-objectstore-ca and carries the CA PEM
+    set:
+      minio:
+        endpoint: "minio.acme.example:9443"
+        tls:
+          caBundle: |
+            -----BEGIN CERTIFICATE-----
+            MIIBdummyObjectStoreCAcertificatePEMforagentpodTLStrust
+            -----END CERTIFICATE-----
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: lenny-objectstore-ca
+      - equal:
+          path: metadata.namespace
+          value: lenny-agents
+      - equal:
+          path: metadata.labels["lenny.dev/component"]
+          value: objectstore-ca
+      - matchRegex:
+          path: data["ca.crt"]
+          pattern: "BEGIN CERTIFICATE"
+
+  # The second document lands in the second declared agent namespace, so the
+  # rendered namespace set matches the agent namespaces the podspec projects
+  # the ConfigMap into exactly.
+  - it: renders into the second agent namespace as well
+    set:
+      minio:
+        endpoint: "minio.acme.example:9443"
+        tls:
+          caBundle: |
+            -----BEGIN CERTIFICATE-----
+            MIIBdummyObjectStoreCAcertificatePEMforagentpodTLStrust
+            -----END CERTIFICATE-----
+    documentIndex: 1
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: lenny-agents-kata
+
+  # spec: §13.2 (NET-071) — a cloud-managed provider chains to a public CA
+  # and needs no bundle, so the realistic cloud-managed deployment leaves
+  # caBundle empty and renders no ConfigMap.
+  - it: renders nothing for a cloud-managed provider without a CA PEM
+    set:
+      objectStorage:
+        provider: s3
+        egressCIDRs:
+          - "52.0.0.0/16"
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # One ConfigMap per namespace when a single agent namespace is declared,
+  # so the fan-out follows agentNamespaces and does not hard-code a count.
+  - it: renders one ConfigMap for a single agent namespace
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+      minio:
+        endpoint: "minio.acme.example:9443"
+        tls:
+          caBundle: |
+            -----BEGIN CERTIFICATE-----
+            MIIBdummyObjectStoreCAcertificatePEMforagentpodTLStrust
+            -----END CERTIFICATE-----
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: metadata.namespace
+          value: lenny-agents

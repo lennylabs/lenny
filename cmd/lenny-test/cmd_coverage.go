@@ -77,7 +77,7 @@ func reportDiffCoverage(ref string, threshold float64, jsonOut bool) int {
 		fmt.Fprintf(os.Stderr, "coverage --diff: read profile: %v\n", err)
 		return 1
 	}
-	covered := parseCoverProfileRanges(string(body))
+	prof := parseCoverProfileRanges(string(body))
 
 	type fileCov struct {
 		File    string `json:"file"`
@@ -89,14 +89,7 @@ func reportDiffCoverage(ref string, threshold float64, jsonOut bool) int {
 	totalCovered := 0
 	for file, ranges := range changedLines {
 		fc := fileCov{File: file}
-		for _, r := range ranges {
-			for line := r.start; line <= r.end; line++ {
-				fc.Total++
-				if covered[file] != nil && covered[file][line] {
-					fc.Covered++
-				}
-			}
-		}
+		fc.Total, fc.Covered = countChanged(prof[file], ranges)
 		totalChanged += fc.Total
 		totalCovered += fc.Covered
 		files = append(files, fc)
@@ -126,10 +119,14 @@ func reportDiffCoverage(ref string, threshold float64, jsonOut bool) int {
 		fmt.Println()
 		fmt.Printf("%-50s  %8s  %s\n", "File", "Cov", "Lines")
 		for _, fc := range files {
-			pct := 0.0
-			if fc.Total > 0 {
-				pct = float64(fc.Covered) / float64(fc.Total) * 100
+			// Files with no coverable changed lines (test files, and
+			// production files whose diff touched only comments, imports,
+			// or declarations) contribute nothing to the rate; omit them
+			// from the per-file table so the listing stays readable.
+			if fc.Total == 0 {
+				continue
 			}
+			pct := float64(fc.Covered) / float64(fc.Total) * 100
 			fmt.Printf("%-50s  %7.1f%%  %d/%d\n", fc.File, pct, fc.Covered, fc.Total)
 		}
 	}
@@ -142,6 +139,35 @@ func reportDiffCoverage(ref string, threshold float64, jsonOut bool) int {
 }
 
 type lineRange struct{ start, end int }
+
+// countChanged returns the coverable and covered line counts for a
+// single file's changed ranges. A changed line counts against the floor
+// only when the Go coverage model can instrument it. Comments, blank
+// lines, imports, package/type/const/var declarations, and multi-line
+// signatures never appear in a `go test -coverprofile` document, so they
+// are uncoverable rather than uncovered. Counting them in the
+// denominator understates coverage of changed code by an amount that
+// scales with how declaration-heavy the file is. A line is coverable
+// when it falls inside a statement block the profile reports for this
+// file; a file with no statement blocks (all declarations) yields 0/0
+// and cannot lower the rate. fp may be nil for such a file.
+func countChanged(fp *fileProfile, ranges []lineRange) (total, covered int) {
+	if fp == nil {
+		return 0, 0
+	}
+	for _, r := range ranges {
+		for line := r.start; line <= r.end; line++ {
+			if !fp.coverable[line] {
+				continue
+			}
+			total++
+			if fp.covered[line] {
+				covered++
+			}
+		}
+	}
+	return total, covered
+}
 
 // changedLineRanges parses `git diff -U0 <ref>..HEAD -- *.go` and
 // returns a map of file → []lineRange (added/modified ranges on
@@ -188,11 +214,24 @@ func changedLineRanges(root, ref string) (map[string][]lineRange, error) {
 	return result, nil
 }
 
-// parseCoverProfileRanges parses cover.out into file → set of
-// covered line numbers. A line is "covered" when at least one
-// statement block over it has a non-zero hit count.
-func parseCoverProfileRanges(body string) map[string]map[int]bool {
-	out := map[string]map[int]bool{}
+// fileProfile records, per file, which lines the Go coverage model can
+// instrument (coverable: any statement block) and which the profile
+// reports as executed at least once (covered: a block with a non-zero
+// hit count). Diff coverage measures covered/coverable over changed
+// lines so that uncoverable lines (comments, imports, declarations) do
+// not enter the denominator.
+type fileProfile struct {
+	coverable map[int]bool
+	covered   map[int]bool
+}
+
+// parseCoverProfileRanges parses cover.out into file → fileProfile.
+// Every statement block contributes its lines to coverable; blocks with
+// a non-zero hit count also contribute to covered. A merged profile (one
+// `mode:` header, blocks from several test runs concatenated) is handled
+// because a line stays covered once any block over it records a hit.
+func parseCoverProfileRanges(body string) map[string]*fileProfile {
+	out := map[string]*fileProfile{}
 	for _, line := range strings.Split(body, "\n") {
 		if strings.HasPrefix(line, "mode:") || strings.TrimSpace(line) == "" {
 			continue
@@ -216,14 +255,16 @@ func parseCoverProfileRanges(body string) map[string]map[int]bool {
 		endLine, _ := strconv.Atoi(strings.SplitN(rest[comma+1:], ".", 2)[0])
 		var hits int
 		fmt.Sscanf(fields[2], "%d", &hits)
-		if out[path] == nil {
-			out[path] = map[int]bool{}
-		}
-		if hits == 0 {
-			continue
+		fp := out[path]
+		if fp == nil {
+			fp = &fileProfile{coverable: map[int]bool{}, covered: map[int]bool{}}
+			out[path] = fp
 		}
 		for ln := startLine; ln <= endLine; ln++ {
-			out[path][ln] = true
+			fp.coverable[ln] = true
+			if hits > 0 {
+				fp.covered[ln] = true
+			}
 		}
 	}
 	return out

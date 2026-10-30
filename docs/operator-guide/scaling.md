@@ -129,6 +129,16 @@ spec:
         threshold: "200"
 ```
 
+### Reducing Custom-Metric Pipeline Lag
+
+The custom-metric pipeline that feeds the HPA has three latency stages: the Prometheus scrape interval, the Prometheus Adapter cache TTL, and the HPA evaluation interval. With defaults the worst-case lag is approximately 60 seconds. Two configuration changes reduce it.
+
+The gateway Helm chart renders a dedicated `lenny-gateway` ServiceMonitor that scrapes the gateway at `monitoring.serviceMonitor.gatewayInterval` (default `10s`), separate from the `lenny-control-plane` ServiceMonitor that scrapes the controller and Token Service at `monitoring.serviceMonitor.interval` (default `30s`). Lower `gatewayInterval` further only when the Prometheus server can absorb the added scrape load.
+
+The Prometheus Adapter is an external dependency that the operator installs; the chart does not render it. Set `metricsRelistInterval: 15s` and `cacheMetricResolutionPeriod: 15s` in the adapter configuration so the adapter relists and refreshes the gateway metric on the same cadence as the scrape. A larger value extends the adapter cache TTL and the pipeline lag.
+
+When KEDA replaces the Prometheus Adapter, set `pollingInterval: 10s` on the `ScaledObject` to bypass the adapter cache. The worst-case pipeline lag then drops to approximately 20 seconds.
+
 ### HPA Queue Depth Targets by Deployment Size
 
 The `lenny_gateway_request_queue_depth` HPA target `averageValue` varies by deployment size to provide tighter back-pressure control at higher scale:
@@ -172,13 +182,16 @@ target_minWarm = ceil(base_demand_p95 × safety_factor × (failover_seconds + po
 
 ### Mode Adjustment Factor
 
-For task and concurrent execution modes, the formula includes a `mode_factor` divisor:
+Pod recycling, concurrent sessions, and service mode change the relationship between pod count and effective capacity, so the formula includes a per-pool `mode_factor` divisor derived from `sessionPolicy` properties (session mode) or from `maxConcurrent` (service mode):
 
-| Mode | `mode_factor` | `burst_mode_factor` |
+| Configuration | `mode_factor` | `burst_mode_factor` |
 |---|---|---|
-| `session` | 1.0 | 1.0 |
-| `task` | `avg_tasks_per_pod_lifetime` (converges toward `maxTasksPerPod`) | 1.0 |
-| `concurrent` | `maxConcurrent` | `maxConcurrent` |
+| `session`, `maxConcurrentSessions: 1`, `recycle.enabled: false` | 1.0 | 1.0 |
+| `session`, `maxConcurrentSessions: 1`, `recycle.enabled: true` | expected sessions per pod lifetime (`lenny_pod_session_reuse_count` p50; converges toward `recycle.maxSessionsPerPod` only when tenants return to their pods while the pods are held) | `maxConcurrentSessions` (1) |
+| `session`, `maxConcurrentSessions: N` | expected sessions per pod lifetime | `maxConcurrentSessions` (N) |
+| `service` | `maxConcurrent` | `maxConcurrent` |
+
+`mode_factor` is the expected number of sessions a pod serves over its lifetime in session mode; on a recycling pool the controller uses the observed `lenny_pod_session_reuse_count` p50, falling back to `mode_factor = 1.0` during cold start (default: 100 completed sessions) and bounded above by `recycle.maxSessionsPerPod`. On a sequential recycling pool a pod serves only its pinned tenant, and across an occupancy-zero boundary only while the pod is held for that tenant (see [Multi-Tenancy](multi-tenancy.md)), so `mode_factor` approaches `recycle.maxSessionsPerPod` only when tenants return to their pods while the pods are held, and the observed p50 governs otherwise. `burst_mode_factor` reflects how many simultaneous arrivals a single pod can absorb: `maxConcurrentSessions` in session mode (1 for a one-session-per-pod or recycling pod) and `maxConcurrent` in service mode.
 
 **Adjusted formula:**
 

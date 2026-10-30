@@ -42,19 +42,19 @@ Pod-startup latency SLO burn. Separate SLO targets are defined per `RuntimeClass
 
 <!-- access: api method=GET path=/v1/admin/metrics -->
 ```
-GET /v1/admin/metrics?q=histogram_quantile(0.95, rate(lenny_warmpool_pod_startup_duration_seconds_bucket[5m]))&groupBy=pool,runtime_class&window=1h
+GET /v1/admin/metrics?q=histogram_quantile(0.95, rate(lenny_warmpool_pod_startup_duration_seconds_bucket[5m]))&groupBy=pool,isolation_profile&window=1h
 ```
 
-Which pool and runtime class? Startup cost differs materially between runc (light) and gVisor/Kata (heavier).
+This metric carries the `isolation_profile` label, not `runtime_class`. Startup cost differs by isolation profile: standard (runc) is light, while sandboxed (gVisor) and microvm (Kata) are heavier.
 
 ### Step 2 — Phase breakdown
 
 <!-- access: api method=GET path=/v1/admin/metrics -->
 ```
-GET /v1/admin/metrics?q=histogram_quantile(0.95, rate(lenny_warmpool_pod_startup_phase_duration_seconds_bucket[5m]))&groupBy=phase&window=1h
+GET /v1/admin/metrics?q=histogram_quantile(0.95, rate(lenny_session_startup_phase_duration_seconds_bucket[5m]))&groupBy=phase,runtime_class&window=1h
 ```
 
-Phases: `schedule`, `image_pull`, `sandbox_init`, `setup_command`, `ready_check`.
+Phases: `pod_claim`, `workspace_materialization`, `setup_commands`, `credential_assignment`, and `agent_session_start`.
 
 ### Step 3 — Node pressure
 
@@ -93,6 +93,15 @@ Node-pool pressure. Scale the node pool or adjust pod resource requests so the s
 ### Step 3 — Setup-command high
 
 Long setup commands are a warm-pod design anti-pattern; the warm pod exists precisely to pre-pay setup cost. Move the work into the base image. See Spec §6 (warm-pod model).
+
+The §6.3 setup-command budget is ≤ 3s for runc and ≤ 1s for gVisor (recommended). Query the per-runtime-class setup-command p95 with:
+
+<!-- access: api method=GET path=/v1/admin/metrics -->
+```
+GET /v1/admin/metrics?q=histogram_quantile(0.95, rate(lenny_session_startup_phase_duration_seconds_bucket{phase="setup_commands"}[5m]))&groupBy=runtime_class&window=1h
+```
+
+A p95 above 3s (runc) or 1s (gVisor) indicates the deployer-controlled setup commands are eating into the 10s TTFT SLO budget. Setup commands are excluded from the platform startup budget but counted against TTFT.
 
 ### Step 4 — gVisor-specific
 

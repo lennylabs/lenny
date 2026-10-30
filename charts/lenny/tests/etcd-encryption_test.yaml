@@ -1,0 +1,85 @@
+suite: etcd encryption
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - etcd-encryption.yaml
+tests:
+  - it: renders the EncryptionConfiguration ConfigMap by default
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: lenny-etcd-encryption
+      - equal:
+          path: metadata.namespace
+          value: lenny-system
+      - equal:
+          path: metadata.labels["lenny.dev/etcd-encryption"]
+          value: "true"
+      - equal:
+          path: metadata.labels["app.kubernetes.io/managed-by"]
+          value: Helm
+
+  - it: embeds an apiserver.config.k8s.io/v1 EncryptionConfiguration
+    asserts:
+      - matchRegex:
+          path: data["encryption-config.yaml"]
+          pattern: "apiVersion: apiserver\\.config\\.k8s\\.io/v1"
+      - matchRegex:
+          path: data["encryption-config.yaml"]
+          pattern: "kind: EncryptionConfiguration"
+
+  - it: encrypts the secrets resource with an aescbc provider
+    asserts:
+      - matchRegex:
+          path: data["encryption-config.yaml"]
+          pattern: "- secrets"
+      - matchRegex:
+          path: data["encryption-config.yaml"]
+          pattern: "- aescbc:"
+
+  - it: keeps an identity provider as the decrypt fallback
+    asserts:
+      - matchRegex:
+          path: data["encryption-config.yaml"]
+          pattern: "- identity: \\{\\}"
+
+  - it: generates a 32-byte aescbc key by default
+    asserts:
+      # 32 raw bytes base64-encode to a 44-character string ending in
+      # a single '=' pad. randAlphaNum 32 | b64enc produces exactly that.
+      - matchRegex:
+          path: data["encryption-config.yaml"]
+          pattern: "secret: [A-Za-z0-9+/]{43}="
+
+  - it: honours an operator-supplied aescbc key list
+    set:
+      etcdEncryption:
+        aescbcKeys:
+          - name: operator-key
+            secret: YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=
+    asserts:
+      - matchRegex:
+          path: data["encryption-config.yaml"]
+          pattern: "name: operator-key"
+      - matchRegex:
+          path: data["encryption-config.yaml"]
+          pattern: "secret: YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE="
+
+  - it: carries an operator-action annotation pointing at the runbook
+    asserts:
+      - matchRegex:
+          path: metadata.annotations["lenny.dev/operator-action"]
+          pattern: "encryption-provider-config"
+
+  - it: suppresses the ConfigMap when etcdEncryption.enabled is false
+    set:
+      etcdEncryption:
+        enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0

@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    { "type": "futureKind", "path": "x", "futureProp": 42 }
+  ]
+}

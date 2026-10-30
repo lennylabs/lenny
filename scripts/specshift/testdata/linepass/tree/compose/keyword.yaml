@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MIT
+#
+# The compose stack the session runs against.
+#
+# spec: §4.8 lines
+# 13-14
+services: {}

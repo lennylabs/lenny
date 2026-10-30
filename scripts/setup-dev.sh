@@ -389,7 +389,9 @@ install_go_tools() {
     "migrate -tags=postgres github.com/golang-migrate/migrate/v4/cmd/migrate@latest" \
     "protoc-gen-go google.golang.org/protobuf/cmd/protoc-gen-go@latest" \
     "protoc-gen-go-grpc google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest" \
-    "oapi-codegen github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest"; do
+    "oapi-codegen github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest" \
+    "controller-gen sigs.k8s.io/controller-tools/cmd/controller-gen@v0.16.5" \
+    "setup-envtest sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.19"; do
     # shellcheck disable=SC2086
     set -- $spec
     local cmd="$1"; shift
@@ -406,6 +408,30 @@ install_go_tools() {
   done
 }
 
+install_envtest_assets() {
+  # The controller integration tests run against envtest, which needs a
+  # kube-apiserver + etcd pair. setup-envtest downloads them into a
+  # local cache; the tests discover the cache with `setup-envtest use
+  # -p path`. The Kubernetes version tracks controller-runtime v0.19.
+  local envtest_k8s_version="1.31.0"
+  if ! have_cmd go; then
+    lenny_log_warn "skipping envtest assets: go is not on PATH"
+    return
+  fi
+  local setup_envtest
+  setup_envtest="$(go env GOPATH)/bin/setup-envtest"
+  if [[ ! -x "$setup_envtest" ]]; then
+    lenny_log_warn "skipping envtest assets: setup-envtest is not installed"
+    return
+  fi
+  if ! (( FORCE )) && "$setup_envtest" use "$envtest_k8s_version" -i -p path >/dev/null 2>&1; then
+    lenny_log_ok "envtest assets ($envtest_k8s_version)"
+    return
+  fi
+  lenny_log_miss "envtest assets ($envtest_k8s_version): downloading"
+  run_or_dry "$setup_envtest" use "$envtest_k8s_version"
+}
+
 install_core() {
   install_go
   install_docker_check
@@ -419,6 +445,7 @@ install_core() {
   install_conftest
   install_golangci_lint
   install_go_tools
+  install_envtest_assets
 }
 
 # ---- Kubernetes toolchain (tier 5) ----
@@ -459,6 +486,38 @@ install_cloud() {
       ;;
     *) lenny_log_warn "no package manager: see TESTING_DEPENDENCIES.md §7" ;;
   esac
+
+  # Terraform / OpenTofu — required by scripts/cloud/{eks,gke,aks}/{up,down}.sh.
+  # The per-provider drivers prefer `terraform` and fall back to `tofu`, so
+  # either binary unblocks the cloud toolchain. Install terraform by default;
+  # operators who can't use Hashicorp's BSL license can swap in `tofu`
+  # (opentofu) without further changes.
+  if have_cmd terraform || have_cmd tofu; then
+    if have_cmd terraform; then
+      local tfv
+      tfv="$(_lenny_probe_version terraform -version terraform)"
+      if [[ -n "$tfv" ]] && lenny_version_ge "$tfv" "$LENNY_VERSION_TERRAFORM" && ! (( FORCE )); then
+        lenny_log_ok "terraform ($tfv)"
+        return
+      fi
+      if (( FORCE )); then
+        lenny_log_info "terraform (${tfv:-unknown}): --force reinstall"
+      else
+        lenny_log_warn "terraform (${tfv:-unknown}) is below pinned $LENNY_VERSION_TERRAFORM; upgrading"
+      fi
+    else
+      lenny_log_ok "tofu (opentofu) on PATH; skipping terraform install"
+      return
+    fi
+  else
+    lenny_log_miss "terraform: not installed; installing"
+  fi
+  case "$PKG" in
+    brew) run_or_dry brew install hashicorp/tap/terraform ;;
+    apt)  lenny_log_info "terraform on apt: follow https://developer.hashicorp.com/terraform/install#linux (apt repo) or `brew install opentofu` for the BSL-free fork" ;;
+    dnf)  lenny_log_info "terraform on dnf: follow https://developer.hashicorp.com/terraform/install#linux or install opentofu via dnf" ;;
+    *)    lenny_log_warn "no package manager: install terraform per https://developer.hashicorp.com/terraform/install" ;;
+  esac
 }
 
 # ---- Load and chaos toolchain (tiers 7-8) ----
@@ -486,7 +545,7 @@ install_security() {
   esac
 }
 
-# ---- SDK toolchains (§14.13) ----
+# ---- SDK toolchains (TESTING.md §14.13) ----
 
 install_sdk_python() {
   # Detect system python.

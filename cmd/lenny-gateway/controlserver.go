@@ -1,0 +1,320 @@
+// SPDX-License-Identifier: MIT
+
+package main
+
+import (
+	"context"
+	"crypto/rand"
+	"fmt"
+	"log"
+	"time"
+
+	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
+	"github.com/lennylabs/lenny/pkg/clockinject"
+	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorauthz"
+	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorinvoke"
+	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectortools"
+	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/platformtools"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol/leaseelicit"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionage"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
+)
+
+// buildControlServer is the §4.1 composition-root build step (R1) for the
+// §8.6 GatewayControl gRPC server and the §6.2 / §11.3 pre-running
+// watchdog. It constructs the adapter→gateway control surface (the §9.1
+// platform-tool and §9.3 connector-tool bridges and the §4.7 scrub-report
+// service) and the session-state watchdog, and records the gRPC server, its
+// listener, the watchdog, and the watchdog context (plus its cancel) on the
+// accumulator for the run loop. It also wires the leasecontrol.Service it
+// builds into the proxy's sessionbudget enforcer as the §8.6 in-process
+// budget-exhaustion extension seam and takes that enforcer as the episode
+// fan-out's SessionReclaimer (proposal 0023 S6).
+//
+// The process-lifetime defers the original inline block registered (the
+// watchdog-context cancel and the hold and recycle coordinator
+// Stops) are relocated to the composition root (runGateway) so they fire at
+// process shutdown rather than when this build step returns; see the
+// scrub-report-branch predicate runGateway re-evaluates to defer the
+// coordinator Stops exactly when the original branch did.
+//
+// spec: §4.1 gateway subsystem seams; §8.6 GatewayControl; §6.2 / §11.3
+// session watchdog.
+func (w *gatewayWiring) buildControlServer(
+	gwMetrics *gatewaymetrics.Metrics,
+	mcpSrv *mcp.Server,
+	auditAppender policy.AuditAppender,
+	slotHealth *slothealth.Tracker,
+	mtlsDeny *mtlsdenylist.DenyList,
+	connectorAuthorizer *connectorauthz.Authorizer,
+	connectorInvoker *connectorinvoke.Invoker,
+	leaseBudgets *leasecontrol.StoreBudgetSource,
+	sessionSrv *sessionserver.Server,
+) {
+	f := w.f
+	grpcAddr := f.grpcAddr
+	claimHoldTTLSeconds := f.claimHoldTTLSeconds
+	agentNamespace := f.agentNamespace
+	leaseAutoMaxPerMin := f.leaseAutoMaxPerMin
+	adapterTLSCert := f.adapterTLSCert
+	adapterTLSKey := f.adapterTLSKey
+	adapterCA := f.adapterCA
+	spiffeTrustDomain := f.spiffeTrustDomain
+	saTokenAudience := f.saTokenAudience
+	maxCreatedStateTimeoutSeconds := f.maxCreatedStateTimeoutSeconds
+	maxFinalizingTimeoutSeconds := f.maxFinalizingTimeoutSeconds
+	maxReadyStateTimeoutSeconds := f.maxReadyStateTimeoutSeconds
+	maxStartingStateTimeoutSeconds := f.maxStartingStateTimeoutSeconds
+	maxSessionAgeSeconds := f.maxSessionAgeSeconds
+	maxAwaitingClientActionSeconds := f.maxAwaitingClientActionSeconds
+	maxSuspendedPodHoldSeconds := f.maxSuspendedPodHoldSeconds
+	maxResumePendingSeconds := f.maxResumePendingSeconds
+	maxResumingSeconds := f.maxResumingSeconds
+	retryMaxRetries := f.retryMaxRetries
+	maxClientIdleSeconds := f.maxClientIdleSeconds
+	maxSuspendedSessionSeconds := f.maxSuspendedSessionSeconds
+	sessionExpiryWarningSeconds := f.sessionExpiryWarningSeconds
+
+	// ----- §8.6 GatewayControl gRPC server -----
+	// With --grpc-addr the gateway serves the adapter→gateway control
+	// surface — the inverse direction of the pod-facing Adapter service. It
+	// hosts the surviving §9.1 platform-tool and §9.3 connector-tool bridges
+	// and the §4.7 scrub-report service; a pod's adapter dials it for those
+	// intra-pod tool forwards and scrub reports. The §8.6 lease-extension
+	// dispatch is no longer a wire RPC on this listener: the gateway LLM
+	// Proxy drives the budget-exhaustion trigger in-process through
+	// leasecontrol.ExtendForBudget, wired below. gwMetrics satisfies
+	// leasecontrol.MetricEmitter so every grant drives the §16
+	// lenny_delegation_lease_extension_total counter. F-8.6.13.
+	// spec: §8.6 / §11.7 — the leasecontrol auditor adapts the
+	// gateway audit appender so every extension decision (granted,
+	// capped, denied) lands as a `delegation.lease_extended` row on the
+	// hash-chained §11.7 audit log. The recorder pulls the requesting
+	// session's tenant and the live actor sub from the §10.6
+	// principal-bound context to satisfy §11.7 actor-tenant
+	// validation. F-8.6.10.
+	leaseExtensionAuditor := leaseExtensionAuditAdapter{appender: auditAppender}
+	// §8.6 — the production Elicitor presents the generic budget
+	// elicitation on the requesting session's client stream over the §9.2
+	// interaction store and blocks for the user's decision. Built only when
+	// the GatewayControl listener is enabled. F-8.6.2.
+	var leaseElicit leasecontrol.Elicitor
+	if *grpcAddr != "" {
+		leaseElicit = leaseelicit.New(leaseelicit.Config{
+			Sessions:     w.sessions,
+			Interactions: w.interactions,
+			Publish:      func(s, et, d string, n time.Time) { w.eventBus.Publish(s, et, d, n) },
+			Clock:        clockinject.Now,
+			IDGen:        func() string { var b [16]byte; _, _ = rand.Read(b[:]); return fmt.Sprintf("lease-elicit-%x", b[:]) },
+		})
+	}
+	// §9.1 — the bridge forwards a type:agent runtime's
+	// intra-pod platform tool calls (over GatewayControl) to the same
+	// platform tool surface the gateway-edge /mcp endpoint serves,
+	// scoped to the calling session. F-9.1.1.
+	platformToolBridge := platformtools.New(mcpSrv, w.sessions)
+	// §9.3 — the connector bridge resolves a session's
+	// policy-permitted connectors and forwards a type:agent runtime's
+	// intra-pod per-connector tool calls (over GatewayControl) to the
+	// connectorinvoke surface, which dials the external endpoint with the
+	// gateway-held credential. F-9.1.2.
+	connectorToolBridge := connectortools.New(w.sessions, w.connectors, connectorAuthorizer, connectorInvoker)
+	// §4.7 — the adapter's per-slot and whole-pod scrub reports reach the
+	// gateway recycle-counter writes, the unhealthy-threshold drain ledger,
+	// and the §6.2 recycle disposition through the ScrubReporter. It
+	// needs the cluster client (Pods get, SandboxClaim status patch) and the
+	// Postgres agent_pod_state mirror (the recycle counters), so it is wired
+	// only when both --agent-namespace (clusterClient) and the Postgres pool
+	// are configured; otherwise both scrub-report RPCs return Unimplemented
+	// (the §8.6-only GatewayControl deployment). F-4.7.
+	var scrubReports leasecontrol.ScrubReportService
+	holdTTL := time.Duration(*claimHoldTTLSeconds) * time.Second
+	if w.scrubReportServiceWired() {
+		// The reserved-hold coordinator and recycle-boundary
+		// coordinator are stopped on shutdown so the in-process timers and
+		// re-warm polls do not run against a draining client; those Stops are
+		// deferred by the composition root (runGateway) so they fire at
+		// process shutdown rather than when this build step returns.
+		var err error
+		scrubReports, err = newScrubReportService(w.clusterClient, agentpodstatepg.New(w.pgPool), w.pools, w.runtimes, gwMetrics, slotHealth, *agentNamespace, holdTTL, w.holdCoordinator, w.recycleBoundary, clockinject.Now)
+		if err != nil {
+			log.Fatalf("lenny-gateway: §4.7 scrub-report service: %v", err)
+		}
+	}
+	gatewayCtrlSrv, gatewayCtrlLis, leaseControlSvc, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, leaseElicit, w.rateLimiter, *leaseAutoMaxPerMin, platformToolBridge, connectorToolBridge, scrubReports, w.replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, *saTokenAudience, w.saTokenVerifier, mtlsDeny, inputWaitRecoveryDeps{sessions: w.sessions, waits: w.inputWaits, events: w.eventBus})
+	if err != nil {
+		log.Fatalf("lenny-gateway: §8.6 GatewayControl listen: %v", err)
+	}
+
+	// spec: §8.6 — wire the in-process budget-exhaustion trigger.
+	// buildSessionDeps builds the sessionbudget enforcer in an earlier step
+	// with a nil extension seam (the §11.2 terminate-immediately
+	// posture); this step, once leasecontrol.Service exists, closes the
+	// construction-order gap. The enforcer's seam calls svc.ExtendForBudget
+	// at the exhaustion boundary, threading both the request context and the
+	// derived in-path wait, and mapping leasecontrol.Outcome onto the
+	// enforcer's own tri-state.
+	//
+	// The SessionReclaimer the episode fan-out (and the in-path Granted path)
+	// applies each grant through is the §4.9 usage recorder, not the enforcer
+	// directly: the recorder both raises the enforcer budget AND accumulates
+	// the granted token delta so RecordUsage adds it to the base
+	// MaxTokenBudget on the next settlement, keeping the raise alive across the
+	// next Enforcer.Record (proposal 0023 S3/S4 raise-survival). When the
+	// recorder is nil (no usagestore wired) the enforcer is the reclaimer
+	// directly, which still clears the deny flag and terminates a detached
+	// session even though no usage settlement will follow to re-exhaust it.
+	// A nil leaseControlSvc (no --grpc-addr, the local-development path)
+	// leaves the enforcer's nil seam in place, so exhaustion still denies and
+	// terminates immediately. proposal 0023 S6.
+	if leaseControlSvc != nil && w.sessionBudgetEnforcer != nil {
+		w.sessionBudgetEnforcer.SetExtendOnExhaustion(leaseExtendSeam(leaseControlSvc))
+		if w.proxyUsageRec != nil {
+			leaseControlSvc.SetReclaimer(w.proxyUsageRec)
+		} else {
+			leaseControlSvc.SetReclaimer(w.sessionBudgetEnforcer)
+		}
+	}
+
+	// ----- §6.2 / §11.3 pre-running watchdog -----
+	// Sweeps every 5 s; transitions stuck sessions to failed.
+	// Tenants list is sourced from the in-memory store so newly
+	// registered tenants are picked up on the next tick.
+	// §5.2 / §6.2: a session forced terminal by background sweep
+	// must run the full gateway-side terminal pipeline — workspace seal,
+	// executor release (concurrent-mode slot release + pod drain), audit,
+	// SSE, billing, archive — so the watchdog-driven path emits the same
+	// signals exactly once as the REST-driven terminal path. Closes
+	// F-5.2.26.
+	// F-7.4.7: thread the configured maxCreatedStateTimeoutSeconds into
+	// the watchdog so its `created`-state budget matches the
+	// uploadToken TTL. An abandoned `created` row ends as the watchdog's
+	// CREATED_TIMEOUT write, and the post-terminal hook releases its pod.
+	// spec: §7.1.
+	// F-6.2.14: thread the §6.2 resuming watchdog and §6.2 resume_pending wall-clock cap into the gateway watchdog. The
+	// resume_pending cap defaults to maxResumeWindowSeconds (which the
+	// per-session retryPolicy.maxResumeWindowSeconds tightens); resuming
+	// is the §6.2 fixed 300s budget. MaxRetries falls through to the
+	// same deployer flag the §4.8 RetryPolicyEvaluator uses so the
+	// resuming → resume_pending retry counts against the same budget.
+	// spec: §11.3 — every operator-tunable watchdog budget
+	// flows through `Config`. The flag surface above defaults each to the
+	// §11.3 spec value, so `Config{}` is now constructed with the
+	// effective value (after env/flag resolution) rather than the
+	// zero-value the watchdog used to backfill silently. F-11.3.11.
+	wd := watchdog.New(w.sessions, tenantsLister{w.tenants}, watchdog.Config{
+		MaxCreatedSeconds:              *maxCreatedStateTimeoutSeconds,
+		MaxFinalizingSeconds:           *maxFinalizingTimeoutSeconds,
+		MaxReadySeconds:                *maxReadyStateTimeoutSeconds,
+		MaxStartingSeconds:             *maxStartingStateTimeoutSeconds,
+		MaxSessionAgeSeconds:           *maxSessionAgeSeconds,
+		MaxAwaitingClientActionSeconds: *maxAwaitingClientActionSeconds,
+		MaxSuspendedPodHoldSeconds:     *maxSuspendedPodHoldSeconds,
+		MaxResumePendingSeconds:        *maxResumePendingSeconds,
+		MaxResumingSeconds:             *maxResumingSeconds,
+		MaxRetries:                     *retryMaxRetries,
+		MaxIdleSeconds:                 *maxClientIdleSeconds,
+		MaxSuspendedSessionSeconds:     *maxSuspendedSessionSeconds,
+		ExpiryWarningSeconds:           *sessionExpiryWarningSeconds,
+	}, nil).
+		WithBilling(w.billing).
+		WithTreeArchive(w.treeArchive).
+		WithTerminalHook(sessionSrv).
+		// spec: §11.3 — the maxSessionAge sweep honours a
+		// deployer's per-runtime `limits.maxSessionAgeSeconds` / per-pool
+		// `maxSessionAgeSeconds` (most-restrictive-wins below the platform
+		// default) instead of expiring every session at the single baked
+		// default. F-11.3.3.
+		WithSessionAgeResolver(sessionage.New(w.runtimes, w.pools)).
+		// spec: §6.2 (maxClientIdleSeconds clock behavior across states) —
+		// the idle sweep acts on a `running` session idle longer than its
+		// effective `maxClientIdleSeconds`, honouring the per-runtime /
+		// per-pool `sessionPolicy.maxClientIdleSeconds` (default: the
+		// --max-client-idle-seconds flag) and the §27.6 playground idle
+		// override. F-11.3.7.
+		WithIdleResolver(sessionidle.NewResolver(w.runtimes, w.pools)).
+		// spec: §6.2 (Pod State Machine) — the suspended sweep releases an
+		// interrupt suspension's pod at the hold and expires a session at
+		// its suspended lifetime; a suspended session that holds its pod and
+		// a message is resumed by the coordinating replica.
+		WithSuspendedPodReleaser(sessionSrv).
+		WithBacklogResumer(sessionSrv)
+	// spec: §6.2 (maxClientIdleSeconds clock behavior across states) — an
+	// idle session is suspended only when a pod binder is wired. Without one
+	// (no --agent-namespace) the in-process or subprocess executor claims no
+	// pod and dials no adapter, so the sweep expires every idle session.
+	if w.podBinder != nil {
+		wd = wd.WithIdleSuspender(sessionSrv)
+	}
+	// spec: §7.2 — wire the DLQ TTL sweeper only when the
+	// messaging coordinator exists (Redis present). Passing a nil
+	// *Coordinator would create a typed-nil interface that defeats the
+	// watchdog's nil guard and force wasted List calls every tick.
+	if w.messagingCoord != nil {
+		wd = wd.WithMessaging(w.messagingCoord)
+	}
+	watchdogCtx, watchdogCancel := context.WithCancel(context.Background())
+
+	w.gatewayCtrlSrv = gatewayCtrlSrv
+	w.gatewayCtrlLis = gatewayCtrlLis
+	w.wd = wd
+	w.watchdogCtx = watchdogCtx
+	w.watchdogCancel = watchdogCancel
+}
+
+// leaseExtendSeam adapts leasecontrol.Service.ExtendForBudget into the
+// sessionbudget.ExtendOnExhaustion the enforcer consults at the
+// exhaustion boundary. It threads both contexts through to the two-context
+// ExtendForBudget (reqCtx for the Pending-vs-Terminal discrimination,
+// waitCtx for the in-path deadline) and maps the returned
+// leasecontrol.Outcome onto the enforcer's own tri-state so the two
+// packages stay decoupled with no import cycle. The extension does not
+// carry a budget/consumed amount: budget exhaustion asks for as much
+// headroom as the §8.6 ceiling allows, which ExtendForBudget derives from
+// the tree budget, so the seam ignores those parameters. The seam threads
+// the tenant the enforcer holds into the dispatch, which reads the session
+// rows under it (§8.6 Extension state). A dispatch error
+// fails closed to Terminal: an unresolvable or errored extension denies
+// and terminates the session rather than silently granting tokens. spec:
+// §8.6; proposal 0023 S6.
+func leaseExtendSeam(svc *leasecontrol.Service) sessionbudget.ExtendOnExhaustion {
+	return func(reqCtx, waitCtx context.Context, tenantID, sessionID string, _, _ int64) sessionbudget.Outcome {
+		outcome, err := svc.ExtendForBudget(reqCtx, waitCtx, tenantID, sessionID)
+		if err != nil {
+			// Fail closed: a transport fault, an unresolvable session, or a
+			// missing tree budget denies and terminates (§8.6 fail-closed
+			// posture), the same as an explicit CEILING_REACHED/REJECTED.
+			return sessionbudget.Terminal
+		}
+		switch outcome {
+		case leasecontrol.OutcomeGranted:
+			return sessionbudget.Granted
+		case leasecontrol.OutcomePending:
+			return sessionbudget.Pending
+		default:
+			// OutcomeTerminal and any unknown value fail closed.
+			return sessionbudget.Terminal
+		}
+	}
+}
+
+// scrubReportServiceWired reports whether the §4.7 scrub-report service is
+// wired, which is the predicate the original inline control-server block
+// used to enter the scrub-report branch and to register the
+// coordinator Stop defers. The composition root re-evaluates it to defer
+// those Stops exactly when the original branch did.
+//
+// spec: §4.7 scrub-report service wiring predicate.
+func (w *gatewayWiring) scrubReportServiceWired() bool {
+	f := w.f
+	return *f.grpcAddr != "" && w.clusterClient != nil && w.pgPool != nil && *f.agentNamespace != ""
+}

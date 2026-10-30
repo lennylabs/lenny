@@ -1,0 +1,3 @@
+ALTER TABLE widgets
+    ADD COLUMN IF NOT EXISTS price_cents INTEGER NOT NULL DEFAULT 0,
+    ALTER COLUMN price_usd_cents DROP NOT NULL;

@@ -18,14 +18,14 @@ import (
 	"testing"
 
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 )
 
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	idem := idemmw.NewMemoryStore()
 	wrapped := idemmw.Wrap(srv.Handler(), idem, idemmw.Options{})
 	ts := httptest.NewServer(wrapped)

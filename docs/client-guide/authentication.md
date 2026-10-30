@@ -66,19 +66,19 @@ Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
 The gateway validates the token signature, checks expiry, and extracts:
 
 - `user_id`: the authenticated user
-- `tenant_id`: the tenant context (extracted from the identity-provider claim configured via `auth.tenantIdClaim`, default: `tenant_id`)
+- `tenant_id`: the tenant context (see [Tenant Context](#tenant-context))
 - Role claims (e.g., `lenny_role`): determines authorization level
 
 ### Tenant Context
 
-In multi-tenant deployments, every request is scoped to a tenant. The tenant is extracted from the identity token:
+In multi-tenant deployments, every request is scoped to a tenant. The gateway reads the tenant from the claim configured via `auth.tenantIdClaim` (default: `tenant_id`) in an identity-provider token, and from the `tenant_id` claim in a token the gateway issued:
 
 | Condition | Behavior |
 |---|---|
 | Single-tenant deployment (`auth.multiTenant: false`) | Tenant claim is ignored; all requests use the built-in `default` tenant |
 | Claim present and tenant registered | Request proceeds with the extracted `tenant_id` |
 | Claim absent or empty | `401 Unauthorized` with code `TENANT_CLAIM_MISSING` |
-| Claim present but tenant not registered | `403 Forbidden` with code `TENANT_NOT_FOUND` |
+| Claim present but tenant not registered, or the tenant is in the `deleting` or `deleted` state | `403 Forbidden` with code `TENANT_NOT_FOUND` |
 
 There is no silent fallback to a default tenant in multi-tenant mode.
 
@@ -94,7 +94,7 @@ Best practice: refresh proactively before expiry. Most identity providers includ
 
 ### Token Rotation and Exchange (`/v1/oauth/token`)
 
-For token lifecycle operations inside Lenny (rotating an admin token, minting a narrowed scoped token for an agent service account, or any internal delegation child-token issuance) Lenny exposes the OAuth token endpoint `POST /v1/oauth/token` compliant with [RFC 6749 §5](https://www.rfc-editor.org/rfc/rfc6749#section-5) and [RFC 8693 (Token Exchange)](https://www.rfc-editor.org/rfc/rfc8693).
+For token lifecycle operations inside Lenny (rotating an admin token or minting a narrowed scoped token for an agent service account) Lenny exposes the OAuth token endpoint `POST /v1/oauth/token` compliant with [RFC 6749 §5](https://www.rfc-editor.org/rfc/rfc6749#section-5) and [RFC 8693 (Token Exchange)](https://www.rfc-editor.org/rfc/rfc8693).
 
 **Example: rotate an admin token:**
 
@@ -129,13 +129,13 @@ grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange
   "access_token": "eyJhbGciOi...",
   "issued_token_type": "urn:ietf:params:oauth:token-type:jwt",
   "token_type": "Bearer",
-  "expires_in": 3600
+  "expires_in": 900
 }
 ```
 
 **Scope narrowing is monotonic.** An exchange may only request a `scope` that is a subset of the `subject_token`'s existing scope. Broadening is rejected with `invalid_scope`. See [Security -> Credential Flow](../operator-guide/security.md) for the full claim-mapping table and scope-narrowing rules.
 
-The CLI command `lenny-ctl admin users rotate-token --user <name>` is a convenience wrapper that calls this endpoint internally.
+This endpoint serves self and service-principal rotation. The bootstrap admin credential rotates through a dedicated route instead: `lenny-ctl admin users rotate-token --user lenny-admin` calls `POST /v1/admin/users/{user}/rotate-token`, and the gateway mints the new admin token in process and patches the `lenny-admin-token` Secret without going through `/v1/oauth/token`.
 
 ---
 

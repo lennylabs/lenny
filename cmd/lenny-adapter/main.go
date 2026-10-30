@@ -1,0 +1,611 @@
+// SPDX-License-Identifier: MIT
+
+// Command lenny-adapter runs the §4.7 runtime adapter: the gRPC sidecar
+// that bridges the Lenny gateway to a pod's runtime binary. It serves
+// the adapterv1.Adapter service and the standard gRPC health service.
+//
+// The gateway↔adapter link is mTLS in production: supply
+// --tls-cert-file, --tls-key-file, and --tls-client-ca-file, where the
+// CA bundle verifies the gateway's client certificate. With no
+// certificate the adapter serves plaintext, intended only for local
+// development.
+//
+// The adapter drives the runtime over one of two §4.7 sidecar-model
+// transports, both carrying the identical §28.5.3 JSONL framing:
+//
+//   - --runtime-socket: the adapter binds an abstract Unix socket and
+//     the runtime container dials it. This is the §4.7 deployment model:
+//     the adapter and the runtime are separate pod containers, and the
+//     runtime has no stdin attached. The controller passes the socket
+//     name to the runtime container in LENNY_ADAPTER_SOCKET.
+//   - --runtime-bin: the adapter execs the runtime binary as a child
+//     and drives it over stdin/stdout. This is the single-host developer
+//     loop, where one process exercises a runtime without a pod.
+//
+// Usage:
+//
+//	lenny-adapter --addr :50051 \
+//	  --runtime-socket @lenny-runtime \
+//	  --tls-cert-file /etc/lenny/adapter-tls/tls.crt \
+//	  --tls-key-file  /etc/lenny/adapter-tls/tls.key \
+//	  --tls-client-ca-file /etc/lenny/adapter-tls/ca.crt
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"log"
+	"net"
+	"os"
+	"os/signal"
+	"strconv"
+	"syscall"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
+
+	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/adapter/prestop"
+	"github.com/lennylabs/lenny/pkg/adapter/scrub"
+	"github.com/lennylabs/lenny/pkg/adapter/sharedassets"
+	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/pkg/observability/logging"
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
+	"github.com/lennylabs/lenny/pkg/runtimekit"
+)
+
+// version is the adapter build version, reported during gateway
+// version negotiation.
+var version = "0.1.0"
+
+// resolveRuntimeUID returns the agent runtime UID for the §4.7/§13
+// SO_PEERCRED MCP peer check. The --runtime-uid flag takes precedence; a
+// zero flag falls back to the LENNY_RUNTIME_UID environment variable the
+// pod spec injects from the runtime container's runAsUser. A value that
+// is zero or unparseable leaves the peer check disabled.
+func resolveRuntimeUID(flagUID uint) uint32 {
+	if flagUID != 0 {
+		return uint32(flagUID)
+	}
+	if env := os.Getenv("LENNY_RUNTIME_UID"); env != "" {
+		if uid, err := strconv.ParseUint(env, 10, 32); err == nil {
+			return uint32(uid)
+		}
+		log.Printf("lenny-adapter: ignoring unparseable LENNY_RUNTIME_UID=%q", env)
+	}
+	return 0
+}
+
+// agentSocketPeerAuth returns the SO_PEERCRED posture of the adapter-agent
+// sockets: the CH-MSGSOCK runtime socket, the CH-RUNTIMEOPS socket, and the
+// intra-pod MCP sockets.
+// Outside nonce-only mode the listeners admit only runtimeUID. When the
+// adapter binds any of these sockets (bindsAgentSocket) and runtimeUID is
+// zero (no --runtime-uid and no LENNY_RUNTIME_UID), it refuses to start: it
+// fails closed rather than binding a socket any process in the pod can
+// reach. The controller renders --runtime-uid on every sidecar pod. In
+// nonce-only mode (--require-so-peercred=false) the specification states
+// that the peer check is unavailable, so no UID is required.
+// spec: §4.7.11 (Separate UIDs and connection authentication), §28.5.3
+// (CH-MSGSOCK, Endpoint).
+func agentSocketPeerAuth(runtimeUID uint32, requireSoPeercred, bindsAgentSocket bool) (adapter.SocketPeerAuth, error) {
+	if !requireSoPeercred {
+		return adapter.SocketPeerAuth{ExpectedUID: runtimeUID, NonceOnly: true}, nil
+	}
+	if runtimeUID == 0 && bindsAgentSocket {
+		return adapter.SocketPeerAuth{}, errors.New("--runtime-socket, --runtime-ops-socket, --mcp-socket, and --supervise-socket require the agent UID " +
+			"(--runtime-uid or LENNY_RUNTIME_UID) for the SO_PEERCRED peer check")
+	}
+	return adapter.SocketPeerAuth{ExpectedUID: runtimeUID}, nil
+}
+
+// newScrubOps builds the §5.2 whole-pod scrub host operations the recycle-scrub
+// driver runs at the recycle boundary. It returns the real DefaultOps so a
+// production recycle actually purges the credential file, kills the session's
+// processes, removes the workspace, clears scratch directories, and verifies
+// the scrub. Leaving ScrubOps nil would make the driver report PodScrubFailed
+// on every recycle, which the default warn policy treats as a reuse: the
+// gateway would hand the pod to the next session with no scrub having run (a
+// between-session isolation regression). DefaultOps makes the step-1
+// kill(-1, SIGKILL) and the System V IPC_RMID removals as direct syscalls,
+// with no exec, as the adapter's own user, so they reach the adapter
+// container's processes and IPC objects only. In the sidecar model the
+// runtime container has its own process namespace and UID: its process
+// outlives sessions on a keep pod and ends in each whole-pod scrub on a
+// restart pod, through the runtime supervisor. spec: §5.2 (whole-pod scrub,
+// steps 0-6; "What the scrub reaches"; Runtime-process lifetime); §4.7.10
+// (Runtime supervisor, End).
+func newScrubOps() scrub.DefaultOps {
+	return scrub.DefaultOps{}
+}
+
+// closeRuntimeListener runs the sidecar transport's pod-scope teardown at
+// process exit, which ends the runtime's connection and releases the
+// pod-scoped listener, and logs, rather than returns, a close failure: the process is
+// already exiting, so a failed close has no caller left to act on it. The
+// closer and the log function are injected so a unit test exercises both
+// branches without binding a real socket. spec: §4.7.10, §28.5.3.
+func closeRuntimeListener(closeListener func() error, logf func(string, ...any)) {
+	if err := closeListener(); err != nil {
+		logf("lenny-adapter: close runtime socket listener: %v", err)
+	}
+}
+
+func main() {
+	// spec: §16.4 — structured JSON logs from the runtime
+	// adapter; routes the stdlib log package through the §16.4 handler
+	// (component=adapter) before any subcommand dispatch. F-16.4.1.
+	logging.Setup(os.Stderr, "adapter")
+
+	// spec: §4.6.1 — the `prestop` subcommand is the agent-pod preStop
+	// drain hook. It signals the running adapter and waits for it to
+	// drain in-flight checkpoints, so it runs as a distinct subcommand
+	// rather than starting the gRPC server.
+	if len(os.Args) > 1 && os.Args[1] == prestop.Verb {
+		os.Exit(prestop.Run(os.Args[2:], log.Printf))
+	}
+
+	// spec: §6.1 (Adapter SIGTERM behavior during sdk_connecting) — the
+	// signal handler's channel is registered before anything else, so a
+	// SIGTERM or SIGINT that arrives while the server is built, or during
+	// the supervisor gate and the warm-up launch, waits here for the
+	// handler RunPreReady starts rather than ending the adapter by default.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+
+	addr := flag.String("addr", ":50051", "address the adapter gRPC server binds to")
+	certFile := flag.String("tls-cert-file", "", "path to the adapter server certificate")
+	keyFile := flag.String("tls-key-file", "", "path to the adapter server private key")
+	clientCAFile := flag.String("tls-client-ca-file", "",
+		"path to the CA bundle that verifies gateway client certificates")
+	workspaceBase := flag.String("workspace-base", "/workspace",
+		"§6.4 workspace base the per-session `slots/{sessionId}/{current,staging}` "+
+			"trees nest under; each session's workspace is materialized into its own "+
+			"slot tree under this base")
+	sessionsRoot := flag.String("sessions-root", "/sessions",
+		"§6.4 /sessions tmpfs the runtime writes its session file into; "+
+			"bundled into the §4.4 checkpoint and restored on §7.3 resume "+
+			"(step f). Empty disables session-file capture")
+	artifactsRoot := flag.String("artifacts-root", "/artifacts",
+		"§6.4 /artifacts base the per-slot artifact "+
+			"trees (/artifacts/{sessionId}) nest under")
+	stagingDir := flag.String("staging-dir", "/workspace/.staging",
+		"directory PrepareWorkspace streams uploaded files into before "+
+			"FinalizeWorkspace materializes them; empty leaves PrepareWorkspace "+
+			"returning FailedPrecondition")
+	credentialsDir := flag.String("credentials-dir", "/run/lenny",
+		"directory the §4.7 credential file is materialized into")
+	sharedAssetsDir := flag.String("shared-assets-dir", "/workspace/shared",
+		"§6.4 directory the adapter materializes read-only shared assets into at "+
+			"warm time; empty skips the populate step")
+	sharedAssets := flag.String("shared-assets", "",
+		"§6.4 base64-encoded JSON array of inline shared-asset file specs "+
+			"(sharedassets.Encode); empty leaves /workspace/shared empty")
+	runtimeUID := flag.Uint("runtime-uid", 0,
+		"UID the agent runtime process runs as (the pod spec runAsUser); "+
+			"the adapter applies the §4.7/§13 SO_PEERCRED peer check against it on "+
+			"the --mcp-socket, --runtime-socket, and --runtime-ops-socket listeners. 0 falls "+
+			"back to LENNY_RUNTIME_UID; still 0 is refused when any of them is bound, "+
+			"unless --require-so-peercred=false")
+	requireSoPeercred := flag.Bool("require-so-peercred", true,
+		"run the mandatory §4.7 SO_PEERCRED startup self-test and crash-loop on "+
+			"failure; set false only when gVisor SO_PEERCRED divergence is "+
+			"confirmed and nonce-only mode is explicitly accepted")
+	runtimeBin := flag.String("runtime-bin", "",
+		"path to the runtime binary the adapter execs and drives over stdin/stdout (developer loop)")
+	runtimeSocket := flag.String("runtime-socket", "",
+		"abstract Unix socket the adapter binds for the §4.7 sidecar runtime transport; "+
+			"the runtime container dials it")
+	lifecycleSocket := flag.String("runtime-ops-socket", "",
+		"Unix socket path for the §15.4.6 CH-RUNTIMEOPS runtime operations socket; empty disables it")
+	mcpSocket := flag.String("mcp-socket", "",
+		"§9.1/§4.7 abstract Unix socket the platform MCP server binds for a type:agent "+
+			"runtime (the @lenny-platform-mcp socket the manifest names); empty disables it")
+	gatewayGRPCAddr := flag.String("gateway-grpc-addr", "",
+		"§9.1/§8.6 gateway GatewayControl address (host:port) the adapter dials to forward "+
+			"platform tool calls (and lease extensions); empty leaves the platform MCP server "+
+			"serving an empty catalog")
+	otlpEndpoint := flag.String("otlp-endpoint", "",
+		"§4.7/§16.3 OTLP collector URL written into the adapter manifest's "+
+			"observability.otlpEndpoint; empty omits the observability object")
+	otlpTLSDisabled := flag.Bool("otlp-tls-disabled", false,
+		"§13.2 (NET-059) dev/make-run escape hatch: write observability.otlpTlsEnabled=false "+
+			"so the runtime accepts an http:// OTLP endpoint; production keeps this false and "+
+			"uses an https:// endpoint")
+	// spec: §11.3 — gateway→pod keepalive: 10s interval,
+	// 5s timeout. The server-side EnforcementPolicy keeps the gateway's
+	// client params (the 10s interval) from triggering an
+	// ENHANCE_YOUR_CALM. F-11.3.12.
+	keepaliveTimeMs := flag.Int("keepalive-time-ms",
+		envIntOr("LENNY_ADAPTER_KEEPALIVE_TIME_MS", 10_000),
+		"§11.3 keepalive interval (ms) for gRPC pings from the gateway. Default 10000ms.")
+	keepaliveTimeoutMs := flag.Int("keepalive-timeout-ms",
+		envIntOr("LENNY_ADAPTER_KEEPALIVE_TIMEOUT_MS", 5_000),
+		"§11.3 keepalive timeout (ms) the gateway waits for a ping reply. Default 5000ms.")
+	coordinatorHoldTimeoutSec := flag.Int("coordinator-hold-timeout-seconds",
+		envIntOr("LENNY_COORDINATOR_HOLD_TIMEOUT_SECONDS", 120),
+		"§10.1.4 coordinatorHoldTimeoutSeconds: how long the adapter holds a session after losing its coordinator before self-terminating. Default 120s.")
+	postMortemDir := flag.String("post-mortem-dir",
+		os.Getenv("LENNY_POST_MORTEM_DIR"),
+		"§10.1.4 directory the adapter writes a coordinator_lost post-mortem record into when a hold times out with no new coordinator. Empty skips the disk write.")
+	heartbeatIntervalSec := flag.Int("heartbeat-interval-seconds",
+		envIntOr("LENNY_ADAPTER_HEARTBEAT_INTERVAL_SECONDS", 30),
+		"§28.5.3 cadence (seconds) at which the adapter sends a heartbeat liveness ping to the runtime. 0 disables heartbeats. Default 30s.")
+	heartbeatAckTimeoutSec := flag.Int("heartbeat-ack-timeout-seconds",
+		envIntOr("LENNY_ADAPTER_HEARTBEAT_ACK_TIMEOUT_SECONDS", 10),
+		"§28.5.3 window (seconds) the runtime has to answer a heartbeat before the adapter considers it hung and ends the session's stream; the runtime process receives no signal. Default 10s.")
+	sessionStartAckTimeout := flag.Duration("session-start-ack-timeout",
+		runtimekit.DefaultSessionStartAckTimeout,
+		"§28.5.3 bound on a session start's wait for the runtime's session_started answer to its session_start, used when the runtime's CH-RUNTIMEOPS connection completed its capability handshake; the wait also ends at the starting request's deadline. It also bounds a session-scoped CH-RUNTIMEOPS frame's wait for that answer when the frame has no bound of its own.")
+	workspaceSizeLimitBytes := flag.Int64("workspace-size-limit-bytes",
+		envInt64Or("LENNY_WORKSPACE_SIZE_LIMIT_BYTES", 0),
+		"§4.4 hard workspace size limit: a checkpoint whose probed workspace exceeds this many bytes is aborted before any grant is minted. 0 disables the limit (the kubelet emptyDir guard is the backstop).")
+	objectStoreCABundle := flag.String("objectstore-ca-bundle",
+		os.Getenv("LENNY_OBJECTSTORE_CA_BUNDLE"),
+		"§13.2 path to the CA bundle the adapter trusts when it PUTs checkpoint chunks and GETs restore chunks against the object store over TLS; empty uses the system roots.")
+	supFlags := &superviseFlags{}
+	flag.StringVar(&supFlags.socket, "supervise-socket", "",
+		"§28.5.3 abstract Unix socket (leading @) the adapter listens on for the runtime supervisor's CH-SUPERVISE connection; empty means the pod runs no supervisor")
+	flag.StringVar(&supFlags.runtimeProcess, "runtime-process", "",
+		"§5.2 runtime-process lifetime of a supervised pod: keep or restart")
+	flag.StringVar(&supFlags.launchMode, "launch-mode", "",
+		"§4.7.10 launch mode of a supervised pod: session, service, preconnect-sdk-warm, or preconnect-pod-warm")
+	flag.DurationVar(&supFlags.pingInterval, "supervise-ping-interval", defaultSupervisePingInterval,
+		"§28.5.3 interval at which the adapter pings the runtime supervisor while no other request is outstanding")
+	flag.DurationVar(&supFlags.pingTimeout, "supervise-ping-timeout", defaultSupervisePingTimeout,
+		"§28.5.3 deadline for the supervisor's pong; a missed pong is a link failure")
+	flag.DurationVar(&supFlags.waitTimeout, "supervise-wait-timeout", defaultSuperviseWaitTimeout,
+		"§28.5.3 bound on the wait before READY for the supervisor's connection and its ready")
+	flag.DurationVar(&supFlags.warmUpTimeout, "warm-up-timeout", defaultWarmUpTimeout,
+		"§4.7.10 bound on the warm-up launch's CH-MSGSOCK connection before READY")
+	flag.Parse()
+	setFlags := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
+
+	if *runtimeBin != "" && *runtimeSocket != "" {
+		log.Fatalf("lenny-adapter: --runtime-bin and --runtime-socket are mutually exclusive")
+	}
+	// spec: §4.7.10 (Runtime supervisor) — the adapter inputs of a
+	// supervised pod are validated before anything is launched or bound.
+	supIn, err := parseSuperviseInputs(supFlags, setFlags, *runtimeSocket)
+	if err != nil {
+		log.Fatalf("lenny-adapter: %v", err)
+	}
+
+	// spec: §16.3 — install the process-wide TracerProvider and
+	// W3C propagator so the pod adapter's §16.3 spans (session.upload,
+	// session.finalize_workspace, session.run_setup, session.start,
+	// session.tool_call) reach the OTLP Collector instead of the no-op
+	// provider. With no OTEL endpoint a stdout exporter is used. F-16.3.2.
+	traceShutdown, err := tracing.InitProvider(context.Background(), tracing.ProviderConfig{
+		ServiceName:  "lenny-adapter",
+		OTLPEndpoint: os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+	})
+	if err != nil {
+		log.Fatalf("lenny-adapter: tracing init: %v", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = traceShutdown(ctx)
+	}()
+
+	// §4.7: run the mandatory SO_PEERCRED startup self-test
+	// before any other setup. On failure, crash-loop the pod so it never
+	// enters the warm pool with a non-functional security boundary; when
+	// --require-so-peercred is false (confirmed gVisor divergence), the
+	// failure is suppressed and the adapter runs in nonce-only mode.
+	if err := adapter.PeercredSelftest(); err != nil && *requireSoPeercred {
+		adapter.IncSoPeercredSelftestFailed()
+		log.Fatalf("lenny-adapter: FATAL: SO_PEERCRED self-test failed — UID mismatch or "+
+			"syscall error; adapter security boundary cannot be enforced: %v", err)
+	}
+	if !*requireSoPeercred {
+		// §4.7: nonce-only mode is an auditable escalation,
+		// not a silent steady state.
+		adapter.IncSoPeercredDisabled()
+		log.Printf("lenny-adapter: WARNING: --require-so-peercred=false; running in " +
+			"nonce-only mode (§4.7). Deployers MUST alert on " +
+			"lenny_adapter_sopeercred_disabled_total > 0")
+	}
+
+	tlsOpt, err := adapter.TLSServerOption(*certFile, *keyFile, *clientCAFile)
+	if err != nil {
+		log.Fatalf("lenny-adapter: %v", err)
+	}
+	var opts []grpc.ServerOption
+	if tlsOpt != nil {
+		opts = append(opts, tlsOpt)
+	}
+	// spec: §11.3 — server-side keepalive that mirrors the
+	// gateway's client params. MinTime guards against an over-aggressive
+	// client; PermitWithoutStream allows the gateway's idle pings to
+	// keep the connection observably alive. F-11.3.12.
+	keepaliveTime := time.Duration(*keepaliveTimeMs) * time.Millisecond
+	keepaliveTimeout := time.Duration(*keepaliveTimeoutMs) * time.Millisecond
+	opts = append(
+		opts,
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             keepaliveTime / 2,
+			PermitWithoutStream: true,
+		}),
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			Time:    keepaliveTime,
+			Timeout: keepaliveTimeout,
+		}),
+	)
+
+	adapterSrv := adapter.New(version)
+	// §6.4: the per-session `slots/{sessionId}` workspace and
+	// `/artifacts/{sessionId}` trees nest under --workspace-base
+	// (production /workspace) and --artifacts-root (production /artifacts).
+	// These roots feed slotlayout.Resolve, which gates per-slot tree
+	// construction on each being non-empty; the layout is uniform across
+	// pool concurrencies, so every session resolves its root from the base.
+	adapterSrv.WorkspaceBase = *workspaceBase
+	adapterSrv.ArtifactsRoot = *artifactsRoot
+	adapterSrv.SessionsRoot = *sessionsRoot
+	adapterSrv.StagingDir = *stagingDir
+	// spec: §4.4 / §13.2 — the checkpoint transport issues the per-chunk
+	// object-store PUT (checkpoint) and GET (resume restore) against the
+	// gateway-minted presigned capabilities. It trusts the object store's
+	// TLS certificate through the deployment CA bundle. The adapter holds
+	// no standing object-store credential; the presigned capability is its
+	// only authorization.
+	transport, err := adapter.NewHTTPCheckpointTransport(*objectStoreCABundle)
+	if err != nil {
+		log.Fatalf("lenny-adapter: %v", err)
+	}
+	adapterSrv.CheckpointTransport = transport
+	// spec: §4.4 — the pre-checkpoint workspace-size probe
+	// reports the on-disk workspace bytes to the gateway (quota reservation)
+	// and aborts the checkpoint when the workspace exceeds the hard limit
+	// before any grant is minted. Zero leaves the limit disabled; the
+	// kubelet emptyDir guard is the backstop.
+	adapterSrv.WorkspaceSizeLimitBytes = *workspaceSizeLimitBytes
+	// spec: §10.1 — the coordinator-loss hold window and the
+	// disk post-mortem path the adapter falls back to when no coordinator
+	// returns to receive the AdapterTerminating event.
+	adapterSrv.CoordinatorHoldTimeout = time.Duration(*coordinatorHoldTimeoutSec) * time.Second
+	adapterSrv.PostMortemDir = *postMortemDir
+	// spec: §28.5.3 — production sidecar probes runtime liveness with
+	// heartbeats and ends the session's stream when the runtime misses the
+	// ack window. Runtime.Interrupt then ends nothing on the sidecar
+	// transport; on a supervised pod the escalation sets the not-live
+	// state's hang cause instead (§4.7.10, Runtime supervisor, Liveness).
+	// A zero interval disables the probe.
+	adapterSrv.HeartbeatInterval = time.Duration(*heartbeatIntervalSec) * time.Second
+	adapterSrv.HeartbeatAckTimeout = time.Duration(*heartbeatAckTimeoutSec) * time.Second
+	adapterSrv.SessionStartAckTimeout = *sessionStartAckTimeout
+	// §6.4: decode the inline shared-asset set the controller
+	// rendered onto --shared-assets so EnsureWarmWorkspaceLayout can
+	// materialize it into the read-only /workspace/shared tree.
+	adapterSrv.SharedAssetsDir = *sharedAssetsDir
+	parsedShared, err := sharedassets.Decode(*sharedAssets)
+	if err != nil {
+		log.Fatalf("lenny-adapter: %v", err)
+	}
+	adapterSrv.SharedAssets = parsedShared
+	// §6.1: /workspace/slots and the staging area must exist before the
+	// pod is claimed. The pod spec mounts one emptyDir at /workspace, so
+	// create the subdirectories at startup rather than lazily at claim time.
+	// §6.4: the same step materializes /workspace/shared read-only.
+	if err := adapterSrv.EnsureWarmWorkspaceLayout(); err != nil {
+		log.Fatalf("lenny-adapter: %v", err)
+	}
+	// §4.7.11: one SO_PEERCRED posture governs every adapter-agent socket,
+	// the CH-MSGSOCK runtime socket and the intra-pod MCP sockets. In
+	// nonce-only mode the MCP servers add the per-connection
+	// challenge-response to the static nonce.
+	peerAuth, err := agentSocketPeerAuth(resolveRuntimeUID(*runtimeUID), *requireSoPeercred,
+		*runtimeSocket != "" || *mcpSocket != "" || *lifecycleSocket != "" || supIn.Supervised())
+	if err != nil {
+		log.Fatalf("lenny-adapter: %v", err)
+	}
+	adapterSrv.PeerAuth = peerAuth
+	// §9.1: bind the platform MCP socket and, when a gateway
+	// address is configured, dial the gateway's GatewayControl service so
+	// the platform MCP server forwards a type:agent runtime's tools/list and
+	// tools/call (and the §9.3 per-connector tool calls) to the gateway.
+	// F-9.1.1.
+	gwCloser, err := adapterSrv.ConnectGateway(*mcpSocket, *gatewayGRPCAddr, *certFile, *keyFile, *clientCAFile)
+	if err != nil {
+		log.Fatalf("lenny-adapter: %v", err)
+	}
+	defer func() { _ = gwCloser.Close() }()
+	if *gatewayGRPCAddr != "" {
+		log.Printf("lenny-adapter: §9.1 platform tool forwarding to gateway at %s", *gatewayGRPCAddr)
+	}
+	adapterSrv.CredentialsDir = *credentialsDir
+	// §5.2 whole-pod scrub: wire the recycle-scrub driver's host operations so
+	// a session-mode recycle actually scrubs the pod. The scrub reads its
+	// credential and workspace paths from CredentialsDir and WorkspaceBase set
+	// above.
+	adapterSrv.ScrubOps = newScrubOps()
+	// §15.4: the adapter manifest is written into /run/lenny alongside
+	// the credential file.
+	adapterSrv.ManifestDir = *credentialsDir
+	// §4.7.11 Runtime connection handshake: both runtime listeners compare
+	// each accepted connection's nonce line with the mcpNonce of the
+	// manifest published in ManifestDir at that moment. They are bound here,
+	// before any start publishes a manifest, so they take a provider rather
+	// than a value.
+	runtimeNonce := adapter.PublishedManifestNonce(adapterSrv.ManifestDir)
+	// §4.7: the manifest's observability object points an OTel-emitting
+	// runtime at the deployment's OTLP collector.
+	adapterSrv.OTLPEndpoint = *otlpEndpoint
+	adapterSrv.OTLPTLSDisabled = *otlpTLSDisabled
+	// §15.4.6: when a lifecycle socket is configured, the adapter listens
+	// on it for the Full-level runtime's lifecycle connection and
+	// advertises it in the session manifest.
+	lifecycle, err := attachLifecycle(adapterSrv, *lifecycleSocket, peerAuth, runtimeNonce)
+	if err != nil {
+		log.Fatalf("lenny-adapter: %v", err)
+	}
+
+	switch {
+	case supIn.Supervised():
+		// spec: §4.7.10 (Runtime supervisor) — the runtime process is
+		// launched through the runtime supervisor, and one CH-MSGSOCK
+		// transport is composed per launched process; the first listener is
+		// bound here, before READY.
+		rt, err := newSupervisedRuntime(supIn, *runtimeSocket, peerAuth, runtimeNonce, lifecycle)
+		if err != nil {
+			log.Fatalf("lenny-adapter: %v", err)
+		}
+		adapterSrv.UseSupervisedRuntime(rt)
+		defer closeRuntimeListener(rt.CloseListener, log.Printf)
+		log.Printf("lenny-adapter: §4.7.10 supervised runtime on socket %s, supervisor on %s", *runtimeSocket, supIn.Socket)
+	case *runtimeSocket != "":
+		// §4.7 sidecar model: bind the abstract socket the runtime
+		// container dials. The controller sets LENNY_ADAPTER_SOCKET on
+		// the runtime container to this same name.
+		sp, err := adapter.NewSocketRuntimeProcess(*runtimeSocket, peerAuth, runtimeNonce)
+		if err != nil {
+			log.Fatalf("lenny-adapter: %v", err)
+		}
+		adapterSrv.Runtime = sp
+		// Run the pod-scope teardown (see adapter.SocketRuntimeProcess) at
+		// process exit: it ends the runtime's connection and releases the
+		// listener. main returns only after srv.Serve returns, so this runs once
+		// the gRPC server has stopped serving. spec: §4.7.10, §28.5.3.
+		defer closeRuntimeListener(sp.CloseListener, log.Printf)
+		log.Printf("lenny-adapter: §4.7 sidecar runtime transport on socket %s", sp.SocketPath())
+	case *runtimeBin != "":
+		// Developer loop: exec the runtime as a child and drive it over
+		// stdin/stdout.
+		adapterSrv.Runtime = executor.NewSubprocessExecutor(executor.SubprocessOptions{
+			BinPath: *runtimeBin,
+		})
+	}
+
+	// spec: §4.7 (ReportUsage), §11.2 (direct-mode usage) — install the
+	// direct-mode usage path: construct the UsageMeter, assign it to
+	// adapterSrv.Usage so ReportUsage stops returning Unimplemented in
+	// production (F-15.3.7), and, when CH-RUNTIMEOPS is configured,
+	// wire the token sink that folds each llm_request_completed frame's
+	// direct-mode token counts into it. Each frame names its session, and
+	// the sink folds only for a session bound to the pod, so a fold is
+	// never charged to a session the pod does not serve.
+	//
+	// This runs before the lifecycle Run goroutine is launched below, so
+	// the sink is assigned to the lock-free RuntimeOps.usage field
+	// before the read loop that reads it starts. That ordering is the
+	// invariant the field relies on in place of a lock (see
+	// RuntimeOps.SetUsageSink); wiring after the Run goroutine would
+	// race the read loop and violate it.
+	adapter.WireDirectModeUsage(adapterSrv, lifecycle)
+
+	if lifecycle != nil {
+		go func() {
+			if err := lifecycle.Run(context.Background()); err != nil {
+				log.Printf("lenny-adapter: runtime operations channel (CH-RUNTIMEOPS) stopped: %v", err)
+			}
+		}()
+	}
+
+	srv := adapter.NewGRPCServer(adapterSrv, opts...)
+
+	// spec: §4.7.9 (step 4); §4.7.10 (Runtime supervisor, Launch) — the
+	// supervisor gate and the warm-up launch run before the gRPC listener is
+	// bound, because the pod's readiness probe reads the bind as READY.
+	pingCtx, stopPing := context.WithCancel(context.Background())
+	defer stopPing()
+	adapter.RunPreReady(context.Background(), preReadyConfig(adapterSrv, srv, supIn, peerAuth, *addr, signals, pingCtx))
+}
+
+// preReadyConfig assembles RunPreReady's dependencies for this adapter.
+func preReadyConfig(adapterSrv *adapter.Server, srv *grpc.Server, supIn superviseInputs,
+	peerAuth adapter.SocketPeerAuth, addr string, signals <-chan os.Signal, pingCtx context.Context,
+) adapter.PreReadyConfig {
+	cfg := adapter.PreReadyConfig{
+		Signals: signals,
+		OnSignal: func() {
+			// §6.1: SIGTERM during sdk_connecting tears the pre-connected SDK
+			// down within LENNY_DEMOTE_TIMEOUT_SECONDS, and on a supervised
+			// pod the launch mode's branch ends a launched process. The exit
+			// path then closes CH-RUNTIMEOPS and stops the server, writing no
+			// session frame of its own (§28.5.3).
+			adapterSrv.ExitOnSignal(adapter.DemoteTimeoutFromEnv(), srv)
+		},
+		Listen: func() (net.Listener, error) {
+			lis, err := net.Listen("tcp", addr)
+			if err == nil {
+				log.Printf("lenny-adapter: serving the adapter on %s", addr)
+			}
+			return lis, err
+		},
+		Serve: srv.Serve,
+		Stop:  srv.Stop,
+		Exit: func(code int) {
+			if code != 0 {
+				os.Exit(code)
+			}
+		},
+	}
+	rt := adapterSrv.SupervisedRuntimeOrNil()
+	if rt == nil {
+		return cfg
+	}
+	cfg.ServiceMode = supIn.Mode == adapter.LaunchService
+	cfg.Liveness = rt.SetOnNotLive
+	cfg.AwaitSupervisor = func(ctx context.Context) error {
+		link, err := adapter.AwaitSupervisor(ctx, adapter.AwaitSupervisorConfig{
+			Socket: supIn.Socket, Auth: peerAuth, Lifetime: supIn.Lifetime, Timeout: supIn.WaitTimeout,
+		})
+		if err != nil {
+			return err
+		}
+		rt.AttachLink(link)
+		go link.RunPing(pingCtx, supIn.PingInterval, supIn.PingTimeout)
+		return nil
+	}
+	switch supIn.Mode {
+	case adapter.LaunchService:
+		cfg.WarmUp = boundedWarmUp(supIn.WarmUpTimeout, rt.WarmUp)
+	case adapter.LaunchPreconnectSDKWarm:
+		cfg.WarmUp = boundedWarmUp(supIn.WarmUpTimeout, adapterSrv.PreConnect)
+	}
+	return cfg
+}
+
+// boundedWarmUp bounds a warm-up launch by --warm-up-timeout.
+func boundedWarmUp(timeout time.Duration, warm func(context.Context) error) func(context.Context) error {
+	return func(ctx context.Context) error {
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		return warm(ctx)
+	}
+}
+
+// envIntOr returns the integer value of the named environment variable,
+// or def when the variable is unset or not parseable. spec: §11.3.
+func envIntOr(name string, def int) int {
+	v := os.Getenv(name)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		log.Printf("lenny-adapter: ignoring unparseable %s=%q", name, v)
+		return def
+	}
+	return n
+}
+
+// envInt64Or returns the int64 value of the named environment variable,
+// or def when the variable is unset or not parseable. spec: §4.4.
+func envInt64Or(name string, def int64) int64 {
+	v := os.Getenv(name)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		log.Printf("lenny-adapter: ignoring unparseable %s=%q", name, v)
+		return def
+	}
+	return n
+}

@@ -1,0 +1,561 @@
+// SPDX-License-Identifier: MIT
+
+package sandbox_test
+
+import (
+	"context"
+	"testing"
+
+	corev1 "k8s.io/api/core/v1"
+	nodev1 "k8s.io/api/node/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/lennylabs/lenny/pkg/admission/ownership"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
+	"github.com/lennylabs/lenny/pkg/controller/sandbox"
+	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
+)
+
+const (
+	testName  = "claude-worker-1"
+	testPodIP = "10.244.1.7"
+)
+
+func newScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+	s := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(s))
+	utilruntime.Must(lennyv1.AddToScheme(s))
+	return s
+}
+
+// newClient creates the test's namespace on the package's shared envtest
+// API server (sharedEnv), and seeds the supplied objects (Spec
+// via Create, then Status via SSA Apply under the
+// `lenny-warm-pool-controller` field manager so the production
+// reconciler's Apply path sees a same-manager update rather than
+// a cross-manager conflict). The fake client does not yet implement
+// SSA (kubernetes/kubernetes#115598), so this routes through a real
+// kube-apiserver via envtest.
+func newClient(t *testing.T, s *runtime.Scheme, objs ...client.Object) client.Client {
+	t.Helper()
+	env := sharedEnv.Start(t)
+	c, err := client.New(env.RESTConfig(), client.Options{Scheme: s})
+	if err != nil {
+		t.Fatalf("client.New: %v", err)
+	}
+	ctx := context.Background()
+	ns := testNamespaces.Create(t, c)
+	// Pre-create the three §5.3 RuntimeClass objects podspec.Build
+	// references. envtest enforces the RuntimeClass admission check
+	// (real apiserver); the fake client did not. The handlers are
+	// stand-ins — the test never schedules these pods anywhere.
+	for _, rc := range []string{"runc", "gvisor", "kata"} {
+		if err := c.Create(ctx, &nodev1.RuntimeClass{
+			ObjectMeta: metav1.ObjectMeta{Name: rc},
+			Handler:    rc,
+		}); err != nil && !apierrors.IsAlreadyExists(err) {
+			t.Fatalf("create RuntimeClass %s: %v", rc, err)
+		}
+	}
+	for _, o := range objs {
+		// A fixture built for another test's namespace or Runtime would
+		// land among another test's objects on the shared control plane.
+		if got := o.GetNamespace(); got != "" && got != ns {
+			t.Fatalf("seed %T %s: namespace %q is not this test's namespace %q", o, o.GetName(), got, ns)
+		}
+		if rt, ok := o.(*lennyv1.Runtime); ok && rt.Name != testRuntime(t) {
+			t.Fatalf("seed Runtime %s: name is not this test's Runtime %q", rt.Name, testRuntime(t))
+		}
+		var (
+			sbStatus  lennyv1.SandboxStatus
+			podStatus corev1.PodStatus
+			seedAfter func()
+		)
+		switch v := o.(type) {
+		case *lennyv1.Sandbox:
+			sbStatus = v.Status
+			v.Status = lennyv1.SandboxStatus{}
+			seedAfter = func() {
+				if sbStatus.Phase == "" && sbStatus.PodName == "" &&
+					sbStatus.NodeName == "" && sbStatus.PodIP == "" {
+					return
+				}
+				patch := &lennyv1.Sandbox{
+					TypeMeta: metav1.TypeMeta{
+						APIVersion: lennyv1.GroupVersion.String(),
+						Kind:       "Sandbox",
+					},
+					ObjectMeta: metav1.ObjectMeta{Name: v.Name, Namespace: v.Namespace},
+				}
+				patch.Status = sbStatus
+				if err := c.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController))); err != nil {
+					t.Fatalf("seed status Sandbox %s: %v", v.Name, err)
+				}
+			}
+		case *corev1.Pod:
+			podStatus = v.Status
+			v.Status = corev1.PodStatus{}
+			seedAfter = func() {
+				if podStatus.Phase == "" && podStatus.PodIP == "" && len(podStatus.Conditions) == 0 {
+					return
+				}
+				v.Status = podStatus
+				if err := c.Status().Update(ctx, v); err != nil {
+					t.Fatalf("seed status Pod %s: %v", v.Name, err)
+				}
+			}
+		}
+		if err := c.Create(ctx, o); err != nil {
+			t.Fatalf("create %T %s: %v", o, o.GetName(), err)
+		}
+		if seedAfter != nil {
+			seedAfter()
+		}
+	}
+	return c
+}
+
+// utilruntime + clientgoscheme stay referenced for tests that build a
+// fresh scheme directly.
+var (
+	_ = utilruntime.Must
+	_ = clientgoscheme.AddToScheme
+)
+
+func sandboxCR(t *testing.T, phase string) *lennyv1.Sandbox {
+	return &lennyv1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNamespace(t)},
+		Spec: lennyv1.SandboxSpec{
+			RuntimeRef:       testRuntime(t),
+			PoolRef:          "claude-worker",
+			IsolationProfile: "sandboxed",
+		},
+		Status: lennyv1.SandboxStatus{Phase: phase},
+	}
+}
+
+// TestReconcileClampsPodGraceToTemplateCeiling_spec_4_6_1 confirms the
+// reconciler resolves the Sandbox's pool and template and clamps the
+// created pod's terminationGracePeriodSeconds to the template's
+// maxTerminationGracePeriodSeconds ceiling.
+func TestReconcileClampsPodGraceToTemplateCeiling_spec_4_6_1(t *testing.T) {
+	s := newScheme(t)
+	ceiling := int64(45)
+	tmpl := &lennyv1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "claude-template", Namespace: testNamespace(t)},
+		Spec: lennyv1.SandboxTemplateSpec{
+			RuntimeRef:                       testRuntime(t),
+			MaxTerminationGracePeriodSeconds: &ceiling,
+		},
+	}
+	pool := &lennyv1.SandboxWarmPool{
+		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker", Namespace: testNamespace(t)},
+		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "claude-template", MinWarm: 1, MaxWarm: 3},
+	}
+	c := newClient(t, s, sandboxCR(t, ""), runtimeCR(t), tmpl, pool)
+
+	if err := reconcile(t, c, s); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	var pod corev1.Pod
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); err != nil {
+		t.Fatalf("get pod: %v", err)
+	}
+	if g := pod.Spec.TerminationGracePeriodSeconds; g == nil || *g != ceiling {
+		t.Errorf("terminationGracePeriodSeconds = %v, want %d (template ceiling)", g, ceiling)
+	}
+}
+
+func runtimeCR(t *testing.T) *lennyv1.Runtime {
+	return &lennyv1.Runtime{
+		ObjectMeta: metav1.ObjectMeta{Name: testRuntime(t)},
+		Spec: lennyv1.RuntimeSpec{
+			Type: "agent",
+			// spec: §5.3 (F-5.3.4) — the Runtime CRD pins images by digest;
+			// envtest enforces the @sha256:<64-hex> Pattern, so the test
+			// helper uses a digest reference rather than a tag.
+			Image:            "ghcr.io/acme/claude-code@sha256:" + "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+			Command:          []string{"/usr/local/bin/lenny"},
+			IntegrationLevel: "full",
+		},
+	}
+}
+
+func podCR(t *testing.T, phase corev1.PodPhase, ready bool) *corev1.Pod {
+	// envtest enforces real Pod validation (spec.containers is
+	// required). A stand-in container suffices; the reconciler reads
+	// only pod.Status, not pod.Spec, for its phase decisions.
+	p := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNamespace(t)},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "stub", Image: "k8s.gcr.io/pause"}},
+		},
+		Status: corev1.PodStatus{Phase: phase, PodIP: testPodIP},
+	}
+	if ready {
+		p.Status.Conditions = []corev1.PodCondition{
+			{Type: corev1.PodReady, Status: corev1.ConditionTrue},
+		}
+	}
+	return p
+}
+
+func reconcile(t *testing.T, c client.Client, s *runtime.Scheme) error {
+	t.Helper()
+	r := &sandbox.Reconciler{Client: c, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1", SupervisorImage: "ghcr.io/lennylabs/lenny-supervisor:v1"}
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: client.ObjectKey{Namespace: testNamespace(t), Name: testName},
+	})
+	return err
+}
+
+func getSandbox(t *testing.T, c client.Client) lennyv1.Sandbox {
+	t.Helper()
+	var sb lennyv1.Sandbox
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &sb); err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	return sb
+}
+
+// TestReconcileDevModeDefaultsPodToRunc_spec_5_3 verifies the §5.3 pod-fallback default: a Sandbox that omits an isolation profile
+// stamps runtimeClassName=runc under dev mode (so a gVisor-less cluster
+// can launch the pod), and gvisor without dev mode.
+//
+// spec: §5.3.
+func TestReconcileDevModeDefaultsPodToRunc_spec_5_3(t *testing.T) {
+	s := newScheme(t)
+	sb := sandboxCR(t, "")
+	sb.Spec.IsolationProfile = "" // exercise the controller default fallback
+	c := newClient(t, s, sb, runtimeCR(t))
+
+	r := &sandbox.Reconciler{Client: c, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1", SupervisorImage: "ghcr.io/lennylabs/lenny-supervisor:v1", DevMode: true}
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: client.ObjectKey{Namespace: testNamespace(t), Name: testName},
+	}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	var pod corev1.Pod
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); err != nil {
+		t.Fatalf("expected a backing pod: %v", err)
+	}
+	if pod.Spec.RuntimeClassName == nil || *pod.Spec.RuntimeClassName != "runc" {
+		t.Errorf("dev-mode runtimeClassName = %v, want runc", pod.Spec.RuntimeClassName)
+	}
+}
+
+// TestReconcileMicrovmLaunchesKataPod_spec_5_3_8 drives a microvm
+// Sandbox through the production reconciler and confirms it launches a
+// genuine Kata pod end-to-end: the §5.3 row-3 RuntimeClass (kata) plus
+// the §17.2 dedicated-node isolation (hard node affinity on
+// lenny.dev/node-pool=kata and the lenny.dev/isolation=kata:NoSchedule
+// toleration). Before F-5.3.8, microvm isolation was type-checked and
+// the podspec builder was unit-tested, but no controller-level reconcile
+// drove a Kata pod to creation through the apiserver.
+//
+// spec: §5.3 row 3 (microvm → kata); §17.2.
+func TestReconcileMicrovmLaunchesKataPod_spec_5_3_8(t *testing.T) {
+	s := newScheme(t)
+	sb := sandboxCR(t, "")
+	sb.Spec.IsolationProfile = "microvm"
+	c := newClient(t, s, sb, runtimeCR(t))
+
+	if err := reconcile(t, c, s); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	var pod corev1.Pod
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); err != nil {
+		t.Fatalf("expected a Kata-isolated backing pod: %v", err)
+	}
+	if pod.Spec.RuntimeClassName == nil || *pod.Spec.RuntimeClassName != "kata" {
+		t.Fatalf("runtimeClassName = %v, want kata", pod.Spec.RuntimeClassName)
+	}
+
+	// §17.2 control 2: hard node affinity pinning the pod to the Kata pool.
+	if !podHasKataNodeAffinity(&pod) {
+		t.Errorf("Kata pod missing the required %s=%s node affinity (§17.2 control 2)",
+			podspec.KataNodePoolLabelKey, podspec.KataNodePoolValue)
+	}
+	// §17.2 control 3: toleration for the dedicated-node taint.
+	if !podHasKataToleration(&pod) {
+		t.Errorf("Kata pod missing the %s=%s:NoSchedule toleration (§17.2 control 3)",
+			podspec.KataIsolationTaintKey, podspec.KataIsolationTaintValue)
+	}
+}
+
+// podHasKataNodeAffinity reports whether pod carries the §17.2 control-2
+// required node affinity matching the Kata node pool.
+func podHasKataNodeAffinity(pod *corev1.Pod) bool {
+	if pod.Spec.Affinity == nil || pod.Spec.Affinity.NodeAffinity == nil {
+		return false
+	}
+	req := pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+	if req == nil {
+		return false
+	}
+	for _, term := range req.NodeSelectorTerms {
+		for _, expr := range term.MatchExpressions {
+			if expr.Key == podspec.KataNodePoolLabelKey &&
+				expr.Operator == corev1.NodeSelectorOpIn {
+				for _, v := range expr.Values {
+					if v == podspec.KataNodePoolValue {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// podHasKataToleration reports whether pod tolerates the §17.2 control-3
+// dedicated-node taint.
+func podHasKataToleration(pod *corev1.Pod) bool {
+	for _, tol := range pod.Spec.Tolerations {
+		if tol.Key == podspec.KataIsolationTaintKey &&
+			tol.Value == podspec.KataIsolationTaintValue &&
+			tol.Effect == corev1.TaintEffectNoSchedule {
+			return true
+		}
+	}
+	return false
+}
+
+func TestReconcileCreatesPodForNewSandbox(t *testing.T) {
+	s := newScheme(t)
+	c := newClient(t, s, sandboxCR(t, ""), runtimeCR(t))
+
+	if err := reconcile(t, c, s); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	var pod corev1.Pod
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); err != nil {
+		t.Fatalf("expected a backing pod to be created: %v", err)
+	}
+	if len(pod.Spec.Containers) != 2 {
+		t.Errorf("pod has %d containers, want 2", len(pod.Spec.Containers))
+	}
+	// spec: §4.6.1 — a Sandbox with no resolvable template ceiling gets
+	// the 120s disruption-protection default.
+	if g := pod.Spec.TerminationGracePeriodSeconds; g == nil || *g != 120 {
+		t.Errorf("terminationGracePeriodSeconds = %v, want 120 (§4.6.1 default)", g)
+	}
+	if len(pod.OwnerReferences) != 1 ||
+		pod.OwnerReferences[0].Kind != "Sandbox" ||
+		pod.OwnerReferences[0].Name != testName {
+		t.Errorf("pod owner references = %+v, want one Sandbox/%s", pod.OwnerReferences, testName)
+	}
+	if got := getSandbox(t, c).Status.PodName; got != testName {
+		t.Errorf("sandbox status.podName = %q, want %q", got, testName)
+	}
+}
+
+// TestReconcileCreatesEmbeddedPodForEmbeddedRuntime confirms the §4.7
+// deploymentModel field threads from the Runtime CRD through the
+// reconciler to podspec: an embedded runtime yields a single-container
+// pod.
+func TestReconcileCreatesEmbeddedPodForEmbeddedRuntime(t *testing.T) {
+	s := newScheme(t)
+	rt := runtimeCR(t)
+	rt.Spec.DeploymentModel = "embedded"
+	// spec: §5.1 (command) — command is forbidden on an embedded runtime.
+	rt.Spec.Command = nil
+	c := newClient(t, s, sandboxCR(t, ""), rt)
+
+	if err := reconcile(t, c, s); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	var pod corev1.Pod
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); err != nil {
+		t.Fatalf("expected a backing pod to be created: %v", err)
+	}
+	if len(pod.Spec.Containers) != 1 {
+		t.Errorf("embedded runtime pod has %d containers, want 1", len(pod.Spec.Containers))
+	}
+}
+
+// TestReconcileWiresT4WorkspaceTierFromRuntimeCRD_spec_6_4 confirms the
+// §6.4 enforcement chain: a Runtime declared at
+// `workspaceTier: T4` causes the sandbox reconciler to stamp the
+// `lenny.dev/workspace-tier: t4` pod label the lenny-t4-node-isolation
+// admission webhook keys on, pin the pod to a T4 node via nodeSelector,
+// and tolerate the T4 NoSchedule taint. Without that triple, the webhook
+// rejects the pod and a T4 Runtime cannot back any pool. spec: §6.4.
+func TestReconcileWiresT4WorkspaceTierFromRuntimeCRD_spec_6_4(t *testing.T) {
+	s := newScheme(t)
+	rt := runtimeCR(t)
+	rt.Spec.WorkspaceTier = "T4"
+	c := newClient(t, s, sandboxCR(t, ""), rt)
+
+	if err := reconcile(t, c, s); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	var pod corev1.Pod
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); err != nil {
+		t.Fatalf("expected a backing pod to be created: %v", err)
+	}
+	if got := pod.Labels["lenny.dev/workspace-tier"]; got != "t4" {
+		t.Errorf("pod label lenny.dev/workspace-tier = %q, want %q", got, "t4")
+	}
+	if got := pod.Spec.NodeSelector["lenny.dev/workspace-tier"]; got != "t4" {
+		t.Errorf("nodeSelector lenny.dev/workspace-tier = %q, want %q", got, "t4")
+	}
+	var matched bool
+	for _, tol := range pod.Spec.Tolerations {
+		if tol.Key == "lenny.dev/workspace-tier" &&
+			tol.Operator == corev1.TolerationOpEqual &&
+			tol.Value == "t4" &&
+			tol.Effect == corev1.TaintEffectNoSchedule {
+			matched = true
+		}
+	}
+	if !matched {
+		t.Errorf("tolerations = %+v, want one lenny.dev/workspace-tier=t4:NoSchedule entry",
+			pod.Spec.Tolerations)
+	}
+}
+
+// TestReconcileNonT4RuntimeOmitsT4Injection_spec_6_4 confirms a Runtime
+// without an explicit T4 tier (the default T3 path) does not pick up the
+// T4 dedicated-node injection, so a non-T4 pod cannot accidentally
+// schedule onto a T4-dedicated node. The webhook rejects a non-T4 pod that
+// carries the T4 label/selector/toleration. spec: §6.4.
+func TestReconcileNonT4RuntimeOmitsT4Injection_spec_6_4(t *testing.T) {
+	s := newScheme(t)
+	c := newClient(t, s, sandboxCR(t, ""), runtimeCR(t))
+
+	if err := reconcile(t, c, s); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	var pod corev1.Pod
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); err != nil {
+		t.Fatalf("get pod: %v", err)
+	}
+	if _, ok := pod.Labels["lenny.dev/workspace-tier"]; ok {
+		t.Errorf("non-T4 pod carries lenny.dev/workspace-tier label, want absent (labels=%v)", pod.Labels)
+	}
+	if _, ok := pod.Spec.NodeSelector["lenny.dev/workspace-tier"]; ok {
+		t.Errorf("non-T4 pod carries lenny.dev/workspace-tier nodeSelector, want absent (selector=%v)",
+			pod.Spec.NodeSelector)
+	}
+	for _, tol := range pod.Spec.Tolerations {
+		if tol.Key == "lenny.dev/workspace-tier" {
+			t.Errorf("non-T4 pod tolerates lenny.dev/workspace-tier (got %+v), want absent", tol)
+		}
+	}
+}
+
+func TestReconcileAdvancesWarmingToIdleWhenPodReady(t *testing.T) {
+	s := newScheme(t)
+	c := newClient(t, s, sandboxCR(t, "warming"), runtimeCR(t), podCR(t, corev1.PodRunning, true))
+
+	if err := reconcile(t, c, s); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got := getSandbox(t, c).Status.Phase; got != "idle" {
+		t.Errorf("phase = %q, want idle once the pod is ready", got)
+	}
+}
+
+func TestReconcileRecordsPodIP(t *testing.T) {
+	s := newScheme(t)
+	c := newClient(t, s, sandboxCR(t, "warming"), runtimeCR(t), podCR(t, corev1.PodRunning, true))
+
+	if err := reconcile(t, c, s); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got := getSandbox(t, c).Status.PodIP; got != testPodIP {
+		t.Errorf("sandbox status.podIP = %q, want %q so the gateway can reach the adapter", got, testPodIP)
+	}
+}
+
+func TestReconcileAdvancesWarmingToFailedOnPodFailure(t *testing.T) {
+	s := newScheme(t)
+	c := newClient(t, s, sandboxCR(t, "warming"), runtimeCR(t), podCR(t, corev1.PodFailed, false))
+
+	if err := reconcile(t, c, s); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got := getSandbox(t, c).Status.Phase; got != "failed" {
+		t.Errorf("phase = %q, want failed when the pod failed", got)
+	}
+}
+
+func TestReconcileWaitsWhilePodPending(t *testing.T) {
+	s := newScheme(t)
+	c := newClient(t, s, sandboxCR(t, "warming"), runtimeCR(t), podCR(t, corev1.PodPending, false))
+
+	if err := reconcile(t, c, s); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got := getSandbox(t, c).Status.Phase; got != "warming" {
+		t.Errorf("phase = %q, want warming while the pod is still pending", got)
+	}
+}
+
+func TestReconcileDrainsIdleSandboxWhosePodVanished(t *testing.T) {
+	s := newScheme(t)
+	c := newClient(t, s, sandboxCR(t, "idle"), runtimeCR(t))
+
+	if err := reconcile(t, c, s); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got := getSandbox(t, c).Status.Phase; got != "draining" {
+		t.Errorf("phase = %q, want draining when an idle pod has vanished", got)
+	}
+}
+
+func TestReconcileDeletesPodWhileDraining(t *testing.T) {
+	s := newScheme(t)
+	c := newClient(t, s, sandboxCR(t, "draining"), runtimeCR(t), podCR(t, corev1.PodRunning, true))
+
+	if err := reconcile(t, c, s); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	var pod corev1.Pod
+	err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod)
+	if !apierrors.IsNotFound(err) {
+		t.Errorf("draining sandbox should have its pod deleted, got err=%v", err)
+	}
+}
+
+func TestReconcileTerminatesDrainingSandboxWithNoPod(t *testing.T) {
+	s := newScheme(t)
+	c := newClient(t, s, sandboxCR(t, "draining"), runtimeCR(t))
+
+	if err := reconcile(t, c, s); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got := getSandbox(t, c).Status.Phase; got != "terminated" {
+		t.Errorf("phase = %q, want terminated once a draining sandbox has no pod", got)
+	}
+}
+
+func TestReconcileMissingRuntimeErrors(t *testing.T) {
+	s := newScheme(t)
+	c := newClient(t, s, sandboxCR(t, "")) // no Runtime CR
+
+	if err := reconcile(t, c, s); err == nil {
+		t.Fatal("Reconcile should error when the referenced Runtime is missing")
+	}
+}
+
+func TestReconcileSandboxNotFound(t *testing.T) {
+	s := newScheme(t)
+	c := newClient(t, s)
+
+	if err := reconcile(t, c, s); err != nil {
+		t.Errorf("Reconcile of a deleted sandbox should not error: %v", err)
+	}
+}

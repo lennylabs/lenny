@@ -1,0 +1,20 @@
+# Container image for the {{.Name}} runtime.
+#
+# The build stage installs dependencies and compiles TypeScript to
+# JavaScript; the runtime stage carries only the production node_modules
+# and the compiled output, and runs as a non-root user.
+FROM node:22-slim AS build
+WORKDIR /src
+COPY package.json package-lock.json* ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM node:22-slim
+WORKDIR /app
+ENV NODE_ENV=production
+COPY package.json package-lock.json* ./
+RUN npm ci --omit=dev && rm -rf /root/.npm
+COPY --from=build /src/dist ./dist
+USER node
+ENTRYPOINT ["node", "dist/main.js"]

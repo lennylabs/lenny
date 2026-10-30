@@ -1,0 +1,169 @@
+---
+layout: default
+title: "Runtime Configuration"
+parent: "Runtime Author Guide"
+nav_order: 1
+---
+
+# Runtime Configuration
+
+This page describes the configuration an author sets on a `Runtime`: the fields of the runtime manifest, what each one controls, its default, and how it behaves when a derived runtime inherits or overrides it. It is the field reference for the manifest you register; the protocol your binary speaks is covered in the [Adapter Contract](../reference/adapter-contract.md), and the exhaustive deployment-level schema is in the [Configuration Reference](../reference/configuration.md).
+
+## What the manifest is
+
+A `Runtime` is the registration record for a runtime image. It is static configuration: an operator registers it through the admin API (see [Publishing](publishing.md#runtime-registration)), and the gateway reads it when it schedules pods and validates sessions. A runtime is not instantiated per session. The manifest sets the runtime's identity, its isolation and execution model, the capabilities its binary implements, the providers and credentials it can use, and the policies and defaults that govern its pods.
+
+A runtime is one of two kinds:
+
+- **Standalone:** the manifest carries an `image`. This is the common case and the path the rest of this page leads with.
+- **Derived:** the manifest carries a `baseRuntime` reference instead of an `image`, and customizes a base runtime's workspace, setup, interface, and policy without re-declaring its image or its security-critical fields. See [Derived runtimes](#derived-runtimes) below.
+
+A second axis is the `type` field, which is either `agent` or `mcp`. Most fields apply to both, but the `capabilities` group and `agentInterface` apply only to `type: agent`. The differences are called out per field below and summarized under [Type-specific fields](#type-specific-fields).
+
+## A minimal manifest
+
+The shortest manifest that registers a runtime and lets it handle sessions sets an identity, an image, a type, at least one provider, and labels. Everything else takes a default. The following is an example standalone `type: agent` runtime:
+
+```yaml
+name: my-agent
+image: registry.example.com/my-agent@sha256:...
+type: agent
+supportedProviders:
+  - anthropic_direct
+labels:
+  team: default
+```
+
+With this manifest the runtime runs one session per pod (`executionMode: session`), under the default isolation profile (`sandboxed`, gVisor), at the default integration level (`basic`). The sections below describe the fields you set when you need to depart from those defaults.
+
+## Field reference
+
+The tables group fields by purpose. For each field, the **Set on** column states whether the value is part of the runtime definition (`author`) or part of a warm pool's configuration (`pool default`, set per pool and overridable per pool). The **Derived** column states how the field behaves on a derived runtime, drawn from the runtime merge rules:
+
+- **Inherited:** always taken from the base; a derived runtime cannot set it.
+- **Prohibited:** a derived runtime must not set it; the gateway rejects registration if it is present.
+- **Override:** a derived value replaces the base value when present, and the base value applies when absent.
+- **Append** or **Merge:** collection and map fields where derived entries are added to or overlaid on the base.
+
+### Identity and image
+
+| Field | Controls | Values / default | Set on | Derived |
+| :--- | :--- | :--- | :--- | :--- |
+| `name` | The runtime's unique identifier, used by `runtimeSelector`, delegation, and the admin API. | String, required. | author | Each derived runtime has its own `name`. |
+| `image` | The container image the pod runs. Must be pinned by digest rather than a mutable tag. | Image reference, required on standalone runtimes. | author | Inherited. A derived runtime never carries its own image. Immutable on the base after registration. |
+| `baseRuntime` | The base runtime a derived runtime extends, in place of an `image`. | Runtime name; present only on derived runtimes. | author | N/A. |
+| `type` | Whether the runtime participates in the session lifecycle (`agent`) or hosts an MCP server (`mcp`). | `agent` (default) or `mcp`. | author | Prohibited. Must match the base. |
+| `command` | The argv of the runtime process, which the runtime supervisor launches in the runtime container. The image's `ENTRYPOINT` and `CMD` are not used. See [Runtime Supervisor](lifecycle.md#runtime-supervisor). | List of strings whose first element is an absolute path in the runtime image. Required on a `type: agent` runtime in the sidecar deployment model, and rejected on every other runtime. A field of the `Runtime` custom resource; the admin registration payload and the bootstrap seed do not carry it. | author | Inherited. A derived runtime may not set it. |
+| `env` | Variables for the runtime process, which the supervisor adds to each launch's environment. The image's `ENV` is not used, so list every variable the binary needs. The values are readable inside the runtime container and carry no secrets. | Optional list of `name` and `value` pairs. Valid only on a runtime that carries `command`, which is a `type: agent` runtime in the sidecar deployment model, and rejected on every other runtime. Each `name` is a non-empty POSIX variable name, appears once, and does not begin with `LENNY_`, which the platform reserves. A field of the `Runtime` custom resource; the admin registration payload and the bootstrap seed do not carry it. | author | Inherited. A derived runtime may not set it. |
+| `labels` | Key-value labels matched by environment `runtimeSelector` and `connectorSelector`. Required from v1. | Map of string to string, required. | author | Merge. Derived keys win on collision; base-only keys are preserved. |
+| `minPlatformVersion` | The minimum platform version that may register the runtime. | Semantic version string, optional. The gateway rejects registration on an older platform. | author | Override. |
+
+### Execution and isolation
+
+| Field | Controls | Values / default | Set on | Derived |
+| :--- | :--- | :--- | :--- | :--- |
+| `executionMode` | How sessions map to pods. See [Execution mode](#execution-mode) below for the full model. | `session` (default) or `service`. | author | Prohibited. Must match the base. |
+| `isolationProfile` | The Kubernetes `RuntimeClass` that isolates the pod. | `sandboxed` (gVisor, default), `microvm` (Kata), or `standard` (runc; requires an explicit operator opt-in with a security acknowledgment). | author | Prohibited. Must match the base. |
+| `allowedResourceClasses` | The CPU and memory classes a pool may select for the runtime. | List, for example `[small, medium, large]`. A pool's `resourceClass` must fall within this set. | author | Prohibited. A derived runtime's classes must be a subset of the base. |
+| `integrationLevel` | The author's declared level of the adapter contract the binary implements. Tooling and admission compare it against the observed level. | `basic` (default), `standard`, or `full`. Valid only on `type: agent`. | author | Inherited. The level is a property of the image. |
+
+The `isolationProfile` values map to isolation backends. `standard` (runc) provides no protection against kernel exploits and is intended for development and testing only. `sandboxed` (gVisor) is the default and the minimum recommended isolation for any workload that processes untrusted input, which includes any LLM-generated code execution. `microvm` (Kata) suits higher-risk, semi-trusted, or multi-tenant workloads and is the only profile that admits `recycle.allowCrossTenantReuse: true`, which applies only to the sequential-reuse path. A pod on such a pool is never reused across tenants, because a recycled pod keeps state the scrub does not reach and the tenant pin applies on every pool.
+
+### Capabilities (`type: agent` only)
+
+The `capabilities` group declares what interaction patterns and platform features the agent binary supports. It is valid only on `type: agent` runtimes; a `type: mcp` runtime has no `capabilities` field. The whole group is **Prohibited** on a derived runtime, because it is a property of the image.
+
+| Field | Controls | Values / default |
+| :--- | :--- | :--- |
+| `capabilities.interaction` | Whether the runtime handles a single request-response (`one_shot`) or an ongoing dialog with mid-session message delivery and clarification requests (`multi_turn`). | `one_shot` (default) or `multi_turn`. `multi_turn` requires `capabilities.injection.supported: true`. |
+| `capabilities.injection.supported` | Whether the runtime accepts mid-session message delivery (injection). The gateway rejects injection attempts against runtimes that do not support it. | `true` or `false` (default). |
+| `capabilities.injection.modes` | The injection delivery modes the runtime accepts. | List, for example `[immediate, queued]`. |
+| `capabilities.preConnect` | Whether the platform launches the agent SDK process during the warm phase, before any session (SDK-warm mode). In the sidecar model the [runtime supervisor](lifecycle.md#runtime-supervisor) launches it, and only when the pool's SDK-warm circuit breaker is closed at the moment the pod is created. When `true`, the adapter must implement `DemoteSDK`. | `true` or `false` (default). |
+| `capabilities.midSessionUpload` | Whether clients may upload files into an active session. The gateway rejects mid-session uploads against runtimes that do not declare it. | `true` or `false` (default). |
+| `sdkWarmBlockingPaths` | Glob patterns that, when matched by an uploaded file, demote an SDK-warm pod before use. Meaningful only when `capabilities.preConnect: true`. | List of glob patterns. Default: `["CLAUDE.md", ".claude/*"]`. |
+
+### Providers and credentials
+
+| Field | Controls | Values / default | Set on | Derived |
+| :--- | :--- | :--- | :--- | :--- |
+| `supportedProviders` | The model providers the runtime can use. | List, for example `[anthropic_direct, aws_bedrock]`. Required to register a usable runtime. | author | Override. A derived runtime may restrict the set but not expand beyond the base. |
+| `credentialCapabilities` | What the runtime's credential handling supports: in-place rotation and the proxy dialects its SDK speaks to Lenny's LLM proxy. | `hotRotation: true` or `false`; `proxyDialect` is a list of dialects (for example `[openai, anthropic]`), required when a pool uses `deliveryMode: proxy`, and set to `[]` for direct-only runtimes. | author | Override. |
+
+### Policy and limits
+
+| Field | Controls | Values / default | Set on | Derived |
+| :--- | :--- | :--- | :--- | :--- |
+| `limits` | Per-session bounds: `maxSessionAge`, `maxUploadSize`, and `maxRequestInputWaitSeconds` (the inter-agent clarification timeout). | Object; each member optional. | author | Override. The whole object is replaced when the derived runtime sets it. |
+| `setupCommandPolicy` | The allowlist and execution constraints for setup commands. | Object with `mode`, `shell`, `allowlist`, and `maxCommands`. | author | Override. A derived runtime may restrict the allowlist. |
+| `setupPolicy` | The timeout and timeout disposition for setup commands. | `timeoutSeconds` (waits indefinitely if absent) and `onTimeout` (`fail` or `warn`). | author | `timeoutSeconds` takes the maximum of base and derived; `onTimeout` overrides. |
+| `runtimeOptionsSchema` | A JSON Schema the gateway validates each session's `runtimeOptions` against. | JSON Schema object. | author | Override. A derived schema may only reference property names present in the base schema. |
+| `capabilityInferenceMode` | The default tool capability for unannotated MCP tools. | `strict` (default; unannotated tools infer as `admin` and emit a warning) or `permissive` (unannotated tools infer as `write`). | author | Override. A derived runtime may relax to `permissive`. |
+| `sessionPolicy` | The pod-occupancy configuration for `session` mode: concurrency, recycling, retirement, scrub, and idle bounds. See [Execution mode](#execution-mode) below. | Object; applies only to `executionMode: session`. | author | Override. The whole object is replaced when the derived runtime sets it. |
+
+Setup commands run for each session, in the session's workspace, after the workspace is materialized and before the session starts. A pod that serves more than one session runs each session's setup commands. Initialization of the runtime process that is specific to one session belongs in the runtime's handling of that session's first message, because a runtime process can serve more than one session and initializes once per launch. Work done in `OnCreate`, or in a hand-written runtime's handling of the session's `session_start` frame, delays the session's `session_started` acknowledgement, and when the adapter waits for that acknowledgement its wait is bounded: a start whose wait ends first fails. The [Adapter Contract](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin) defines both frames. `sessionPolicy` carries the pod-reuse policy for session mode, described under [Execution mode](#execution-mode).
+
+### Workspace and pool defaults
+
+| Field | Controls | Values / default | Set on | Derived |
+| :--- | :--- | :--- | :--- | :--- |
+| `workspaceDefaults` | Files and setup commands the gateway adds to every session's workspace. The gateway copies the defaults into a session's workspace plan when the plan binds, ahead of the client's own sources and setup commands, so a later change to the runtime does not reach a session whose plan has already bound. A client file at the same path replaces the default file. The runtime's `setupCommandPolicy` neither checks the default setup commands against its allowlist nor counts them toward `maxCommands`. | Object with `files` and `setupCommands`. Each file carries its content inline; larger files belong in `sharedAssets` or in the image. | author | Append. Derived files are appended to the base; a conflicting path is replaced by the derived file. Derived setup commands run after base setup commands. |
+| `sharedAssets` | Read-only files the adapter populates into `/workspace/shared/` at warm time, before the pod reports ready and before any slot exists. The directory is mounted on every pod. | List of `artifact` or `inline` entries with a destination path. | author | Append. A conflicting destination path is replaced by the derived entry. |
+| `defaultPoolConfig` | The pool settings a pool inherits when it does not set its own: warm count, resource class, and egress profile. | Object, for example `warmCount: 5`, `resourceClass: medium`, `egressProfile: restricted`. | author (the per-pool values are pool defaults) | Override. |
+
+Warm-pool fields such as `warmCount`, `resourceClass`, and `egressProfile` are set per pool when an operator attaches a pool to the runtime, and `defaultPoolConfig` supplies their fallback values. See [Pool Configuration](publishing.md#pool-configuration) for how a pool is attached and tuned. Derived runtimes have fully independent pool settings; a pool's resource classes cannot exceed the base runtime's `allowedResourceClasses`.
+
+### Delegation and discovery
+
+| Field | Controls | Values / default | Set on | Derived |
+| :--- | :--- | :--- | :--- | :--- |
+| `delegationPolicyRef` | The delegation policy that bounds the runtime's child tasks. | Policy name, optional. | author | Override (restrict only). A derived policy must be a subset of the base. |
+| `allowSelfRecursion` | Whether the runtime's `(runtime, pool)` identity may repeat in its own delegation lineage. A security boundary. | `true` or `false` (default). | author | Override (restrict only). A derived runtime may set `false` when the base is `true`, but a derived `true` is rejected when the base is `false`. |
+| `agentInterface` | The discovery and A2A-card metadata for the runtime: description, input and output modes, skills, and examples. Valid only on `type: agent`. | Object, optional. | author | Override. |
+| `publishedMetadata` | Opaque metadata entries the gateway serves without parsing, for example an A2A agent card. Each entry has a key, content type, and a visibility of `internal`, `tenant`, or `public`. | List, optional. | author | Append. A duplicate key is replaced by the derived entry. |
+
+The gateway treats `publishedMetadata` content as opaque pass-through, so validating its contents is the author's responsibility. When `agentInterface` is present, the gateway generates an A2A agent card at registration time and stores it as a `publishedMetadata` entry; an author who wants full control over the card omits `agentInterface` and publishes the card directly.
+
+## Execution mode
+
+The `executionMode` field is either `session` or `service`. The mode name follows the unit of the client contract.
+
+- **`session`** (default): the session is the managed unit. The gateway binds each session to a claimed pod and manages its workspace, lifecycle, and recovery. In the default configuration the pod is exclusive to one session and terminates when the session ends.
+- **`service`:** the runtime is a replicated service. The gateway routes each message to any ready, tenant-pinned replica, creates no pod claim, and materializes no workspace. Service mode provides no cross-message conversation continuity; every message is self-contained, and the platform may route successive messages of one session to different replicas. Stateless workloads with no workspace requirement are better registered as external connectors than as service-mode runtimes.
+
+Session mode is parameterized by the `sessionPolicy` block, which `service` mode ignores. The block's two governing fields are `maxConcurrentSessions` (the number of simultaneous sessions a pod may hold) and `recycle.enabled` (whether a pod serves successive sessions with a scrub between them). Their combinations cover the common configurations:
+
+| Configuration | `maxConcurrentSessions` | `recycle.enabled` | Behavior |
+| :--- | :--- | :--- | :--- |
+| One session per pod (default) | 1 | `false` | The pod is exclusive to a single session and terminates when the session ends. |
+| Pod reuse | 1 | `true` | The pod serves sequential sessions of one tenant, with a whole-pod scrub between sessions. |
+| Concurrent | N | `true` | The pod serves up to N simultaneous sessions and recycles when occupancy reaches zero, unless the last release ends the occupancy without reuse ([Recycle lifecycle](../reference/execution-modes#recycle-lifecycle)). |
+| Bounded cohort | N | `false` | The pod serves up to N simultaneous sessions, then terminates after the cohort drains. |
+
+Departing from one session per pod requires explicit acknowledgments, because the alternatives weaken isolation. `recycle.enabled: true` requires `recycle.acknowledgeBestEffortScrub: true`, because the between-session workspace scrub is best-effort and is not a security boundary. `maxConcurrentSessions > 1` requires `sessionPolicy.acknowledgeProcessLevelIsolation: true`, because concurrent slots share process namespace, `/tmp`, cgroup memory, and network stack. On a recycling pool with `recycle.maxSessionsPerPod` above 1 and a `recycle.scrubProfile` other than `vm-restart`, `recycle.runtimeProcess` is required: `keep` keeps the pod's runtime process across its sessions, and `restart` ends it in each whole-pod scrub so the next session runs in a newly launched process ([Runtime Process Lifetime](lifecycle.md#runtime-process-lifetime)). `restart` requires a runtime that carries `command`, runs in `session` mode, and does not declare `capabilities.preConnect: true`. `sessionPolicy.acknowledgeProcessLevelIsolation: true` is also required on such a pool under `keep`, because a later session can run in the process that served an earlier one; pool admission refuses the pool without it. A pool that recycles pods or runs more than one session per pod is pinned to a single tenant for its lifetime. `recycle.allowCrossTenantReuse: true` applies only to the sequential-reuse path (`maxConcurrentSessions: 1` with `recycle.enabled: true`) under `microvm` isolation, and a pod on such a pool is never reused across tenants, because a recycled pod keeps state the scrub does not reach and the tenant pin applies on every pool.
+
+When recycling is enabled, set `recycle.maxSessionsPerPod` to the number of sessions a pod serves before it is retired; the field is required and has no default. The block also carries `maxClientIdleSeconds` (the inactivity bound, default 900s, after which the gateway idle-suspends the session and releases its pod or slot, or expires a session that cannot be idle-suspended) and `onPoolExhausted` (`reject`, the default, or `queue` to hold a request in a bounded FIFO until a pod frees).
+
+This subsection summarizes the model so an author can choose a mode and set the policy. The full per-pod claim mechanism, the scrub procedure, and the retirement rules are platform behavior; consult the [Configuration Reference](../reference/configuration.md) and the [Pod Lifecycle](lifecycle.md) page for the exhaustive treatment.
+
+## Type-specific fields
+
+Most fields apply to both runtime types. The following apply only to one:
+
+- **`capabilities` and `sdkWarmBlockingPaths`:** `type: agent` only. A `type: mcp` runtime has no capabilities block, because it has no session lifecycle.
+- **`agentInterface`:** `type: agent` only. It signals workspace-file support and supplies discovery metadata.
+- **`integrationLevel`:** meaningful only on `type: agent`. The gateway rejects it on a `type: mcp` runtime.
+
+A `type: mcp` runtime hosts an MCP server behind Lenny's pod isolation, credential management, pool scaling, egress control, and audit, and its binary needs to know nothing about Lenny. It still sets identity, image, isolation, providers, credentials, limits, and pool defaults. See [`type: mcp` runtimes](integration-levels.md#type-mcp-runtimes) for how MCP runtimes differ from agents.
+
+## Derived runtimes
+
+A derived runtime references a `baseRuntime` instead of an `image` and customizes the base without re-declaring its security-critical fields. The **Derived** column in each table above states the rule for each field. The fields a derived runtime can independently configure are the pool settings, `workspaceDefaults`, setup commands, `setupPolicy.timeoutSeconds`, `agentInterface`, `delegationPolicyRef` (restrict only), `publishedMetadata`, `labels`, and `sessionPolicy`. The fields it can never set are `type`, `executionMode`, `isolationProfile`, `allowedResourceClasses`, `capabilities.interaction`, `capabilities.injection`, and `integrationLevel`; these are inherited or prohibited because they are properties of the base image or its security posture. The gateway rejects registration of a derived runtime that sets a prohibited field, or that widens a restrict-only field beyond the base.
+
+On the base runtime, `image` and `name` are immutable after registration. All other base fields are mutable, with impact validation: a change that would invalidate an existing derived runtime is rejected with the list of affected runtimes.
+
+## Where to read next
+
+- [Publishing](publishing.md) -- registering the manifest through the admin API and attaching a warm pool.
+- [Integration Levels](integration-levels.md) -- what the binary must implement at each declared `integrationLevel`.
+- [Pod Lifecycle](lifecycle.md) -- how `executionMode` and `sessionPolicy` play out across a pod's life.
+- [Configuration Reference](../reference/configuration.md) -- the exhaustive deployment-level schema.

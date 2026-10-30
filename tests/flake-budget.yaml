@@ -8,7 +8,7 @@
 # nightly invocations of phase-launch-gate fail.
 #
 # CI's PR gate refuses to merge a PR that adds a new entry without an
-# associated issue link and an ETA, per §21.4. The validator that enforces
+# associated issue link and an ETA, per TESTING.md §21.4. The validator that enforces
 # this lives in scripts/check-flake-budget.sh and runs in the Tier 0 static
 # gate.
 

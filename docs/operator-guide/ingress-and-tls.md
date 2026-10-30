@@ -44,7 +44,7 @@ gateway:
 
 ### 2. `lenny-ops` Ingress (mandatory)
 
-**What it serves.** The operability control plane — diagnostics, runbooks, audit query, backup/restore, drift detection, webhook subscriptions, the `/mcp/management` endpoint.
+**What it serves.** The operability control plane — diagnostics, runbooks, backup/restore, drift detection, webhook subscriptions, the `/mcp/management` endpoint. The audit query API is gateway-resident and served through the Gateway Ingress under `/v1/...`.
 
 **Who reaches it.** Platform operators via `lenny-ctl`, human on-call, AI DevOps agents, `kubectl lenny` — all from outside the cluster.
 

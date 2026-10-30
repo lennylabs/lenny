@@ -1,0 +1,524 @@
+// SPDX-License-Identifier: MIT
+
+package podregistry_test
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
+	"github.com/lennylabs/lenny/pkg/podregistry"
+)
+
+// scheme is the shared scheme every test wires into the fake client
+// so Sandbox CRUD round-trips through the controller-runtime API.
+func newScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+	s := runtime.NewScheme()
+	if err := lennyv1.AddToScheme(s); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	return s
+}
+
+func newRegistry(t *testing.T, namespace string, seed ...client.Object) *podregistry.CRDPodRegistry {
+	t.Helper()
+	cli := newFakeClient(t, seed...)
+	r, err := podregistry.New(cli, namespace)
+	if err != nil {
+		t.Fatalf("podregistry.New: %v", err)
+	}
+	return r
+}
+
+// newFakeClient builds the fake controller-runtime client every test uses.
+// Both Sandbox and the per-pod SandboxClaim carry a status subresource so
+// the §4.6.1 claim writes (SandboxClaim CREATE + `bound` status) and the
+// WarmPoolController-projected Sandbox.status round-trip through the API.
+func newFakeClient(t *testing.T, seed ...client.Object) client.Client {
+	t.Helper()
+	scheme := newScheme(t)
+	return fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(seed...).
+		WithStatusSubresource(&lennyv1.Sandbox{}, &lennyv1.SandboxClaim{}).
+		Build()
+}
+
+func seedSandbox(name, pool, phase string) *lennyv1.Sandbox {
+	sb := &lennyv1.Sandbox{}
+	sb.Namespace = "lenny-agents"
+	sb.Name = name
+	sb.Labels = map[string]string{podregistry.PoolLabel: pool}
+	sb.Spec.PoolRef = pool
+	sb.Spec.RuntimeRef = "echo"
+	sb.Spec.IsolationProfile = "sandboxed"
+	sb.Status.Phase = phase
+	return sb
+}
+
+// spec: §12.6 (GetPod returns the §6.2 phase via the CRD status)
+func TestGetPodReturnsCRDStatus(t *testing.T) {
+	r := newRegistry(t, "lenny-agents",
+		seedSandbox("alpha", "echo-pool", "idle"))
+	rec, err := r.GetPod(context.Background(), "alpha")
+	if err != nil {
+		t.Fatalf("GetPod: %v", err)
+	}
+	if rec.State != "idle" {
+		t.Errorf("State = %q, want idle", rec.State)
+	}
+	if rec.PoolID != "echo-pool" {
+		t.Errorf("PoolID = %q, want echo-pool", rec.PoolID)
+	}
+	if rec.IsolationProfile != "sandboxed" {
+		t.Errorf("IsolationProfile = %q, want sandboxed", rec.IsolationProfile)
+	}
+}
+
+// spec: §12.6 (GetPod for an unknown pod returns ErrNotFound)
+func TestGetPodMissingReturnsErrNotFound(t *testing.T) {
+	r := newRegistry(t, "lenny-agents")
+	_, err := r.GetPod(context.Background(), "missing")
+	if !errors.Is(err, podregistry.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+// spec: §6.2 (UpdatePodState writes the new phase under CAS)
+func TestUpdatePodStateWritesPhase(t *testing.T) {
+	r := newRegistry(t, "lenny-agents",
+		seedSandbox("alpha", "echo-pool", "warming"))
+	if err := r.UpdatePodState(context.Background(), "alpha",
+		podregistry.StateTransition{From: "warming", To: "idle"}); err != nil {
+		t.Fatalf("UpdatePodState: %v", err)
+	}
+	rec, _ := r.GetPod(context.Background(), "alpha")
+	if rec.State != "idle" {
+		t.Errorf("State = %q, want idle", rec.State)
+	}
+}
+
+// spec: §6.2 (mismatched From rejects the transition)
+func TestUpdatePodStateRejectsMismatchedFrom(t *testing.T) {
+	r := newRegistry(t, "lenny-agents",
+		seedSandbox("alpha", "echo-pool", "idle"))
+	err := r.UpdatePodState(context.Background(), "alpha",
+		podregistry.StateTransition{From: "warming", To: "claimed"})
+	if !errors.Is(err, podregistry.ErrInvalidTransition) {
+		t.Errorf("err = %v, want ErrInvalidTransition", err)
+	}
+}
+
+// The happy-path ClaimPod assertions (the per-pod claim CREATE plus the
+// `bound` binding-state status patch, the projected claimed record, and the
+// untouched Sandbox.status) write the binding state through the canonical
+// pkg/gateway/podclaim Server-Side Apply PATCH (§4.6.3: the gateway holds
+// `get`/`patch` and no `update` on sandboxclaims/status), which the
+// controller-runtime fake client cannot round-trip. They run against a real
+// API server in the tier-2 component suite
+// (tests/tier2_component/stores/crdpodregistry_claim_test.go:
+// TestCRDPodRegistryClaimCreatesPerPodClaim_spec_4_6_1,
+// TestCRDPodRegistryClaimSingleClaimGuard_spec_4_6_1, and
+// TestCRDPodRegistryClaimInertOptsUsePatchNotUpdate_spec_4_6_3), which also
+// pins the write to a PATCH so a regression to Status().Update is caught.
+
+// spec: §4.6.1 (ClaimPod returns ErrPoolExhausted when nothing idle)
+func TestClaimPodExhaustedWhenNoneIdle(t *testing.T) {
+	r := newRegistry(t, "lenny-agents",
+		seedSandbox("alpha", "echo-pool", "claimed"))
+	_, err := r.ClaimPod(context.Background(),
+		podregistry.ClaimOpts{PoolID: "echo-pool", TenantID: "acme", SessionID: "s1"})
+	if !errors.Is(err, podregistry.ErrPoolExhausted) {
+		t.Errorf("err = %v, want ErrPoolExhausted", err)
+	}
+}
+
+// spec: §4.6.1 (ClaimPod input validation). PoolID and SessionID are both
+// required: a claim with no pool has nothing to scan, and a claim with no
+// session has no attribution for the returned record. Each missing field is
+// rejected before any idle-pod scan, so the guard fails closed rather than
+// claiming a pod it cannot attribute.
+func TestClaimPodRejectsMissingRequiredOpts(t *testing.T) {
+	r := newRegistry(t, "lenny-agents",
+		seedSandbox("alpha", "echo-pool", "idle"))
+	cases := []struct {
+		name string
+		opts podregistry.ClaimOpts
+		want string
+	}{
+		{"no pool", podregistry.ClaimOpts{TenantID: "acme", SessionID: "s1"}, "PoolID is required"},
+		{"no session", podregistry.ClaimOpts{PoolID: "echo-pool", TenantID: "acme"}, "SessionID is required"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := r.ClaimPod(context.Background(), tc.opts)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want error containing %q", err, tc.want)
+			}
+			// A rejected claim returns before any idle-pod scan, so the seeded
+			// idle pod is untouched and stays claimable (the gateway never
+			// wrote its Sandbox.status.phase).
+			rec, gerr := r.GetPod(context.Background(), "alpha")
+			if gerr != nil {
+				t.Fatalf("GetPod after rejected claim: %v", gerr)
+			}
+			if rec.State != "idle" {
+				t.Errorf("pod state = %q after rejected claim, want idle (untouched)", rec.State)
+			}
+		})
+	}
+}
+
+// spec: §6.2 (UpdatePodState on an unknown pod returns ErrNotFound). The
+// CAS write reads the Sandbox first; a missing Sandbox maps the API
+// NotFound to the package sentinel so callers branch on it with errors.Is.
+func TestUpdatePodStateMissingReturnsErrNotFound(t *testing.T) {
+	r := newRegistry(t, "lenny-agents")
+	err := r.UpdatePodState(context.Background(), "ghost",
+		podregistry.StateTransition{From: "warming", To: "idle"})
+	if !errors.Is(err, podregistry.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+// spec: §4.6.1 (ReleasePod propagates a non-NotFound delete error). A
+// release that fails for any reason other than a missing claim wraps the
+// API error rather than swallowing it, so a transient delete failure
+// surfaces to the caller instead of silently leaving the claim in place.
+func TestReleasePodPropagatesDeleteError(t *testing.T) {
+	base := fake.NewClientBuilder().
+		WithScheme(newScheme(t)).
+		WithObjects(seedSandbox("alpha", "echo-pool", "claimed")).
+		WithStatusSubresource(&lennyv1.Sandbox{}, &lennyv1.SandboxClaim{}).
+		Build()
+	cli := interceptor.NewClient(base, interceptor.Funcs{
+		Delete: func(context.Context, client.WithWatch, client.Object, ...client.DeleteOption) error {
+			return apierrors.NewServiceUnavailable("apiserver down")
+		},
+	})
+	r, err := podregistry.New(cli, "lenny-agents")
+	if err != nil {
+		t.Fatalf("podregistry.New: %v", err)
+	}
+	rerr := r.ReleasePod(context.Background(), "alpha", podregistry.ReleaseCompleted)
+	if rerr == nil || !strings.Contains(rerr.Error(), "release alpha") {
+		t.Fatalf("ReleasePod err = %v, want a wrapped release error", rerr)
+	}
+}
+
+// spec: §4.6.1 (occupancy projection on claim DELETE), §4.6.3 (gateway is not
+// a Sandbox.status writer). ReleasePod deletes the deterministic per-pod
+// SandboxClaim and leaves Sandbox.status untouched. The release reason
+// no longer maps to a Sandbox phase.
+func TestReleasePodDeletesPerPodClaim_spec_4_6_3(t *testing.T) {
+	cli := newFakeClient(t, seedSandbox("alpha", "echo-pool", "claimed"))
+	// Seed the per-pod claim the release deletes.
+	claim := &lennyv1.SandboxClaim{}
+	claim.Namespace = "lenny-agents"
+	claim.Name = "claim-alpha"
+	claim.Spec.SandboxRef = "alpha"
+	claim.Spec.TenantID = "acme"
+	if err := cli.Create(context.Background(), claim); err != nil {
+		t.Fatalf("seed claim: %v", err)
+	}
+	r, err := podregistry.New(cli, "lenny-agents")
+	if err != nil {
+		t.Fatalf("podregistry.New: %v", err)
+	}
+	if err := r.ReleasePod(context.Background(), "alpha", podregistry.ReleaseCompleted); err != nil {
+		t.Fatalf("ReleasePod: %v", err)
+	}
+	// The per-pod claim is gone.
+	var got lennyv1.SandboxClaim
+	if err := cli.Get(context.Background(),
+		client.ObjectKey{Namespace: "lenny-agents", Name: "claim-alpha"}, &got); !apierrors.IsNotFound(err) {
+		t.Errorf("claim still present after release: err = %v, want NotFound", err)
+	}
+	// Sandbox.status is untouched: the gateway is not a Sandbox.status writer,
+	// so the stored phase stays as the WarmPoolController last projected it and
+	// no session/tenant is cleared on Sandbox.status here.
+	var sb lennyv1.Sandbox
+	if err := cli.Get(context.Background(),
+		client.ObjectKey{Namespace: "lenny-agents", Name: "alpha"}, &sb); err != nil {
+		t.Fatalf("get released sandbox: %v", err)
+	}
+	if sb.Status.Phase != "claimed" {
+		t.Errorf("Sandbox.status.phase = %q, want claimed (unwritten by the gateway)", sb.Status.Phase)
+	}
+}
+
+// spec: §4.6.1 (release is idempotent). A release of a pod whose per-pod claim
+// is already gone (a double release, or a claim the orphan GC reclaimed) is a
+// no-op rather than an error.
+func TestReleasePodIdempotentForMissingClaim_spec_4_6_1(t *testing.T) {
+	r := newRegistry(t, "lenny-agents", seedSandbox("alpha", "echo-pool", "idle"))
+	if err := r.ReleasePod(context.Background(), "alpha", podregistry.ReleaseCompleted); err != nil {
+		t.Errorf("ReleasePod with no claim = %v, want nil (idempotent)", err)
+	}
+}
+
+// spec: §12.6 (ListPodsByPool sorts deterministically)
+func TestListPodsByPoolSortsByName(t *testing.T) {
+	r := newRegistry(t, "lenny-agents",
+		seedSandbox("z-pod", "echo-pool", "idle"),
+		seedSandbox("a-pod", "echo-pool", "idle"),
+		seedSandbox("other-pod", "other-pool", "idle"))
+	out, err := r.ListPodsByPool(context.Background(), "echo-pool", podregistry.PodFilter{})
+	if err != nil {
+		t.Fatalf("ListPodsByPool: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("len = %d, want 2", len(out))
+	}
+	if out[0].PodID != "a-pod" || out[1].PodID != "z-pod" {
+		t.Errorf("order = %v, want [a-pod z-pod]", []podregistry.PodID{out[0].PodID, out[1].PodID})
+	}
+}
+
+// spec: §12.6 (filter by state narrows results)
+func TestListPodsByPoolFiltersByState(t *testing.T) {
+	r := newRegistry(t, "lenny-agents",
+		seedSandbox("a-pod", "echo-pool", "idle"),
+		seedSandbox("b-pod", "echo-pool", "claimed"))
+	out, _ := r.ListPodsByPool(context.Background(), "echo-pool",
+		podregistry.PodFilter{State: "idle"})
+	if len(out) != 1 || out[0].PodID != "a-pod" {
+		t.Errorf("filtered = %v, want [a-pod]", out)
+	}
+}
+
+// spec: §12.6 (CountByState returns the §6.2 phase histogram)
+func TestCountByStateReturnsHistogram(t *testing.T) {
+	r := newRegistry(t, "lenny-agents",
+		seedSandbox("a", "echo-pool", "idle"),
+		seedSandbox("b", "echo-pool", "idle"),
+		seedSandbox("c", "echo-pool", "claimed"))
+	counts, err := r.CountByState(context.Background(), "echo-pool")
+	if err != nil {
+		t.Fatalf("CountByState: %v", err)
+	}
+	if counts["idle"] != 2 || counts["claimed"] != 1 {
+		t.Errorf("counts = %v, want idle=2 claimed=1", counts)
+	}
+}
+
+// spec: §12.6 (CreatePod writes a new Sandbox with the PoolLabel)
+func TestCreatePodWritesNewSandbox(t *testing.T) {
+	r := newRegistry(t, "lenny-agents")
+	spec := podregistry.PodSpec{PoolID: "echo-pool", IsolationProfile: "sandboxed"}
+	rec, err := r.CreatePod(context.Background(), "echo-pool", spec)
+	if err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	if rec.PoolID != "echo-pool" {
+		t.Errorf("PoolID = %q, want echo-pool", rec.PoolID)
+	}
+	if rec.State != "warming" {
+		t.Errorf("State = %q, want warming", rec.State)
+	}
+	// The new pod is observable via Get and List.
+	got, err := r.GetPod(context.Background(), rec.PodID)
+	if err != nil {
+		t.Fatalf("Get after Create: %v", err)
+	}
+	if got.PodID != rec.PodID {
+		t.Errorf("created pod id %q does not match Get id %q", rec.PodID, got.PodID)
+	}
+	pods, _ := r.ListPodsByPool(context.Background(), "echo-pool", podregistry.PodFilter{})
+	if len(pods) != 1 {
+		t.Errorf("ListPodsByPool len = %d, want 1", len(pods))
+	}
+}
+
+// spec: §12.6 (DeletePod removes the Sandbox)
+func TestDeletePodRemovesSandbox(t *testing.T) {
+	r := newRegistry(t, "lenny-agents", seedSandbox("alpha", "echo-pool", "idle"))
+	if err := r.DeletePod(context.Background(), "alpha"); err != nil {
+		t.Fatalf("DeletePod: %v", err)
+	}
+	if _, err := r.GetPod(context.Background(), "alpha"); !errors.Is(err, podregistry.ErrNotFound) {
+		t.Errorf("Get after Delete = %v, want ErrNotFound", err)
+	}
+	if err := r.DeletePod(context.Background(), "missing"); !errors.Is(err, podregistry.ErrNotFound) {
+		t.Errorf("Delete unknown = %v, want ErrNotFound", err)
+	}
+}
+
+// spec: §12.6.
+func TestWatchPodsDoesNotEmitInitialSnapshot_spec_12_6_482(t *testing.T) {
+	r := newRegistry(t, "lenny-agents", seedSandbox("alpha", "echo-pool", "idle"))
+	r.SetWatchTuningForTest(10*time.Millisecond, 32)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events, err := r.WatchPods(ctx, "echo-pool")
+	if err != nil {
+		t.Fatalf("WatchPods: %v", err)
+	}
+	// Many poll cycles elapse with the pod stable: the stream stays
+	// silent because the consumer owns initial state via ListPodsByPool.
+	select {
+	case e := <-events:
+		t.Fatalf("unexpected initial-snapshot event %+v; want none", e)
+	case <-time.After(150 * time.Millisecond):
+	}
+	// A subsequent state change produces a delta (Updated, not Created).
+	if err := r.UpdatePodState(ctx, "alpha",
+		podregistry.StateTransition{From: "idle", To: "claimed"}); err != nil {
+		t.Fatalf("UpdatePodState: %v", err)
+	}
+	select {
+	case e := <-events:
+		if e.EventType != podregistry.EventUpdated {
+			t.Errorf("event type = %q, want updated", e.EventType)
+		}
+		if e.PodID != "alpha" {
+			t.Errorf("event PodID = %q, want alpha", e.PodID)
+		}
+		if e.PodRecord.State != "claimed" {
+			t.Errorf("event PodRecord.State = %q, want claimed", e.PodRecord.State)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no Updated event after state change")
+	}
+}
+
+// spec: §12.6.
+func TestWatchPodsEmitsResyncUnderBackpressure_spec_12_6_482(t *testing.T) {
+	r := newRegistry(t, "lenny-agents",
+		seedSandbox("alpha", "echo-pool", "idle"),
+		seedSandbox("bravo", "echo-pool", "idle"))
+	// A single-slot buffer plus a fast poll makes a non-draining consumer
+	// fall behind within one reconcile: two simultaneous deltas cannot
+	// both fit, so the loop coalesces and signals resync.
+	r.SetWatchTuningForTest(5*time.Millisecond, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events, err := r.WatchPods(ctx, "echo-pool")
+	if err != nil {
+		t.Fatalf("WatchPods: %v", err)
+	}
+	// Let the initial snapshot seed before introducing deltas, so the
+	// transitions register as changes against the seeded idle state.
+	time.Sleep(20 * time.Millisecond)
+	for _, name := range []string{"alpha", "bravo"} {
+		if err := r.UpdatePodState(ctx, podregistry.PodID(name),
+			podregistry.StateTransition{From: "idle", To: "claimed"}); err != nil {
+			t.Fatalf("UpdatePodState %s: %v", name, err)
+		}
+	}
+	// Let the poll loop observe both changes and fall behind on the
+	// single-slot buffer.
+	time.Sleep(120 * time.Millisecond)
+	// Draining the channel must surface a resync frame that carries no
+	// PodRecord — the line 482 re-read signal.
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case e := <-events:
+			if e.EventType != podregistry.EventResync {
+				continue
+			}
+			if e.PodID != "" {
+				t.Errorf("resync PodID = %q, want empty", e.PodID)
+			}
+			if e.PodRecord != (podregistry.PodRecord{}) {
+				t.Errorf("resync PodRecord = %+v, want zero", e.PodRecord)
+			}
+			return
+		case <-deadline:
+			t.Fatal("no resync frame within 2s under backpressure")
+		}
+	}
+}
+
+// spec: §12.6.
+func TestToPodRecordProjectsExecutionModeAndSessionID_spec_12_6_421(t *testing.T) {
+	sb := seedSandbox("alpha", "echo-pool", "claimed")
+	sb.Spec.ExecutionMode = "task"
+	sb.Status.SessionID = "sess-9"
+	r := newRegistry(t, "lenny-agents", sb)
+	rec, err := r.GetPod(context.Background(), "alpha")
+	if err != nil {
+		t.Fatalf("GetPod: %v", err)
+	}
+	if rec.ExecutionMode != "task" {
+		t.Errorf("ExecutionMode = %q, want task", rec.ExecutionMode)
+	}
+	if rec.SessionID != "sess-9" {
+		t.Errorf("SessionID = %q, want sess-9", rec.SessionID)
+	}
+}
+
+// spec: §12.6.
+func TestCreatePodStampsExecutionModeAndIsolation_spec_12_6_422(t *testing.T) {
+	r := newRegistry(t, "lenny-agents")
+	spec := podregistry.PodSpec{PoolID: "echo-pool", IsolationProfile: "microvm", ExecutionMode: "concurrent"}
+	rec, err := r.CreatePod(context.Background(), "echo-pool", spec)
+	if err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	if rec.IsolationProfile != "microvm" {
+		t.Errorf("IsolationProfile = %q, want microvm", rec.IsolationProfile)
+	}
+	if rec.ExecutionMode != "concurrent" {
+		t.Errorf("ExecutionMode = %q, want concurrent", rec.ExecutionMode)
+	}
+	got, _ := r.GetPod(context.Background(), rec.PodID)
+	if got.ExecutionMode != "concurrent" || got.IsolationProfile != "microvm" {
+		t.Errorf("persisted exec/iso = %q/%q, want concurrent/microvm", got.ExecutionMode, got.IsolationProfile)
+	}
+}
+
+// spec: §12.6 Interface Design (the `PodSpec` row: `RuntimeDefinitionRef`,
+// `IsolationProfile`, `ExecutionMode`, resource limits) — CreatePod
+// stamps the PodSpec fields onto the Sandbox spec so a gateway-created
+// pod expresses the runtime and resource class it was created for rather
+// than silently inheriting the pool template's defaults. RuntimeRef is a
+// required CRD field, so a CreatePod that does not stamp it produces an
+// invalid Sandbox. The PodSpec carries no workspace plan: a session binds
+// its plan at creation or finalize (§14.1 Plan binding).
+func TestCreatePodStampsRuntimeAndResourceClass_spec_12_6_422(t *testing.T) {
+	scheme := newScheme(t)
+	cli := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&lennyv1.Sandbox{}).
+		Build()
+	r, err := podregistry.New(cli, "lenny-agents")
+	if err != nil {
+		t.Fatalf("podregistry.New: %v", err)
+	}
+	spec := podregistry.PodSpec{
+		PoolID:               "claude-pool",
+		RuntimeDefinitionRef: "claude-code",
+		IsolationProfile:     "sandboxed",
+		ExecutionMode:        "session",
+		ResourceClass:        "large",
+	}
+	rec, err := r.CreatePod(context.Background(), "claude-pool", spec)
+	if err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	var sb lennyv1.Sandbox
+	if err := cli.Get(context.Background(), client.ObjectKey{Namespace: "lenny-agents", Name: string(rec.PodID)}, &sb); err != nil {
+		t.Fatalf("get created sandbox: %v", err)
+	}
+	if sb.Spec.RuntimeRef != "claude-code" {
+		t.Errorf("RuntimeRef = %q, want claude-code", sb.Spec.RuntimeRef)
+	}
+	if sb.Spec.ResourceClass != "large" {
+		t.Errorf("ResourceClass = %q, want large", sb.Spec.ResourceClass)
+	}
+	if sb.Spec.IsolationProfile != "sandboxed" || sb.Spec.ExecutionMode != "session" {
+		t.Errorf("IsolationProfile/ExecutionMode = %q/%q, want sandboxed/session", sb.Spec.IsolationProfile, sb.Spec.ExecutionMode)
+	}
+}

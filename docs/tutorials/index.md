@@ -29,7 +29,7 @@ Driving sessions from your own application, script, or MCP host.
 | [User Credentials](user-credentials) | Beginner | Attach per-user credentials to a session and scope them safely |
 | [MCP Client Integration](mcp-client-integration) | Intermediate | Plug an MCP host into Lenny's gateway |
 | [OpenAI SDK Integration](openai-sdk-integration) | Intermediate | Point the OpenAI Python and TypeScript SDKs at Lenny |
-| [OAuth Token Exchange](oauth-token-exchange) | Intermediate | Use `POST /v1/oauth/token` to rotate admin tokens and exchange identity-provider tokens for Lenny access tokens |
+| [OAuth Token Exchange](oauth-token-exchange) | Intermediate | Use `POST /v1/oauth/token` to rotate a caller's own token and exchange identity-provider tokens for Lenny access tokens |
 | [Using Connectors](using-connectors) | Intermediate | Register and use connectors (GitHub, Jira, Slack, etc.) for gateway-managed OAuth |
 | [Session Derive and Replay](session-derive-replay) | Intermediate | Fork a completed session's workspace, or replay its prompt history against a new runtime version |
 | [Agent Memory](agent-memory) | Intermediate | Persist per-user memory across sessions with the agent-memory service |

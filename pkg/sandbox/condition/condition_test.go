@@ -1,0 +1,136 @@
+// SPDX-License-Identifier: MIT
+
+package condition_test
+
+import (
+	"context"
+	"testing"
+
+	corev1 "k8s.io/api/core/v1"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
+	sandboxcond "github.com/lennylabs/lenny/pkg/sandbox/condition"
+	"github.com/lennylabs/lenny/tests/testinfra/envtest"
+)
+
+const testNS = "lenny-agents"
+
+func newScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+	s := runtime.NewScheme()
+	if err := lennyv1.AddToScheme(s); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	if err := corev1.AddToScheme(s); err != nil {
+		t.Fatalf("AddToScheme corev1: %v", err)
+	}
+	return s
+}
+
+func newClient(t *testing.T, sb *lennyv1.Sandbox) client.Client {
+	t.Helper()
+	env := envtest.Start(t)
+	c, err := client.New(env.RESTConfig(), client.Options{Scheme: newScheme(t)})
+	if err != nil {
+		t.Fatalf("client.New: %v", err)
+	}
+	ctx := context.Background()
+	if err := c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNS}}); err != nil {
+		t.Fatalf("create namespace: %v", err)
+	}
+	if err := c.Create(ctx, sb); err != nil {
+		t.Fatalf("create sandbox: %v", err)
+	}
+	return c
+}
+
+// spec: §6.2 / §4.6.1 — distinct lifecycle condition types
+// accumulate as history; they do not overwrite one another because each
+// Type is owned by its own SSA field manager.
+func TestApplyAccumulatesDistinctConditions_spec_6_2_305(t *testing.T) {
+	sb := &lennyv1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: testNS},
+		Spec:       lennyv1.SandboxSpec{PoolRef: "p"},
+	}
+	c := newClient(t, sb)
+	ctx := context.Background()
+
+	// Two distinct lifecycle condition types accumulate as history. Each Type
+	// is owned by its own SSA field manager, so a second Apply does not
+	// overwrite the first. (The session-terminal and interrupt-suspension
+	// facts moved to the Postgres session model under §7.2 / §8.8; the
+	// remaining Sandbox condition types are controller-written, so this test
+	// exercises the accumulation mechanics with the OrphanClaimReclaimed type
+	// and a second arbitrary type.)
+	if err := sandboxcond.Apply(ctx, c, sb, metav1.Condition{
+		Type: sandboxcond.OrphanClaimReclaimed, Reason: "OrphanClaimCollected",
+	}); err != nil {
+		t.Fatalf("apply orphan-claim-reclaimed: %v", err)
+	}
+	if err := sandboxcond.Apply(ctx, c, sb, metav1.Condition{
+		Type: "Cordoned", Reason: "NodeUnschedulable",
+	}); err != nil {
+		t.Fatalf("apply cordoned: %v", err)
+	}
+
+	var got lennyv1.Sandbox
+	if err := c.Get(ctx, client.ObjectKey{Namespace: testNS, Name: "pod-1"}, &got); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Status.Conditions) != 2 {
+		t.Fatalf("conditions = %d, want 2 (both accumulate): %+v", len(got.Status.Conditions), got.Status.Conditions)
+	}
+	for _, ty := range []string{sandboxcond.OrphanClaimReclaimed, "Cordoned"} {
+		if cond := apimeta.FindStatusCondition(got.Status.Conditions, ty); cond == nil {
+			t.Errorf("missing %s condition", ty)
+		} else if cond.Status != metav1.ConditionTrue {
+			t.Errorf("%s status = %q, want True", ty, cond.Status)
+		}
+	}
+}
+
+// spec: §6.2 — re-applying the same condition Type updates that
+// entry in place (listType=map keyed by type) rather than duplicating it.
+func TestApplyUpdatesSameTypeInPlace_spec_6_2_305(t *testing.T) {
+	sb := &lennyv1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-2", Namespace: testNS},
+		Spec:       lennyv1.SandboxSpec{PoolRef: "p"},
+	}
+	c := newClient(t, sb)
+	ctx := context.Background()
+
+	if err := sandboxcond.Apply(ctx, c, sb, metav1.Condition{
+		Type: sandboxcond.OrphanClaimReclaimed, Reason: "OrphanClaimCollected",
+	}); err != nil {
+		t.Fatalf("apply 1: %v", err)
+	}
+	if err := sandboxcond.Apply(ctx, c, sb, metav1.Condition{
+		Type: sandboxcond.OrphanClaimReclaimed, Reason: "OrphanClaimRecollected",
+	}); err != nil {
+		t.Fatalf("apply 2: %v", err)
+	}
+
+	var got lennyv1.Sandbox
+	if err := c.Get(ctx, client.ObjectKey{Namespace: testNS, Name: "pod-2"}, &got); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Status.Conditions) != 1 {
+		t.Fatalf("conditions = %d, want 1 (updated in place): %+v", len(got.Status.Conditions), got.Status.Conditions)
+	}
+	if got.Status.Conditions[0].Reason != "OrphanClaimRecollected" {
+		t.Errorf("reason = %q, want OrphanClaimRecollected (latest wins)", got.Status.Conditions[0].Reason)
+	}
+}
+
+// An empty condition type is rejected so a caller never writes a malformed
+// entry the API server would refuse.
+func TestApplyRejectsEmptyType(t *testing.T) {
+	sb := &lennyv1.Sandbox{ObjectMeta: metav1.ObjectMeta{Name: "pod-3", Namespace: testNS}}
+	if err := sandboxcond.Apply(context.Background(), nil, sb, metav1.Condition{Reason: "x"}); err == nil {
+		t.Error("Apply with empty type must error")
+	}
+}

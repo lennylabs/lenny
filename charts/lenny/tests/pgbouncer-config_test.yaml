@@ -1,0 +1,117 @@
+suite: lenny-pgbouncer-config ConfigMap (§4.2 connect_query sentinel)
+templates:
+  - pgbouncer-config.yaml
+tests:
+  - it: renders the ConfigMap with the spec connect_query under stock values
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: lenny-pgbouncer-config
+      - equal:
+          path: metadata.labels["lenny.dev/component"]
+          value: pgbouncer
+      - matchRegex:
+          path: data["pgbouncer.ini"]
+          # spec: §4.2 — fresh server connections must SET
+          # app.current_tenant = '__unset__'.
+          pattern: "connect_query='SET app.current_tenant = ''__unset__'''"
+      - matchRegex:
+          path: data["pgbouncer.ini"]
+          pattern: "pool_mode = transaction"
+
+  - it: suppresses the ConfigMap when pgbouncer.enabled=false
+    set:
+      pgbouncer.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: honours a custom configMapName
+    set:
+      pgbouncer.configMapName: "acme-pgbouncer"
+    asserts:
+      - equal:
+          path: metadata.name
+          value: acme-pgbouncer
+
+  - it: honours a custom connect_query string for operators who deploy a per-tenant variant
+    set:
+      pgbouncer.connectQuery: "SET app.current_tenant = '__unset__'; SET statement_timeout = '30s'"
+    asserts:
+      - matchRegex:
+          path: data["pgbouncer.ini"]
+          pattern: "SET app.current_tenant = ''__unset__''; SET statement_timeout = ''30s''"
+
+  - it: honours a session pool mode override
+    set:
+      pgbouncer.poolMode: "session"
+    asserts:
+      - matchRegex:
+          path: data["pgbouncer.ini"]
+          pattern: "pool_mode = session"
+
+  # spec: §12.3 — the PgBouncer ConfigMap stamps pool_mode from
+  # pgbouncer.poolMode. The default `transaction` is the §12.3
+  # transaction-mode posture required for RLS via SET LOCAL; it is
+  # round-trippable from values.yaml without an override. With no
+  # upstream the [databases] entry is a comment an operator completes.
+  - it: pgbouncer.poolMode default is transaction
+    asserts:
+      - equal:
+          path: data["pgbouncer.ini"]
+          value: |
+            [databases]
+            # spec: §4.2 — every fresh server connection begins with the
+            # SET sentinel so an unclaimed pooled connection is rejected by
+            # the lenny_tenant_guard trigger and by RLS before tenant data
+            # could leak. The connection-string parser takes a single-quoted
+            # value and a doubled embedded single quote, so `'` becomes `''`
+            # from the values.yaml literal here.
+            ; * = host=<postgres-host> port=5432 connect_query='SET app.current_tenant = ''__unset__'''
+
+            [pgbouncer]
+            listen_addr = 0.0.0.0
+            listen_port = 5432
+            unix_socket_dir =
+            auth_type = scram-sha-256
+            auth_file = /etc/pgbouncer/userlist.txt
+            pool_mode = transaction
+            ignore_startup_parameters = extra_float_digits
+
+  # spec: §4.2, §12.3 — PgBouncer accepts connect_query only on a
+  # [databases] entry and refuses to start when it appears under
+  # [pgbouncer], so the sentinel rides the upstream entry. F-17.9.25.
+  - it: routes every database to the CloudNativePG primary with the connect_query under postgres.deploy
+    set:
+      postgres.deploy: true
+    asserts:
+      - matchRegex:
+          path: data["pgbouncer.ini"]
+          pattern: "(?m)^\\* = host=lenny-postgres-rw port=5432 connect_query='SET app.current_tenant = ''__unset__'''$"
+      - notMatchRegex:
+          path: data["pgbouncer.ini"]
+          pattern: "(?s)\\[pgbouncer\\].*connect_query"
+
+  - it: routes to an operator-supplied upstream host and port
+    set:
+      pgbouncer.upstream.host: postgres.acme.internal
+      pgbouncer.upstream.port: 6543
+    asserts:
+      - matchRegex:
+          path: data["pgbouncer.ini"]
+          pattern: "(?m)^\\* = host=postgres.acme.internal port=6543 connect_query="
+
+  # spec: §13.2 — PgBouncer listens on TCP 5432 on every address, the
+  # port the client NetworkPolicies admit. F-17.9.25.
+  - it: listens on TCP at pgbouncer.port on every address
+    asserts:
+      - matchRegex:
+          path: data["pgbouncer.ini"]
+          pattern: "(?m)^listen_addr = 0\\.0\\.0\\.0$"
+      - matchRegex:
+          path: data["pgbouncer.ini"]
+          pattern: "(?m)^listen_port = 5432$"

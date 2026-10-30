@@ -1,0 +1,24 @@
+# spec: §26.1 — referenceRuntimes.enabled: false is a supported install
+# posture (air-gapped / curated catalog), but the empty-catalog result
+# must not be silent. The install prints a NOTES warning so an operator
+# understands no reference runtimes were registered. F-26.1.2.
+suite: reference-runtime empty-catalog NOTES warning
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - NOTES.txt
+tests:
+  - it: warns when referenceRuntimes.enabled is false
+    set:
+      referenceRuntimes.enabled: false
+    asserts:
+      - matchRegexRaw:
+          pattern: "no §26 reference runtimes were registered"
+      - matchRegexRaw:
+          pattern: "POST /v1/admin/runtimes"
+
+  - it: prints no reference-runtime warning on a default install
+    asserts:
+      - notMatchRegexRaw:
+          pattern: "no §26 reference runtimes were registered"

@@ -11,6 +11,33 @@
 // The package is pure: no Redis, no Postgres. Redis-backed atomic
 // reservations (the budget_reserve.lua script) live in later phases
 // that import this package.
+//
+// §4.2 delegation-lease design clarification:
+//
+// The §4.2 Session Manager bullet ("Delegation lease
+// tracking") is realised in v1 by the child session row plus the
+// Redis budget keys ({root_session_id}:dlg:*), not by a separate
+// delegation_leases table. The lease lifecycle maps onto session
+// fields as follows:
+//
+//   - The lease is "granted" when the child session row is created
+//     under a parent's parent_session_id; sessions.created_at
+//     records the grant time.
+//   - The lease's expiry tracks sessions.resume_eligible_until from
+//     migration 0055 — the per-session resume window that doubles
+//     as the lease lifetime cap.
+//   - The lease's policy reference is the delegation_policies row
+//     resolved at issuance and recorded on the child via the §8.3
+//     effective policy carried through tracingContext and
+//     policy_enforcement_state (§4.2).
+//   - The lease's remaining slice is the in-Redis budget under
+//     {root_session_id}:dlg:* — atomically reserved at every
+//     lenny/delegate_task call per §8.2.
+//
+// A future iteration may extract a dedicated delegation_leases
+// table; the v1 invariant is "delegation lease == child session
+// row + Redis budget keys" with no separate row.
+// spec: §4.2.
 package lease
 
 import (
@@ -37,12 +64,22 @@ type LeaseSlice struct {
 	// accounting axis.
 	MaxTreeSize int
 
+	// MaxTreeMemoryBytes caps the aggregate in-memory footprint of the
+	// delegation tree on the gateway (§8.2 default 2 MB). The gateway
+	// tracks cumulative tree memory via an atomic Redis counter
+	// alongside MaxTreeSize and rejects a delegation that would push
+	// the tree over this cap with BUDGET_EXHAUSTED.
+	//
+	// spec: §8.2.
+	MaxTreeMemoryBytes int64
+
 	// MaxParallelChildren caps concurrent in-flight children of the
 	// child. Bounded above by the parent's MaxParallelChildren.
 	MaxParallelChildren int
 
-	// PerChildMaxAge is the wall-clock seconds budget per descendant.
-	// Bounded above by the parent's PerChildMaxAge.
+	// PerChildMaxAge is the wall-clock seconds the session holding this
+	// slice may live, counted from its creation.
+	// spec: §8.2
 	PerChildMaxAge int
 }
 
@@ -206,4 +243,186 @@ type DepthExceededError struct {
 
 func (e *DepthExceededError) Error() string {
 	return fmt.Sprintf("delegation lease: depth %d + 1 exceeds maxDepth %d", e.Current, e.Max)
+}
+
+// ApprovalMode is the §8.4 closed enum on a delegation lease that
+// governs whether a delegation hop is auto-approved, queued for
+// approval, or unconditionally rejected. The empty string and the
+// three documented values are the only admissible inputs; any other
+// string is a registration-time error.
+//
+// spec: §8.4.
+// F-8.4.1, F-8.4.2.
+type ApprovalMode string
+
+const (
+	// ApprovalModePolicy auto-approves every delegation that passes
+	// the lease constraints (PreDelegation interceptor, isolation
+	// monotonicity, cycle detection, depth + budget arithmetic).
+	// This is the v1 default and the spec-conformant behaviour when
+	// the field is absent.
+	//
+	// spec: §8.4.
+	ApprovalModePolicy ApprovalMode = "policy"
+
+	// ApprovalModeApproval is the v1-reserved, post-v1-deferred mode.
+	// It MUST be accepted at registration time so that operators can
+	// author leases with `approval` today; in v1 the gateway aliases
+	// it to ApprovalModePolicy at evaluation time. The audit record
+	// preserves the original mode so a back-fill or staged rollout is
+	// auditable.
+	//
+	// spec: §8.4.
+	ApprovalModeApproval ApprovalMode = "approval"
+
+	// ApprovalModeDeny short-circuits the delegation path before pod
+	// allocation and before the §4 PreDelegation interceptor chain.
+	// It is the platform-provided mechanism for an operator to opt a
+	// lease out of delegation entirely, distinct from omitting the
+	// delegation tools or setting maxDepth=0.
+	//
+	// spec: §8.4.
+	ApprovalModeDeny ApprovalMode = "deny"
+)
+
+// ValidateApprovalMode reports whether m is one of the §8.4 closed
+// enum values (or the empty string, which resolves to
+// ApprovalModePolicy at evaluation time). Returns a typed error so
+// the admin ingress and the §8.5 lenny/delegate_task handler can
+// surface INVALID_LEASE_FIELD before any side effects.
+//
+// spec: §8.4. F-8.4.1, F-8.4.2.
+func ValidateApprovalMode(m ApprovalMode) error {
+	switch m {
+	case "", ApprovalModePolicy, ApprovalModeApproval, ApprovalModeDeny:
+		return nil
+	}
+	return &InvalidApprovalModeError{Value: string(m)}
+}
+
+// InvalidApprovalModeError is returned by ValidateApprovalMode when
+// the input is outside the §8.4 closed enum. The gateway maps it to
+// INVALID_LEASE_FIELD at the admin / §8.5 lenny/delegate_task ingress.
+type InvalidApprovalModeError struct {
+	Value string
+}
+
+func (e *InvalidApprovalModeError) Error() string {
+	return fmt.Sprintf("delegation lease: approvalMode %q is not one of %q, %q, %q",
+		e.Value, ApprovalModePolicy, ApprovalModeApproval, ApprovalModeDeny)
+}
+
+// EffectiveApprovalMode applies the v1 aliasing rule: the empty
+// string resolves to ApprovalModePolicy (the spec-conformant default
+// at lease evaluation time), and ApprovalModeApproval aliases to
+// ApprovalModePolicy because the dedicated approval API is post-v1.
+// ApprovalModeDeny is preserved as-is so the caller can short-circuit
+// the delegation path.
+//
+// The original declared mode is reported separately by audit emission
+// so an auditor can tell whether a child session was approved via
+// ApprovalModePolicy or via the v1-aliased ApprovalModeApproval.
+//
+// spec: §8.4. F-8.4.1, F-8.4.3.
+func EffectiveApprovalMode(declared ApprovalMode) ApprovalMode {
+	switch declared {
+	case ApprovalModeDeny:
+		return ApprovalModeDeny
+	default:
+		return ApprovalModePolicy
+	}
+}
+
+// CredentialPropagation is the §8.3 closed enum on a delegation lease
+// that governs how a child session obtains LLM provider credentials.
+// The empty string and the three documented values are the only
+// admissible inputs; any other string is a registration-time error.
+// The empty string resolves to CredentialPropagationIndependent, the
+// §8.3 default when the field is omitted from a delegate_task call.
+//
+// spec: §8.3.
+type CredentialPropagation string
+
+const (
+	// CredentialPropagationInherit assigns the child a credential from
+	// the same pool/source as the parent. Across an environment
+	// boundary the gateway first runs the §8.3 provider-intersection
+	// compatibility check against the child runtime's supportedProviders.
+	//
+	// spec: §8.3.
+	CredentialPropagationInherit CredentialPropagation = "inherit"
+
+	// CredentialPropagationIndependent gives the child its own
+	// credential lease based on the tenant's credentialPolicy and the
+	// child runtime's supportedProviders. This is the §8.3 default when
+	// credentialPropagation is omitted from a delegate_task call.
+	//
+	// spec: §8.3.
+	CredentialPropagationIndependent CredentialPropagation = "independent"
+
+	// CredentialPropagationDeny gives the child no LLM credentials, for
+	// runtimes that do not need LLM access (for example a pure
+	// file-processing tool).
+	//
+	// spec: §8.3.
+	CredentialPropagationDeny CredentialPropagation = "deny"
+)
+
+// ValidateCredentialPropagation reports whether m is one of the §8.3
+// closed enum values (or the empty string, which resolves to
+// CredentialPropagationIndependent at evaluation time). Returns a
+// typed error so the admin ingress and the §8.5 lenny/delegate_task
+// handler can surface INVALID_LEASE_FIELD before any side effects.
+//
+// spec: §8.3.
+func ValidateCredentialPropagation(m CredentialPropagation) error {
+	switch m {
+	case "", CredentialPropagationInherit, CredentialPropagationIndependent, CredentialPropagationDeny:
+		return nil
+	}
+	return &InvalidCredentialPropagationError{Value: string(m)}
+}
+
+// InvalidCredentialPropagationError is returned by
+// ValidateCredentialPropagation when the input is outside the §8.3
+// closed enum. The gateway maps it to INVALID_LEASE_FIELD at the admin
+// / §8.5 lenny/delegate_task ingress.
+type InvalidCredentialPropagationError struct {
+	Value string
+}
+
+func (e *InvalidCredentialPropagationError) Error() string {
+	return fmt.Sprintf("delegation lease: credentialPropagation %q is not one of %q, %q, %q",
+		e.Value, CredentialPropagationInherit, CredentialPropagationIndependent, CredentialPropagationDeny)
+}
+
+// IntersectProviders returns the order-stable (a-ordered) intersection
+// of two provider lists. It is the §8.3 provider-intersection
+// primitive: the cross-environment credentialPropagation: inherit
+// compatibility check computes the intersection of the parent
+// credential pool's providers with the child runtime's
+// supportedProviders, and the independent-mode pre-claim check
+// intersects the child runtime's supportedProviders with the tenant
+// credentialPolicy's provider pools. Elements of a are emitted at most
+// once, in a's order, when they also appear in b.
+//
+// spec: §8.3.
+func IntersectProviders(a, b []string) []string {
+	inB := make(map[string]struct{}, len(b))
+	for _, p := range b {
+		inB[p] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(a))
+	out := make([]string, 0, len(a))
+	for _, p := range a {
+		if _, ok := inB[p]; !ok {
+			continue
+		}
+		if _, dup := seen[p]; dup {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	return out
 }

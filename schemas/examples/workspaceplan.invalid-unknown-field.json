@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    {
+      "type": "inlineFile",
+      "path": "notes.txt",
+      "content": "hello",
+      "bogusField": true
+    }
+  ]
+}

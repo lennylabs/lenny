@@ -1,0 +1,432 @@
+// SPDX-License-Identifier: MIT
+
+package poolscaling_test
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/lennylabs/lenny/pkg/controller/poolscaling"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+)
+
+// newMemoryStore returns a poolstore.Memory seeded with pools.
+func newMemoryStore(t *testing.T, pools ...poolstore.Pool) poolstore.Store {
+	t.Helper()
+	m := poolstore.NewMemory()
+	for _, p := range pools {
+		if err := m.Create(context.Background(), p); err != nil {
+			t.Fatalf("seed pool %q: %v", p.Name, err)
+		}
+	}
+	return m
+}
+
+// spec: §4.6.2 — the PoolStoreSource maps active store rows into the
+// SandboxTemplate spec and the bootstrap minWarm/maxWarm.
+func TestPoolStoreSourceMapsActivePools(t *testing.T) {
+	store := newMemoryStore(t, poolstore.Pool{
+		Name:                 "acme-agents",
+		RuntimeRef:           "claude-code",
+		IsolationProfile:     isolation.ProfileSandboxed,
+		ExecutionMode:        runtimestore.ExecutionModeSession,
+		ResourceClass:        "medium",
+		WarmCount:            3,
+		MaxSessionAgeSeconds: 3600,
+	})
+	src := &poolscaling.PoolStoreSource{Store: store, Namespace: "lenny-agents"}
+
+	configs, err := src.ListPoolConfigs(context.Background())
+	if err != nil {
+		t.Fatalf("ListPoolConfigs: %v", err)
+	}
+	if len(configs) != 1 {
+		t.Fatalf("want 1 config, got %d", len(configs))
+	}
+	c := configs[0]
+	if c.Name != "acme-agents" || c.Namespace != "lenny-agents" {
+		t.Fatalf("name/namespace = %q/%q", c.Name, c.Namespace)
+	}
+	if c.Template.RuntimeRef != "claude-code" {
+		t.Fatalf("runtimeRef = %q", c.Template.RuntimeRef)
+	}
+	if c.Template.IsolationProfile != "sandboxed" {
+		t.Fatalf("isolationProfile = %q", c.Template.IsolationProfile)
+	}
+	if c.Template.ResourceClass != "medium" || c.Template.ExecutionMode != "session" {
+		t.Fatalf("resourceClass/executionMode = %q/%q", c.Template.ResourceClass, c.Template.ExecutionMode)
+	}
+	if c.Template.MaxSessionAgeSeconds != 3600 {
+		t.Fatalf("maxSessionAgeSeconds = %d", c.Template.MaxSessionAgeSeconds)
+	}
+	// v1 bootstrap: warmCount is both the minWarm floor and maxWarm.
+	if c.MinWarm != 3 || c.MaxWarm != 3 {
+		t.Fatalf("minWarm/maxWarm = %d/%d, want 3/3", c.MinWarm, c.MaxWarm)
+	}
+}
+
+// spec: §4.6.2 — soft-deleted pools are not reconciled; the source
+// lists only active rows.
+func TestPoolStoreSourceExcludesSoftDeleted(t *testing.T) {
+	store := newMemoryStore(
+		t,
+		poolstore.Pool{Name: "live", RuntimeRef: "r1", WarmCount: 1},
+		poolstore.Pool{Name: "gone", RuntimeRef: "r2", WarmCount: 1},
+	)
+	if err := store.SoftDelete(context.Background(), "gone", time.Now()); err != nil {
+		t.Fatalf("soft delete: %v", err)
+	}
+	src := &poolscaling.PoolStoreSource{Store: store, Namespace: "lenny-agents"}
+
+	configs, err := src.ListPoolConfigs(context.Background())
+	if err != nil {
+		t.Fatalf("ListPoolConfigs: %v", err)
+	}
+	if len(configs) != 1 || configs[0].Name != "live" {
+		t.Fatalf("want only [live], got %+v", configs)
+	}
+}
+
+// spec: §4.6.2 — the derived CRDs need an agent namespace; an empty
+// namespace is a misconfiguration that fails fast rather than
+// materializing CRDs in the wrong namespace.
+func TestPoolStoreSourceRequiresNamespace(t *testing.T) {
+	store := newMemoryStore(t, poolstore.Pool{Name: "p", RuntimeRef: "r", WarmCount: 1})
+	src := &poolscaling.PoolStoreSource{Store: store, Namespace: ""}
+
+	if _, err := src.ListPoolConfigs(context.Background()); err == nil {
+		t.Fatal("want error for empty namespace, got nil")
+	}
+}
+
+// TestPoolStoreSourceFoldsScrubProfileIntoCRD verifies the store recycle
+// scrub control (microvmScrubMode → scrubProfile, plus the residual-state
+// acknowledgment) is folded onto SandboxTemplate.spec.sessionPolicy.recycle
+// so the pool-config validator's fail-closed in-place gate sees the
+// deployer's intent. The remaining recycle and concurrency knobs reach the
+// gateway through the poolstore directly and are not carried on the CRD.
+//
+// spec: §5.2 (recycle lifecycle, Kata scrub variant).
+func TestPoolStoreSourceFoldsScrubProfileIntoCRD(t *testing.T) {
+	// The CRD mapping reads the scrub control from the §5.2 sessionPolicy
+	// recycle block: scrubProfile (MicrovmScrubMode) and the in-place
+	// residual-state acknowledgment.
+	store := newMemoryStore(t, poolstore.Pool{
+		Name:             "recycle-pool",
+		RuntimeRef:       "claude-code",
+		IsolationProfile: isolation.ProfileMicrovm,
+		ExecutionMode:    runtimestore.ExecutionModeSession,
+		WarmCount:        2,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			AcknowledgeProcessLevelIsolation: true,
+			Recycle: &runtimestore.RecyclePolicy{
+				Enabled:                         true,
+				AcknowledgeBestEffortScrub:      true,
+				MaxSessionsPerPod:               50,
+				AllowCrossTenantReuse:           true,
+				ScrubProfile:                    runtimestore.MicrovmScrubInPlace,
+				AcknowledgeMicrovmResidualState: true,
+				RuntimeProcess:                  runtimestore.RuntimeProcessKeep,
+			},
+		},
+	})
+	src := &poolscaling.PoolStoreSource{Store: store, Namespace: "lenny-agents"}
+	configs, err := src.ListPoolConfigs(context.Background())
+	if err != nil {
+		t.Fatalf("ListPoolConfigs: %v", err)
+	}
+	if len(configs) != 1 {
+		t.Fatalf("want 1 config, got %d", len(configs))
+	}
+	sp := configs[0].Template.SessionPolicy
+	if sp == nil || sp.Recycle == nil {
+		t.Fatal("CRD SessionPolicy.Recycle not populated")
+	}
+	if sp.Recycle.ScrubProfile != "in-place" {
+		t.Errorf("ScrubProfile = %q, want in-place", sp.Recycle.ScrubProfile)
+	}
+	if !sp.Recycle.AcknowledgeMicrovmResidualState {
+		t.Error("AcknowledgeMicrovmResidualState did not propagate")
+	}
+}
+
+// TestPoolStoreSourceMapsVMRestartScrubMode verifies the store
+// `vm-restart` scrub mode passes through to the CRD `vm-restart` scrub
+// profile value-for-value.
+//
+// spec: §5.2 (Kata/microvm scrub variant).
+func TestPoolStoreSourceMapsVMRestartScrubMode(t *testing.T) {
+	store := newMemoryStore(t, poolstore.Pool{
+		Name:             "vm-restart-pool",
+		RuntimeRef:       "claude-code",
+		IsolationProfile: isolation.ProfileMicrovm,
+		ExecutionMode:    runtimestore.ExecutionModeSession,
+		WarmCount:        1,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			Recycle: &runtimestore.RecyclePolicy{
+				Enabled:                    true,
+				AcknowledgeBestEffortScrub: true,
+				MaxSessionsPerPod:          10,
+				AllowCrossTenantReuse:      true,
+				ScrubProfile:               runtimestore.MicrovmScrubVMRestart,
+			},
+		},
+	})
+	src := &poolscaling.PoolStoreSource{Store: store, Namespace: "lenny-agents"}
+	configs, err := src.ListPoolConfigs(context.Background())
+	if err != nil {
+		t.Fatalf("ListPoolConfigs: %v", err)
+	}
+	sp := configs[0].Template.SessionPolicy
+	if sp == nil || sp.Recycle == nil {
+		t.Fatal("CRD SessionPolicy.Recycle not populated")
+	}
+	if sp.Recycle.ScrubProfile != "vm-restart" {
+		t.Errorf("ScrubProfile = %q, want vm-restart", sp.Recycle.ScrubProfile)
+	}
+}
+
+// TestPoolStoreSourceCarriesSessionSizingKnobs verifies the §5.2
+// session-mode scaling knobs (recycle.enabled, recycle.maxSessionsPerPod,
+// maxConcurrentSessions) reach PoolConfig directly from the store row even
+// though the CRD does not model them. The mode_factor derivation reads them
+// off PoolConfig rather than the CRD spec (§4.6.3 ownership).
+//
+// spec: §5.2 (execution mode scaling implications).
+func TestPoolStoreSourceCarriesSessionSizingKnobs(t *testing.T) {
+	store := newMemoryStore(t, poolstore.Pool{
+		Name:             "recycle-sizing-pool",
+		RuntimeRef:       "claude-code",
+		IsolationProfile: isolation.ProfileSandboxed,
+		ExecutionMode:    runtimestore.ExecutionModeSession,
+		WarmCount:        2,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			MaxConcurrentSessions:            4,
+			AcknowledgeProcessLevelIsolation: true,
+			Recycle: &runtimestore.RecyclePolicy{
+				Enabled:                    true,
+				AcknowledgeBestEffortScrub: true,
+				MaxSessionsPerPod:          12,
+				RuntimeProcess:             runtimestore.RuntimeProcessKeep,
+			},
+		},
+	})
+	src := &poolscaling.PoolStoreSource{Store: store, Namespace: "lenny-agents"}
+	configs, err := src.ListPoolConfigs(context.Background())
+	if err != nil {
+		t.Fatalf("ListPoolConfigs: %v", err)
+	}
+	if len(configs) != 1 {
+		t.Fatalf("want 1 config, got %d", len(configs))
+	}
+	c := configs[0]
+	if !c.RecycleEnabled {
+		t.Error("RecycleEnabled = false, want true")
+	}
+	if c.MaxSessionsPerPod != 12 {
+		t.Errorf("MaxSessionsPerPod = %d, want 12", c.MaxSessionsPerPod)
+	}
+	if c.MaxConcurrentSessions != 4 {
+		t.Errorf("MaxConcurrentSessions = %d, want 4", c.MaxConcurrentSessions)
+	}
+}
+
+// TestPoolStoreSourceLeavesSizingKnobsZeroOnNonRecyclingPool verifies a
+// non-recycling session pool with no SessionPolicy block carries the
+// one-session-per-pod sizing defaults (RecycleEnabled false, both bounds 0),
+// so the mode_factor derivation keeps mode_factor = 1.0.
+//
+// default configuration mode_factor = 1.0.
+func TestPoolStoreSourceLeavesSizingKnobsZeroOnNonRecyclingPool(t *testing.T) {
+	store := newMemoryStore(t, poolstore.Pool{
+		Name:          "plain-sizing-pool",
+		RuntimeRef:    "claude-code",
+		ExecutionMode: runtimestore.ExecutionModeSession,
+		WarmCount:     1,
+	})
+	src := &poolscaling.PoolStoreSource{Store: store, Namespace: "lenny-agents"}
+	configs, err := src.ListPoolConfigs(context.Background())
+	if err != nil {
+		t.Fatalf("ListPoolConfigs: %v", err)
+	}
+	c := configs[0]
+	if c.RecycleEnabled || c.MaxSessionsPerPod != 0 || c.MaxConcurrentSessions != 0 {
+		t.Errorf("sizing knobs = %v/%d/%d, want false/0/0",
+			c.RecycleEnabled, c.MaxSessionsPerPod, c.MaxConcurrentSessions)
+	}
+}
+
+// TestPoolStoreSourceLeavesSessionPolicyNilWithoutScrubControl verifies a
+// pool with no recycle scrub control leaves the CRD on its default
+// one-session-per-pod configuration (no SessionPolicy block).
+//
+// spec: §5.2 (sessionPolicy default).
+func TestPoolStoreSourceLeavesSessionPolicyNilWithoutScrubControl(t *testing.T) {
+	store := newMemoryStore(t, poolstore.Pool{
+		Name:          "plain-pool",
+		RuntimeRef:    "claude-code",
+		ExecutionMode: runtimestore.ExecutionModeSession,
+		WarmCount:     1,
+	})
+	src := &poolscaling.PoolStoreSource{Store: store, Namespace: "lenny-agents"}
+	configs, err := src.ListPoolConfigs(context.Background())
+	if err != nil {
+		t.Fatalf("ListPoolConfigs: %v", err)
+	}
+	if sp := configs[0].Template.SessionPolicy; sp != nil {
+		t.Errorf("SessionPolicy = %#v, want nil for a pool with no scrub control", sp)
+	}
+}
+
+// TestPoolStoreSourceMirrorsNonceOnlyAck verifies the PoolStoreSource, the
+// §4.6.3 Postgres→CRD channel, copies the §5.3 acknowledgeNonceOnlyAuth opt-in
+// from the store row onto SandboxTemplate.spec so the WarmPoolController render
+// gate can require it before rendering --require-so-peercred=false. A pool
+// carrying the acknowledgment maps to a SandboxTemplate spec with the flag set;
+// a pool without it maps to a spec with the flag false.
+//
+// spec: §4.7, §5.3.
+func TestPoolStoreSourceMirrorsNonceOnlyAck(t *testing.T) {
+	store := newMemoryStore(
+		t,
+		poolstore.Pool{
+			Name:                     "nonce-ack",
+			RuntimeRef:               "gvisor-runtime",
+			IsolationProfile:         isolation.ProfileSandboxed,
+			ExecutionMode:            runtimestore.ExecutionModeSession,
+			WarmCount:                1,
+			AcknowledgeNonceOnlyAuth: true,
+		},
+		poolstore.Pool{
+			Name:             "no-ack",
+			RuntimeRef:       "gvisor-runtime",
+			IsolationProfile: isolation.ProfileSandboxed,
+			ExecutionMode:    runtimestore.ExecutionModeSession,
+			WarmCount:        1,
+		},
+	)
+	src := &poolscaling.PoolStoreSource{Store: store, Namespace: "lenny-agents"}
+	configs, err := src.ListPoolConfigs(context.Background())
+	if err != nil {
+		t.Fatalf("ListPoolConfigs: %v", err)
+	}
+	byName := map[string]bool{}
+	for _, c := range configs {
+		byName[c.Name] = c.Template.AcknowledgeNonceOnlyAuth
+	}
+	if got, ok := byName["nonce-ack"]; !ok || !got {
+		t.Errorf("nonce-ack template acknowledgeNonceOnlyAuth = %v (present=%v), want true", got, ok)
+	}
+	if got, ok := byName["no-ack"]; !ok || got {
+		t.Errorf("no-ack template acknowledgeNonceOnlyAuth = %v (present=%v), want false", got, ok)
+	}
+}
+
+// TestPoolStoreSourceMirrorsDeliveryFields verifies the §4.9 pool-definition
+// deliveryMode and spiffeBinding flow from the poolstore source of truth onto
+// SandboxTemplate.spec so the lenny-direct-mode-isolation ValidatingAdmissionWebhook
+// and the preflight scan read live values rather than the empty strings the CRD
+// carried before the PoolScalingController populated them. Against the pre-fix
+// mapping (which copied IsolationProfile/EgressProfile but neither delivery
+// field) the CRD deliveryMode/spiffeBinding stayed empty and this assertion
+// fails. The two deployer opt-in acknowledgments are deliberately absent from
+// the CRD spec, which the SandboxTemplateSpec type enforces structurally: the
+// webhook rejects the forbidden combinations in multi-tenant mode regardless of
+// any opt-in value, so the CRD carries only the fields the admission gate reads.
+//
+// spec: §4.9.
+func TestPoolStoreSourceMirrorsDeliveryFields(t *testing.T) {
+	store := newMemoryStore(
+		t,
+		poolstore.Pool{
+			Name:                                "proxy-spiffe-disabled",
+			RuntimeRef:                          "claude-code",
+			IsolationProfile:                    isolation.ProfileStandard,
+			AllowStandardIsolation:              true,
+			ExecutionMode:                       runtimestore.ExecutionModeSession,
+			WarmCount:                           1,
+			DeliveryMode:                        "proxy",
+			SpiffeBinding:                       "disabled",
+			AllowProxyModeSpiffeBindingDisabled: true,
+			AllowDirectModeStandardIsolation:    true,
+		},
+		poolstore.Pool{
+			Name:             "default-delivery",
+			RuntimeRef:       "claude-code",
+			IsolationProfile: isolation.ProfileSandboxed,
+			ExecutionMode:    runtimestore.ExecutionModeSession,
+			WarmCount:        1,
+		},
+	)
+	src := &poolscaling.PoolStoreSource{Store: store, Namespace: "lenny-agents"}
+	configs, err := src.ListPoolConfigs(context.Background())
+	if err != nil {
+		t.Fatalf("ListPoolConfigs: %v", err)
+	}
+	byName := map[string]poolscaling.PoolConfig{}
+	for _, c := range configs {
+		byName[c.Name] = c
+	}
+	set := byName["proxy-spiffe-disabled"]
+	if set.Template.DeliveryMode != "proxy" {
+		t.Errorf("proxy-spiffe-disabled template deliveryMode = %q, want proxy", set.Template.DeliveryMode)
+	}
+	if set.Template.SpiffeBinding != "disabled" {
+		t.Errorf("proxy-spiffe-disabled template spiffeBinding = %q, want disabled", set.Template.SpiffeBinding)
+	}
+	def := byName["default-delivery"]
+	if def.Template.DeliveryMode != "" {
+		t.Errorf("default-delivery template deliveryMode = %q, want empty (runtime default)", def.Template.DeliveryMode)
+	}
+	if def.Template.SpiffeBinding != "" {
+		t.Errorf("default-delivery template spiffeBinding = %q, want empty (runtime default)", def.Template.SpiffeBinding)
+	}
+}
+
+// TestPoolStoreSourceMirrorsDNSPolicy verifies the §13.2 per-pool DNS
+// opt-out flows from the store row onto SandboxTemplate.spec.dnsPolicy so
+// the WarmPoolController stamps the lenny.dev/dns-policy: cluster-default
+// label and the supplemental allow-pod-egress-kube-dns NetworkPolicy
+// selects the pool's pods. A pool with no opt-out maps to an empty
+// dnsPolicy and stays on the dedicated CoreDNS instance.
+//
+// spec: 13.2 (per-pool DNS opt-out)
+func TestPoolStoreSourceMirrorsDNSPolicy(t *testing.T) {
+	store := newMemoryStore(
+		t,
+		poolstore.Pool{
+			Name:                   "dns-optout",
+			RuntimeRef:             "echo-runtime",
+			IsolationProfile:       isolation.ProfileStandard,
+			AllowStandardIsolation: true,
+			ExecutionMode:          runtimestore.ExecutionModeSession,
+			WarmCount:              1,
+			DNSPolicy:              poolstore.DNSPolicyClusterDefault,
+		},
+		poolstore.Pool{
+			Name:             "dns-dedicated",
+			RuntimeRef:       "echo-runtime",
+			IsolationProfile: isolation.ProfileSandboxed,
+			ExecutionMode:    runtimestore.ExecutionModeSession,
+			WarmCount:        1,
+		},
+	)
+	src := &poolscaling.PoolStoreSource{Store: store, Namespace: "lenny-agents"}
+	configs, err := src.ListPoolConfigs(context.Background())
+	if err != nil {
+		t.Fatalf("ListPoolConfigs: %v", err)
+	}
+	byName := map[string]string{}
+	for _, c := range configs {
+		byName[c.Name] = c.Template.DNSPolicy
+	}
+	if got := byName["dns-optout"]; got != poolstore.DNSPolicyClusterDefault {
+		t.Errorf("dns-optout template dnsPolicy = %q, want %q", got, poolstore.DNSPolicyClusterDefault)
+	}
+	if got := byName["dns-dedicated"]; got != "" {
+		t.Errorf("dns-dedicated template dnsPolicy = %q, want empty (dedicated instance)", got)
+	}
+}

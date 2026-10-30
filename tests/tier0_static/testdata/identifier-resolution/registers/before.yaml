@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MIT
+#
+# The register as it stands before the identifier pass runs: every site
+# is resolved to the channel it denotes, and the carrier's own name is
+# resolved as well.
+kind: identifier-senses
+version: 1
+entries:
+  - file: pkg/adapter/lifecyclechannel.go
+    path: true
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecyclechannel.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecyclechannel.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS

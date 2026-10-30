@@ -1,0 +1,106 @@
+{{- /*
+The §26 reference-runtime catalog. When referenceRuntimes.enabled is
+true, helm install registers each catalog entry as a platform-global
+(cluster-scoped) Runtime record, so the reference runtimes are
+installable through lenny-ctl install.
+
+Per §26.1 the records carry no default tenant access; an operator
+grants access per tenant with
+POST /v1/admin/runtimes/{name}/tenant-access after install. The runtime
+images live in their own repositories (github.com/lennylabs/runtime-<name>)
+and are pulled lazily on first session start.
+
+Each seeded runtime's isolationProfile defaults to the chart-wide
+§17.9.1 isolationProfile composition dimension via
+lenny.seededIsolationProfile (baseline -> standard, sandboxed ->
+sandboxed, hypervisor -> microvm); a catalog entry may pin its own
+isolationProfile to override the default. F-17.9.10.
+
+The Runtime CRD carries the type, image, the §5.1 command the runtime
+supervisor launches (§26.1), integration level, execution
+mode, isolation profile, allowed resource classes, supported providers,
+the §5.1 capabilities block (interaction + injection), the §5.1
+runtimeOptionsSchema URL the §26 sections enumerate, the §4.9
+credentialCapabilities.proxyDialect set, the §8.3 delegationPolicyRef,
+and the §26.2 coding-agent shared blocks (limits, setupCommandPolicy,
+setupPolicy, defaultPoolConfig, agentInterface). The §26.3 labels
+(maintainer, upstream) are stamped onto the object's metadata.labels.
+F-26.2.1 / F-26.9.2 / F-26.10.2 / F-26.11.2 / F-26.3.2 / F-26.3.4 /
+F-26.3.5.
+*/ -}}
+{{- if .Values.referenceRuntimes.enabled }}
+{{- /*
+referenceRuntimes.include narrows the catalog to a subset of runtimes by
+name. An empty list (the default) registers the whole catalog; a non-empty
+list registers only the named entries. The §17.6 install wizard's
+reference-runtime multi-select composes this key so a deployer can minimize
+the image-pull footprint without hand-editing the catalog. F-17.6.10.
+*/ -}}
+{{- $include := .Values.referenceRuntimes.include | default (list) }}
+{{- range .Values.referenceRuntimes.catalog }}
+{{- if or (eq (len $include) 0) (has .name $include) }}
+---
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: {{ .name }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+    lenny.dev/reference-runtime: "true"
+    {{- range $k, $v := .labels }}
+    {{ $k }}: {{ $v | quote }}
+    {{- end }}
+spec:
+  type: agent
+  image: {{ .image }}
+  {{- /* spec: §5.1 (command), §26.1 — a sidecar agent Runtime requires
+  command, and the Runtime CRD rejects one without it, so a catalog entry
+  that omits it fails the render rather than the apply. */}}
+  command:
+    {{- toYaml (required (printf "referenceRuntimes.catalog[%s].command is required (§5.1)" .name) .command) | nindent 4 }}
+  integrationLevel: {{ .integrationLevel }}
+  executionMode: session
+  isolationProfile: {{ .isolationProfile | default (include "lenny.seededIsolationProfile" $) }}
+  {{- with .allowedResourceClasses }}
+  allowedResourceClasses:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  supportedProviders:
+    {{- toYaml .supportedProviders | nindent 4 }}
+  {{- with .capabilities }}
+  capabilities:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .runtimeOptionsSchemaRef }}
+  runtimeOptionsSchemaRef: {{ . | quote }}
+  {{- end }}
+  {{- with .credentialCapabilities }}
+  credentialCapabilities:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .limits }}
+  limits:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .setupCommandPolicy }}
+  setupCommandPolicy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .setupPolicy }}
+  setupPolicy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .defaultPoolConfig }}
+  defaultPoolConfig:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .agentInterface }}
+  agentInterface:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .delegationPolicyRef }}
+  delegationPolicyRef: {{ . | quote }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

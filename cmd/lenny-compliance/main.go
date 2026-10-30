@@ -11,8 +11,10 @@
 //	lenny-compliance --binary ./bin/echo --level basic
 //	lenny-compliance --binary ./bin/echo --level basic --json
 //
-// Phase 2 ships the Basic-level battery. Standard and Full ship in
-// later phases alongside the adapter manifest and lifecycle channel.
+// The Basic-level battery exercises the stdin/stdout binary protocol.
+// The Standard-level battery adds the §15.4.3 intra-pod MCP integration
+// and the §8.5 delegation tool surface; the Full-level battery adds the
+// CH-RUNTIMEOPS.
 //
 // The harness exits 0 when every check passed and non-zero (one per
 // failed check) otherwise. The JSON form produces a single document
@@ -38,6 +40,7 @@ const harnessVersion = "0.3.0-phase2.8"
 func main() {
 	var (
 		binaryPath = flag.String("binary", "", "path to the adapter binary under test")
+		image      = flag.String("image", "", "OCI image reference for the runtime under test (docker pull if not already cached locally; mutually exclusive with --binary)")
 		level      = flag.String("level", "basic", "integration level: basic|standard|full")
 		jsonOut    = flag.Bool("json", false, "emit JSON report on stdout instead of a human summary")
 		timeout    = flag.Duration("timeout", 30*time.Second, "per-check timeout")
@@ -45,26 +48,123 @@ func main() {
 	)
 	flag.Parse()
 
+	// `lenny-compliance --image <ref> --level
+	// <level>` drives a container-deployed runtime through the same
+	// battery a locally built binary runs. Resolve --image to a wrapper
+	// script the rest of the harness can exec like any other adapter
+	// binary, so the check functions need no image-aware branch.
+	if *image != "" {
+		if *binaryPath != "" {
+			fmt.Fprintln(os.Stderr, "lenny-compliance: --binary and --image are mutually exclusive")
+			os.Exit(2)
+		}
+		resolved, cleanup, err := resolveImageBinary(context.Background(), *image)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "lenny-compliance: %v\n", err)
+			os.Exit(1)
+		}
+		defer cleanup()
+		binaryPath = &resolved
+	}
 	if *binaryPath == "" {
-		fmt.Fprintln(os.Stderr, "lenny-compliance: --binary is required")
+		fmt.Fprintln(os.Stderr, "lenny-compliance: --binary or --image is required")
 		os.Exit(2)
 	}
 	var report Report
 	switch *level {
 	case "basic":
 		report = runBasicBattery(*binaryPath, *timeout, *verbose)
+	case "standard":
+		report = runStandardBattery(*binaryPath, *timeout, *verbose)
 	case "full":
 		report = runFullBattery(*binaryPath, *timeout, *verbose)
-	case "standard":
-		fmt.Fprintln(os.Stderr, "lenny-compliance: --level=standard ships in a later phase (Phase 2.8 covers full; Phase 9 ships standard alongside delegation-echo)")
-		os.Exit(2)
 	default:
 		fmt.Fprintf(os.Stderr, "lenny-compliance: unknown --level %q (basic|standard|full)\n", *level)
 		os.Exit(2)
 	}
+	// Report the image reference the operator asked for rather than the
+	// generated wrapper script's temp path, which carries no meaning
+	// outside this process.
+	if *image != "" {
+		report.Binary = *image
+	}
 
 	emit(report, *jsonOut)
 	os.Exit(report.failedCount())
+}
+
+// resolveImageBinary makes image runnable through the harness's
+// exec-a-binary-path abstraction. It pulls image via docker when not
+// already cached locally, then materializes a small wrapper script that
+// execs `docker run --rm -i <image>`, piping the harness's stdin/stdout
+// through to the container the same way it would to a local adapter
+// binary. The returned cleanup func removes the wrapper script; it is
+// always non-nil when err is nil.
+// The reference-runtime and third-party
+// conformance batteries run against a container image via
+// `lenny-compliance --image`. A `file://` reference (see
+// tests/testinfra/runtimes/conformance-fixtures/README.md) names a
+// binary on disk directly rather than a container image, for driving
+// the §11 intentionally-malformed conformance fixtures through the
+// same --image entry point without a docker build per fixture; it
+// bypasses docker entirely.
+func resolveImageBinary(ctx context.Context, image string) (string, func(), error) {
+	if path, ok := strings.CutPrefix(image, "file://"); ok {
+		return path, func() {}, nil
+	}
+	if err := ensureImagePresent(ctx, image); err != nil {
+		return "", nil, err
+	}
+	return materializeImageWrapper(image)
+}
+
+// ensureImagePresent skips the pull when the image is already cached in
+// the local docker daemon (the case for an image built in-process by a
+// test), and otherwise pulls it. A pull failure is reported with the
+// docker output attached so a missing or unauthorized image reads as an
+// external-dependency error rather than an opaque non-zero exit.
+func ensureImagePresent(ctx context.Context, image string) error {
+	if exec.CommandContext(ctx, "docker", "image", "inspect", image).Run() == nil {
+		return nil
+	}
+	out, err := exec.CommandContext(ctx, "docker", "pull", image).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("docker pull %s: %w\n%s", image, err, out)
+	}
+	return nil
+}
+
+// materializeImageWrapper writes a shebang script that runs image as a
+// piped subprocess and returns its path plus a cleanup func that removes
+// it. driveAdapter execs the returned path exactly as it would a local
+// adapter binary.
+func materializeImageWrapper(image string) (string, func(), error) {
+	f, err := os.CreateTemp("", "lenny-compliance-image-*.sh")
+	if err != nil {
+		return "", nil, fmt.Errorf("create image wrapper script: %w", err)
+	}
+	script := "#!/bin/sh\nexec docker run --rm -i " + shellSingleQuote(image) + "\n"
+	if _, err := f.WriteString(script); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return "", nil, fmt.Errorf("write image wrapper script: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(f.Name())
+		return "", nil, fmt.Errorf("close image wrapper script: %w", err)
+	}
+	if err := os.Chmod(f.Name(), 0o755); err != nil {
+		os.Remove(f.Name())
+		return "", nil, fmt.Errorf("chmod image wrapper script: %w", err)
+	}
+	path := f.Name()
+	return path, func() { os.Remove(path) }, nil
+}
+
+// shellSingleQuote quotes s for safe interpolation into the generated
+// /bin/sh wrapper script's single-quoted argument position.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
 // Report is the conformance report. One entry per check.
@@ -98,6 +198,42 @@ func (r Report) failedCount() int { return r.Summary.Failed }
 
 // runBasicBattery runs every Basic-level conformance check against the
 // adapter binary and assembles the Report.
+// checkCase is one named conformance check tagged with the spec section
+// that defines it. The Basic battery is shared by the Standard and Full
+// batteries, so it lives in one place to keep the three in sync.
+type checkCase struct {
+	name string
+	spec string
+	fn   func(string, time.Duration, bool) (string, error)
+}
+
+// basicCases is the §15.4.6 Basic-level conformance battery, run as-is by
+// every level. The three schema-driven checks generate their assertions
+// from the published artifacts §24.8 names rather than from
+// hand-coded prose: response_matches_jsonl_schema (§15.4.6,
+// schemas/lenny-adapter-jsonl.schema.json), messagepart_schema_compliance
+// (§15.4.6, schemas/messagepart.schema.json), and
+// response_error_code_in_proto_catalog (§24.8, the
+// schemas/lenny-adapter.proto Error.ErrorCode enum the JSONL schema leaves
+// open). Each failing assertion is cited in the report by name and source
+// artifact.
+func basicCases() []checkCase {
+	return []checkCase{
+		{"binary_exists_and_executes", "15.4", checkBinaryExecutes},
+		{"empty_stdin_exits_cleanly", "15.4", checkEmptyStdin},
+		{"message_emits_response", "15.4", checkMessageEmitsResponse},
+		{"heartbeat_emits_ack", "15.4", checkHeartbeatAck},
+		{"heartbeat_busy", "15.4", checkHeartbeatBusy},
+		{"unknown_type_ignored", "15.4", checkUnknownTypeIgnored},
+		{"shutdown_exits_within_deadline", "15.4", checkShutdownDeadline},
+		{"session_lifetime", "15.4.6", checkSessionLifetime},
+		{"response_matches_jsonl_schema", "15.4.6", checkResponseMatchesJSONLSchema},
+		{"messagepart_schema_compliance", "15.4.6", checkMessagePartSchemaCompliance},
+		{"response_error_code_in_proto_catalog", "24.8", checkResponseErrorCodeCatalog},
+		{"response_echoes_session_id", "28.5.3", checkResponseEchoesSessionID},
+	}
+}
+
 func runBasicBattery(binary string, timeout time.Duration, verbose bool) Report {
 	r := Report{
 		Harness:   "lenny-compliance/" + harnessVersion,
@@ -106,21 +242,7 @@ func runBasicBattery(binary string, timeout time.Duration, verbose bool) Report 
 		StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}
 
-	cases := []struct {
-		name string
-		spec string
-		fn   func(string, time.Duration, bool) (string, error)
-	}{
-		{"binary_exists_and_executes", "15.4", checkBinaryExecutes},
-		{"empty_stdin_exits_cleanly", "15.4", checkEmptyStdin},
-		{"message_emits_response", "15.4", checkMessageEmitsResponse},
-		{"heartbeat_emits_ack", "15.4", checkHeartbeatAck},
-		{"unknown_type_ignored", "15.4", checkUnknownTypeIgnored},
-		{"shutdown_exits_within_deadline", "15.4", checkShutdownDeadline},
-		{"sequential_messages_handled", "15.4", checkSequentialMessages},
-	}
-
-	for _, c := range cases {
+	for _, c := range basicCases() {
 		detail, err := c.fn(binary, timeout, verbose)
 		r.recordCheck(c.name, c.spec, detail, err)
 	}
@@ -157,7 +279,7 @@ func emit(r Report, asJSON bool) {
 
 // driveAdapter starts the binary, sends inputLines on stdin, then closes
 // stdin. It reads up to maxLines from stdout (or until the process exits)
-// and returns the captured lines. The process is killed if it does not
+// and returns the captured lines, skipping session_started frames. The process is killed if it does not
 // exit within timeout.
 func driveAdapter(binary string, inputLines []string, maxLines int, timeout time.Duration) (stdout []string, stderr string, exitCode int, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -201,8 +323,12 @@ func driveAdapter(binary string, inputLines []string, maxLines int, timeout time
 
 	scanner := bufio.NewScanner(out)
 	scanner.Buffer(make([]byte, 64*1024), 50*1024*1024)
-	for scanner.Scan() {
-		stdout = append(stdout, scanner.Text())
+	for {
+		line, ok := scanFrame(scanner)
+		if !ok {
+			break
+		}
+		stdout = append(stdout, line)
 		if maxLines > 0 && len(stdout) >= maxLines {
 			break
 		}
@@ -264,9 +390,9 @@ func checkEmptyStdin(binary string, timeout time.Duration, _ bool) (string, erro
 }
 
 func checkMessageEmitsResponse(binary string, timeout time.Duration, verbose bool) (string, error) {
-	in := []string{
-		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5P1","from":{"kind":"client","id":"client_alice"},"input":[{"type":"text","inline":"ping"}]}`,
-	}
+	in := withSessionStart(
+		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5P1","from":{"kind":"client","id":"client_alice"},"sessionId":"` + complianceSessionID + `","input":[{"type":"text","inline":"ping"}]}`,
+	)
 	stdout, _, code, err := driveAdapter(binary, in, 1, timeout)
 	if err != nil {
 		return "", err
@@ -299,8 +425,71 @@ func checkMessageEmitsResponse(binary string, timeout time.Duration, verbose boo
 	return "response.type=response, output[0].type=" + resp.Output[0].Type, nil
 }
 
-func checkHeartbeatAck(binary string, timeout time.Duration, _ bool) (string, error) {
-	in := []string{`{"type":"heartbeat","ts":1234}`}
+// complianceSessionID is the session the battery addresses every inbound
+// `message` frame to. The adapter populates the per-session identifier on
+// every session-scoped frame on every pod, so a runtime the battery drives
+// is handed one and echoes it back. spec: §28.5.3.
+const complianceSessionID = "sess_01J9X0ZW1ZF7K8Q1V2T3M4N5S1"
+
+// complianceSessionStart is the CH-MSGSOCK session_start frame that opens
+// complianceSessionID, as the adapter writes it before any other frame
+// for the session. It omits credentialsPath, which the frame carries only
+// when a credential file was provisioned and never as an empty string.
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start).
+const complianceSessionStart = `{"type":"session_start","sessionId":"` + complianceSessionID +
+	`","startId":"` + complianceStartID + `","experimentContext":null,"tracingContext":null,"llm":null}`
+
+// complianceStartID is the startId of complianceSessionStart, which the
+// session_started that answers it echoes.
+const complianceStartID = "compliance-1"
+
+// withSessionStart prefixes a check's stdin lines with the session_start
+// frame that opens complianceSessionID. Every check that writes a
+// session-scoped frame uses it, so the runtime holds the session before
+// it reads the session's first message or CH-RUNTIMEOPS frame.
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start).
+func withSessionStart(lines ...string) []string {
+	return append([]string{complianceSessionStart}, lines...)
+}
+
+// isSessionStarted reports whether a stdout line is a session_started
+// frame. A runtime that keeps per-session context answers session_start
+// with one, and the battery's frame readers skip it wherever a check
+// reads stdout so a check sees the frames its assertion is about.
+// spec: §28.5.3 (CH-MSGSOCK, Outbound: session_started).
+func isSessionStarted(line string) bool {
+	var f struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal([]byte(line), &f) == nil && f.Type == "session_started"
+}
+
+// scanFrame advances s past any session_started frames and returns the
+// next stdout line. ok is false when stdout ends first.
+func scanFrame(s *bufio.Scanner) (line string, ok bool) {
+	for s.Scan() {
+		if line = s.Text(); !isSessionStarted(line) {
+			return line, true
+		}
+	}
+	return "", false
+}
+
+// checkResponseEchoesSessionID is the Basic-level echo obligation. A
+// Basic-level runtime may ignore every envelope field but `type`, `id`,
+// and `input`, with the per-session identifier excepted: it echoes the
+// identifier it was handed on the frames it emits in response, on every
+// pod. Without the echo the adapter cannot attribute the response to the
+// session that produced it, and on a pod holding more than one slot the
+// frame is rejected and relayed to no stream. The check requires the
+// echoed value and the absence of the retired `slotId` key, so an
+// emitter that still writes the old spelling fails here rather than
+// diverging only on the wire.
+// spec: §15.4.3; §28.5.3.
+func checkResponseEchoesSessionID(binary string, timeout time.Duration, verbose bool) (string, error) {
+	in := withSessionStart(
+		`{"schemaVersion":1,"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5P2","from":{"kind":"client","id":"client_alice"},"sessionId":"` + complianceSessionID + `","input":[{"schemaVersion":1,"type":"text","inline":"ping"}]}`,
+	)
 	stdout, _, code, err := driveAdapter(binary, in, 1, timeout)
 	if err != nil {
 		return "", err
@@ -309,7 +498,166 @@ func checkHeartbeatAck(binary string, timeout time.Duration, _ bool) (string, er
 		return "", fmt.Errorf("exit %d", code)
 	}
 	if len(stdout) == 0 {
-		return "", errors.New("no heartbeat_ack on stdout")
+		return "", errors.New("no response on stdout")
+	}
+	var resp struct {
+		Type      string `json:"type"`
+		SessionID string `json:"sessionId"`
+		// SlotID decodes the retired frame key so the check pins the
+		// rename rather than the mere presence of an identifier. The
+		// session-scoped frames carry `sessionId` and nothing else
+		// addresses them. spec: §28.5.3.
+		SlotID string `json:"slotId"`
+	}
+	if err := json.Unmarshal([]byte(stdout[0]), &resp); err != nil {
+		return "", fmt.Errorf("response not JSON: %w (line: %s)", err, stdout[0])
+	}
+	if resp.Type != "response" {
+		return "", fmt.Errorf("response.type = %q, want \"response\"", resp.Type)
+	}
+	if resp.SlotID != "" {
+		return "", fmt.Errorf("response carries the retired slotId key (%q); a session-scoped frame is addressed by sessionId alone", resp.SlotID)
+	}
+	if resp.SessionID == "" {
+		return "", fmt.Errorf("response carries no sessionId; a Basic-level runtime echoes the per-session identifier it was handed (%s)", complianceSessionID)
+	}
+	if resp.SessionID != complianceSessionID {
+		return "", fmt.Errorf("response.sessionId = %q, want the inbound %q echoed unchanged", resp.SessionID, complianceSessionID)
+	}
+	if verbose {
+		return fmt.Sprintf("response echoed sessionId=%q (line: %s)", resp.SessionID, stdout[0]), nil
+	}
+	return "response.sessionId echoes the inbound " + complianceSessionID, nil
+}
+
+// checkResponseMatchesJSONLSchema validates that the runtime's response
+// frame matches the published adapter JSONL schema. spec: §15.4.6.
+func checkResponseMatchesJSONLSchema(binary string, timeout time.Duration, verbose bool) (string, error) {
+	stdout, _, code, err := driveAdapter(binary, withSessionStart(canonicalMessage), 1, timeout)
+	if err != nil {
+		return "", err
+	}
+	if code != 0 {
+		return "", fmt.Errorf("exit %d", code)
+	}
+	if len(stdout) == 0 {
+		return "", errors.New("no response on stdout")
+	}
+	if err := validateJSONLFrame([]byte(stdout[0])); err != nil {
+		return "", err
+	}
+	if verbose {
+		return fmt.Sprintf("validated against %s: %s", jsonlSchemaFile, stdout[0]), nil
+	}
+	return "response validates against " + jsonlSchemaFile, nil
+}
+
+// checkMessagePartSchemaCompliance validates every MessagePart in the
+// runtime's response against the published MessagePart schema. A
+// text-shorthand response (no output array) carries no MessageParts to
+// validate and passes. spec: §15.4.6.
+func checkMessagePartSchemaCompliance(binary string, timeout time.Duration, verbose bool) (string, error) {
+	stdout, _, code, err := driveAdapter(binary, withSessionStart(canonicalMessage), 1, timeout)
+	if err != nil {
+		return "", err
+	}
+	if code != 0 {
+		return "", fmt.Errorf("exit %d", code)
+	}
+	if len(stdout) == 0 {
+		return "", errors.New("no response on stdout")
+	}
+	var resp struct {
+		Type   string            `json:"type"`
+		Output []json.RawMessage `json:"output"`
+		Text   string            `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(stdout[0]), &resp); err != nil {
+		return "", fmt.Errorf("response not JSON: %w", err)
+	}
+	if resp.Type != "response" {
+		return "", fmt.Errorf("response.type = %q, want \"response\"", resp.Type)
+	}
+	if len(resp.Output) == 0 {
+		// spec: §28.5.3 — the Basic shorthand {type:response,text:"..."}
+		// emits no MessagePart array; the adapter normalizes it. There is
+		// nothing to validate against the MessagePart schema.
+		return "no MessageParts emitted (text shorthand)", nil
+	}
+	for i, part := range resp.Output {
+		if err := validateMessagePart(part); err != nil {
+			return "", fmt.Errorf("output[%d]: %w", i, err)
+		}
+	}
+	return fmt.Sprintf("%d MessagePart(s) validate against %s", len(resp.Output), messagePartFile), nil
+}
+
+// checkResponseErrorCodeCatalog runs the proto-generated error-code
+// assertion against the runtime's response. The §28.5.3 JSONL schema models
+// `error.code` as an open string; the closed catalog is the
+// schemas/lenny-adapter.proto Error.ErrorCode enum (the §15.1 catalog), so a
+// runtime that fails a task with an out-of-catalog code is non-conformant in
+// a way no JSON-Schema assertion can catch. A successful response carries no
+// error and passes vacuously. spec: §24.8.
+func checkResponseErrorCodeCatalog(binary string, timeout time.Duration, verbose bool) (string, error) {
+	stdout, _, code, err := driveAdapter(binary, withSessionStart(canonicalMessage), 1, timeout)
+	if err != nil {
+		return "", err
+	}
+	if code != 0 {
+		return "", fmt.Errorf("exit %d", code)
+	}
+	if len(stdout) == 0 {
+		return "", errors.New("no response on stdout")
+	}
+	if err := validateResponseErrorCode([]byte(stdout[0])); err != nil {
+		return "", err
+	}
+	var frame struct {
+		Error *struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal([]byte(stdout[0]), &frame)
+	if frame.Error != nil && frame.Error.Code != "" {
+		return fmt.Sprintf("error code %q is in the %s catalog", frame.Error.Code, adapterProtoFile), nil
+	}
+	if verbose {
+		return "response carries no error; proto error-code catalog assertion vacuously satisfied", nil
+	}
+	return "no error frame to assert against " + adapterProtoFile, nil
+}
+
+// heartbeatAckDeadline is the §15.4.6 Basic-conformance bound:
+// the binary MUST write heartbeat_ack within 10s of receiving heartbeat.
+// The harness drives the adapter under this deadline (rather than the
+// generic test timeout) so a slow-starting runtime that acks at, say,
+// 20s is force-killed and fails the check instead of passing under the
+// 30s default. 15.4-MED-022.
+const heartbeatAckDeadline = 10 * time.Second
+
+func checkHeartbeatAck(binary string, timeout time.Duration, _ bool) (string, error) {
+	// spec: §15.4.6 — bound the wait to the 10s ack deadline.
+	// A smaller caller timeout still wins so an aggressive overall budget
+	// is honored.
+	deadline := heartbeatAckDeadline
+	if timeout > 0 && timeout < deadline {
+		deadline = timeout
+	}
+	in := []string{`{"type":"heartbeat","ts":1234}`}
+	start := time.Now()
+	stdout, _, code, err := driveAdapter(binary, in, 1, deadline)
+	elapsed := time.Since(start)
+	if err != nil {
+		return "", err
+	}
+	if code != 0 {
+		return "", fmt.Errorf("exit %d", code)
+	}
+	if len(stdout) == 0 {
+		// driveAdapter force-killed the binary at the deadline before it
+		// produced an ack: the 10s bound was exceeded.
+		return "", fmt.Errorf("no heartbeat_ack within %s", deadline)
 	}
 	var ack struct {
 		Type string `json:"type"`
@@ -320,7 +668,7 @@ func checkHeartbeatAck(binary string, timeout time.Duration, _ bool) (string, er
 	if ack.Type != "heartbeat_ack" {
 		return "", fmt.Errorf("ack.type = %q, want \"heartbeat_ack\"", ack.Type)
 	}
-	return "heartbeat_ack received", nil
+	return fmt.Sprintf("heartbeat_ack received in %s (deadline %s)", elapsed.Round(time.Millisecond), deadline), nil
 }
 
 func checkUnknownTypeIgnored(binary string, timeout time.Duration, _ bool) (string, error) {
@@ -342,41 +690,43 @@ func checkUnknownTypeIgnored(binary string, timeout time.Duration, _ bool) (stri
 	return "unknown type silently dropped; heartbeat still answered", nil
 }
 
+// shutdownDeadlineMs is the §15.4.6 Basic-conformance shutdown
+// budget: "the binary exits cleanly before the deadline elapses (tested
+// with N = 5000)". The harness sends deadline_ms=5000 and asserts the
+// binary exits — cleanly (exit 0) — within that window rather than under
+// an unrelated 3s wall-clock guard. 15.4-MED-023.
+const shutdownDeadlineMs = 5000
+
 func checkShutdownDeadline(binary string, _ time.Duration, _ bool) (string, error) {
-	in := []string{`{"type":"shutdown","reason":"test","deadline_ms":500}`}
-	start := time.Now()
-	_, _, code, err := driveAdapter(binary, in, 0, 5*time.Second)
-	if err != nil {
-		return "", err
-	}
-	if code != 0 {
-		return "", fmt.Errorf("exit %d", code)
-	}
-	elapsed := time.Since(start)
-	// The adapter must exit. We don't enforce the deadline strictly here
-	// because OS-level scheduling adds noise; we just require it doesn't
-	// hang past a generous bound.
-	if elapsed > 3*time.Second {
-		return "", fmt.Errorf("exit took %v, expected well under the 500ms deadline", elapsed)
-	}
-	return fmt.Sprintf("exit in %s", elapsed.Round(time.Millisecond)), nil
+	return runShutdownDeadlineCheck(binary, shutdownDeadlineMs)
 }
 
-func checkSequentialMessages(binary string, timeout time.Duration, _ bool) (string, error) {
-	in := []string{
-		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5A1","from":{"kind":"client","id":"client_alice"},"input":[{"type":"text","inline":"one"}]}`,
-		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5A2","from":{"kind":"client","id":"client_alice"},"input":[{"type":"text","inline":"two"}]}`,
-		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5A3","from":{"kind":"client","id":"client_alice"},"input":[{"type":"text","inline":"three"}]}`,
-	}
-	stdout, _, code, err := driveAdapter(binary, in, 3, timeout)
+// runShutdownDeadlineCheck drives binary with a shutdown frame carrying
+// deadlineMs and asserts the §15.4.6 contract: a clean exit
+// (code 0) before the deadline elapses. The deadlineMs is a parameter so
+// tests can exercise the boundary fast; the public check passes the
+// spec's N=5000. spec: §15.4.6. 15.4-MED-023.
+func runShutdownDeadlineCheck(binary string, deadlineMs int) (string, error) {
+	deadline := time.Duration(deadlineMs) * time.Millisecond
+	in := []string{fmt.Sprintf(`{"type":"shutdown","reason":"test","deadline_ms":%d}`, deadlineMs)}
+	start := time.Now()
+	// Bound the harness wall clock just past the deadline so a runtime
+	// that ignores the deadline is force-killed (non-zero exit) and fails,
+	// matching the production adapter's SIGTERM-at-deadline behavior.
+	_, _, code, err := driveAdapter(binary, in, 0, deadline+2*time.Second)
+	elapsed := time.Since(start)
 	if err != nil {
 		return "", err
 	}
+	// spec: §15.4.6 — a clean exit is exit code 0. A binary
+	// force-killed at the harness bound returns non-zero.
 	if code != 0 {
-		return "", fmt.Errorf("exit %d", code)
+		return "", fmt.Errorf("exit %d (must exit cleanly within the %s deadline)", code, deadline)
 	}
-	if len(stdout) < 3 {
-		return "", fmt.Errorf("got %d response(s), want 3", len(stdout))
+	// spec: §15.4.6 — the binary must exit *before* the deadline
+	// elapses, not merely before a looser guard.
+	if elapsed > deadline {
+		return "", fmt.Errorf("exit took %v, exceeds the %s deadline_ms", elapsed.Round(time.Millisecond), deadline)
 	}
-	return fmt.Sprintf("3 messages → 3 responses (%d total stdout lines)", len(stdout)), nil
+	return fmt.Sprintf("clean exit in %s (deadline %s)", elapsed.Round(time.Millisecond), deadline), nil
 }

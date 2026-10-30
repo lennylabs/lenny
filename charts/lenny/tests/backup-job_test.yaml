@@ -1,0 +1,277 @@
+suite: lenny-backup ServiceAccount, RBAC, and on-demand Job (F-17.1.5, spec §17.1 row 17 / §25.11)
+templates:
+  - backup-job.yaml
+tests:
+  - it: renders the mandatory SA and RBAC unconditionally, no Job by default (§17.8.5 core inventory)
+    # Exactly five documents (SA, ClusterRole, ClusterRoleBinding, Role,
+    # RoleBinding) and no Job: the Job is opt-in via backups.onDemand.
+    asserts:
+      - hasDocuments:
+          count: 5
+
+  - it: provisions the lenny-backup-sa ServiceAccount distinct from lenny-ops-sa
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: ServiceAccount
+      - equal:
+          path: metadata.name
+          value: lenny-backup-sa
+
+  - it: grants cluster-scoped get/list on CRDs and lenny.dev resources only (§25)
+    documentIndex: 1
+    asserts:
+      - isKind:
+          of: ClusterRole
+      - equal:
+          path: metadata.name
+          value: lenny-backup
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["apiextensions.k8s.io"]
+            resources: ["customresourcedefinitions"]
+            verbs: ["get", "list"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["lenny.dev"]
+            resources: ["*"]
+            verbs: ["get", "list"]
+      # §25 narrows the envelope: no Pod, Deployment, or Secret read access.
+      - notContains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["secrets"]
+            verbs: ["get", "list"]
+
+  - it: binds the ClusterRole to lenny-backup-sa
+    documentIndex: 2
+    asserts:
+      - isKind:
+          of: ClusterRoleBinding
+      - equal:
+          path: subjects[0].name
+          value: lenny-backup-sa
+
+  - it: grants get on ConfigMaps in the release namespace, nothing else
+    documentIndex: 3
+    asserts:
+      - isKind:
+          of: Role
+      - equal:
+          path: rules[0].resources
+          value: ["configmaps"]
+      - equal:
+          path: rules[0].verbs
+          value: ["get"]
+
+  - it: renders the on-demand Job with the §25.11 Job Pod Specification when enabled
+    set:
+      backups.onDemand.enabled: true
+      backups.onDemand.minioBucket: lenny-backups
+    documentIndex: 5
+    asserts:
+      - isKind:
+          of: Job
+      - equal:
+          path: metadata.name
+          value: lenny-backup
+      - equal:
+          path: spec.backoffLimit
+          value: 3
+      - equal:
+          path: spec.ttlSecondsAfterFinished
+          value: 3600
+      - equal:
+          path: spec.activeDeadlineSeconds
+          value: 7200
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: lenny-backup-sa
+      - equal:
+          path: spec.template.spec.restartPolicy
+          value: Never
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - contains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop
+          content: ALL
+      - matchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: lenny-backup
+      # §25.11 step-2 config export reads the lenny-bootstrap-values ConfigMap
+      # in the release namespace through the get-on-ConfigMaps grant, so the
+      # Job carries --namespace.
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --namespace=NAMESPACE
+
+  # spec: §25.11 "Backup Job NetworkPolicy" — "A dedicated NetworkPolicy
+  # `lenny-backup-job` is rendered for backup Job pods (selected by label
+  # `app: lenny-backup`)". The on-demand Job runs the lenny-backup image,
+  # so its pod template must carry app: lenny-backup for the
+  # lenny-backup-job NetworkPolicy podSelector to match it; without the
+  # label the Job pod gets no egress under the chart's namespace-wide
+  # default-deny-all.
+  - it: carries the app=lenny-backup label the lenny-backup-job NetworkPolicy selects on
+    set:
+      backups.onDemand.enabled: true
+    documentIndex: 5
+    asserts:
+      - equal:
+          path: spec.template.metadata.labels.app
+          value: lenny-backup
+
+  - it: sources backup credentials from the lenny-backup Secrets, never inlined
+    set:
+      backups.onDemand.enabled: true
+    documentIndex: 5
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name == "LENNY_BACKUP_POSTGRES_DSN")].valueFrom.secretKeyRef.name
+          value: lenny-backup-postgres
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name == "LENNY_BACKUP_MINIO_ACCESS_KEY")].valueFrom.secretKeyRef.name
+          value: lenny-backup-minio
+
+  # SEC-BACKUP-1: a config-only backup runs the §25.11 step-2 config export,
+  # which SELECTs tenants/quotas/runtimes/pools through the read-only
+  # lenny-backup role, so the config Job must carry --postgres-shard. Without
+  # it the config export has no DSN and produces an empty config archive — the
+  # very defect SEC-BACKUP-1 closes.
+  - it: passes --postgres-shard to a config-only backup so the config export has a shard DSN (SEC-BACKUP-1)
+    set:
+      backups.onDemand.enabled: true
+      backups.onDemand.mode: config
+    documentIndex: 5
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --postgres-shard=$(LENNY_BACKUP_POSTGRES_DSN)
+
+  - it: passes --postgres-shard to full and postgres backups
+    set:
+      backups.onDemand.enabled: true
+      backups.onDemand.mode: postgres
+    documentIndex: 5
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --postgres-shard=$(LENNY_BACKUP_POSTGRES_DSN)
+
+  # §25.11 Sensitive Content Policy — F-17.3.17.
+  - it: forwards no content-policy or encryption flags by default
+    set:
+      backups.onDemand.enabled: true
+    documentIndex: 5
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --include-sensitive-tables
+      # No SSE-KMS key id env renders by default. The exists anchors the
+      # notExists so a path typo cannot pass vacuously.
+      - exists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LENNY_BACKUP_MINIO_ENDPOINT")]
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LENNY_BACKUP_KMS_KEY_ID")]
+
+  - it: forwards --include-sensitive-tables when contentPolicy.includeSensitiveTables is set
+    set:
+      backups.onDemand.enabled: true
+      backups.contentPolicy.includeSensitiveTables: true
+    documentIndex: 5
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --include-sensitive-tables
+
+  - it: forwards one --exclude-table flag per contentPolicy.excludeTables entry
+    set:
+      backups.onDemand.enabled: true
+      backups.contentPolicy.excludeTables: [audit_events, billing_events]
+    documentIndex: 5
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --exclude-table=audit_events
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --exclude-table=billing_events
+
+  - it: forwards one --redact-column flag per contentPolicy.redactColumns entry
+    set:
+      backups.onDemand.enabled: true
+      backups.contentPolicy.redactColumns: [tenant_secrets.api_key, token]
+    documentIndex: 5
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --redact-column=tenant_secrets.api_key
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --redact-column=token
+
+  - it: forwards the SSE-KMS key id as a flag and env when encryption.kmsKeyId is set
+    set:
+      backups.onDemand.enabled: true
+      backups.encryption.kmsKeyId: arn:aws:kms:us-east-1:111:key/abc
+    documentIndex: 5
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-key-id=$(LENNY_BACKUP_KMS_KEY_ID)
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name == "LENNY_BACKUP_KMS_KEY_ID")].value
+          value: arn:aws:kms:us-east-1:111:key/abc
+
+  # spec: §12.5 "TLS: MinIO connections MUST use TLS (`https://` endpoint)
+  # ... All other backends enforce TLS." A self-managed MinIO whose serving
+  # cert is issued by a CA outside the system trust store still needs the
+  # on-demand backup Job's TLS client to verify that endpoint; the gateway
+  # and the bucket-lifecycle Job already trust minio.tls.caBundleConfigMap
+  # for the same purpose, so the backup Job mirrors that mount so its own
+  # MinIO connection can complete the MUST-use-TLS handshake instead of
+  # failing closed with x509: certificate signed by unknown authority.
+  - it: mounts the MinIO CA bundle and sets SSL_CERT_DIR when minio.tls.caBundleConfigMap is set
+    set:
+      backups.onDemand.enabled: true
+      minio.tls.caBundleConfigMap: lenny-minio-ca
+    documentIndex: 5
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SSL_CERT_DIR
+            value: /etc/lenny/minio-ca
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: lenny-minio-ca
+            mountPath: /etc/lenny/minio-ca
+            readOnly: true
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: lenny-minio-ca
+            configMap:
+              name: lenny-minio-ca
+              items:
+                - key: ca.crt
+                  path: ca.crt
+
+  - it: omits the MinIO CA bundle mount when minio.tls.caBundleConfigMap is unset
+    set:
+      backups.onDemand.enabled: true
+    documentIndex: 5
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SSL_CERT_DIR
+            value: /etc/lenny/minio-ca

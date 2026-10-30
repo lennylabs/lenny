@@ -1,0 +1,47 @@
+{{- /*
+lenny-bootstrap-values ConfigMap (§17.6 Day-1 seed mechanism). Renders
+the .Values.bootstrap tenants, runtimes, users, pools, credentialPools,
+delegationPolicies, and environments lists into a single
+bootstrap-values.yaml data key. The lenny-bootstrap Job mounts this
+ConfigMap at /etc/lenny/ and runs
+`lenny-ctl bootstrap --from-values /etc/lenny/bootstrap-values.yaml`.
+
+The ConfigMap is a post-install/post-upgrade hook at weight 5, lower
+than the lenny-bootstrap Job at weight 10, so it exists before the Job
+pod starts — the same ordering the lenny-preflight Job uses for its
+ServiceAccount and RBAC.
+*/ -}}
+{{- if .Values.bootstrap.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lenny-bootstrap-values
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: bootstrap
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  bootstrap-values.yaml: |
+    {{- /*
+    §26.2 — when bootstrap.defaultGithubVcsPool.enabled, append
+    the v1 built-in `github` VCS credential pool to the seeded
+    credentialPools so a private gitClone source resolves its
+    vcs.github.read/.write lease out of the box. Gated on an
+    operator-supplied Secret: an enabled pool with no secretRef fails the
+    render rather than seeding a credential-less pool. F-26.2.5.
+    */ -}}
+    {{- $pools := .Values.bootstrap.credentialPools | default list -}}
+    {{- $gh := .Values.bootstrap.defaultGithubVcsPool -}}
+    {{- if and $gh $gh.enabled -}}
+    {{- if not $gh.secretRef -}}
+    {{- fail "bootstrap.defaultGithubVcsPool.enabled is true but secretRef is empty; set secretRef to the name of a Secret holding a GitHub App installation token or PAT (§26.2)." -}}
+    {{- end -}}
+    {{- $ghPool := dict "tenantId" ($gh.tenantId | default "default") "name" ($gh.name | default "github-default") "provider" "github" "hostPatterns" ($gh.hostPatterns | default (list "github.com")) "credentials" (list (dict "id" ($gh.credentialId | default "github-app") "secretRef" $gh.secretRef)) -}}
+    {{- $pools = append $pools $ghPool -}}
+    {{- end -}}
+    {{- dict "tenants" .Values.bootstrap.tenants "runtimes" .Values.bootstrap.runtimes "users" .Values.bootstrap.users "pools" .Values.bootstrap.pools "credentialPools" $pools "delegationPolicies" .Values.bootstrap.delegationPolicies "environments" .Values.bootstrap.environments | toYaml | nindent 4 }}
+{{- end }}

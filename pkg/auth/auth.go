@@ -73,6 +73,181 @@ func (r Role) IsTenantScoped() bool {
 	return r != RolePlatformAdmin
 }
 
+// roleNamePattern is the §10.2 role-name format, shared by built-in
+// and custom role names. All five built-in roles match it.
+var roleNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,127}$`)
+
+// IsWellFormedRoleName reports whether s is a syntactically valid role
+// name in the format shared by built-in and §10.2 custom roles. It
+// does not verify that a custom role of that name exists; existence is
+// checked where the tenant's custom-role registry is available.
+func IsWellFormedRoleName(s string) bool {
+	return roleNamePattern.MatchString(s)
+}
+
+// Permission is one operation category from the §10.2 RBAC permission
+// matrix. The closed set below mirrors the matrix rows one to one; each
+// constant's comment quotes the matrix row it represents. §10.2 custom
+// roles are defined as a subset of these.
+type Permission string
+
+const (
+	// PermManageOwnSessions — §10.2 "Create / cancel own sessions".
+	PermManageOwnSessions Permission = "manage_own_sessions"
+	// PermReadOwnSessions — §10.2 "Read own session history".
+	PermReadOwnSessions Permission = "read_own_sessions"
+	// PermManageOwnCredentials — §10.2 "Manage own credentials".
+	PermManageOwnCredentials Permission = "manage_own_credentials"
+	// PermReadTenantSessions — §10.2 "Read other users' sessions (same tenant)".
+	PermReadTenantSessions Permission = "read_tenant_sessions"
+	// PermManageRuntimes — §10.2 "Manage runtimes".
+	PermManageRuntimes Permission = "manage_runtimes"
+	// PermManagePools — §10.2 "Manage pools / scaling policies".
+	PermManagePools Permission = "manage_pools"
+	// PermManageCredentialPools — §10.2 "Manage credential pools".
+	PermManageCredentialPools Permission = "manage_credential_pools"
+	// PermViewUsage — §10.2 "View usage / metering".
+	PermViewUsage Permission = "view_usage"
+	// PermManageQuotas — §10.2 "Manage quotas".
+	PermManageQuotas Permission = "manage_quotas"
+	// PermManageUsers — §10.2 "Manage users / role assignments".
+	PermManageUsers Permission = "manage_users"
+	// PermManageLegalHolds — §10.2 "Set / release legal holds".
+	PermManageLegalHolds Permission = "manage_legal_holds"
+	// PermManageWebhooks — §10.2 "Configure callback URLs / webhooks".
+	PermManageWebhooks Permission = "manage_webhooks"
+	// PermManageRBACConfig — §10.2 "Configure tenant RBAC config".
+	PermManageRBACConfig Permission = "manage_rbac_config"
+	// PermManageEnvironments — §10.2 "Manage environments".
+	PermManageEnvironments Permission = "manage_environments"
+	// PermManageDelegationPolicies — §10.2 "Manage delegation policies".
+	PermManageDelegationPolicies Permission = "manage_delegation_policies"
+	// PermManageEgressProfiles — §10.2 "Manage egress profiles".
+	PermManageEgressProfiles Permission = "manage_egress_profiles"
+	// PermIssueBillingCorrections — §10.2 "Issue billing corrections (operator-initiated)".
+	PermIssueBillingCorrections Permission = "issue_billing_corrections"
+	// PermManagePlatformSettings — §10.2 "Manage platform-wide settings".
+	PermManagePlatformSettings Permission = "manage_platform_settings"
+	// PermAccessCrossTenantData — §10.2 "Access other tenants' data".
+	PermAccessCrossTenantData Permission = "access_cross_tenant_data"
+	// PermSessionEvalWrite — §10.7. This
+	// is a capability permission the eval-submission contract introduces
+	// beyond the §10.2 operation matrix: the gateway gates
+	// POST /v1/sessions/{id}/eval on it so an external scorer pipeline
+	// can hold a dedicated grant without the broader manage_own_sessions
+	// authority. The session-owning built-in roles (user, tenant-admin,
+	// platform-admin) carry it so existing owners keep submitting; a
+	// tenant may grant it to a custom scorer role because it is within
+	// the tenant-admin ceiling. spec: §10.7.
+	PermSessionEvalWrite Permission = "session:eval:write"
+)
+
+// AllPermissions returns the closed permission set: the §10.2
+// operation-matrix rows followed by the §10.7 session:eval:write
+// capability permission, which the eval-submission contract defines
+// outside the matrix.
+func AllPermissions() []Permission {
+	return []Permission{
+		PermManageOwnSessions, PermReadOwnSessions, PermManageOwnCredentials,
+		PermReadTenantSessions, PermManageRuntimes, PermManagePools,
+		PermManageCredentialPools, PermViewUsage, PermManageQuotas,
+		PermManageUsers, PermManageLegalHolds, PermManageWebhooks,
+		PermManageRBACConfig, PermManageEnvironments, PermManageDelegationPolicies,
+		PermManageEgressProfiles, PermIssueBillingCorrections,
+		PermManagePlatformSettings, PermAccessCrossTenantData,
+		PermSessionEvalWrite,
+	}
+}
+
+// IsValid reports whether p is a recognised §10.2 permission.
+func (p Permission) IsValid() bool {
+	for _, v := range AllPermissions() {
+		if p == v {
+			return true
+		}
+	}
+	return false
+}
+
+// TenantAdminPermissions returns the permissions the §10.2 `tenant-admin`
+// role holds — every operation category except the three the matrix
+// reserves to `platform-admin` (issue billing corrections, manage
+// platform-wide settings, access other tenants' data). A §10.2 custom
+// role's permission set must be a subset of this.
+func TenantAdminPermissions() []Permission {
+	return RolePermissions(RoleTenantAdmin)
+}
+
+// IsTenantAdminPermission reports whether p is within the `tenant-admin`
+// permission set — the §10.2 ceiling a custom role may not exceed.
+func IsTenantAdminPermission(p Permission) bool {
+	for _, v := range TenantAdminPermissions() {
+		if p == v {
+			return true
+		}
+	}
+	return false
+}
+
+// RolePermissions returns the §10.2 permission-matrix row for a
+// built-in role. The matrix grades each operation category as full
+// access, read-only, or none; RolePermissions returns the permission
+// for every category the role holds at the access level the
+// permission denotes. The read-only cells for the manage categories
+// (a `tenant-viewer` may read runtimes but not manage them) do not map
+// to a permission, because the permission set models manage-level
+// operations and the explicit session-read categories. Resource reads
+// are gated separately.
+//
+// A non-built-in role name (a tenant custom role) has no matrix row;
+// its permissions come from the tenant custom-role registry, so
+// RolePermissions returns nil for it.
+func RolePermissions(r Role) []Permission {
+	switch r {
+	case RolePlatformAdmin:
+		return AllPermissions()
+	case RoleTenantAdmin:
+		return []Permission{
+			PermManageOwnSessions, PermReadOwnSessions, PermManageOwnCredentials,
+			PermReadTenantSessions, PermManageRuntimes, PermManagePools,
+			PermManageCredentialPools, PermViewUsage, PermManageQuotas,
+			PermManageUsers, PermManageLegalHolds, PermManageWebhooks,
+			PermManageRBACConfig, PermManageEnvironments, PermManageDelegationPolicies,
+			PermManageEgressProfiles, PermSessionEvalWrite,
+		}
+	case RoleTenantViewer:
+		return []Permission{
+			PermReadOwnSessions, PermReadTenantSessions, PermViewUsage,
+		}
+	case RoleBillingViewer:
+		return []Permission{PermViewUsage}
+	case RoleUser:
+		return []Permission{
+			PermManageOwnSessions, PermReadOwnSessions, PermManageOwnCredentials,
+			PermSessionEvalWrite,
+		}
+	default:
+		return nil
+	}
+}
+
+// RolesGrant reports whether any built-in role in roles grants perm.
+// A non-built-in role name (a tenant custom role) is ignored: its
+// permissions live in the tenant custom-role registry, which this
+// function does not consult. A caller that must honor custom roles
+// resolves them against the registry and combines the result with
+// RolesGrant.
+func RolesGrant(roles []Role, perm Permission) bool {
+	for _, r := range roles {
+		for _, granted := range RolePermissions(r) {
+			if granted == perm {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // tenantIDPattern is the regex from §10.2: `^[a-zA-Z0-9_-]{1,128}$`.
 // Enforced at every boundary that ingests a tenant identifier.
 var tenantIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`)

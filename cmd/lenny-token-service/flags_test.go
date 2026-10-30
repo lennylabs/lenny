@@ -1,0 +1,214 @@
+// SPDX-License-Identifier: MIT
+
+package main
+
+import (
+	"flag"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/lennylabs/lenny/pkg/kms/providerflags"
+)
+
+// spec: 4.1 (the Token Service composition root parses its inputs once),
+// 13.3 (the lenny-token-service flag surface)
+//
+// TestParseFlagsPopulatesEveryDefault pins the R11 composition-root
+// decomposition's flag seam (proposal 0020 §4 Part A R11). parseFlags splits its
+// flag definitions across the per-domain register helpers (registerListenerFlags,
+// registerIssuerAndStateFlags, registerRateLimitFlags, registerTLSFlags, and
+// registerKMSFlags). The R11 move introduced that delegation, so a flag binding
+// accidentally omitted from one helper — or a helper omitted from parseFlags'
+// call sequence — would silently change a runtime default: the corresponding
+// tokenServiceFlags field would stay nil (a never-bound pointer) or, for a bound
+// flag, hold its Go zero value instead of the §13.3 default the operator and
+// chart depend on.
+//
+// This test mirrors cmd/lenny-controller's TestParseFlagsPopulatesEveryControllerDefault
+// and cmd/lenny-ops's TestParseFlags. It runs parseFlags against an isolated,
+// empty command line (no env, no args) and asserts that every flag pointer is
+// non-nil and that every field with a documented non-zero default holds that
+// default after the parse. Against a regression that drops a binding from a
+// register helper (or drops a helper from parseFlags) the pointer stays nil and
+// the nil-pointer check fails, or the value reverts to its zero value and the
+// matching default assertion fails. The env-/arg-derived string fields
+// (postgres-dsn, redis-url, tls-cert, ...) legitimately default to empty here
+// and are exercised by the binary characterization (main_test.go) rather than
+// asserted as non-empty.
+//
+// parseFlags parses the process-global flag.CommandLine, so the test isolates
+// it behind a fresh ContinueOnError set with no args and restores it on
+// cleanup; no other test in this package parses the global set, so the single
+// call cannot trigger a flag-redefinition panic.
+func TestParseFlagsPopulatesEveryDefault(t *testing.T) {
+	savedCmdLine := flag.CommandLine
+	savedArgs := os.Args
+	t.Cleanup(func() {
+		flag.CommandLine = savedCmdLine
+		os.Args = savedArgs
+	})
+	flag.CommandLine = flag.NewFlagSet(savedArgs[0], flag.ContinueOnError)
+	os.Args = []string{savedArgs[0]}
+	clearTokenServiceEnv(t)
+
+	f := parseFlags()
+	if f == nil {
+		t.Fatal("parseFlags returned nil")
+	}
+
+	// Every flag pointer must be non-nil: a register helper dropped from
+	// parseFlags, or a binding omitted from a helper, leaves the pointer nil,
+	// which the composition root would dereference (panic) or read as the zero
+	// value. The KMS option set and finalize hook are bound by
+	// registerKMSFlags via providerflags.Bind.
+	nilChecks := []struct {
+		name  string
+		isNil bool
+	}{
+		{"addr", f.addr == nil},
+		{"grpcAddr", f.grpcAddr == nil},
+		{"metricsAddr", f.metricsAddr == nil},
+		{"issuer", f.issuer == nil},
+		{"postgresDSN", f.postgresDSN == nil},
+		{"redisURL", f.redisURL == nil},
+		{"redisPassword", f.redisPassword == nil},
+		{"redisSentinelAddrs", f.redisSentinelAddrs == nil},
+		{"redisSentinelMaster", f.redisSentinelMaster == nil},
+		{"redisSentinelPassword", f.redisSentinelPassword == nil},
+		{"redisClusterAddrs", f.redisClusterAddrs == nil},
+		{"redisTLS", f.redisTLS == nil},
+		{"redisAllowInsecure", f.redisAllowInsecure == nil},
+		{"redisCachePubSubURL", f.redisCachePubSubURL == nil},
+		{"rlCallerPerSec", f.rlCallerPerSec == nil},
+		{"rlCallerPerMin", f.rlCallerPerMin == nil},
+		{"rlTenantPerSec", f.rlTenantPerSec == nil},
+		{"rlSampleWindow", f.rlSampleWindow == nil},
+		{"tlsCert", f.tlsCert == nil},
+		{"tlsKey", f.tlsKey == nil},
+		{"tlsCA", f.tlsCA == nil},
+		{"secretNamespace", f.secretNamespace == nil},
+		{"capabilityTokenTTL", f.capabilityTokenTTL == nil},
+		{"kmsOpts", f.kmsOpts == nil},
+		{"kmsFinalize", f.kmsFinalize == nil},
+	}
+	for _, c := range nilChecks {
+		if c.isNil {
+			t.Errorf("tokenServiceFlags.%s is nil: a register helper dropped its binding, "+
+				"or parseFlags omitted the helper (proposal 0020 R11)", c.name)
+		}
+	}
+
+	// Every field below carries a documented non-zero default fixed in code (a
+	// constant or a literal), so the chart need not pass the flag to get the
+	// §13.3 behavior. A register helper that drops the binding leaves the Go
+	// zero value, which differs from each default here and fails the
+	// assertion. The defaults trace to the flag declarations in flags.go.
+	checks := []struct {
+		name string
+		got  any
+		want any
+	}{
+		// registerListenerFlags
+		{"addr", *f.addr, ":8081"},
+		{"grpcAddr", *f.grpcAddr, ""},
+		{"metricsAddr", *f.metricsAddr, ""},
+		// registerIssuerAndStateFlags (§13.3 issuer, §4.9 probe namespace)
+		{"issuer", *f.issuer, "https://lenny.dev.local/token"},
+		{"secretNamespace", *f.secretNamespace, "lenny-system"},
+		// registerRateLimitFlags (§13.3 normative limits)
+		{"rlCallerPerSec", *f.rlCallerPerSec, 10},
+		{"rlCallerPerMin", *f.rlCallerPerMin, 300},
+		{"rlTenantPerSec", *f.rlTenantPerSec, 100},
+		{"rlSampleWindow", *f.rlSampleWindow, 10 * time.Second},
+		// registerLifetimeFlags (§10.2 auth.capabilityTokenTtlSeconds default)
+		{"capabilityTokenTTL", *f.capabilityTokenTTL, 900},
+		// registerKMSFlags (§4 / §17.5 KMS provider selector; local default)
+		{"kmsProvider", f.kmsOpts.Provider, providerflags.ProviderLocal},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("tokenServiceFlags.%s = %v, want %v: a register helper dropped its binding, "+
+				"or parseFlags omitted the helper, so the §13.3 default is no longer wired (proposal 0020 R11)",
+				c.name, c.got, c.want)
+		}
+	}
+}
+
+// clearTokenServiceEnv unsets every environment variable parseFlags reads as a
+// flag default so the parse observes the in-code defaults rather than a value
+// the surrounding shell happens to export. The list mirrors the os.Getenv calls
+// in flags.go (and the providerflags env reads registerKMSFlags passes through).
+func clearTokenServiceEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"LENNY_TOKEN_ISSUER",
+		"LENNY_POSTGRES_DSN",
+		"LENNY_REDIS_URL",
+		"LENNY_REDIS_PASSWORD",
+		"LENNY_REDIS_SENTINEL_ADDRS",
+		"LENNY_REDIS_SENTINEL_MASTER",
+		"LENNY_REDIS_SENTINEL_PASSWORD",
+		"LENNY_REDIS_CLUSTER_ADDRS",
+		"LENNY_REDIS_TLS",
+		"LENNY_REDIS_ALLOW_INSECURE",
+		"LENNY_REDIS_CACHE_PUBSUB_URL",
+		"LENNY_OAUTH_RL_CALLER_PER_SECOND",
+		"LENNY_OAUTH_RL_CALLER_PER_MINUTE",
+		"LENNY_OAUTH_RL_TENANT_PER_SECOND",
+		"LENNY_OAUTH_RL_SAMPLE_WINDOW",
+		"LENNY_CAPABILITY_TOKEN_TTL_SECONDS",
+		"LENNY_TOKEN_SERVICE_TLS_CERT",
+		"LENNY_TOKEN_SERVICE_TLS_KEY",
+		"LENNY_TOKEN_SERVICE_CA",
+		"POD_NAMESPACE",
+		// providerflags.Bind env reads (registerKMSFlags).
+		"LENNY_KMS_PROVIDER",
+		"LENNY_ENV",
+	} {
+		t.Setenv(key, "")
+	}
+}
+
+// spec: 10.2 (Authentication)
+//
+// TestCapabilityTokenTTLFlagBound_spec_10_2 pins the Token Service startup
+// gate on --capability-token-ttl-seconds: 119 and 3601 are fatal, and 120 and
+// 3600 start. main calls the gate before any wiring.
+func TestCapabilityTokenTTLFlagBound_spec_10_2(t *testing.T) {
+	for _, tc := range []struct {
+		seconds int
+		ok      bool
+	}{
+		{119, false},
+		{120, true},
+		{900, true},
+		{3600, true},
+		{3601, false},
+	} {
+		err := validateCapabilityTokenTTLFlag(tc.seconds)
+		if (err == nil) != tc.ok {
+			t.Errorf("validateCapabilityTokenTTLFlag(%d) = %v, want ok=%v", tc.seconds, err, tc.ok)
+			continue
+		}
+		if err != nil && (!strings.Contains(err.Error(), "--capability-token-ttl-seconds") ||
+			!strings.Contains(err.Error(), "auth.capabilityTokenTtlSeconds")) {
+			t.Errorf("error %q does not name the flag and auth.capabilityTokenTtlSeconds", err)
+		}
+	}
+	b, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "validateCapabilityTokenTTLFlag(*f.capabilityTokenTTL)"; !strings.Contains(string(b), want) {
+		t.Errorf("main.go: the capability token lifetime gate is not wired (%q missing)", want)
+	}
+	b, err = os.ReadFile("server.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "time.Duration(*w.f.capabilityTokenTTL) * time.Second"; !strings.Contains(string(b), want) {
+		t.Errorf("server.go: buildServer does not pass the flag as Options.CapabilityTokenTTL (%q missing)", want)
+	}
+}

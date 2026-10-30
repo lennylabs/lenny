@@ -1,0 +1,745 @@
+suite: §5.3/§5.2 lenny-preflight RuntimeClass and termination-grace checks
+templates:
+  - preflight-job.yaml
+tests:
+  - it: requires the sandboxed gVisor RuntimeClass by default
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--required-runtime-classes=sandboxed=gvisor"
+
+  # spec: §25.4 / F-25.4.25 — the preflight Job feeds the
+  # prometheus-reachability check ops.prometheus.url, global.deploymentTier,
+  # and monitoring.acknowledgeNoPrometheus.
+  - it: passes the §25.4 prometheus-reachability inputs
+    set:
+      ops.prometheus.url: "http://prom.monitoring.svc:9090"
+      global.deploymentTier: "tier2"
+      monitoring.acknowledgeNoPrometheus: true
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--prometheus-url=http://prom.monitoring.svc:9090"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--platform-tier=tier2"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--acknowledge-no-prometheus=true"
+
+  # spec: §17.9.2 / §17.9 — preflight.skipNetworkProbes is
+  # false by default so the backend-reachability probes run. F-17.9.11.
+  - it: passes --skip-network-probes=false by default
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--skip-network-probes=false"
+
+  # The §17.9.2 airgap answer file sets skipNetworkProbes=true so the
+  # preflight Job succeeds with no egress to the managed backends. F-17.9.11.
+  - it: passes --skip-network-probes=true when preflight.skipNetworkProbes is set
+    set:
+      preflight.skipNetworkProbes: true
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--skip-network-probes=true"
+
+  # spec: §17.9.2 / §12.5 / F-17.9.11 — under
+  # skipNetworkProbes the MinIO SSE probe does not run, so the Job must not
+  # mount the lenny-datastore-conn MinIO credential env nor pass
+  # --minio-endpoint / --redis-url. On a fresh install the
+  # lenny-datastore-conn Secret renders after this pre-install hook, so a
+  # non-optional secretKeyRef for a probe that is skipped would block the
+  # preflight pod with CreateContainerConfigError until activeDeadlineSeconds
+  # and abort the chart install. The cluster-API checks still run.
+  - it: drops the MinIO credential env and backend-probe args under skipNetworkProbes
+    set:
+      preflight.skipNetworkProbes: true
+      minio.endpoint: "lenny-minio.lenny-system.svc:9000"
+      minio.bucket: "lenny-artifacts"
+      minio.accessKey: "a"
+      minio.secretKey: "s"
+      preflight.checkRedisMaxmemoryPolicy: true
+      redis.url: "rediss://:pw@redis-master:6379"
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--minio-endpoint=lenny-minio.lenny-system.svc:9000"
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--redis-url=rediss://:pw@redis-master:6379"
+      # The container carries no env at all under skipNetworkProbes with no
+      # external pooler, so the not-yet-created Secret cannot block the pod.
+      - notExists:
+          path: spec.template.spec.containers[0].env
+
+  # spec: §12.5 / F-12.4.15 — with network probes enabled (the
+  # default) a configured MinIO endpoint still wires the SSE credential env
+  # from lenny-datastore-conn so the probe can authenticate. This pins that
+  # the skipNetworkProbes gate above did not over-broadly drop the env on a
+  # probing install.
+  - it: wires the MinIO credential env when network probes run
+    set:
+      minio.endpoint: "lenny-minio.lenny-system.svc:9000"
+      minio.bucket: "lenny-artifacts"
+      minio.accessKey: "a"
+      minio.secretKey: "s"
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--minio-endpoint=lenny-minio.lenny-system.svc:9000"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: MINIO_ACCESS_KEY_ENV
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: minio-access-key
+
+  # spec: §10.3 (NET-064) — the preflight Job needs the
+  # values at hand to feed CheckSPIFFETrustDomainUniqueness /
+  # CheckSATokenAudienceUniqueness. F-10.3.5.
+  - it: passes --spiffe-trust-domain and --sa-token-audience to the preflight binary
+    set:
+      global.saTokenAudience: lenny-gateway-acme
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--spiffe-trust-domain=cluster.local"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--sa-token-audience=lenny-gateway-acme"
+
+  - it: still passes an empty --sa-token-audience when global.saTokenAudience is unset (chart default)
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--sa-token-audience="
+
+  # spec: §10.3 / F-10.3.12 — the preflight Job carries the
+  # certmanager.enabled value so the cert-manager version check knows
+  # whether cert-manager >= v1.12.0 is a prerequisite.
+  - it: passes --certmanager-enabled=true by default
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--certmanager-enabled=true"
+
+  - it: passes --certmanager-enabled=false for a mesh-managed install
+    set:
+      certmanager.enabled: false
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--certmanager-enabled=false"
+
+  - it: requires both gVisor and Kata when microvm is also enabled
+    set:
+      runtimeClasses.profiles.microvm.enabled: true
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--required-runtime-classes=microvm=kata,sandboxed=gvisor"
+
+  - it: requires no RuntimeClass in dev mode (runc fallback per §5.3)
+    set:
+      global.devMode: true
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--required-runtime-classes=sandboxed=gvisor"
+
+  - it: requires no RuntimeClass when the chart renders them itself
+    set:
+      runtimeClasses.create: true
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--required-runtime-classes=sandboxed=gvisor"
+
+  - it: grants the preflight SA RuntimeClass and SandboxTemplate read
+    documentSelector:
+      path: kind
+      value: ClusterRole
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["node.k8s.io"]
+            resources: ["runtimeclasses"]
+            verbs: ["get", "list"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["lenny.dev"]
+            resources: ["sandboxtemplates"]
+            verbs: ["list"]
+
+  # spec: §13.1 — the host-sharing and credential-fsGroup
+  # audits reach the agent namespaces, so the workload and pod list
+  # permissions are cluster-wide on the ClusterRole. F-13.1.7 / F-13.1.4.
+  - it: grants cluster-wide workload and pod read for the §13.1 agent-namespace audits
+    documentSelector:
+      path: kind
+      value: ClusterRole
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["apps"]
+            resources: ["deployments", "daemonsets"]
+            verbs: ["list"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["batch"]
+            resources: ["jobs"]
+            verbs: ["list"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["pods"]
+            verbs: ["list"]
+
+  # spec: §13.1 — the Job tells the preflight binary which
+  # agent namespaces to scan. F-13.1.7 / F-13.1.4.
+  - it: passes the chart agent namespaces to the preflight binary
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--agent-namespaces=lenny-agents,lenny-agents-kata"
+
+  # spec: §17.6 — the preflight Job ships with a hard runtime
+  # cap so a slow control plane does not hang the install.
+  - it: caps preflight runtime via activeDeadlineSeconds (default 120s)
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - equal:
+          path: spec.activeDeadlineSeconds
+          value: 120
+
+  - it: honors preflight.timeoutSeconds override
+    set:
+      preflight.timeoutSeconds: 240
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - equal:
+          path: spec.activeDeadlineSeconds
+          value: 240
+
+  # spec: §17.9.3 / §17.6 — preflight passes the connection-pooler
+  # selection so the CloudPoolerSentinelDefense check fires only when
+  # the deployer fronts Postgres with an external proxy.
+  - it: defaults --connection-pooler to pgbouncer
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--connection-pooler=pgbouncer"
+
+  - it: surfaces --connection-pooler=external for cloud-managed Postgres
+    set:
+      postgres.connectionPooler: external
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--connection-pooler=external"
+
+  - it: rejects an unrecognized postgres.connectionPooler value
+    set:
+      postgres.connectionPooler: rdsproxy
+    asserts:
+      - failedTemplate:
+          errorMessage: '§17.9.3: postgres.connectionPooler must be "pgbouncer" or "external", got "rdsproxy"'
+
+  # spec: §17.6 / F-17.9.2 — when the pooler is external and a
+  # Postgres DSN is supplied, the Job wires --postgres-dsn from the
+  # datastore Secret (optional:true) so the cloud-pooler sentinel defense
+  # can probe lenny_tenant_guard.
+  - it: wires the cloud-pooler sentinel Postgres DSN when external with a DSN
+    set:
+      postgres.connectionPooler: external
+      postgres.dsn: "postgres://u:p@rds.example.com:5432/lenny"
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--postgres-dsn=$(LENNY_POSTGRES_DSN)"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POSTGRES_DSN
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: postgres-dsn
+                optional: true
+
+  # The DSN wiring is absent when the pooler is the in-cluster default,
+  # so a pgbouncer install never mounts the Postgres credential.
+  - it: omits the cloud-pooler sentinel DSN for the pgbouncer pooler
+    set:
+      postgres.dsn: "postgres://u:p@pg.lenny-system.svc:5432/lenny"
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--postgres-dsn=$(LENNY_POSTGRES_DSN)"
+
+  # spec: §27.2 + §27.3 — the preflight Job renders the
+  # playground.* chart values into --playground-* flags so the
+  # CheckPlaygroundConfig install-time gate sees them.
+  # F-27.2.2 / F-27.2.4 / F-27.2.5 / F-27.2.6 / F-27.9.3.
+  - it: renders the playground-config preflight inputs from chart values
+    set:
+      playground.enabled: true
+      playground.authMode: oidc
+      playground.devTenantId: alice
+      playground.acknowledgeApiKeyMode: true
+      tenancy.mode: multi
+      auth.multiTenant: true
+      global.devMode: false
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--playground-enabled=true"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--playground-auth-mode=oidc"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--playground-dev-tenant-id=alice"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--playground-multi-tenant=true"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--playground-global-dev-mode=false"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--playground-acknowledge-api-key-mode=true"
+      # spec: §4.9 — the credential-delivery scan reads tenancy.mode to
+      # decide whether to enforce the forbidden deliveryMode combinations.
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--tenancy-mode=multi"
+
+  - it: renders the playground-config preflight inputs at chart defaults
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--playground-enabled=false"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--playground-multi-tenant=false"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--playground-acknowledge-api-key-mode=false"
+      # spec: §4.9 — defaults to single-tenant, so the credential-delivery
+      # scan passes without enforcing.
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--tenancy-mode=single"
+
+  # spec: §17.2 — the fail-closed lenny-registry-digest webhook
+  # must be tracked by the preflight inventory when digest pinning is on,
+  # so an air-gap install cannot ship without it. F-17.2.13.
+  - it: passes --feature-registry-digest=false at chart defaults
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--feature-registry-digest=false"
+
+  - it: passes --feature-registry-digest=true when platform.registry.requireDigest is set
+    set:
+      platform.registry.requireDigest: true
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--feature-registry-digest=true"
+
+  # §5.3 (F-5.3.5): the cosign-production advisory inputs reach
+  # the preflight binary. At chart defaults the environment is dev and
+  # cosign is disabled, so the advisory short-circuits to a pass.
+  - it: passes --environment and --feature-cosign-verify at chart defaults
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--feature-cosign-verify=false"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--environment=dev"
+
+  - it: surfaces --environment=prod and cosign enabled for a production install
+    set:
+      environment: prod
+      imageVerification.cosign.enabled: true
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--environment=prod"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--feature-cosign-verify=true"
+      # §17.9.1 "Production mode": --environment is the one carrier; the
+      # chart sets no environment variable that names production mode.
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_ENV
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_PRODUCTION
+          any: true
+
+  # §12.4 (F-12.4.15): the BYO-Redis maxmemory-policy audit is opt-in.
+  # At chart defaults no --redis-url flag is rendered.
+  - it: omits --redis-url at chart defaults
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--redis-url=rediss://:pw@redis-master:6379"
+
+  - it: renders --redis-url when checkRedisMaxmemoryPolicy is set
+    set:
+      preflight.checkRedisMaxmemoryPolicy: true
+      redis.url: "rediss://:pw@redis-master:6379"
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--redis-url=rediss://:pw@redis-master:6379"
+
+  # §13.2 NET-040 / NET-022 (F-13.2.13): the preflight Job passes the
+  # cluster-CIDR values so CheckClusterCIDRDiscovery can validate the
+  # apiserver ClusterIP and the node pod CIDRs against the discovered
+  # addressing.
+  - it: passes the §13.2 cluster-CIDR discovery values at chart defaults
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--kube-apiserver-cidr=10.96.0.0/12"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--exclude-cluster-service-cidr=10.96.0.0/12"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--exclude-cluster-pod-cidr=10.244.0.0/16"
+
+  # §13.2 OTLP-068 (F-13.2.9): the preflight Job passes the OTLP TLS
+  # posture so the otlp-tls check can reject an http:// scheme and probe
+  # the collector TLS handshake.
+  - it: passes the §13.2 OTLP TLS posture at chart defaults
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--otlp-tls-enabled=true"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--otlp-endpoint="
+
+  - it: surfaces a configured OTLP endpoint to the otlp-tls check
+    set:
+      observability.otlpEndpoint: "https://otel-collector.lenny-system.svc:4317"
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--otlp-endpoint=https://otel-collector.lenny-system.svc:4317"
+
+  # spec: §12.9 — the preflight Job carries global.devMode and
+  # preflight.attestVolumeEncryption so the volume-encryption check can
+  # exempt dev installs and consume the operator attestation. F-12.9.12.
+  - it: passes the §12.9 volume-encryption flags at their defaults
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--dev-mode=false"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--attest-volume-encryption=false"
+
+  - it: surfaces the volume-encryption attestation when set
+    set:
+      preflight.attestVolumeEncryption: true
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--attest-volume-encryption=true"
+
+  # spec: §17.6 — preflight.enabled: false skips the whole
+  # admission-plane preflight Job (air-gapped / constrained installs).
+  # The SA, RBAC, and Job all disappear. F-17.6.11.
+  - it: renders nothing when preflight.enabled is false
+    set:
+      preflight.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # The Job renders by default (preflight.enabled defaults to true in
+  # values.yaml), so the skip-knob is opt-in.
+  - it: renders the Job by default
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - isKind:
+          of: Job
+
+  # spec: §17.9.4 / §17.6 — the preflight Job feeds the
+  # cloud-object-storage-lifecycle check the objectStorage.* selectors.
+  # The default render passes provider=minio (the check self-skips, since
+  # MinIO lifecycle is configured by the post-install Job). F-17.9.3.
+  - it: passes the §17.9.4 object-storage lifecycle inputs (default minio)
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--object-storage-provider=minio"
+
+  - it: passes the §17.9.4 cloud object-storage selectors for provider=s3
+    set:
+      objectStorage.provider: s3
+      objectStorage.bucket: acme-artifacts
+      objectStorage.region: us-east-1
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--object-storage-provider=s3"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--object-storage-bucket=acme-artifacts"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--object-storage-region=us-east-1"
+
+  # spec: §17.6 — the SIEM-endpoint advisory input. F-17.6.1.
+  - it: passes the §17.6 SIEM endpoint (configured)
+    set:
+      audit.siem.endpoint: "https://siem.acme:443"
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--siem-endpoint=https://siem.acme:443"
+
+  # spec: §17.6 — the preflight SA can read each agent
+  # namespace and its ResourceQuota / LimitRange. F-17.6.1.
+  - it: grants the preflight SA namespace + ResourceQuota/LimitRange read
+    documentSelector:
+      path: kind
+      value: ClusterRole
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["namespaces"]
+            verbs: ["get"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["resourcequotas", "limitranges"]
+            verbs: ["list"]
+
+  # spec: §17.6 — the preflight Job feeds the lenny-ops-sa
+  # RBAC audit, the ops.ingress ClusterIssuer advisory, and the
+  # monitoring-namespace advisory their inputs. F-17.6.1.
+  - it: passes the §17.6 ops-readiness advisory inputs
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--ops-service-account=system:serviceaccount:NAMESPACE:lenny-ops-sa"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--monitoring-namespace=monitoring"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--monitoring-pod-label=app=prometheus"
+
+  - it: renders the ops.ingress ClusterIssuer annotation into the audit flag
+    set:
+      ops.ingress.annotations:
+        cert-manager.io/cluster-issuer: letsencrypt-prod
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--ops-ingress-cluster-issuer=letsencrypt-prod"
+
+  # spec: §17.6 — the preflight SA can run SubjectAccessReviews
+  # and read cert-manager ClusterIssuers. F-17.6.1.
+  - it: grants the preflight SA SubjectAccessReview + ClusterIssuer read
+    documentSelector:
+      path: kind
+      value: ClusterRole
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["authorization.k8s.io"]
+            resources: ["subjectaccessreviews"]
+            verbs: ["create"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["cert-manager.io"]
+            resources: ["clusterissuers"]
+            verbs: ["get"]
+
+  # spec: §13.2.4 NET-038 — the Job passes the
+  # ingressControllerNamespace and ingress.controllerPodLabel.key/value to
+  # the preflight binary so it can verify the allow-gateway-ingress
+  # NetworkPolicy admits external HTTPS. F-13.2.8.
+  - it: passes the §13.2 NET-038 ingress-controller advisory inputs (defaults)
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--ingress-controller-namespace=ingress-nginx"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--ingress-controller-pod-label-key=app.kubernetes.io/name"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--ingress-controller-pod-label-value=ingress-nginx"
+
+  # spec: §13.2.4 NET-038 — a custom Ingress controller (traefik)
+  # flows through to the advisory inputs. F-13.2.8.
+  - it: passes a custom ingress-controller namespace and pod label
+    set:
+      ingressControllerNamespace: traefik
+      ingress.controllerPodLabel.key: app.kubernetes.io/instance
+      ingress.controllerPodLabel.value: traefik
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--ingress-controller-namespace=traefik"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--ingress-controller-pod-label-key=app.kubernetes.io/instance"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--ingress-controller-pod-label-value=traefik"
+
+# §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
+# value with no default; a placeholder lets the gateway-deployment
+# annotation `required` guard render in this suite.
+set:
+  global.spiffeTrustDomain: cluster.local

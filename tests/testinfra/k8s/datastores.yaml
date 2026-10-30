@@ -1,0 +1,653 @@
+# SPDX-License-Identifier: MIT
+#
+# In-cluster data-store stack for the tier-5/8/9 e2e Kind cluster.
+#
+# The production Lenny chart treats Postgres, Redis, and MinIO as
+# bring-your-own external services (§17.9) and deploys none of them.
+# The e2e suite needs real stores in-cluster to exercise the audit,
+# backup, store-failure, and tenant-isolation tests, so this manifest
+# stands up single-replica Postgres, Redis, and MinIO Deployments with
+# ClusterIP Services in the lenny-system namespace.
+#
+# These are test fixtures, not the product. Postgres is backed by a
+# PersistentVolumeClaim against the cluster's default StorageClass so
+# the schema survives a pod restart within the cluster's lifetime; on
+# Kind that is the kindest/node local-path provisioner, on EKS that is
+# the gp3 EBS class. Redis and MinIO use emptyDir because they hold no
+# state the suite needs across restarts (Redis is started with
+# persistence off; MinIO's bucket is re-created by the bucket-init
+# sidecar). The e2e cluster is still ephemeral and torn down per run
+# (the PVC is reclaimed with the namespace); the PVC switch protects
+# against in-cluster postgres-pod recreation between runs when
+# KEEP_CLUSTER=1 reuses the cluster across invocations. Resource
+# requests are small and the credentials below are fixed and well-
+# known. The security context is hardened where a stock image allows
+# it (non-root, no privilege escalation, all capabilities dropped),
+# but these manifests are not a deployment reference.
+#
+# Fixed connection facts the e2e Helm overlay and the test code use:
+#
+#   Postgres  Service lenny-postgres.lenny-system.svc:5432
+#             user "lenny", password "lenny", database "lenny"
+#             DSN  postgres://lenny:lenny@lenny-postgres.lenny-system.svc:5432/lenny?sslmode=disable
+#   Redis     Service lenny-redis.lenny-system.svc:6379
+#             URL  redis://lenny-redis.lenny-system.svc:6379
+#   MinIO     Service lenny-minio.lenny-system.svc:9000 (API), :9090 (console)
+#             access key "lennyminio", secret key "lennyminio123"
+#             bucket "lenny-artifacts"
+#
+# install.sh applies this file, waits for the three Deployments to be
+# Available, then runs the lenny-migrate Job before the Helm install.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: lenny-postgres-data
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: postgres
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lenny-postgres
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: postgres
+spec:
+  replicas: 1
+  # Recreate avoids two Postgres pods sharing the (ephemeral) data dir
+  # during a rollout.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      lenny.dev/e2e-datastore: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lenny
+        app.kubernetes.io/component: e2e-datastore
+        lenny.dev/e2e-datastore: postgres
+    spec:
+      # Prefer the control-plane node so the TESTING.md §13.19 Kind node-drain
+      # test (which drains a worker) does not evict the database, lose
+      # its emptyDir, and force every downstream test to re-migrate.
+      # The preference falls back to any node on clusters that lack a
+      # lenny.dev/role=control-plane label (EKS / cloud installs), so
+      # the same manifest works on Kind and on managed Kubernetes.
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: lenny.dev/role
+                    operator: In
+                    values: [control-plane]
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      securityContext:
+        runAsNonRoot: true
+        # The postgres:16 image's "postgres" account is uid/gid 999.
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: pgvector/pgvector:pg16
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_USER
+              value: lenny
+            - name: POSTGRES_PASSWORD
+              value: lenny
+            - name: POSTGRES_DB
+              value: lenny
+            # PGDATA points at a subdirectory of the emptyDir mount so
+            # Postgres does not trip over the mountpoint's lost+found.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "lenny", "-d", "lenny"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "lenny", "-d", "lenny"]
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: lenny-postgres-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-postgres
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: postgres
+spec:
+  type: ClusterIP
+  selector:
+    lenny.dev/e2e-datastore: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lenny-redis
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      lenny.dev/e2e-datastore: redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lenny
+        app.kubernetes.io/component: e2e-datastore
+        lenny.dev/e2e-datastore: redis
+    spec:
+      # Prefer the control-plane node so the TESTING.md §13.19 Kind node-drain
+      # test does not evict the cache, lose its emptyDir, and clear
+      # coordination state mid-suite. Falls back to any node when the
+      # control-plane label is absent (EKS / cloud installs).
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: lenny.dev/role
+                    operator: In
+                    values: [control-plane]
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      securityContext:
+        runAsNonRoot: true
+        # The redis:7 image's "redis" account is uid/gid 999.
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: redis:7.4
+          imagePullPolicy: IfNotPresent
+          args:
+            - --save
+            - ""
+            - --appendonly
+            - "no"
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-redis
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: redis
+spec:
+  type: ClusterIP
+  selector:
+    lenny.dev/e2e-datastore: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+---
+# §12.5 — the artifact-store TLS mandate binds the plaintext-MinIO
+# exception to backends: embedded only; all other backends enforce TLS. The
+# e2e overlay runs a real in-cluster MinIO (a non-embedded backend), so the
+# §12.5 chart guard requires minio.tls.enabled: true, which means the MinIO
+# server must serve HTTPS. cert-manager (installed by install.sh) issues a
+# serving certificate for the lenny-minio Service DNS name from a self-signed
+# CA; the gateway and the chart's bucket-lifecycle Job trust that CA via the
+# SSL_CERT_FILE env var install.sh patches onto them post-install (the gateway
+# MinIO client and mc both read the Go/OpenSSL system trust path, and the
+# cert-manager-issued ca.crt is what they verify the MinIO server cert
+# against). This is the e2e harness only; production uses a publicly trusted
+# or operator-managed artifact-store endpoint.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: lenny-minio-selfsign
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: minio
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: lenny-minio-tls
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: minio
+spec:
+  # cert-manager writes tls.crt, tls.key, and ca.crt into this Secret. The
+  # MinIO Deployment mounts tls.crt/tls.key as public.crt/private.key under
+  # its --certs-dir; install.sh mounts ca.crt into the gateway and the
+  # bucket-lifecycle Job so they trust the issuing CA.
+  secretName: lenny-minio-tls
+  duration: 8760h    # 1 year — comfortably outlives an e2e cluster's life.
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  dnsNames:
+    - lenny-minio.lenny-system.svc
+    - lenny-minio.lenny-system.svc.cluster.local
+    - lenny-minio
+  issuerRef:
+    name: lenny-minio-selfsign
+    kind: Issuer
+    group: cert-manager.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lenny-minio
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: minio
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      lenny.dev/e2e-datastore: minio
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lenny
+        app.kubernetes.io/component: e2e-datastore
+        lenny.dev/e2e-datastore: minio
+    spec:
+      # Prefer the control-plane node so the TESTING.md §13.19 Kind node-drain
+      # test does not evict MinIO, vanish the bucket with the emptyDir,
+      # and cause the gateway's §12.5 drain-readiness probe to reject
+      # subsequent agent-pod evictions. Falls back to any node when
+      # the control-plane label is absent (EKS / cloud installs;
+      # production installs use the cloud-native artifact store
+      # instead of MinIO anyway).
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: lenny.dev/role
+                    operator: In
+                    values: [control-plane]
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      securityContext:
+        runAsNonRoot: true
+        # The MinIO server runs as uid/gid 1000.
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: minio
+          # pgsty/silo, the maintained fork of the MinIO server, pinned by
+          # tag and index digest. install.sh pulls it on the host, loads it
+          # onto the nodes, and registers the digest-pinned name.
+          image: pgsty/silo:RELEASE.2026-10-26T00-00-00Z@sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7
+          imagePullPolicy: IfNotPresent
+          args:
+            - server
+            - /data
+            - --console-address
+            - ":9090"
+            # §12.5 — serve the artifact-store API over TLS. MinIO
+            # reads public.crt/private.key from --certs-dir and serves https
+            # on :9000 when they are present. The cert-manager-issued cert is
+            # projected into this dir by the tls-certs volume below.
+            - --certs-dir
+            - /certs
+          env:
+            - name: MINIO_ROOT_USER
+              value: lennyminio
+            - name: MINIO_ROOT_PASSWORD
+              value: lennyminio123
+          ports:
+            - name: api
+              containerPort: 9000
+            - name: console
+              containerPort: 9090
+          # MinIO now serves the health endpoints over HTTPS; the probes
+          # use scheme: HTTPS. The cert is issued from a self-signed CA the
+          # kubelet does not trust, so the httpGet probe would fail TLS
+          # verification — but the kubelet skips certificate verification for
+          # HTTPS probes, so the liveness/readiness checks still succeed.
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: api
+              scheme: HTTPS
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: api
+              scheme: HTTPS
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            # cert-manager writes tls.crt/tls.key into the lenny-minio-tls
+            # Secret; this projection renames them to the public.crt/
+            # private.key filenames MinIO expects under --certs-dir.
+            - name: tls-certs
+              mountPath: /certs
+              readOnly: true
+        # bucket-init keeps lenny-artifacts present across MinIO
+        # restarts. The base Deployment uses emptyDir, so any pod
+        # restart wipes /data — the install.sh one-shot bucket
+        # creation no longer covers it. This sidecar polls the in-
+        # pod MinIO endpoint and runs `mc mb --ignore-existing` until
+        # the bucket reappears. The §12.5 drain-readiness probe runs
+        # BucketExists and rejects evictions when the bucket is
+        # missing, so this loop is what keeps tier-5 node-drain
+        # exercisable across the lifetime of the cluster.
+        - name: bucket-init
+          # pgsty/mc, the maintained fork of the MinIO client, pinned by
+          # tag and index digest; install.sh loads it like the server image.
+          image: pgsty/mc:RELEASE.2026-10-26T00-00-00Z@sha256:ce62c9053c69ce12a527a322345b5ad9f44b5f8a7b8189f82e516f2e3f30f1d8
+          imagePullPolicy: IfNotPresent
+          # The mc client writes its config to $HOME/.mc; the image's
+          # default HOME is `/` which is unwritable for uid 1000.
+          # Point HOME at a writable scratch dir mounted from the
+          # init-scratch emptyDir below.
+          env:
+            - name: HOME
+              value: /tmp/mc
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              mkdir -p /tmp/mc
+              # MinIO now serves https on :9000. The sidecar dials the
+              # in-pod loopback, whose address never matches the cert's DNS
+              # SAN, so mc runs with --insecure (skip TLS verification) — an
+              # acceptable posture for an in-pod test-fixture sidecar that
+              # only re-creates the bucket. The gateway and the chart's
+              # bucket-lifecycle Job verify the cert properly against the
+              # mounted CA.
+              until mc --insecure alias set local https://127.0.0.1:9000 lennyminio lennyminio123 >/dev/null 2>&1; do
+                sleep 2
+              done
+              while :; do
+                mc --insecure mb --ignore-existing local/lenny-artifacts >/dev/null 2>&1 || true
+                mc --insecure version enable local/lenny-artifacts >/dev/null 2>&1 || true
+                sleep 30
+              done
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - name: init-scratch
+              mountPath: /tmp/mc
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: init-scratch
+          emptyDir: {}
+        # Project the cert-manager-issued cert under the public.crt/
+        # private.key filenames MinIO reads from --certs-dir.
+        - name: tls-certs
+          secret:
+            secretName: lenny-minio-tls
+            items:
+              - key: tls.crt
+                path: public.crt
+              - key: tls.key
+                path: private.key
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-minio
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: minio
+spec:
+  type: ClusterIP
+  selector:
+    lenny.dev/e2e-datastore: minio
+  ports:
+    - name: api
+      port: 9000
+      targetPort: api
+    - name: console
+      port: 9090
+      targetPort: console
+---
+# NetworkPolicies for the e2e data stores. The lenny-system namespace
+# carries the chart's default-deny-all policy, which would otherwise
+# block every connection to and from these test-fixture pods. These two
+# policies re-admit exactly the data-store traffic: ingress to the
+# store pods from anything in the namespace, and egress from anything in
+# the namespace to the store pods plus kube-system CoreDNS on port 53 so
+# a pod can resolve a store's Service DNS name before dialing it. They
+# are additive, so they do not weaken the default-deny for any other
+# destination: the tier-9 NetworkPolicy adversarial test still observes
+# the gateway as unreachable from an unlabelled pod, and DNS resolution
+# alone grants no data-plane reach to any non-datastore peer.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-e2e-datastores-ingress
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: e2e-datastore
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 5432
+          protocol: TCP
+        - port: 6379
+          protocol: TCP
+        - port: 9000
+          protocol: TCP
+        - port: 9090
+          protocol: TCP
+    # §13.2 NET-071 — admit agent-namespace checkpoint chunk PUT/GET on the
+    # MinIO API port. The chart's allow-pod-egress-objectstore out-of-band arm
+    # opens agent-pod egress to the store CIDR, but the store pod lives in
+    # lenny-system under this namespace's default-deny, so the agent-namespace
+    # ingress must be re-admitted here. The from clause pairs the
+    # agent-namespace namespaceSelector with the managed-pod podSelector, the
+    # same label pair the chart's self-managed MinIO ingress clause uses. A
+    # production out-of-band store is external to the cluster and needs no such
+    # in-cluster ingress clause; this is the e2e fixture analog.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              lenny.dev/agent-namespace: "true"
+          podSelector:
+            matchLabels:
+              lenny.dev/managed: "true"
+      ports:
+        - port: 9000
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-to-e2e-datastores
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: e2e-datastore
+      ports:
+        - port: 5432
+          protocol: TCP
+        - port: 6379
+          protocol: TCP
+        - port: 9000
+          protocol: TCP
+        - port: 9090
+          protocol: TCP
+    # Egress to kube-system CoreDNS on UDP/TCP 53. Pods in lenny-system
+    # that address a data store by its Service DNS name (for example the
+    # chart's post-install lenny-minio-bucket-lifecycle Job, which hits
+    # lenny-minio.lenny-system.svc:9000) must resolve that name first.
+    # Without this rule the default-deny-all policy blocks the lookup and
+    # mc fails intermittently with a DNS i/o timeout, surfacing as the
+    # misleading "Access Key Id does not exist" error. The peer uses the
+    # canonical CoreDNS namespaceSelector/podSelector the chart's own
+    # egress policies use. install.sh's one-shot bucket pod sidesteps DNS
+    # by dialing the MinIO pod IP, but a chart-rendered Job has no pod IP
+    # to substitute, so it needs the DNS path open.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP

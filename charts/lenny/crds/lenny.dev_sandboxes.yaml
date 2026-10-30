@@ -1,0 +1,442 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
+    lenny.dev/schema-version: "1"
+  name: sandboxes.lenny.dev
+spec:
+  group: lenny.dev
+  names:
+    kind: Sandbox
+    listKind: SandboxList
+    plural: sandboxes
+    shortNames:
+    - sbx
+    singular: sandbox
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.poolRef
+      name: Pool
+      type: string
+    - jsonPath: .status.podName
+      name: Pod
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          Sandbox is the lenny.dev/v1alpha1 record of one managed agent pod (§4.6).
+          The status subresource carries the §6.2 authoritative pod state
+          machine; the gateway claims pods by referencing them from a
+          SandboxClaim.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              SandboxSpec is the desired state of a Sandbox — one managed agent
+              pod (§4.6, §6). The WarmPoolController owns spec.*; the pod is
+              created from the pool's SandboxTemplate, and these fields pin the
+              per-pod identity the controller and gateway resolve against.
+            properties:
+              deliveryMode:
+                description: DeliveryMode is the §4.9 credential delivery mode.
+                enum:
+                - proxy
+                - direct
+                type: string
+              executionMode:
+                description: |-
+                  ExecutionMode is the §5.2 pod-reuse mode the pod was warmed
+                  under: `session` (a pod parameterized by the pool's sessionPolicy)
+                  or `service` (a claimless, request-routed pod). spec: §12.6 — the PodRegistry projects it as PodRecord.ExecutionMode.
+                  The WarmPoolController denormalizes it from the pool's
+                  SandboxTemplate.spec.executionMode onto each Sandbox (the same
+                  copy-down as IsolationProfile) so the registry can project it
+                  without resolving the template on every read. Empty is treated as
+                  `session`.
+                enum:
+                - session
+                - service
+                type: string
+              isolationProfile:
+                description: |-
+                  IsolationProfile is the §5.3 sandbox isolation profile the pod
+                  was warmed under.
+                enum:
+                - standard
+                - sandboxed
+                - microvm
+                type: string
+              poolRef:
+                description: PoolRef names the SandboxWarmPool this pod is a member
+                  of.
+                type: string
+              requireSoPeercred:
+                description: |-
+                  RequireSoPeercred carries the resolved §4.7 nonce-only render
+                  decision the WarmPoolController's Sandbox reconciler computes from
+                  the referenced Runtime's requireSoPeercred, its deploymentModel, and
+                  the pool's acknowledgeNonceOnlyAuth. An explicit false records that
+                  the pod was rendered with --require-so-peercred=false (nonce-only
+                  mode); a nil value records the default SO_PEERCRED-enforcing render.
+                  The pool-level SecurityDegradedMode trigger reads this field back
+                  from the member Sandboxes without resolving the Runtime CR. spec:
+                  §4.7.
+                type: boolean
+              resourceClass:
+                description: |-
+                  ResourceClass is the §5.1/§5.2 resource class (small, medium,
+                  large, or a deployer-defined class) the pod's CPU/memory limits
+                  resolve from. spec: §12.6 — the PodRegistry PodSpec
+                  carries the per-pod resource limits, which this codebase models as
+                  a named resource class rather than raw quantities. A warm pod
+                  created by the WarmPoolController resolves its class from the
+                  SandboxTemplate at pod-build time and leaves this empty; the §12.6
+                  CreatePod path (a gateway-created pod for a non-prewarmed session
+                  at Tier 4+) stamps the resolved class here so it round-trips
+                  through the registry.
+                type: string
+              runtimeRef:
+                description: RuntimeRef names the lenny.dev/v1alpha1 Runtime this
+                  pod runs.
+                type: string
+              topologySpreadConstraints:
+                description: |-
+                  TopologySpreadConstraints distribute the pod across zones and
+                  nodes. spec: §5.2 — the WarmPoolController copies the
+                  pool's SandboxTemplate.spec.topologySpreadConstraints onto each
+                  Sandbox it creates, and the Sandbox-to-Pod reconciler stamps them
+                  onto the agent pod. The PoolScalingController owns the defaults it
+                  writes into the SandboxTemplate; this field carries the resolved
+                  constraints (defaults or deployer override) down to the pod.
+                items:
+                  description: TopologySpreadConstraint specifies how to spread matching
+                    pods among the given topology.
+                  properties:
+                    labelSelector:
+                      description: |-
+                        LabelSelector is used to find matching pods.
+                        Pods that match this label selector are counted to determine the number of pods
+                        in their corresponding topology domain.
+                      properties:
+                        matchExpressions:
+                          description: matchExpressions is a list of label selector
+                            requirements. The requirements are ANDed.
+                          items:
+                            description: |-
+                              A label selector requirement is a selector that contains values, a key, and an operator that
+                              relates the key and values.
+                            properties:
+                              key:
+                                description: key is the label key that the selector
+                                  applies to.
+                                type: string
+                              operator:
+                                description: |-
+                                  operator represents a key's relationship to a set of values.
+                                  Valid operators are In, NotIn, Exists and DoesNotExist.
+                                type: string
+                              values:
+                                description: |-
+                                  values is an array of string values. If the operator is In or NotIn,
+                                  the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                  the values array must be empty. This array is replaced during a strategic
+                                  merge patch.
+                                items:
+                                  type: string
+                                type: array
+                                x-kubernetes-list-type: atomic
+                            required:
+                            - key
+                            - operator
+                            type: object
+                          type: array
+                          x-kubernetes-list-type: atomic
+                        matchLabels:
+                          additionalProperties:
+                            type: string
+                          description: |-
+                            matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                            map is equivalent to an element of matchExpressions, whose key field is "key", the
+                            operator is "In", and the values array contains only "value". The requirements are ANDed.
+                          type: object
+                      type: object
+                      x-kubernetes-map-type: atomic
+                    matchLabelKeys:
+                      description: |-
+                        MatchLabelKeys is a set of pod label keys to select the pods over which
+                        spreading will be calculated. The keys are used to lookup values from the
+                        incoming pod labels, those key-value labels are ANDed with labelSelector
+                        to select the group of existing pods over which spreading will be calculated
+                        for the incoming pod. The same key is forbidden to exist in both MatchLabelKeys and LabelSelector.
+                        MatchLabelKeys cannot be set when LabelSelector isn't set.
+                        Keys that don't exist in the incoming pod labels will
+                        be ignored. A null or empty list means only match against labelSelector.
+
+                        This is a beta field and requires the MatchLabelKeysInPodTopologySpread feature gate to be enabled (enabled by default).
+                      items:
+                        type: string
+                      type: array
+                      x-kubernetes-list-type: atomic
+                    maxSkew:
+                      description: |-
+                        MaxSkew describes the degree to which pods may be unevenly distributed.
+                        When `whenUnsatisfiable=DoNotSchedule`, it is the maximum permitted difference
+                        between the number of matching pods in the target topology and the global minimum.
+                        The global minimum is the minimum number of matching pods in an eligible domain
+                        or zero if the number of eligible domains is less than MinDomains.
+                        For example, in a 3-zone cluster, MaxSkew is set to 1, and pods with the same
+                        labelSelector spread as 2/2/1:
+                        In this case, the global minimum is 1.
+                        | zone1 | zone2 | zone3 |
+                        |  P P  |  P P  |   P   |
+                        - if MaxSkew is 1, incoming pod can only be scheduled to zone3 to become 2/2/2;
+                        scheduling it onto zone1(zone2) would make the ActualSkew(3-1) on zone1(zone2)
+                        violate MaxSkew(1).
+                        - if MaxSkew is 2, incoming pod can be scheduled onto any zone.
+                        When `whenUnsatisfiable=ScheduleAnyway`, it is used to give higher precedence
+                        to topologies that satisfy it.
+                        It's a required field. Default value is 1 and 0 is not allowed.
+                      format: int32
+                      type: integer
+                    minDomains:
+                      description: |-
+                        MinDomains indicates a minimum number of eligible domains.
+                        When the number of eligible domains with matching topology keys is less than minDomains,
+                        Pod Topology Spread treats "global minimum" as 0, and then the calculation of Skew is performed.
+                        And when the number of eligible domains with matching topology keys equals or greater than minDomains,
+                        this value has no effect on scheduling.
+                        As a result, when the number of eligible domains is less than minDomains,
+                        scheduler won't schedule more than maxSkew Pods to those domains.
+                        If value is nil, the constraint behaves as if MinDomains is equal to 1.
+                        Valid values are integers greater than 0.
+                        When value is not nil, WhenUnsatisfiable must be DoNotSchedule.
+
+                        For example, in a 3-zone cluster, MaxSkew is set to 2, MinDomains is set to 5 and pods with the same
+                        labelSelector spread as 2/2/2:
+                        | zone1 | zone2 | zone3 |
+                        |  P P  |  P P  |  P P  |
+                        The number of domains is less than 5(MinDomains), so "global minimum" is treated as 0.
+                        In this situation, new pod with the same labelSelector cannot be scheduled,
+                        because computed skew will be 3(3 - 0) if new Pod is scheduled to any of the three zones,
+                        it will violate MaxSkew.
+                      format: int32
+                      type: integer
+                    nodeAffinityPolicy:
+                      description: |-
+                        NodeAffinityPolicy indicates how we will treat Pod's nodeAffinity/nodeSelector
+                        when calculating pod topology spread skew. Options are:
+                        - Honor: only nodes matching nodeAffinity/nodeSelector are included in the calculations.
+                        - Ignore: nodeAffinity/nodeSelector are ignored. All nodes are included in the calculations.
+
+                        If this value is nil, the behavior is equivalent to the Honor policy.
+                        This is a beta-level feature default enabled by the NodeInclusionPolicyInPodTopologySpread feature flag.
+                      type: string
+                    nodeTaintsPolicy:
+                      description: |-
+                        NodeTaintsPolicy indicates how we will treat node taints when calculating
+                        pod topology spread skew. Options are:
+                        - Honor: nodes without taints, along with tainted nodes for which the incoming pod
+                        has a toleration, are included.
+                        - Ignore: node taints are ignored. All nodes are included.
+
+                        If this value is nil, the behavior is equivalent to the Ignore policy.
+                        This is a beta-level feature default enabled by the NodeInclusionPolicyInPodTopologySpread feature flag.
+                      type: string
+                    topologyKey:
+                      description: |-
+                        TopologyKey is the key of node labels. Nodes that have a label with this key
+                        and identical values are considered to be in the same topology.
+                        We consider each <key, value> as a "bucket", and try to put balanced number
+                        of pods into each bucket.
+                        We define a domain as a particular instance of a topology.
+                        Also, we define an eligible domain as a domain whose nodes meet the requirements of
+                        nodeAffinityPolicy and nodeTaintsPolicy.
+                        e.g. If TopologyKey is "kubernetes.io/hostname", each Node is a domain of that topology.
+                        And, if TopologyKey is "topology.kubernetes.io/zone", each zone is a domain of that topology.
+                        It's a required field.
+                      type: string
+                    whenUnsatisfiable:
+                      description: |-
+                        WhenUnsatisfiable indicates how to deal with a pod if it doesn't satisfy
+                        the spread constraint.
+                        - DoNotSchedule (default) tells the scheduler not to schedule it.
+                        - ScheduleAnyway tells the scheduler to schedule the pod in any location,
+                          but giving higher precedence to topologies that would help reduce the
+                          skew.
+                        A constraint is considered "Unsatisfiable" for an incoming pod
+                        if and only if every possible node assignment for that pod would violate
+                        "MaxSkew" on some topology.
+                        For example, in a 3-zone cluster, MaxSkew is set to 1, and pods with the same
+                        labelSelector spread as 3/1/1:
+                        | zone1 | zone2 | zone3 |
+                        | P P P |   P   |   P   |
+                        If WhenUnsatisfiable is set to DoNotSchedule, incoming pod can only be scheduled
+                        to zone2(zone3) to become 3/2/1(3/1/2) as ActualSkew(2-1) on zone2(zone3) satisfies
+                        MaxSkew(1). In other words, the cluster can still be imbalanced, but scheduler
+                        won't make it *more* imbalanced.
+                        It's a required field.
+                      type: string
+                  required:
+                  - maxSkew
+                  - topologyKey
+                  - whenUnsatisfiable
+                  type: object
+                type: array
+            required:
+            - poolRef
+            - runtimeRef
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+          status:
+            description: |-
+              SandboxStatus is the observed state of a Sandbox. status.phase is
+              the §6.2 authoritative pod lifecycle state machine; it is the
+              single source of truth that the §4.6 claim path and the
+              lenny-sandboxclaim-guard webhook read.
+            properties:
+              conditions:
+                description: Conditions is the standard Kubernetes condition list.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              nodeName:
+                description: |-
+                  NodeName is the host node the pod is scheduled on. Empty until
+                  the scheduler binds the pod.
+                type: string
+              observedGeneration:
+                description: |-
+                  ObservedGeneration is the .metadata.generation the controller
+                  last reconciled.
+                format: int64
+                type: integer
+              phase:
+                description: |-
+                  Phase is the §6.2 coarse pod-occupancy state. The WarmPoolController
+                  is the sole writer and computes it as a level-triggered projection of
+                  per-pod SandboxClaim existence, the claim's binding state, and the
+                  pool's sessionPolicy (§4.6.3). The fine session-lifecycle states live
+                  in the Postgres session model (§7.2, §8.8) and are not projected onto
+                  the CRD; concurrent occupancy projects `claimed`.
+                enum:
+                - warming
+                - idle
+                - reserved
+                - claimed
+                - sdk_connecting
+                - draining
+                - failed
+                - terminated
+                type: string
+              podIP:
+                description: |-
+                  PodIP is the cluster IP of the backing Pod. The gateway dials the
+                  pod's §4.7 adapter at this address. Empty until the pod is running.
+                type: string
+              podName:
+                description: |-
+                  PodName is the underlying Pod backing this Sandbox. Empty until
+                  the pod is created.
+                type: string
+              sessionId:
+                description: |-
+                  SessionID records the session a pod is bound to. spec: §12.6 —
+                  PodRecord.SessionID (nullable) in the store interface table, and
+                  the PodRegistry agent_pod_state.session_id column, which the
+                  schema comment describes as set on claim. The §4.6.1
+                  claim path writes it on ClaimPod and clears it on ReleasePod; the
+                  orphan-session reconciler (§10.1) cross-references it via the
+                  partial session_id index. Empty for an unclaimed pod.
+                type: string
+              tenantId:
+                description: |-
+                  TenantID records the tenant a recycling or concurrent-session pod is
+                  pinned to (§5.2 tenant pinning). It is set on the pod's first
+                  assignment and is never reassigned to a different tenant for the
+                  pod's lifetime. Empty for an unassigned pod.
+                type: string
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

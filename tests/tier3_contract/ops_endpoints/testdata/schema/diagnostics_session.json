@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lenny.test/schemas/diagnostics_session.json",
+  "title": "SessionDiagnosis response body (spec 25.6)",
+  "description": "The GET /v1/admin/diagnostics/sessions/{id} response. Pins the SessionDiagnosis struct: the identity fields, the ordered cause chain, the retry history, the suggestedActions array, and the optional relatedLogs pointer and canonical degradation envelope. additionalProperties is false so a renamed or dropped field fails the contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sessionId", "state", "runtime", "pool", "causeChain", "retryHistory", "suggestedActions"],
+  "properties": {
+    "sessionId": { "type": "string" },
+    "state": { "type": "string" },
+    "runtime": { "type": "string" },
+    "pool": { "type": "string" },
+    "causeChain": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/causeChainEntry" }
+    },
+    "retryHistory": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/retryAttempt" }
+    },
+    "suggestedActions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/suggestedAction" }
+    },
+    "relatedLogs": { "$ref": "#/$defs/logReference" },
+    "degradation": { "$ref": "#/$defs/degradation" }
+  },
+  "$defs": {
+    "causeChainEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level", "category", "summary"],
+      "properties": {
+        "level": { "type": "integer" },
+        "category": { "type": "string", "minLength": 1 },
+        "summary": { "type": "string" },
+        "details": {},
+        "timestamp": { "type": "string" }
+      }
+    },
+    "retryAttempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempt", "reason"],
+      "properties": {
+        "attempt": { "type": "integer" },
+        "reason": { "type": "string" },
+        "at": { "type": "string" }
+      }
+    },
+    "logReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["namespace", "pod"],
+      "properties": {
+        "namespace": { "type": "string" },
+        "pod": { "type": "string" },
+        "container": { "type": "string" }
+      }
+    },
+    "suggestedAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "endpoint", "reasoning"],
+      "properties": {
+        "action": { "type": "string" },
+        "endpoint": { "type": "string" },
+        "body": {},
+        "reasoning": { "type": "string" },
+        "runbook": { "type": "string" },
+        "confidence": { "type": "number" },
+        "risk": { "type": "string" }
+      }
+    },
+    "degradation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level"],
+      "properties": {
+        "level": { "type": "string", "enum": ["healthy", "degraded", "failed"] },
+        "primarySource": { "type": "string" },
+        "actualSource": { "type": "string" },
+        "fallbackPath": { "type": "array", "items": { "type": "string" } },
+        "confidence": { "type": "number" },
+        "unavailableFields": { "type": "array", "items": { "type": "string" } },
+        "thresholdSource": { "type": "string", "enum": ["operator-customized", "compiled-in-defaults"] },
+        "warnings": { "type": "array", "items": { "type": "string" } },
+        "since": { "type": "string" }
+      }
+    }
+  }
+}

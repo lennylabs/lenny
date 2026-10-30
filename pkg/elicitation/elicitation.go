@@ -96,6 +96,31 @@ func ResolveEffective(platformFloor, tenantStored EnforcementMode) (EnforcementM
 	return tenantStored, nil
 }
 
+// ResolveEffectiveWithDefaults resolves the §9.2 effective enforcement
+// mode from the raw configured platform floor and the raw tenant
+// stored value, applying the spec defaults so the result is always a
+// valid mode: an unset or invalid floor is treated as off (§9.2 platform-floor default), and an unset or invalid tenant stored
+// value is treated as the enforce tenant default (§9.2). The
+// effective mode is max(floor, stored). This is the shared resolver
+// the admin GET response and the §16.5 weakened-mode reconciliation
+// gauge both read so the two surfaces agree on what "weaker than
+// enforce" means. spec: §9.2. F-9.2.5.
+func ResolveEffectiveWithDefaults(rawFloor, rawStored string) EnforcementMode {
+	floor := EnforcementMode(rawFloor)
+	if !floor.IsValid() {
+		floor = ModeOff
+	}
+	stored := EnforcementMode(rawStored)
+	if !stored.IsValid() {
+		stored = ModeEnforce
+	}
+	eff, err := ResolveEffective(floor, stored)
+	if err != nil {
+		return stored
+	}
+	return eff
+}
+
 // InvalidModeError captures the §9.2 mode-validation failure surfaced
 // by the gateway admin API as 400 ELICITATION_INTEGRITY_INVALID_MODE.
 type InvalidModeError struct {
@@ -123,6 +148,12 @@ const (
 	// (depth > 0).
 	DepthBlockAll DepthPolicy = "block_all"
 )
+
+// DefaultSuppressAtDepth is the §9.2 platform-default threshold
+// applied when a pool ships no elicitationDepthPolicy: deep-tree
+// agent-initiated elicitation spam is auto-suppressed at delegation
+// depth >= 3. spec: §9.2. F-9.2.16.
+const DefaultSuppressAtDepth = 3
 
 // AllDepthPolicies returns the closed enum.
 func AllDepthPolicies() []DepthPolicy {
@@ -259,6 +290,32 @@ type TamperError struct {
 
 func (e *TamperError) Error() string {
 	return fmt.Sprintf("elicitation: content tampered: expected digest %s, observed %s (§9.2 gateway-origin-binding)", e.ExpectedDigest, e.ObservedDigest)
+}
+
+// DivergentFields reports which of the §9.2 `{message, schema}` fields
+// differ between the gateway-recorded original and a forward-hop
+// re-emission. It is the `divergent_fields` payload of the
+// `elicitation.content_tamper_detected` audit event (§16.7):
+// an incident responder reads it to learn whether the tampering pod
+// rewrote the human-visible message, the input schema, or both. The
+// schema comparison is over the canonical digest so key reordering or
+// whitespace differences do not register as a divergence. Fields are
+// returned in a stable order (message before schema); an empty slice
+// means the two contents are semantically equal. spec: §9.2;
+// §16.7.
+func DivergentFields(original, forwarded Content) []string {
+	out := make([]string, 0, 2)
+	if original.Message != forwarded.Message {
+		out = append(out, "message")
+	}
+	// Isolate the schema by zeroing the message on both sides; the
+	// resulting digests differ iff the schemas differ canonically.
+	od, oerr := Content{Schema: original.Schema}.Digest()
+	fd, ferr := Content{Schema: forwarded.Schema}.Digest()
+	if oerr != nil || ferr != nil || od != fd {
+		out = append(out, "schema")
+	}
+	return out
 }
 
 // Provenance is the §9.2 provenance metadata the gateway stamps on

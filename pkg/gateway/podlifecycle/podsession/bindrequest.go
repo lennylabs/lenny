@@ -1,0 +1,446 @@
+// SPDX-License-Identifier: MIT
+
+package podsession
+
+import (
+	"context"
+	"fmt"
+	"sync/atomic"
+	"time"
+
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+)
+
+// BindRequest describes a session to place on a warm pod.
+type BindRequest struct {
+	// Pool is the SandboxWarmPool to claim a pod from.
+	Pool string
+	// SessionID is the §15.1 session being started.
+	SessionID string
+	// TenantID is the tenant that owns the session.
+	TenantID string
+	// ReusesPods is true when the pool the session server resolved lets a
+	// pod serve a later session (poolstore.ReusesPods), and
+	// RequiresProcessAcknowledgment is true when that pool requires the
+	// runtime-process acknowledgment (poolstore.RequiresProcessAcknowledgment).
+	// The claim copies both into podclaim.ClaimRequest; the zero values
+	// refuse every pod that has served a session. spec: §5.2 (Deployer
+	// acknowledgment (runtime process kept across sessions)).
+	ReusesPods                    bool
+	RequiresProcessAcknowledgment bool
+	// Runtime is the runtime name passed to the adapter's StartSession.
+	Runtime string
+	// DeclaredIntegrationLevel is the runtime's §5.1 author-declared
+	// integrationLevel ("basic", "standard", or "full"; empty is treated as
+	// the §5.1 default "basic"). On the first session assignment to the
+	// runtime, Bind probes the adapter for the observed level and rejects
+	// the assignment with RUNTIME_LEVEL_UNDERPERFORMS when observed <
+	// declared. spec: §5.1.
+	DeclaredIntegrationLevel string
+	// Plan is the workspace the adapter materializes before start.
+	Plan *adapterv1.WorkspacePlan
+	// ExperimentContext is the §8.3 / §10.7 experiment enrollment
+	// delivered to the runtime in the session's session_start frame on
+	// CH-MSGSOCK (§28.5.3). Nil for an unenrolled session.
+	ExperimentContext *adapterv1.ExperimentContext
+	// TracingContext is the §8.3 opaque tracing-identifier map delivered
+	// to the runtime in the session's session_start frame on CH-MSGSOCK
+	// (§28.5.3). Nil when none is set.
+	TracingContext map[string]string
+	// SetupPolicy is the §5.1 runtime setupPolicy bounding the setup
+	// phase. Nil when the runtime declares no aggregate cap.
+	SetupPolicy *adapterv1.SetupPolicy
+	// ArchivePolicy is the §13.4 per-Runtime archive-extraction opt-in
+	// block. The Binder forwards it to the adapter on FinalizeWorkspace so
+	// uploadArchive symlink entries are admitted (and target-validated)
+	// only for runtimes that opt in. Nil leaves the platform default
+	// (symlinks rejected). spec: §7.4; §13.4 — F-7.4.4.
+	ArchivePolicy *adapterv1.ArchivePolicy
+	// CredentialPools names the §4.9 credential pool to lease from for
+	// each authorized provider, keyed by provider. The caller resolves it
+	// from the §4.9 intersection of the Runtime's supportedProviders and
+	// the tenant's credentialPolicy.providerPools. Bind mints one lease
+	// per entry and pushes the set to the pod via AssignCredentials
+	// before StartSession. Empty (or nil) when the session needs no
+	// upstream LLM credentials; Bind then assigns nothing.
+	CredentialPools map[string]string
+	// UserID is the session's owning user, used to resolve the §4.9
+	// user-source credentials named in UserCredentialProviders. Empty when
+	// the session names no user-source providers.
+	UserID string
+	// UserCredentialProviders names the providers whose §4.9 credential the
+	// caller resolved to the user source (the Pre-Authorized Credential
+	// Flow). For each, Bind materializes a proxy-mode lease from the user's
+	// registered credential through UserCredentials and pushes it alongside
+	// the pool leases. Empty when no provider resolved to a user credential.
+	// spec: §4.9.
+	UserCredentialProviders []string
+	// PodSpiffeURI is the issuing pod's SPIFFE identity, recorded on each
+	// minted lease for the §4.9 proxy-mode SPIFFE-binding check. Empty
+	// disables binding, which §4.9 permits only in single-tenant and
+	// development deployments.
+	PodSpiffeURI string
+	// AgentInterface is the runtime's §5.1 agentInterface descriptor as
+	// JSON, written verbatim into the §15.4 manifest's agentInterface
+	// field. Nil when the runtime declares none.
+	AgentInterface []byte
+	// MinPlatformVersion is the runtime's §5.1 minPlatformVersion written
+	// into the §15.4 manifest. Empty when the runtime specifies no minimum.
+	MinPlatformVersion string
+	// PreConnect is the runtime's §5.1 capabilities.preConnect flag. When
+	// true the pod is SDK-warm: the binder either points the pre-connected
+	// SDK at the workspace (ConfigureWorkspace) or, when the plan matches a
+	// blocking path, demotes it (DemoteSDK) and proceeds pod-warm.
+	PreConnect bool
+	// SDKWarmBlockingPaths is the runtime's §5.1 sdkWarmBlockingPaths glob
+	// list. When PreConnect is true and any workspace path matches, the
+	// binder demotes the SDK-warm pod before materializing the workspace
+	// (§6.1). An empty list disables demotion (§6.1).
+	SDKWarmBlockingPaths []string
+	// Recycle is the pool's §5.2 sessionPolicy.recycle.enabled flag, resolved
+	// by ResolvePool. When true and the session ends cleanly, Release patches
+	// the per-pod claim bound → recycling and signals the adapter to run the
+	// whole-pod scrub (the §5.2 recycle disposition) rather than draining the
+	// pod; the adapter's ReportPodScrub then drives recycle vs. retire. A
+	// failed/crashed session always retires regardless of this flag. spec:
+	// §5.2 (recycle on occupancy-zero).
+	Recycle bool
+	// SandboxName is the pod claimed at /create, persisted on the session
+	// row. The decomposed §7.1 lifecycle (§4.6) sets it so Prepare and Launch
+	// reconnect to the claimed pod from the binding rather than holding the
+	// claim connection across /create → /finalize → /start. Empty for Claim,
+	// which produces the binding. spec: §4.6 (proposal).
+	SandboxName string
+	// Demoted carries the §6.1 SDK-warm demotion decision Prepare made into
+	// Launch, so Launch chooses StartSession (demoted or pod-warm) vs.
+	// ConfigureWorkspace (still SDK-warm) without re-running the blocking-path
+	// match. Meaningful only when PreConnect is true. spec: §6.1.
+	Demoted bool
+	// CleanupCommands and CleanupTimeoutSeconds are the §5.2 whole-pod scrub
+	// parameters resolved from the pool's sessionPolicy at bind time. Bind
+	// carries them onto BindResult so the recycle-path Shutdown delivers them
+	// to the adapter (the §4.7 recycle disposition) without re-resolving the
+	// pool at the release boundary, matching how the Recycle flag is captured
+	// once at bind. Empty/zero on a non-recycling pool. The scrub profile is
+	// not carried on the wire; the gateway routes the §5.2 step-7 vm-restart
+	// retire on the recycle policy in its own runtime store (C4). spec: §5.2
+	// (whole-pod scrub trigger), §4.6.3.
+	CleanupCommands       []string
+	CleanupTimeoutSeconds int
+	// OnClaimed is the post-claim hook. The binder calls it once per binder
+	// call, after the pod claim and any slot reservation and before the first
+	// RPC to the pod, so a resume writes `resuming` only once it holds a pod.
+	// A hook error releases the claim and is returned unwrapped. Nil is a
+	// no-op, which is the create and start paths. spec: §7.3 (Retry and
+	// Resume).
+	OnClaimed func(context.Context) error
+	// RestoreChunks mints the presigned GET capabilities for the session's
+	// starting snapshot. nil means no restore. The Binder calls it at most once
+	// per bind attempt, after stageWorkspace and immediately before
+	// FinalizeWorkspace, because the capabilities expire after
+	// checkpointCapabilityTTLSeconds. The result is never logged or persisted.
+	// spec: §7.1 (Derive restore semantics).
+	RestoreChunks func(context.Context) ([]adapterclient.ChunkGrant, error)
+	// attemptScoped marks a request Bind built for one whole-sequence bind
+	// attempt. On it a Prepare or Launch failure releases only the §4.9
+	// leases the attempt minted (mintedLeaseIDs) and deletes the claim,
+	// rather than revoking every lease the session holds, which would strip
+	// a lease another attempt for the same session minted. The decomposed
+	// /finalize and /start path never sets it. spec: §7.3 (Retry and Resume),
+	// §4.9 (Credential Leasing Service).
+	attemptScoped bool
+	// mintedLeaseIDs carries the lease identifiers this attempt's Prepare
+	// minted into its Launch, on an attemptScoped request only.
+	mintedLeaseIDs []string
+	// CoordinationGeneration is the session's coordination_generation the
+	// binding attempt holds. The binder records it on every lease the
+	// attempt mints. The resume driver sets it to its entry generation on a
+	// snapshotless rebuild; create, finalize, start, and a delegated child
+	// leave it 0. spec: §7.3 (Credential leases on the replacement pod).
+	CoordinationGeneration int64
+}
+
+// BindResult reports the pod a session was bound to.
+type BindResult struct {
+	// SessionID is the session the pod was claimed for.
+	SessionID string
+	// TenantID is the tenant that owns the session.
+	TenantID string
+	// SandboxName is the claimed Sandbox.
+	SandboxName string
+	// PodIP is the bound pod's address.
+	PodIP string
+	// SlotID identifies the §5.2 concurrent-workspace slot the session was
+	// placed on. It is empty for an exclusive (maxConcurrentSessions=1) bind,
+	// where the pod is claimed exclusively for the session. It is non-empty
+	// only for a BindSlot result.
+	SlotID string
+	// Recycle is the pool's §5.2 sessionPolicy.recycle.enabled flag, carried
+	// from the bind request so the release path can apply the §5.2 recycle
+	// disposition without re-resolving the pool. On a recycling session-mode
+	// pool a clean session release patches the claim bound → recycling and
+	// signals the whole-pod scrub rather than draining the pod (Release). On a
+	// recycling concurrent-session pool (the §5.2 "Concurrent" preset) the same
+	// disposition runs when the last slot drains cleanly (ReleaseSlot →
+	// SlotClaimer.ReleaseSlot). False for a non-recycling pool, where the pod
+	// terminates after the session or cohort drains. spec: §5.2,
+	// §6.2.
+	Recycle bool
+	// CleanupCommands and CleanupTimeoutSeconds are the §5.2 whole-pod scrub
+	// parameters carried from the bind request so the recycle-path Shutdown
+	// delivers them to the adapter without re-resolving the pool.
+	// shutdownAdapter builds them into the §4.7 RecycleScrub sub-message (with
+	// PodId == SandboxName) only on the recycle branch; the retire path sends a
+	// plain Shutdown and ignores them. They are populated only on the
+	// session-mode (exclusive) bind result; the concurrent-session bind result
+	// leaves them empty because its occupancy-zero recycle trigger is a
+	// follow-on. Empty/zero on a non-recycling pool. The scrub profile is not
+	// carried on the wire; the gateway routes the §5.2 step-7 vm-restart retire
+	// on the recycle policy in its own runtime store (C4). spec: §5.2
+	// (whole-pod scrub trigger), §4.6.3.
+	CleanupCommands       []string
+	CleanupTimeoutSeconds int
+	// CoordinationGeneration is the session row's coordination_generation
+	// when this replica published the binding: a generation at which this
+	// replica held the session's coordination lease. Binder results leave it
+	// zero, and each site that publishes a binding into the Registry stamps
+	// it first. A stream-failure report compares it with the row's current
+	// generation, so a replica whose session a peer has since taken over
+	// evicts the binding instead of reporting, and a zero stamp counts as
+	// superseded. spec: §10.1.1 (Stateless Replicas and Per-Session
+	// Coordination), §10.1.5 (Stale Replica Behavior).
+	CoordinationGeneration int64
+	// Adapter is the live connection to the pod's adapter. The caller
+	// owns it and closes it when the session ends.
+	Adapter *adapterclient.Client
+	// Timings reports the wall-clock duration of each §6.3 hot-path
+	// phase Bind executed, for the caller to record on the §6.3
+	// per-phase and end-to-end startup-latency histograms. It is the
+	// zero value for a BindSlot result, where the concurrent-mode
+	// startup path is timed separately.
+	Timings BindTimings
+	// WorkspacePlanWarnings carries the §14 non-fatal advisories the
+	// adapter raised during FinalizeWorkspace materialization. The
+	// caller republishes each as an SSE event so clients see the §7.4 per-entry notice.
+	// Nil when materialization produced no warnings or when Bind
+	// returned before FinalizeWorkspace ran. F-7.4.15.
+	WorkspacePlanWarnings []*adapterv1.WorkspacePlanWarning
+	// WorkspaceBase is the §6.4 workspace base the pod's adapter reported
+	// on the §15.5 version handshake, verbatim. The session's §7.3 cwd is
+	// `<base>/slots/{sessionId}/current`, derived once where the value is
+	// persisted on the session row, so a subsequent Resume can pass that
+	// root back via ResumeRequest.expected_workspace_root for the adapter
+	// to assert "same absolute cwd path" before extracting any checkpoint
+	// bytes. Empty when the adapter reported no base. F-7.3.15.
+	WorkspaceBase string
+	// SetupOutputs carries the §7.5 captured stdout/stderr/exit
+	// for each setup command the adapter ran. The gateway persists this
+	// trail on the session row so it is visible through §15.1
+	// GET /v1/sessions/{id} and the §11.7 audit log. F-7.5.4 / F-7.5.11.
+	SetupOutputs []*adapterv1.SetupCommandOutput
+	// BindAttempt is the §4.7.1 token of the attempt that created the
+	// adapter's registry entry for this binding. ReleaseUncommitted names
+	// it on the reclaim of a restore whose commit did not land, so the
+	// reclaim removes only the entry this attempt created. Bind sets it
+	// from the token Prepare minted, materializeSlot and Resume from their
+	// own. spec: §4.7.1 (Role and Gateway RPC Contract), §7.3 (Resume
+	// driver).
+	BindAttempt string
+	// Pool and MaxConcurrentSessions are the pool the binding was claimed
+	// from and its per-pod session bound (1 on an exclusive pool). They
+	// bound and label an uncommitted restore's compensation reclaim.
+	Pool                  string
+	MaxConcurrentSessions int32
+	// MintedLeaseIDs are the §4.9 leases the binding attempt minted. A
+	// pod release returns them with the session's leases at or below the
+	// binding's CoordinationGeneration, and an uncommitted restore returns
+	// exactly these. spec: §7.3 (Credential leases on the replacement pod).
+	MintedLeaseIDs []string
+	// crashed records that the binding's CH-ATTACH stream ended in a
+	// reported stream failure before the release unbound it. A release
+	// whose unbind follows that end retires a pod that serves one session
+	// whatever disposition it passes. No site clears it: a later binding
+	// of the session is a new BindResult. spec: §5.2 (Pool Configuration
+	// and Execution Modes), §28.5.1 (Gateway-to-pod).
+	crashed atomic.Bool
+	// closing records that the session's terminal seal has begun on this
+	// binding. From the mark on, the executor opens no Attach stream over the
+	// binding and the Checkpointer starts no non-seal attempt on it, so no
+	// turn and no periodic or eviction checkpoint runs while the export
+	// reads the workspace. No site clears it: a later binding of the session
+	// is a new BindResult. It is distinct from the idle-suspension seal
+	// epochs, which carry adapter-grant semantics and are cleared on unseal.
+	// spec: §7.1 (Delivery and checkpoints during the seal).
+	closing atomic.Bool
+	// sealEpoch counts the binding's seal transitions: it is odd while the
+	// binding is marked sealed and even otherwise, and every mark and every
+	// clear moves it by one. The mark is set before the gateway asks the
+	// adapter to seal and stays set while the adapter may refuse the
+	// session's messages. A Send captures the epoch when it writes a message
+	// and reads the stream's end as a refusal only when the epoch it captured
+	// is odd and still current, that is, when the message was written after
+	// the seal mark and the same seal held until the stream ended. A message
+	// written before the seal can have reached the runtime, because work the
+	// runtime began before the seal without producing activity does not
+	// prevent it. spec: §4.7.1 (Role and Gateway RPC Contract), §6.2
+	// (maxClientIdleSeconds clock behavior across states).
+	sealEpoch atomic.Int64
+	// sealGranted is the odd seal epoch the adapter confirmed it sealed
+	// under, or zero. The mark is placed before the adapter decides the
+	// seal, so during the call it says nothing about whether the adapter
+	// refuses messages: a message written then reaches the runtime when it
+	// arrives before the seal. Only a granted seal makes a stream end a
+	// refusal, so SealHeldSince requires the captured epoch to be granted.
+	// An unseal whose outcome is unknown withdraws the grant, because the
+	// adapter may already have lifted the seal. spec: §4.7.1 (Role and
+	// Gateway RPC Contract), §6.2 (maxClientIdleSeconds clock behavior
+	// across states).
+	sealGranted atomic.Int64
+}
+
+// MarkSealed marks the binding sealed under a new odd seal epoch and returns
+// it. A binding already marked moves to the next odd epoch and stays marked,
+// so each seal call opens its own epoch and a grant covers only the messages
+// written after that call's mark. Keeping the earlier epoch would let a later
+// sealed answer re-grant an epoch whose grant an unseal with an unknown
+// outcome withdrew, and a message the runtime received in between would then
+// read as refused and be delivered a second time. spec: §4.7.1 (Role and
+// Gateway RPC Contract), §6.2 (maxClientIdleSeconds clock behavior across
+// states).
+func (r *BindResult) MarkSealed() int64 {
+	for {
+		e := r.sealEpoch.Load()
+		next := e + 1
+		if e%2 == 1 {
+			next = e + 2
+		}
+		if r.sealEpoch.CompareAndSwap(e, next) {
+			return next
+		}
+	}
+}
+
+// ClearSealed clears the binding's seal mark, after an unseal lifted the
+// seal or when the adapter did not seal the session. A binding not marked
+// keeps its epoch. spec: §4.7.1 (Role and Gateway RPC Contract).
+func (r *BindResult) ClearSealed() {
+	for {
+		e := r.sealEpoch.Load()
+		if e%2 == 0 || r.sealEpoch.CompareAndSwap(e, e+1) {
+			return
+		}
+	}
+}
+
+// Sealed reports whether the binding is marked sealed.
+func (r *BindResult) Sealed() bool { return r.sealEpoch.Load()%2 == 1 }
+
+// SealEpoch returns the binding's seal epoch, odd while the binding is
+// marked sealed. A caller compares two reads to tell whether one seal held
+// between them.
+func (r *BindResult) SealEpoch() int64 { return r.sealEpoch.Load() }
+
+// GrantSealed records that the adapter sealed the session under epoch, the
+// odd epoch SealEpoch returned after the mark that preceded the seal call.
+// An epoch that is even or no longer current records nothing, since the
+// mark it names was cleared. spec: §4.7.1 (Role and Gateway RPC Contract).
+func (r *BindResult) GrantSealed(epoch int64) {
+	if epoch%2 == 1 && r.sealEpoch.Load() == epoch {
+		r.sealGranted.Store(epoch)
+	}
+}
+
+// WithdrawSealGrant withdraws a recorded grant and keeps the mark, after an
+// unseal whose outcome is unknown: the adapter may still refuse the
+// session's messages, or may have lifted the seal and delivered them, so a
+// stream end no longer reads as a refusal. spec: §4.7.1 (Role and Gateway
+// RPC Contract).
+func (r *BindResult) WithdrawSealGrant() { r.sealGranted.Store(0) }
+
+// SealHeldSince reports whether the binding is marked sealed under the same
+// seal it was marked sealed under when SealEpoch returned epoch, and the
+// adapter granted that seal and no unknown unseal outcome withdrew the
+// grant. A mark the adapter has not yet granted reports false.
+func (r *BindResult) SealHeldSince(epoch int64) bool {
+	return epoch%2 == 1 && r.sealEpoch.Load() == epoch && r.sealGranted.Load() == epoch
+}
+
+// MarkCrashed records that the binding's attach stream ended in a reported
+// stream failure, so a later Release retires the pod. spec: §28.5.1
+// (Gateway-to-pod).
+func (r *BindResult) MarkCrashed() { r.crashed.Store(true) }
+
+// Crashed reports whether MarkCrashed was called on the binding.
+func (r *BindResult) Crashed() bool { return r.crashed.Load() }
+
+// MarkClosing records that the session's terminal seal has begun on the
+// binding. The mark is never cleared. spec: §7.1 (Delivery and checkpoints
+// during the seal).
+func (r *BindResult) MarkClosing() { r.closing.Store(true) }
+
+// Closing reports whether MarkClosing was called on the binding. spec: §7.1
+// (Delivery and checkpoints during the seal).
+func (r *BindResult) Closing() bool { return r.closing.Load() }
+
+// SetupCommandFailure wraps a §7.5 setup-command failure with the partial
+// captured output the adapter returned before the abort. The gateway
+// unwraps it on the §7.3 setup_command_failed classification path to
+// persist the trail on the session row and to emit the §16.1
+// `lenny_warmpool_warmup_failure_total{error_type=setup_command_failed}`
+// counter. spec: §7.5, §7.3 — F-7.5.4 / F-7.5.9.
+type SetupCommandFailure struct {
+	// Pod is the sandbox name the failure was observed on.
+	Pod string
+	// Cause is the adapter-side error (a gRPC FailedPrecondition).
+	Cause error
+	// Outputs is the per-command transcript captured up to the failure,
+	// including the failing command's stdout/stderr/exit code when
+	// available.
+	Outputs []*adapterv1.SetupCommandOutput
+}
+
+func (e *SetupCommandFailure) Error() string {
+	return fmt.Sprintf("podsession: run setup on pod %s: %v", e.Pod, e.Cause)
+}
+
+func (e *SetupCommandFailure) Unwrap() error { return e.Cause }
+
+// BindTimings carries the per-phase wall-clock durations a successful
+// Bind measured, so the caller can attribute the §6.3 latency
+// budget. The end-to-end pod-warm SLO (§6.3,
+// lenny_session_startup_duration_seconds) is the sum of PodClaim,
+// CredentialAssignment, and AgentSessionStart; it excludes
+// WorkspaceMaterialization (payload-dependent) and SetupCommands
+// (deployer-controlled), both of which §6.3 keeps out of the
+// platform-controlled pod-warm budget. spec: §6.3.
+type BindTimings struct {
+	// PodClaim is the §6.3 "pod claim and routing" phase: the warm-pod
+	// claim, pod-IP resolution, mTLS dial, and version handshake.
+	PodClaim time.Duration
+	// WorkspaceMaterialization is the staging plus FinalizeWorkspace
+	// phase. Excluded from the pod-warm SLO total per §6.3.
+	WorkspaceMaterialization time.Duration
+	// SetupCommands is the RunSetup phase. Deployer-controlled and
+	// excluded from the platform pod-warm budget (§6.3), but
+	// instrumented per the §6.3 per-phase requirement.
+	SetupCommands time.Duration
+	// CredentialAssignment is the §4.9 lease mint plus AssignCredentials
+	// RPC phase.
+	CredentialAssignment time.Duration
+	// AgentSessionStart is the StartSession RPC phase, after which the
+	// session is ready.
+	AgentSessionStart time.Duration
+}
+
+// mintRestoreChunks invokes a bind request's restore closure, returning no
+// grants when the request carries none. It runs once per bind attempt,
+// immediately before FinalizeWorkspace, so the capabilities are fresh when
+// the adapter fetches them. The grants are bearer URLs and are never logged.
+// spec: §7.1 (Derive restore semantics).
+func mintRestoreChunks(ctx context.Context, restore func(context.Context) ([]adapterclient.ChunkGrant, error)) ([]adapterclient.ChunkGrant, error) {
+	if restore == nil {
+		return nil, nil
+	}
+	return restore(ctx)
+}

@@ -1,0 +1,456 @@
+// SPDX-License-Identifier: MIT
+
+package adapter_test
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+)
+
+func TestAttachRoundTripsEnvelopes(t *testing.T) {
+	s, rt, _ := sessionServer(t)
+	rt.output = make(chan []byte, 8)
+	rt.echoInput = true
+	if _, err := s.StartSession(context.Background(), startReq("sess-x")); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	client, _ := adapterClient(t, s)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := client.Attach(ctx)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+
+	// The first message binds the session and carries an envelope; the
+	// fake runtime echoes each written envelope to its output stream,
+	// so a successful Recv proves the input reached WriteEnvelope.
+	if err := stream.Send(&adapterv1.AttachRequest{
+		SessionId:    &adapterv1.SessionId{Value: "sess-x"},
+		EnvelopeJson: []byte(`{"type":"message","n":1}`),
+	}); err != nil {
+		t.Fatalf("Send first: %v", err)
+	}
+	got, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("Recv first: %v", err)
+	}
+	// The adapter stamps the stream's session address onto the envelope
+	// before it reaches the shared runtime, and the fake runtime echoes
+	// what it was written.
+	if string(got.GetEnvelopeJson()) != `{"n":1,"sessionId":"sess-x","type":"message"}` {
+		t.Errorf("received %s, want the echoed first envelope carrying the session address", got.GetEnvelopeJson())
+	}
+
+	// A subsequent message round-trips the same way.
+	if err := stream.Send(&adapterv1.AttachRequest{
+		SessionId:    &adapterv1.SessionId{Value: "sess-x"},
+		EnvelopeJson: []byte(`{"type":"message","n":2}`),
+	}); err != nil {
+		t.Fatalf("Send second: %v", err)
+	}
+	got, err = stream.Recv()
+	if err != nil {
+		t.Fatalf("Recv second: %v", err)
+	}
+	if string(got.GetEnvelopeJson()) != `{"n":2,"sessionId":"sess-x","type":"message"}` {
+		t.Errorf("received %s, want the echoed second envelope carrying the session address", got.GetEnvelopeJson())
+	}
+
+	// Closing the runtime output ends the stream cleanly.
+	close(rt.output)
+	if _, err := stream.Recv(); err != io.EOF {
+		t.Errorf("Recv after the runtime output closed = %v, want io.EOF", err)
+	}
+}
+
+func TestAttachStreamsRuntimeOutput(t *testing.T) {
+	s, rt, _ := sessionServer(t)
+	rt.output = make(chan []byte, 4)
+	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	client, _ := adapterClient(t, s)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := client.Attach(ctx)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	// Bind the session with an envelope-free first message.
+	if err := stream.Send(&adapterv1.AttachRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	rt.output <- []byte(`{"type":"response"}`)
+	got, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("Recv: %v", err)
+	}
+	if string(got.GetEnvelopeJson()) != `{"type":"response"}` {
+		t.Errorf("received %s, want the runtime output frame", got.GetEnvelopeJson())
+	}
+}
+
+func TestAttachInterceptsAdapterLocalToolCall(t *testing.T) {
+	s, rt, root := sessionServer(t)
+	rt.output = make(chan []byte, 4)
+	rt.echoInput = true
+	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	// The adapter-local dispatch resolves its cwd from the session's own
+	// slot tree, which the start created.
+	current := filepath.Join(root, "slots", "sess-1", "current")
+	if err := os.WriteFile(filepath.Join(current, "data.txt"), []byte("file-bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	client, _ := adapterClient(t, s)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := client.Attach(ctx)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	if err := stream.Send(&adapterv1.AttachRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	// The adapter intercepts the read_file tool_call, runs it, and
+	// writes the tool_result to the runtime's stdin; the fake runtime
+	// echoes that write back to its output, where the adapter relays
+	// it. The tool_call itself is never relayed to the gateway.
+	rt.output <- toolCallFrame(t, "tc_read", "read_file", map[string]string{"path": "data.txt"})
+	got, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("Recv: %v", err)
+	}
+	tr := decodeToolResult(t, got.GetEnvelopeJson())
+	if tr.Type != "tool_result" || tr.ID != "tc_read" {
+		t.Errorf("relayed frame = %q/%q, want a tool_result for tc_read", tr.Type, tr.ID)
+	}
+	if tr.IsError || len(tr.Content) != 1 || tr.Content[0].Inline != "file-bytes" {
+		t.Errorf("tool_result = %+v, want inline file-bytes with no error", tr)
+	}
+}
+
+func TestAttachRejectsMissingSessionID(t *testing.T) {
+	s, _, _ := sessionServer(t)
+	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	client, _ := adapterClient(t, s)
+
+	stream, err := client.Attach(context.Background())
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	if err := stream.Send(&adapterv1.AttachRequest{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	_ = stream.CloseSend()
+	if _, err := stream.Recv(); status.Code(err) != codes.InvalidArgument {
+		t.Errorf("Recv error code = %v, want InvalidArgument for a missing session id", status.Code(err))
+	}
+}
+
+func TestAttachRejectsUnassignedSession(t *testing.T) {
+	s, _, _ := sessionServer(t)
+	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	client, _ := adapterClient(t, s)
+
+	stream, err := client.Attach(context.Background())
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	if err := stream.Send(&adapterv1.AttachRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-other"},
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	_ = stream.CloseSend()
+	if _, err := stream.Recv(); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("Recv error code = %v, want FailedPrecondition for a session the pod does not hold", status.Code(err))
+	}
+}
+
+// frameSessionIDForTest reads the sessionId off a JSONL frame so a test
+// can assert demultiplexing routed the right session's output to a
+// stream.
+func frameSessionIDForTest(t *testing.T, frame []byte) string {
+	t.Helper()
+	var probe struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(frame, &probe); err != nil {
+		t.Fatalf("decode frame sessionId from %q: %v", frame, err)
+	}
+	return probe.SessionID
+}
+
+// spec: §6.4; spec/05:509; spec/15:1459 — the single
+// pod-global runtime serves two concurrent slots over one connection, and
+// the adapter demultiplexes its interleaved output by sessionId so each
+// per-slot Attach stream receives only its slot's frames. A second
+// concurrent slot is admitted rather than rejected with "pod is not idle".
+//
+// diagnosis: a failure means per-slot output demultiplexing over the
+// single runtime connection regressed: a slot's Attach stream saw a
+// sibling slot's output, or the second concurrent slot was rejected.
+func TestAttachDemultiplexesConcurrentSlotsBySessionID_spec_6_4(t *testing.T) {
+	s, rt := concurrentServer(t)
+	rt.output = make(chan []byte, 16)
+	ctx := context.Background()
+	// Two concurrent slots land on one pod; the second is admitted, not
+	// rejected — both share the single pod-global runtime.
+	for _, sess := range []string{"sess-a", "sess-b"} {
+		if _, err := s.StartSession(ctx, slotStartReq(sess)); err != nil {
+			t.Fatalf("StartSession(%s): %v", sess, err)
+		}
+	}
+	client, _ := adapterClient(t, s)
+
+	open := func(slot string) adapterv1.Adapter_AttachClient {
+		t.Helper()
+		streamCtx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		stream, err := client.Attach(streamCtx)
+		if err != nil {
+			t.Fatalf("Attach(%s): %v", slot, err)
+		}
+		if err := stream.Send(&adapterv1.AttachRequest{
+			SessionId: &adapterv1.SessionId{Value: slot},
+		}); err != nil {
+			t.Fatalf("Send bind(%s): %v", slot, err)
+		}
+		return stream
+	}
+	streamA := open("sess-a")
+	streamB := open("sess-b")
+
+	// Both Attach handlers must have subscribed to the single fan-out before
+	// any frame is written: the runtime delivers each frame only to the
+	// subscribers present when it arrives, so a frame written before a slot
+	// subscribes would never reach that slot's stream. The bind Send above is
+	// asynchronous, so the server-side Output subscription may not have
+	// happened yet when open() returns.
+	rt.waitForSubscribers(t, 2)
+
+	// The runtime interleaves sessionId-tagged frames for both sessions over the
+	// one connection (each stamped by the runtime's dispatch loop). The
+	// adapter must route each frame to the slot that owns it.
+	rt.output <- []byte(`{"type":"response","sessionId":"sess-a","n":1}`)
+	rt.output <- []byte(`{"type":"response","sessionId":"sess-b","n":1}`)
+
+	// sess-a's stream receives only its own frame.
+	gotA, err := streamA.Recv()
+	if err != nil {
+		t.Fatalf("Recv(sess-a): %v", err)
+	}
+	if sid := frameSessionIDForTest(t, gotA.GetEnvelopeJson()); sid != "sess-a" {
+		t.Errorf("sess-a stream received a frame addressed to %q, want sess-a", sid)
+	}
+	// sess-b's stream receives only its own frame.
+	gotB, err := streamB.Recv()
+	if err != nil {
+		t.Fatalf("Recv(sess-b): %v", err)
+	}
+	if sid := frameSessionIDForTest(t, gotB.GetEnvelopeJson()); sid != "sess-b" {
+		t.Errorf("sess-b stream received a frame addressed to %q, want sess-b", sid)
+	}
+
+	// A second sess-a frame still routes only to sess-a, proving the
+	// co-tenant frame above was demultiplexed away rather than consumed by
+	// sess-a's stream.
+	rt.output <- []byte(`{"type":"response","sessionId":"sess-a","n":2}`)
+	gotA2, err := streamA.Recv()
+	if err != nil {
+		t.Fatalf("Recv(sess-a #2): %v", err)
+	}
+	if sid := frameSessionIDForTest(t, gotA2.GetEnvelopeJson()); sid != "sess-a" {
+		t.Errorf("sess-a stream second frame address = %q, want sess-a", sid)
+	}
+}
+
+// spec: §28.5.3 (CH-MSGSOCK) — a heartbeat_ack is protocol-level and is
+// relayed to no Attach stream, whether or not the session has a heartbeat
+// monitor: the ack reaches the monitor through the activity tap. A
+// session-scoped frame after it still reaches the stream.
+//
+// diagnosis: a failure means a heartbeat_ack reached the gateway as session
+// content, or the stream stopped relaying the frames that follow it.
+func TestAttachConsumesHeartbeatAckWithoutAMonitor_spec_28_5_3(t *testing.T) {
+	s, rt := concurrentServer(t)
+	rt.output = make(chan []byte, 4)
+	ctx := context.Background()
+	if _, err := s.StartSession(ctx, slotStartReq("sess-base")); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	client, _ := adapterClient(t, s)
+
+	streamCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := client.Attach(streamCtx)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	if err := stream.Send(&adapterv1.AttachRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-base"},
+	}); err != nil {
+		t.Fatalf("Send bind: %v", err)
+	}
+	rt.waitForSubscribers(t, 1)
+
+	rt.output <- []byte(`{"type":"heartbeat_ack"}`)
+	rt.output <- []byte(`{"type":"status","sessionId":"sess-base","state":"thinking"}`)
+	got, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("Recv: %v", err)
+	}
+	if ty := frameTypeOf(got.GetEnvelopeJson()); ty != "status" {
+		t.Errorf("stream received %q, want the status frame (the heartbeat_ack is consumed)", got.GetEnvelopeJson())
+	}
+}
+
+// spec: §28.5.3 (CH-MSGSOCK, Outbound: session_started), rule 5 — the
+// adapter consumes the runtime's session_started acknowledgement and relays
+// it to no Attach stream, even with no heartbeat monitor running, while the
+// response the runtime writes after it still reaches its session's stream.
+func TestAttachConsumesSessionStarted_spec_28_5_3(t *testing.T) {
+	s, rt := concurrentServer(t)
+	rt.output = make(chan []byte, 4)
+	ctx := context.Background()
+	if _, err := s.StartSession(ctx, slotStartReq("sess-base")); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	client, _ := adapterClient(t, s)
+
+	streamCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := client.Attach(streamCtx)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	if err := stream.Send(&adapterv1.AttachRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-base"},
+	}); err != nil {
+		t.Fatalf("Send bind: %v", err)
+	}
+	rt.waitForSubscribers(t, 1)
+
+	rt.output <- []byte(`{"type":"session_started","sessionId":"sess-base","startId":"1"}`)
+	rt.output <- []byte(`{"type":"response","sessionId":"sess-base"}`)
+	got, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("Recv: %v", err)
+	}
+	if string(got.GetEnvelopeJson()) != `{"type":"response","sessionId":"sess-base"}` {
+		t.Errorf("stream received %q, want the response written after session_started", got.GetEnvelopeJson())
+	}
+}
+
+// spec: §6.4; spec/15:1459 — an inbound (client→agent)
+// envelope on a per-slot Attach stream is stamped with the session's
+// sessionId before it reaches the shared runtime, so the runtime's
+// dispatch loop routes it to the session's cwd. Driven under two concurrent slots so the
+// race detector exercises the shared-connection write path.
+//
+// diagnosis: a failure means inbound sessionId stamping over the single
+// runtime connection regressed: an envelope reached the runtime without
+// the addressed session's sessionId, which would misroute it on a pod
+// holding more than one slot.
+func TestAttachStampsInboundSessionID_spec_6_4(t *testing.T) {
+	s, rt := concurrentServer(t)
+	rt.output = make(chan []byte, 16)
+	ctx := context.Background()
+	for _, sess := range []string{"sess-a", "sess-b"} {
+		if _, err := s.StartSession(ctx, slotStartReq(sess)); err != nil {
+			t.Fatalf("StartSession(%s): %v", sess, err)
+		}
+	}
+	client, _ := adapterClient(t, s)
+
+	send := func(wg *sync.WaitGroup, slot string) {
+		defer wg.Done()
+		// The stream stays open until the test ends (t.Cleanup cancels it),
+		// so cancelling it does not race the server's delivery of the
+		// first-message envelope to the shared runtime.
+		streamCtx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		stream, err := client.Attach(streamCtx)
+		if err != nil {
+			t.Errorf("Attach(%s): %v", slot, err)
+			return
+		}
+		// The first message binds the stream and carries an envelope with
+		// no sessionId; the adapter must stamp the session's own onto it.
+		if err := stream.Send(&adapterv1.AttachRequest{
+			SessionId:    &adapterv1.SessionId{Value: slot},
+			EnvelopeJson: []byte(`{"type":"message"}`),
+		}); err != nil {
+			t.Errorf("Send(%s): %v", slot, err)
+		}
+	}
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go send(&wg, "sess-a")
+	go send(&wg, "sess-b")
+	wg.Wait()
+
+	// Both inbound envelopes reached the shared runtime, each stamped with
+	// its session's sessionId. The runtime also records the session_start
+	// frame each StartSession wrote above (§28.5.3, Inbound:
+	// session_start), so only the message envelopes are counted: counting
+	// every recorded envelope passed on the two session_start frames
+	// before either message landed, and failed with three or four when a
+	// message landed before the first snapshot. Wait briefly for the
+	// concurrent writes to land.
+	// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start); §6.4
+	messages := func() [][]byte {
+		var out [][]byte
+		for _, env := range rt.envelopesSnapshot() {
+			if frameTypeOf(env) == "message" {
+				out = append(out, env)
+			}
+		}
+		return out
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	var envs [][]byte
+	for time.Now().Before(deadline) {
+		if envs = messages(); len(envs) >= 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(envs) != 2 {
+		t.Fatalf("runtime received %d message envelopes, want 2 (one per slot): %q", len(envs), envs)
+	}
+	seen := map[string]int{}
+	for _, env := range envs {
+		seen[frameSessionIDForTest(t, env)]++
+	}
+	if seen["sess-a"] != 1 || seen["sess-b"] != 1 {
+		t.Errorf("stamped session addresses = %v, want one message each for sess-a and sess-b", seen)
+	}
+}

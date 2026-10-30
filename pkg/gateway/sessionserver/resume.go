@@ -1,0 +1,170 @@
+// SPDX-License-Identifier: MIT
+
+package sessionserver
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+)
+
+// handleResume implements POST /v1/sessions/{id}/resume. The endpoint admits
+// awaiting_client_action and suspended. It decides on the primary row:
+//
+//   - From awaiting_client_action, and from a suspended session that holds no
+//     pod, the call is a store write any replica serves: it writes
+//     resume_pending with RetryCount unchanged and answers 200 with the
+//     updated row. The resume driver restores the session on the replica
+//     that coordinates it, and the restore's outcome arrives on the event
+//     stream.
+//   - From a suspended session that holds its pod, the coordinating replica
+//     resumes the session on that pod and delivers its held messages under
+//     the session's delivery lock, answering 200 with the row in running. A
+//     replica that does not coordinate the session writes nothing and
+//     forwards the request to the coordinating replica over
+//     CH-HOLDERFORWARD.
+//
+// The call claims no pod and runs no post-commit effect itself. Every write
+// out of suspended first passes the resume admission check; a refusal
+// answers 429 QUOTA_EXCEEDED and the row stays suspended. An off-holder
+// replica writes nothing and runs no check; a forward that is not delivered
+// or whose outcome is unknown answers 409 TARGET_NOT_READY.
+//
+// spec: §7.3 (Retry and Resume), §15.1 (REST API), §29.3 (Interactive
+// message send), §29.6 (Restore and resume), §11.1 (Resume admission)
+func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
+	tenantID := s.resolveTenant(r)
+	id := r.PathValue("id")
+	row, err := s.readPrimary(r.Context(), tenantID, id)
+	if err != nil {
+		if errors.Is(err, sessionstore.ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
+			return
+		}
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	if err := session.Validate(session.PreconditionRequest{
+		Endpoint:     session.EndpointResume,
+		CurrentState: row.State,
+	}); err != nil {
+		s.writePreconditionError(w, err)
+		return
+	}
+	if row.State == session.StateSuspended && s.holdsPod(row) {
+		s.resumeHeldPodRequest(w, r, row)
+		return
+	}
+	updated, err := s.enterResumePending(r.Context(), row)
+	if err != nil {
+		s.writeResumeError(w, err)
+		return
+	}
+	s.writeSession(w, http.StatusOK, updated)
+}
+
+// writeResumeError answers a failed POST /resume write: a cap refusal of the
+// resume admission check as 429 QUOTA_EXCEEDED with the details a refused
+// creation carries, a precondition error with its §15.1 code, and any other
+// error, an admission lookup or count error included, as 500
+// INTERNAL_ERROR. The row stays as it was.
+// spec: §11.1 (Resume admission), §15.1 (REST API)
+func (s *Server) writeResumeError(w http.ResponseWriter, err error) {
+	var refusal *CapRefusal
+	if errors.As(err, &refusal) {
+		s.writeCapRefusal(w, refusal)
+		return
+	}
+	s.writePreconditionError(w, err)
+}
+
+// resumeHeldPodRequest serves POST /resume on a suspended session that holds
+// its pod. Only the coordinating replica resumes it; any other replica writes
+// nothing and forwards the request to the coordinating replica, answering the
+// coordinator's response, or 409 TARGET_NOT_READY with the current state when
+// the forward is not delivered or its outcome is unknown. A forwarded request
+// that reaches a replica that no longer coordinates the session gets the same
+// refusal. On the coordinating replica the resume and the delivery of held messages run
+// under the session's delivery lock. A delivery failure after the running
+// write still answers 200 with running. A row that left suspended before the
+// write is handled as the state it reached: from awaiting_client_action the
+// call writes resume_pending, and from any other state it answers the
+// precondition error.
+//
+// spec: §29.3 (Interactive message send) Forwarding, §7.2 (Message delivery
+// routing — seven paths, path 6), §7.3 (Retry and Resume)
+func (s *Server) resumeHeldPodRequest(w http.ResponseWriter, r *http.Request, row sessionstore.Session) {
+	if s.forwardToHolder(w, r, row, ForwardKindResume, r.Body) != ForwardLocal {
+		return
+	}
+	unlock, err := s.deliveryLocks.Lock(r.Context(), row.ID)
+	if err != nil {
+		s.writeError(w, http.StatusServiceUnavailable, "TARGET_NOT_READY", err.Error(),
+			map[string]any{"currentState": string(row.State)})
+		return
+	}
+	updated, err := s.resumeHeldAndDrain(r.Context(), row)
+	unlock()
+	switch {
+	case err == nil, errors.Is(err, errHeldDeliveryFailed):
+		s.writeSession(w, http.StatusOK, updated)
+	case errors.Is(err, errResumeHeldPodReleased):
+		// spec: §7.2 — a suspension release cleared the pod after the
+		// read; the call is the podless store write.
+		pending, perr := s.enterResumePending(r.Context(), row)
+		if perr != nil {
+			s.writeResumeError(w, perr)
+			return
+		}
+		s.writeSession(w, http.StatusOK, pending)
+	case errors.Is(err, errResumeHeldPodNotSuspended):
+		moved := row
+		moved.State = session.StateAwaitingClientAction
+		pending, perr := s.enterResumePending(r.Context(), moved)
+		if perr != nil {
+			s.writePreconditionError(w, perr)
+			return
+		}
+		s.writeSession(w, http.StatusOK, pending)
+	default:
+		s.writeResumeError(w, err)
+	}
+}
+
+// errHeldDeliveryFailed wraps a held-message delivery error that followed a
+// held-pod resume's running write, so a caller distinguishes it from a
+// resume error that left the row suspended.
+var errHeldDeliveryFailed = errors.New("sessionserver: held-message delivery failed after the resume")
+
+// resumeHeldAndDrain resumes a suspended session on its held pod and then
+// delivers its held messages. It is the one implementation of the held-pod
+// resume edge. Its callers are the REST message path, ResumeSuspended, and
+// handleResume, each holding the session's delivery lock and each only when
+// this replica coordinates the session. It returns the running row; a
+// delivery error comes after the running write and is returned wrapped in
+// errHeldDeliveryFailed with that row. A row whose pod a suspension release
+// cleared returns errResumeHeldPodReleased, and the caller moves the session
+// to resume_pending.
+//
+// spec: §7.2 (Message delivery routing — seven paths, path 6)
+func (s *Server) resumeHeldAndDrain(ctx context.Context, row sessionstore.Session) (sessionstore.Session, error) {
+	updated, err := s.resumeHeldPod(ctx, row)
+	if err != nil {
+		return sessionstore.Session{}, err
+	}
+	if derr := s.deliverBuffered(ctx, updated); derr != nil {
+		return updated, fmt.Errorf("%w: %w", errHeldDeliveryFailed, derr)
+	}
+	return updated, nil
+}
+
+// holdsPod reports whether the session row names its pod, or the server runs
+// with no pod binder, where every session holds its in-process executor.
+// spec: §6.2 (Pod State Machine).
+func (s *Server) holdsPod(row sessionstore.Session) bool {
+	return row.PodAssignment != "" || s.podBinder == nil
+}

@@ -1,0 +1,637 @@
+//go:build component
+
+// SPDX-License-Identifier: MIT
+
+package migrations_test
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/lennylabs/lenny/tests/testinfra/containers"
+)
+
+// dropSlotIDPriorVersion is the schema version immediately below the drop
+// migration, the point the stepwise cases roll back to before seeding and
+// re-applying.
+const dropSlotIDPriorVersion = 179
+
+// dropSlotIDUpFile is the drop migration's forward file, re-applied verbatim
+// by the idempotency case.
+const dropSlotIDUpFile = "0180_drop_checkpoint_slot_id.up.sql"
+
+// dropSlotIDGateIndex is the covering index the uniqueness gate creates for
+// its own read and drops again before the migration continues.
+const dropSlotIDGateIndex = "idx_checkpoint_manifest_active_partial_gate"
+
+// spec: 10.1 (the at-most-one-active-partial invariant, the resume-selection
+// walk, and the manifest scoping key the persisted duplicate slot columns
+// duplicated), 12.5 (the "latest 2" retention cap the rotation index serves)
+// diagnosis: migration 0180 did not drop session_checkpoints.slot_id and
+//
+//	checkpoint_manifest.slot_id, or did not re-key the rotation index, the
+//	partial-manifest unique index, and the resume-selection index onto
+//	session_id alone. The Go stores name these columns in string literals, so a
+//	schema that still carries the column, or an index the drop left keyed on
+//	it, is not caught by the compiler: it surfaces as an undefined-column error
+//	on every checkpoint insert, or as a per-slot uniqueness scope the supersede
+//	path no longer expresses. A failure on the rollback half means the
+//	.down.sql did not restore the pre-drop column and index set.
+func TestDropCheckpointSlotIDMigration_spec_10_1(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	// Forward: both columns are gone.
+	mustNotHaveColumn(t, ctx, pg, "session_checkpoints", "slot_id")
+	mustNotHaveColumn(t, ctx, pg, "checkpoint_manifest", "slot_id")
+
+	// The three re-keyed indexes exist and name session_id without a slot
+	// dimension. Each definition is asserted rather than only the index name,
+	// because a surviving slot-keyed index under a re-keyed name would leave
+	// the retention cap and the uniqueness scope per slot.
+	for _, want := range []struct {
+		index    string
+		contains string
+	}{
+		// §12.5 rotation: the "latest 2" cap walks a session's checkpoints by
+		// descending created_at.
+		{"idx_session_checkpoints_session_age", "(tenant_id, session_id, created_at DESC)"},
+		// §10.1 at-most-one-active-partial invariant, keyed on session_id.
+		{"partial_manifest_active_uniq", "(session_id)"},
+		// §10.1 resume selection: the highest-fenced active row for a session.
+		{"idx_checkpoint_manifest_active", "(tenant_id, session_id, coordination_generation DESC)"},
+	} {
+		def := indexDef(t, ctx, pg, want.index)
+		if def == "" {
+			t.Errorf("index %s is absent after migration 0180", want.index)
+			continue
+		}
+		if !strings.Contains(def, want.contains) {
+			t.Errorf("index %s definition = %q, want it keyed on %s", want.index, def, want.contains)
+		}
+		if strings.Contains(def, "slot_id") {
+			t.Errorf("index %s still names slot_id: %q", want.index, def)
+		}
+	}
+	// The slot-keyed indexes the drop replaces are gone.
+	for _, gone := range []string{"idx_session_checkpoints_slot_age"} {
+		if def := indexDef(t, ctx, pg, gone); def != "" {
+			t.Errorf("index %s survived migration 0180: %q", gone, def)
+		}
+	}
+
+	// Rolling 0180 back restores both columns and the slot-keyed indexes, so
+	// the migration is reversible per step.
+	pg.MigrateTo(t, dir, dropSlotIDPriorVersion)
+	mustHaveColumn(t, ctx, pg, "session_checkpoints", "slot_id")
+	mustHaveColumn(t, ctx, pg, "checkpoint_manifest", "slot_id")
+	for _, restored := range []string{
+		"idx_session_checkpoints_slot_age",
+		"partial_manifest_active_uniq",
+		"idx_checkpoint_manifest_active",
+	} {
+		def := indexDef(t, ctx, pg, restored)
+		if def == "" {
+			t.Errorf("index %s absent after rolling migration 0180 back", restored)
+			continue
+		}
+		if !strings.Contains(def, "slot_id") {
+			t.Errorf("index %s after rollback = %q, want the slot-keyed definition", restored, def)
+		}
+	}
+}
+
+// spec: 6.4 (the per-slot workspace tree), 7.3 (step (d) recreates the same
+// absolute cwd path and the adapter compares the persisted root against the
+// root it resolves)
+// diagnosis: migration 0180 did not rewrite sessions.workspace_root onto the
+//
+//	per-slot path, or rewrote a row it must leave alone. The persisted root is
+//	replayed verbatim as the resume-time expectation, so a row left holding the
+//	retired pod-global /workspace/current fails every resume against a pod that
+//	resolves a slot root, and a row rewritten from the empty default or from a
+//	root already under the slot tree records a path no pod resolves. No other
+//	case asserts the rewritten value: the resume path writes its own root, so a
+//	wrong UPDATE predicate or a wrong derived expression ships green without
+//	this case.
+func TestDropCheckpointSlotIDRewritesWorkspaceRoot_spec_7_3(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	// Roll back to the schema the rewrite runs against, so the three rows are
+	// seeded before the migration rather than after it.
+	pg.MigrateTo(t, dir, dropSlotIDPriorVersion)
+
+	if _, err := pg.Pool.Exec(ctx,
+		`INSERT INTO tenants (id, genesis_nonce) VALUES ('acme', '\x00')`); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	const insertSession = `INSERT INTO sessions (id, tenant_id, state, runtime_ref, root_session_id, workspace_root)
+		VALUES ($1, 'acme', 'created', 'echo', $1, $2)`
+	var (
+		retired  = "11111111-1111-4111-8111-111111111111"
+		unset    = "22222222-2222-4222-8222-222222222222"
+		slotRoot = "33333333-3333-4333-8333-333333333333"
+	)
+	for _, row := range []struct{ id, root string }{
+		// The retired pod-global path: the row the rewrite exists for.
+		{retired, "/workspace/current"},
+		// The column default: no root was ever reported for this session.
+		{unset, ""},
+		// A root already under the slot tree, for a different session's
+		// identifier than its own is not a case the platform produces; this row
+		// holds its own slot root and must survive untouched.
+		{slotRoot, "/workspace/slots/" + slotRoot + "/current"},
+	} {
+		if err := execTenant(ctx, pg, "acme", insertSession, row.id, row.root); err != nil {
+			t.Fatalf("seed session %s: %v", row.id, err)
+		}
+	}
+
+	pg.MigrateTo(t, dir, dropSlotIDPriorVersion+1)
+
+	after := []struct{ id, root, why string }{
+		{retired, "/workspace/slots/" + retired + "/current", "the retired pod-global root is rewritten onto the session's own slot root"},
+		{unset, "", "the column default records no reported root and is left alone"},
+		{slotRoot, "/workspace/slots/" + slotRoot + "/current", "a root already under the slot tree is left alone"},
+	}
+	for _, want := range after {
+		got := sessionWorkspaceRoot(t, ctx, pg, want.id)
+		if got != want.root {
+			t.Errorf("sessions.workspace_root for %s = %q, want %q (%s)", want.id, got, want.root, want.why)
+		}
+	}
+
+	// Rolling the migration back leaves every recorded root as it stands. A
+	// reverse rewrite keyed on the slot-root spelling cannot tell a row the
+	// forward pass produced from a row that already held its own slot root, so
+	// it would put the retired pod-global path onto a session whose value was
+	// correct before the migration ran. The root is re-derived and
+	// re-persisted at the next handshake, so the rollback writes nothing.
+	pg.MigrateTo(t, dir, dropSlotIDPriorVersion)
+	for _, want := range after {
+		got := sessionWorkspaceRoot(t, ctx, pg, want.id)
+		if got != want.root {
+			t.Errorf("sessions.workspace_root for %s after rolling the migration back = %q, want it unchanged at %q", want.id, got, want.root)
+		}
+	}
+}
+
+// indexDef returns the CREATE INDEX definition Postgres holds for name, or
+// the empty string when no such index exists.
+func indexDef(t *testing.T, ctx context.Context, pg *containers.Postgres, name string) string {
+	t.Helper()
+	var def string
+	err := pg.Pool.QueryRow(ctx,
+		`SELECT COALESCE(max(indexdef), '') FROM pg_indexes
+			WHERE schemaname = 'public' AND indexname = $1`, name).Scan(&def)
+	if err != nil {
+		t.Fatalf("read definition of index %s: %v", name, err)
+	}
+	return def
+}
+
+// sessionWorkspaceRoot reads the persisted §7.3 workspace root of one session.
+func sessionWorkspaceRoot(t *testing.T, ctx context.Context, pg *containers.Postgres, id string) string {
+	t.Helper()
+	var root string
+	if err := pg.Pool.QueryRow(ctx,
+		`SELECT workspace_root FROM sessions WHERE id = $1`, id).Scan(&root); err != nil {
+		t.Fatalf("read workspace_root of session %s: %v", id, err)
+	}
+	return root
+}
+
+// spec: 10.5 (a Phase 3 contract migration is idempotent, so a re-run after
+// the gate passes is a no-op), 10.1 (the persisted duplicate slot columns are
+// dropped and the manifest keys on session_id alone)
+// diagnosis: re-applying migration 0180's .up.sql against a schema it has
+//
+//	already contracted aborts instead of doing nothing. Every DDL statement in
+//	the file has to tolerate its own outcome: the drops are DROP COLUMN IF
+//	EXISTS, the re-keyed indexes are CREATE INDEX IF NOT EXISTS, the isolation
+//	policy is restated through DROP POLICY IF EXISTS, and the gate reads
+//	without writing and drops the index it creates. An operator re-running the
+//	contract step of a rolling deploy sees the whole migration roll back
+//	otherwise.
+func TestDropCheckpointSlotIDUpIsIdempotent_spec_10_5(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	src, err := os.ReadFile(filepath.Join(dir, dropSlotIDUpFile))
+	if err != nil {
+		t.Fatalf("read %s: %v", dropSlotIDUpFile, err)
+	}
+	if _, err := pg.Pool.Exec(ctx, string(src)); err != nil {
+		t.Fatalf("re-applying %s against the contracted schema: %v", dropSlotIDUpFile, err)
+	}
+
+	// The re-run left the contracted schema exactly as it found it.
+	mustNotHaveColumn(t, ctx, pg, "session_checkpoints", "slot_id")
+	mustNotHaveColumn(t, ctx, pg, "checkpoint_manifest", "slot_id")
+	if def := indexDef(t, ctx, pg, dropSlotIDGateIndex); def != "" {
+		t.Errorf("gate index %s survived the re-run: %q", dropSlotIDGateIndex, def)
+	}
+	for _, want := range []string{
+		"idx_session_checkpoints_session_age",
+		"partial_manifest_active_uniq",
+		"idx_checkpoint_manifest_active",
+	} {
+		if indexDef(t, ctx, pg, want) == "" {
+			t.Errorf("index %s is absent after the re-run", want)
+		}
+	}
+}
+
+// spec: 10.1 (the at-most-one-active-partial invariant, which the re-keyed
+// unique index expresses on session_id alone), 11.2 (a reservation is released
+// exactly once through the guarded release, which SQL alone cannot issue),
+// 12.5 (the backstop reclaim sees only rows that are still active)
+// diagnosis: migration 0180 did not refuse a schema in which one session holds
+//
+//	more than one active partial checkpoint_manifest row. The pre-drop unique
+//	index was scoped on (session_id, slot_id), so that state is one the platform
+//	produces: a crashed attempt at the 'default' sentinel is never superseded by
+//	a later attempt that writes slot_id = session_id, and both rows pass the
+//	Phase 3 column gates. The re-keyed index admits one such row per session, so
+//	the migration has to resolve the duplicate before creating it. Retiring the
+//	extra attempt is not a soft-delete: the reservation release is guarded on
+//	reservation_released_at and the attempt's confirmed chunk objects and their
+//	artifact_store rows have to be released, and once deleted_at is stamped the
+//	§12.5 backstop can no longer reach the row. A migration that soft-deletes
+//	the duplicate therefore leaks the attempt's reserved bytes and orphans its
+//	chunk objects permanently, which is why this case asserts that the migration
+//	refuses and leaves every row exactly as it found it.
+func TestDropCheckpointSlotIDRefusesDuplicateActivePartials_spec_10_1(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	pg.MigrateTo(t, dir, dropSlotIDPriorVersion)
+	seedDropSlotIDTenant(t, ctx, pg, "acme")
+
+	const session = "44444444-4444-4444-8444-444444444444"
+	var (
+		stale    = "55555555-5555-4555-8555-555555555555"
+		survivor = "66666666-6666-4666-8666-666666666666"
+	)
+	// The crashed attempt sits at the 'default' sentinel and a lower fenced
+	// generation; the later attempt on a concurrent pod wrote its own session
+	// identifier, so the old (session_id, slot_id) index admitted both.
+	seedActivePartial(t, ctx, pg, "acme", stale, session, "default", 1)
+	seedActivePartial(t, ctx, pg, "acme", survivor, session, session, 2)
+
+	err := applyDropSlotIDUp(ctx, pg, dir, "")
+	if err == nil {
+		t.Fatalf("migration 0180 applied against a session holding two active partial rows; want it refused")
+	}
+	if !strings.Contains(err.Error(), session) {
+		t.Errorf("refusal = %v, want it to name session %s so an operator can retire the extra attempt", err, session)
+	}
+
+	// The refusal rolled the whole migration back, so no row was retired and
+	// no column was dropped.
+	mustHaveColumn(t, ctx, pg, "checkpoint_manifest", "slot_id")
+	mustHaveColumn(t, ctx, pg, "session_checkpoints", "slot_id")
+	for _, id := range []string{stale, survivor} {
+		if deleted, reason := manifestTombstone(t, ctx, pg, "acme", id); deleted || reason != "in_progress" {
+			t.Errorf("manifest row %s after the refusal: soft-deleted = %v, manifest_reason = %q; want it untouched and %q",
+				id, deleted, reason, "in_progress")
+		}
+	}
+
+	// Retiring the extra attempt through the abort path (its reservation
+	// released and its row soft-deleted) lets the migration through.
+	if err := execTenant(ctx, pg, "acme",
+		`UPDATE checkpoint_manifest SET deleted_at = now(), manifest_reason = 'superseded',
+			reservation_released_at = now()
+			WHERE tenant_id = 'acme' AND checkpoint_id = $1`, stale); err != nil {
+		t.Fatalf("retire the extra attempt: %v", err)
+	}
+	pg.MigrateTo(t, dir, dropSlotIDPriorVersion+1)
+	mustNotHaveColumn(t, ctx, pg, "checkpoint_manifest", "slot_id")
+}
+
+// spec: 10.1 (the at-most-one-active-partial invariant, whose unique index is
+// re-keyed on session_id alone, with no tenant column)
+// diagnosis: migration 0180's uniqueness gate is keyed on a wider column set
+//
+//	than the index it prepares for. The re-keyed unique index carries no tenant
+//	column, so it admits one active partial row per session_id across every
+//	tenant. A gate that partitions per tenant passes a pair of rows the index
+//	then rejects, and the migration aborts on a bare unique violation that names
+//	nothing an operator can act on instead of on the gate's own message.
+func TestDropCheckpointSlotIDRefusesCrossTenantDuplicateActivePartials_spec_10_1(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	pg.MigrateTo(t, dir, dropSlotIDPriorVersion)
+	seedDropSlotIDTenant(t, ctx, pg, "acme")
+	seedDropSlotIDTenant(t, ctx, pg, "globex")
+
+	const session = "77777777-7777-4777-8777-777777777777"
+	seedActivePartial(t, ctx, pg, "acme", "88888888-8888-4888-8888-888888888888", session, "default", 1)
+	seedActivePartial(t, ctx, pg, "globex", "99999999-9999-4999-8999-999999999999", session, session, 1)
+
+	err := applyDropSlotIDUp(ctx, pg, dir, "")
+	if err == nil {
+		t.Fatalf("migration 0180 applied against two tenants holding an active partial row for one session; want it refused")
+	}
+	if !strings.Contains(err.Error(), session) {
+		t.Errorf("refusal = %v, want the gate's message naming session %s rather than a bare unique violation", err, session)
+	}
+	if strings.Contains(err.Error(), "partial_manifest_active_uniq") {
+		t.Errorf("refusal = %v, want the gate to reject the pair before the unique index is created", err)
+	}
+}
+
+// applyDropSlotIDUp applies the drop migration's forward file directly, so a
+// refusal is returned rather than failing the test the way MigrateTo does.
+// The file is one implicit transaction, matching how the migrator applies it.
+// A non-empty role is taken for that transaction with SET LOCAL ROLE, so the
+// file applies under a role that row-level security is enforced against.
+func applyDropSlotIDUp(ctx context.Context, pg *containers.Postgres, dir, role string) error {
+	src, err := os.ReadFile(filepath.Join(dir, dropSlotIDUpFile))
+	if err != nil {
+		return err
+	}
+	batch := string(src)
+	if role != "" {
+		batch = "SET LOCAL ROLE " + role + ";\n" + batch
+	}
+	_, err = pg.Pool.Exec(ctx, batch)
+	return err
+}
+
+// seedDropSlotIDTenant inserts the tenant row the seeded manifest rows
+// reference.
+func seedDropSlotIDTenant(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant string) {
+	t.Helper()
+	if _, err := pg.Pool.Exec(ctx,
+		`INSERT INTO tenants (id, genesis_nonce) VALUES ($1, '\x00')`, tenant); err != nil {
+		t.Fatalf("seed tenant %s: %v", tenant, err)
+	}
+}
+
+// seedActivePartial inserts one active partial manifest row at the pre-drop
+// schema, which still carries slot_id.
+func seedActivePartial(t *testing.T, ctx context.Context, pg *containers.Postgres,
+	tenant, checkpointID, sessionID, slotID string, generation int64,
+) {
+	t.Helper()
+	const insertManifest = `INSERT INTO checkpoint_manifest
+		(tenant_id, checkpoint_id, session_id, slot_id, coordination_generation, partial,
+		 chunk_object_key_prefix, chunk_size_bytes, checkpoint_started_at, checkpoint_timeout_at)
+		VALUES ($1, $2, $3, $4, $5, TRUE, '/checkpoints/', 1048576, now(), now() + interval '1 hour')`
+	if err := execTenant(ctx, pg, tenant, insertManifest, tenant, checkpointID, sessionID, slotID, generation); err != nil {
+		t.Fatalf("seed manifest row %s: %v", checkpointID, err)
+	}
+}
+
+// manifestTombstone reads one manifest row's soft-delete state and reason.
+func manifestTombstone(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant, checkpointID string) (bool, string) {
+	t.Helper()
+	var (
+		deleted bool
+		reason  string
+	)
+	if err := pg.Pool.QueryRow(ctx,
+		`SELECT deleted_at IS NOT NULL, manifest_reason FROM checkpoint_manifest
+			WHERE tenant_id = $1 AND checkpoint_id = $2`, tenant, checkpointID).
+		Scan(&deleted, &reason); err != nil {
+		t.Fatalf("read manifest row %s: %v", checkpointID, err)
+	}
+	return deleted, reason
+}
+
+// spec: 10.1 (the persisted duplicate slot columns hold nothing beyond
+// session_id, so the drop is unconditional and there is no backfill), 12.5
+// (the retention cap the re-keyed rotation index serves)
+// diagnosis: migration 0180 refused a database whose slot columns hold a
+//
+//	distinct slot identifier. A pool running more than one session per pod
+//	wrote the binding's own slot identifier into both the retention row and the
+//	manifest row, so that is the state the pre-drop writers produced on every
+//	concurrent pool. The columns carry no value worth preserving and there is
+//	no data migration an operator could run to clear a refusal, so a migration
+//	that inspects the column values before dropping them is unappliable on
+//	exactly the databases it has to run against.
+func TestDropCheckpointSlotIDDropsUnmigratedSlotValues_spec_10_1(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	pg.MigrateTo(t, dir, dropSlotIDPriorVersion)
+	seedDropSlotIDTenant(t, ctx, pg, "acme")
+
+	const (
+		retentionSession = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+		manifestSession  = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+		checkpointID     = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+		concurrentSlot   = "slot-a"
+	)
+	if err := execTenant(ctx, pg, "acme",
+		`INSERT INTO session_checkpoints (tenant_id, session_id, slot_id, ref)
+			VALUES ('acme', $1, $2, 'checkpoints/one')`, retentionSession, concurrentSlot); err != nil {
+		t.Fatalf("seed retention row: %v", err)
+	}
+	seedActivePartial(t, ctx, pg, "acme", checkpointID, manifestSession, concurrentSlot, 1)
+
+	pg.MigrateTo(t, dir, dropSlotIDPriorVersion+1)
+
+	mustNotHaveColumn(t, ctx, pg, "session_checkpoints", "slot_id")
+	mustNotHaveColumn(t, ctx, pg, "checkpoint_manifest", "slot_id")
+
+	// The rows themselves survive the drop: the column goes, the checkpoint
+	// catalog and the manifest attempt stay.
+	var refs int
+	if err := pg.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM session_checkpoints WHERE session_id = $1`, retentionSession).Scan(&refs); err != nil {
+		t.Fatalf("count retention rows: %v", err)
+	}
+	if refs != 1 {
+		t.Errorf("session_checkpoints rows for %s = %d, want 1", retentionSession, refs)
+	}
+	if deleted, reason := manifestTombstone(t, ctx, pg, "acme", checkpointID); deleted || reason != "in_progress" {
+		t.Errorf("manifest row %s after the drop: soft-deleted = %v, manifest_reason = %q; want it untouched and %q",
+			checkpointID, deleted, reason, "in_progress")
+	}
+}
+
+// spec: 12.3 (the tenant-isolation policy and the platform cross-tenant
+// sentinel every cross-tenant read takes), 10.1 (the uniqueness gate the
+// migration runs before it re-keys the at-most-one-active-partial index)
+// diagnosis: migration 0180 cannot be applied by a migration role that is not
+//
+//	a superuser. checkpoint_manifest carries FORCE ROW LEVEL SECURITY, so every
+//	read the migration makes is subject to the isolation policy, and the policy
+//	matches tenant_id against current_setting('app.current_tenant', false),
+//	which raises for an unset parameter rather than returning NULL. A gate read
+//	taken with no tenant context therefore aborts the whole migration, and a
+//	read taken under the '__all__' sentinel against the strict policy form sees
+//	no rows at all and passes vacuously. The tier-2 cases that connect as the
+//	container superuser cannot surface either outcome, because a superuser
+//	bypasses row-level security unconditionally.
+func TestDropCheckpointSlotIDAppliesUnderRowLevelSecurity_spec_12_3(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	pg.MigrateTo(t, dir, dropSlotIDPriorVersion)
+	seedDropSlotIDTenant(t, ctx, pg, "acme")
+
+	const (
+		session      = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+		checkpointID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+	)
+	if err := execTenant(ctx, pg, "acme",
+		`INSERT INTO sessions (id, tenant_id, state, runtime_ref, root_session_id, workspace_root)
+			VALUES ($1, 'acme', 'created', 'echo', $1, '/workspace/current')`, session); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	seedActivePartial(t, ctx, pg, "acme", checkpointID, session, "default", 1)
+
+	grantDropSlotIDMigratorRole(t, ctx, pg)
+
+	src, err := os.ReadFile(filepath.Join(dir, dropSlotIDUpFile))
+	if err != nil {
+		t.Fatalf("read %s: %v", dropSlotIDUpFile, err)
+	}
+	// SET LOCAL ROLE holds for the implicit transaction the multi-statement
+	// batch runs in, so the migration applies under the non-superuser role and
+	// the pooled connection is handed back unchanged.
+	if _, err := pg.Pool.Exec(ctx, "SET LOCAL ROLE lenny_migrator;\n"+string(src)); err != nil {
+		t.Fatalf("applying %s as a non-superuser migration role: %v", dropSlotIDUpFile, err)
+	}
+
+	mustNotHaveColumn(t, ctx, pg, "session_checkpoints", "slot_id")
+	mustNotHaveColumn(t, ctx, pg, "checkpoint_manifest", "slot_id")
+	if got, want := sessionWorkspaceRoot(t, ctx, pg, session), "/workspace/slots/"+session+"/current"; got != want {
+		t.Errorf("sessions.workspace_root = %q, want %q: the rewrite ran under the cross-tenant sentinel", got, want)
+	}
+
+	// The widening the gate read needs is confined to the migration. Its
+	// steady-state schema differs from the pre-drop schema only in the columns
+	// and indexes §10.1 names, so checkpoint_manifest is left carrying the
+	// strict §12.3 predicate migration 0178 created it with.
+	if using := manifestIsolationUsing(t, ctx, pg); strings.Contains(using, "__all__") {
+		t.Errorf("checkpoint_manifest isolation policy after the migration = %s, want the strict §12.3 form with no cross-tenant sentinel", using)
+	}
+	if got := crossTenantManifestRows(t, ctx, pg, checkpointID); got != 0 {
+		t.Errorf("manifest rows visible to a cross-tenant read as the migration role = %d, want 0", got)
+	}
+}
+
+// spec: 12.3 (the isolation policy the migration widens for its gate read and
+// restores), 10.1 (the at-most-one-active-partial invariant the gate holds)
+// diagnosis: the migration's uniqueness gate passed vacuously under row-level
+//
+//	security. The gate reads checkpoint_manifest across every tenant, and the
+//	table's strict §12.3 predicate matches no row under the '__all__' sentinel,
+//	so a gate taken against that predicate as a non-superuser migration role
+//	sees an empty table and admits a pair of rows the re-keyed unique index then
+//	rejects with a bare unique violation. The superuser cases cannot surface it
+//	because a superuser bypasses row-level security unconditionally.
+func TestDropCheckpointSlotIDGateReadsUnderRowLevelSecurity_spec_10_1(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	pg.MigrateTo(t, dir, dropSlotIDPriorVersion)
+	seedDropSlotIDTenant(t, ctx, pg, "acme")
+
+	const session = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	seedActivePartial(t, ctx, pg, "acme", "aaaaaaa1-aaaa-4aaa-8aaa-aaaaaaaaaaaa", session, "default", 1)
+	seedActivePartial(t, ctx, pg, "acme", "aaaaaaa2-aaaa-4aaa-8aaa-aaaaaaaaaaaa", session, session, 2)
+
+	grantDropSlotIDMigratorRole(t, ctx, pg)
+
+	err := applyDropSlotIDUp(ctx, pg, dir, "lenny_migrator")
+	if err == nil {
+		t.Fatalf("migration applied as the non-superuser migration role against a session holding two active partial rows; want the gate to refuse")
+	}
+	if !strings.Contains(err.Error(), session) {
+		t.Errorf("refusal = %v, want the gate's message naming session %s: the gate read saw no row under the isolation policy", err, session)
+	}
+	if strings.Contains(err.Error(), "partial_manifest_active_uniq") {
+		t.Errorf("refusal = %v, want the gate to reject the pair before the unique index is created", err)
+	}
+}
+
+// manifestIsolationUsing returns the USING clause of checkpoint_manifest's
+// lenny_tenant_isolation policy as the catalog records it.
+func manifestIsolationUsing(t *testing.T, ctx context.Context, pg *containers.Postgres) string {
+	t.Helper()
+	var using string
+	if err := pg.Pool.QueryRow(
+		ctx,
+		`SELECT qual FROM pg_policies
+		 WHERE tablename = 'checkpoint_manifest' AND policyname = 'lenny_tenant_isolation'`,
+	).Scan(&using); err != nil {
+		t.Fatalf("read the checkpoint_manifest isolation policy: %v", err)
+	}
+	return using
+}
+
+// crossTenantManifestRows counts the manifest rows one checkpoint identifier
+// resolves to under the platform cross-tenant sentinel, read as the
+// non-superuser migration role so the isolation policy is applied rather than
+// bypassed. The strict §12.3 predicate matches no row under the sentinel, so
+// the count is zero on a schema the migration left as it should.
+func crossTenantManifestRows(t *testing.T, ctx context.Context, pg *containers.Postgres, checkpointID string) int {
+	t.Helper()
+	tx, err := pg.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin cross-tenant read: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	for _, stmt := range []string{
+		`SET LOCAL ROLE lenny_migrator`,
+		`SET LOCAL lenny.allow_all_sentinel = 'true'`,
+		`SET LOCAL app.current_tenant = '__all__'`,
+	} {
+		if _, err := tx.Exec(ctx, stmt); err != nil {
+			t.Fatalf("prepare cross-tenant read (%s): %v", stmt, err)
+		}
+	}
+	var rows int
+	if err := tx.QueryRow(ctx,
+		`SELECT count(*) FROM checkpoint_manifest WHERE checkpoint_id = $1`, checkpointID).Scan(&rows); err != nil {
+		t.Fatalf("read the manifest row under the cross-tenant sentinel: %v", err)
+	}
+	return rows
+}
+
+// grantDropSlotIDMigratorRole creates the non-superuser role the row-level
+// security case applies the migration under, and hands it the ownership and
+// privileges a migration role holds in production: it owns the two checkpoint
+// tables it contracts and reads and writes the sessions row it rewrites.
+func grantDropSlotIDMigratorRole(t *testing.T, ctx context.Context, pg *containers.Postgres) {
+	t.Helper()
+	for _, stmt := range []string{
+		`CREATE ROLE lenny_migrator NOSUPERUSER NOBYPASSRLS`,
+		`GRANT USAGE, CREATE ON SCHEMA public TO lenny_migrator`,
+		`ALTER TABLE session_checkpoints OWNER TO lenny_migrator`,
+		`ALTER TABLE checkpoint_manifest OWNER TO lenny_migrator`,
+		`GRANT SELECT, UPDATE ON sessions TO lenny_migrator`,
+	} {
+		if _, err := pg.Pool.Exec(ctx, stmt); err != nil {
+			t.Fatalf("prepare the migration role (%s): %v", stmt, err)
+		}
+	}
+}

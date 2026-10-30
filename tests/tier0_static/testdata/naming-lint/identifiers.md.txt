@@ -1,0 +1,4 @@
+## 28.3 Registers
+
+Every message the adapter writes on the LNK-GWCONTROL channel is answered by the
+gateway replica that holds the session, and the intra-pod socket is CH-RUNTIMEOPS.

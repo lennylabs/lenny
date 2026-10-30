@@ -1,0 +1,5 @@
+{
+  "type": "lifecycle_capabilities",
+  "protocolVersion": "1.0",
+  "capabilities": ["checkpoint", "interrupt", "credential_rotation", "deadline_signal"]
+}

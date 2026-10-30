@@ -1,0 +1,65 @@
+suite: lenny-ops-tls Certificate (F-17.1.9, spec §17.1 row 21)
+templates:
+  - ops-tls.yaml
+tests:
+  - it: renders nothing with stock values (plaintext admin-API in dev)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders nothing when internalEnabled is true but cert-manager is absent
+    set:
+      ops.tls.internalEnabled: true
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders the cert-manager Certificate that issues lenny-ops-tls
+    set:
+      ops.tls.internalEnabled: true
+      ops.tls.certManager.enabled: true
+      ops.tls.certManager.issuerRef.name: lenny-ca
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Certificate
+      - equal:
+          path: metadata.name
+          value: lenny-ops-tls
+      - equal:
+          path: spec.secretName
+          value: lenny-ops-tls
+      - equal:
+          path: spec.issuerRef.name
+          value: lenny-ca
+      - equal:
+          path: spec.issuerRef.kind
+          value: ClusterIssuer
+      - contains:
+          path: spec.dnsNames
+          content: lenny-ops.NAMESPACE.svc
+
+  - it: honors certSecretName and custom dnsNames overrides
+    set:
+      ops.tls.internalEnabled: true
+      ops.tls.certManager.enabled: true
+      ops.tls.certManager.issuerRef.name: lenny-ca
+      ops.tls.certSecretName: custom-ops-tls
+      ops.tls.dnsNames:
+        - ops.acme.internal
+    asserts:
+      - equal:
+          path: spec.secretName
+          value: custom-ops-tls
+      - equal:
+          path: spec.dnsNames[0]
+          value: ops.acme.internal
+
+  - it: fails render when issuerRef.name is missing
+    set:
+      ops.tls.internalEnabled: true
+      ops.tls.certManager.enabled: true
+    asserts:
+      - failedTemplate:
+          errorMessage: "ops.tls.certManager.issuerRef.name is required when ops.tls.certManager.enabled is true (§17.1 row 21)"

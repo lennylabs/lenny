@@ -1,0 +1,247 @@
+// SPDX-License-Identifier: MIT
+
+// Package executor abstracts session message execution from the
+// session-server HTTP layer. The minimal gateway uses an in-process
+// echo executor; production wires a kubernetes-backed executor that
+// dispatches messages to the claimed agent pod over the §4.7
+// adapter binary protocol.
+//
+// The interface is intentionally narrow:
+//
+//   - Send(sessionID, messages) accepts the §7.2 message envelopes
+//     and returns one or more output parts.
+//   - Close(sessionID) tears down any executor-side state.
+//
+// Streaming and event delivery are deferred — the minimal gateway
+// returns the full response synchronously. Production replaces this
+// with the SSE relay + CH-RUNTIMEOPS from §4.7.
+package executor
+
+import (
+	"context"
+	"errors"
+	"strconv"
+)
+
+// Sentinel errors.
+var (
+	// ErrUnsupported reports that the configured executor does not
+	// support the given operation (e.g., a stateless executor asked
+	// to maintain conversation context).
+	ErrUnsupported = errors.New("executor: operation not supported")
+
+	// ErrSessionSealed reports that a message did not reach the session's
+	// runtime because the session is sealed against delivery. Two seals
+	// produce it: the runtime adapter refused the message because an idle
+	// suspension sealed the session (§4.7.1 **Session seal.**), or the
+	// executor refused to open or use the session's stream because the
+	// binding is marked closing for the terminal seal (spec: §7.1 (Delivery
+	// and checkpoints during the seal)). The message did not reach the
+	// runtime, and the stream end is not a stream failure, so the caller
+	// routes the message again by the session's state.
+	ErrSessionSealed = errors.New("executor: session sealed against message delivery")
+
+	// ErrNotBound reports that this replica holds no pod binding for the
+	// session, so nothing was sent and the message did not reach the
+	// runtime. A caller whose classification read found the session
+	// running routes the message again when a re-read finds it in another
+	// state, such as after an idle suspension released the pod.
+	ErrNotBound = errors.New("executor: session is not bound to a pod")
+)
+
+// SealedError is the error a Send returns when the adapter refused one of
+// the batch's messages as sealed, or when the session's binding is marked
+// closing for the terminal seal. Delivered counts the batch's messages the
+// runtime received before the refusal, in order, and Response carries their
+// output; the refused message and every later one were not delivered. A
+// closing binding refuses the batch before any message is written, so
+// Delivered is zero. errors.Is(err, ErrSessionSealed) holds for it.
+//
+// spec: §4.7.1 (Role and Gateway RPC Contract), §28.5.1 (CH-ATTACH), §7.1
+// (Delivery and checkpoints during the seal)
+type SealedError struct {
+	Delivered int
+	Response  Response
+}
+
+// Error implements error.
+func (e *SealedError) Error() string {
+	return "executor: session sealed against message delivery after " + strconv.Itoa(e.Delivered) + " delivered message(s)"
+}
+
+// Unwrap returns ErrSessionSealed.
+func (e *SealedError) Unwrap() error { return ErrSessionSealed }
+
+// Message captures the §7.2 / §15.4 inbound message envelope.
+// Implementations of Executor receive a slice of Messages and emit
+// a slice of MessageParts.
+type Message struct {
+	// ID is the §15.4 stable message identifier. Gateway-assigned
+	// when the sender omits it.
+	ID string
+
+	// Role is the §7.2 message role: `user`, `assistant`, `system`.
+	Role string
+
+	// Content is the message text. Production extends this with
+	// multi-part content (image, file ref) per §28.5.3 MessagePart.
+	Content string
+
+	// From is the §15.4 from-object the gateway stamps onto the
+	// delivered envelope. The zero value defers to the executor's
+	// default gateway-client identity (a top-level client turn). An
+	// inter-session lenny/send_message sets it to the authenticated
+	// sending session so the target can attribute the message and the
+	// runtime never has to trust a caller-supplied origin. F-13.5.11.
+	From MessageFrom
+}
+
+// MessageFrom is the §15.4 MessageEnvelope `from` attribution the
+// gateway injects before delivering a message to the runtime. Kind is
+// the closed enum (`client`, `agent`, `system`, `external`); ID is the
+// kind-specific identifier (for an inter-session message, the sending
+// session id under kind `agent`). The zero value carries no attribution
+// and the executor stamps its default gateway-client identity.
+//
+// spec: §15.4 — `from` is adapter-injected and the
+// runtime never supplies it; §13.5 mitigation 6 — `from` is always set
+// by the gateway from the calling session's authenticated identity.
+// F-13.5.11.
+type MessageFrom struct {
+	Kind string
+	ID   string
+}
+
+// SenderFrom builds the §15.4 from-object for a message an inter-session
+// sender sent: an authenticated sender is attributed as kind `agent` with its
+// session id, and an unattributed send (no sender session) returns the zero
+// value so the executor stamps its default gateway-client identity. The
+// gateway always sets `from` — a caller cannot. The MCP send path and the
+// delivery of held messages both use it, so a held message keeps the sender
+// attribution it was accepted with.
+//
+// spec: §15.4 (Runtime Adapter Specification); §13.5 mitigation 6.
+func SenderFrom(senderID string) MessageFrom {
+	if senderID == "" {
+		return MessageFrom{}
+	}
+	return MessageFrom{Kind: "agent", ID: senderID}
+}
+
+// MessagePart is the §28.5.3 outbound response envelope.
+type MessagePart struct {
+	// Type is the §28.5.3 content type: `text`, `tool_call`,
+	// `tool_result`, etc. The minimal echo executor emits only
+	// `text`. An unregistered unprefixed type is collapsed to `text`
+	// at ingress, with the original preserved in Annotations.
+	Type string `json:"type"`
+
+	// Text carries the inline text content when Type == "text".
+	Text string `json:"text,omitempty"`
+
+	// Ref carries the §4.5 lenny-blob:// reference when the content
+	// is bound by a blob.
+	Ref string `json:"ref,omitempty"`
+
+	// SchemaVersion is the §28.5.3 per-part MessagePart schema revision
+	// (default 1). Ingest defaults a missing or non-positive value to
+	// 1 so a durable consumer always reads a value.
+	SchemaVersion int `json:"schemaVersion,omitempty"`
+
+	// Annotations is the §28.5.3 open metadata map. Ingest stamps
+	// `originalType` and the `unregistered_platform_type` warning here
+	// when a part's type falls through the canonical-registry fallback.
+	Annotations map[string]any `json:"annotations,omitempty"`
+}
+
+// Response is the result of an Executor.Send: the runtime's output parts
+// plus the §28.5.3 degradation annotations the gateway, as a live
+// consumer, surfaced on the enclosing MessageEnvelope while ingesting the
+// runtime's `response` frame. Annotations carries the envelope-scoped
+// kinds — `schema_version_ahead` (a part stamped a schemaVersion ahead of
+// the gateway's known max) and `blob_ref_unresolvable` (a ref the
+// consumer could not dereference). It is nil when ingestion hit no
+// envelope-level degradation. Part-scoped warnings such as
+// `unregistered_platform_type` live on the part's own Annotations.
+//
+// spec: §15.4 MessagePart format — the live-consumer obligations that
+// define schema_version_ahead and blob_ref_unresolvable; §15.5
+// degradation annotation catalog.
+type Response struct {
+	Parts       []MessagePart
+	Annotations map[string]any
+}
+
+// Executor is the gateway-side abstraction for routing a session's
+// messages to a runtime + collecting the response.
+type Executor interface {
+	// Send delivers the messages to the executor's session context
+	// and returns the runtime's Response (output parts plus any
+	// envelope-level §28.5.3 degradation annotations). Implementations
+	// must not retain the supplied slice after returning.
+	Send(ctx context.Context, sessionID string, messages []Message) (Response, error)
+
+	// Close releases any executor-side state associated with the
+	// session. Idempotent; calling Close on a session that was never
+	// opened is a no-op. An executor that drives a §6.2 Sandbox-backed
+	// pod also implements SessionReleaser to record the session's terminal
+	// disposition before the pod drains; Close on such an executor releases
+	// without recording a disposition (the pod still drains).
+	Close(ctx context.Context, sessionID string) error
+}
+
+// Disposition is how a session ended, supplied to SessionReleaser.Release so
+// a pod-backed executor can record the terminal phase on the backing Sandbox
+// per §6.2 (attached → completed/failed/cancelled/expired) before draining the
+// pod. The empty value carries no disposition and skips the terminal-phase
+// write.
+type Disposition string
+
+const (
+	// DispositionCompleted is a session that reached its terminal state
+	// normally (§6.2 completed).
+	DispositionCompleted Disposition = "completed"
+	// DispositionFailed is a session that ended on an unrecoverable error
+	// (§6.2 failed).
+	DispositionFailed Disposition = "failed"
+	// DispositionCancelled is a session cancelled by the client, a parent
+	// cascade, or an admin (§6.2 cancelled).
+	DispositionCancelled Disposition = "cancelled"
+	// DispositionExpired is a session that hit a deadline (§6.2 expired).
+	DispositionExpired Disposition = "expired"
+)
+
+// SessionReleaser is the optional Executor extension a pod-backed executor
+// implements to release a session while recording its terminal disposition
+// on the backing Sandbox (§6.2 attached → completed/failed/cancelled/expired)
+// before draining the pod. The gateway's terminal-state path prefers Release
+// over Close so the authoritative §6.2 state machine reflects the session
+// outcome; executors with no Sandbox phase to record (echo, subprocess) do not
+// implement it and the caller falls back to Close. spec: §6.2.
+type SessionReleaser interface {
+	// Release tears down the session like Close and records disposition on
+	// the backing Sandbox. Idempotent; releasing an unbound session is a
+	// no-op.
+	Release(ctx context.Context, sessionID string, disposition Disposition) error
+}
+
+// ReleaseSession tears a terminal session's executor state down, recording the
+// §6.2 terminal disposition on the backing Sandbox when the executor is a
+// SessionReleaser (pod-backed) and otherwise falling back to Close (echo,
+// subprocess). Draining the pod is the §11.4 clean-cancellation
+// mechanism: the §6.2 claimed → draining → terminated transition triggers the
+// adapter's session teardown, which sends the runtime process no signal; the
+// process ends with the pod (§4.7.10). This is the single
+// release entry point shared by the session-server terminal path, the §8.10
+// cascade, and the §8.5 lenny/cancel_child cascade so every cancellation route
+// drains the runtime the same way. A nil executor is a no-op.
+// spec: §6.2; §11.4.
+func ReleaseSession(ctx context.Context, exec Executor, sessionID string, disp Disposition) error {
+	if exec == nil {
+		return nil
+	}
+	if r, ok := exec.(SessionReleaser); ok {
+		return r.Release(ctx, sessionID, disp)
+	}
+	return exec.Close(ctx, sessionID)
+}

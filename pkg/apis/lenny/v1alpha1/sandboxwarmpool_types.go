@@ -1,0 +1,261 @@
+// SPDX-License-Identifier: MIT
+
+package v1alpha1
+
+import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+// ScheduleWindow is a time-of-day override of the pool's warm count
+// (§4.6.1). Within the window the pool targets MinWarm idle pods
+// instead of the demand-derived target.
+type ScheduleWindow struct {
+	// Start is the window open time as a 24-hour `HH:MM` clock value.
+	// +kubebuilder:validation:Pattern=`^([01][0-9]|2[0-3]):[0-5][0-9]$`
+	// +kubebuilder:validation:Required
+	Start string `json:"start"`
+
+	// End is the window close time as a 24-hour `HH:MM` clock value.
+	// +kubebuilder:validation:Pattern=`^([01][0-9]|2[0-3]):[0-5][0-9]$`
+	// +kubebuilder:validation:Required
+	End string `json:"end"`
+
+	// MinWarm is the warm-count target enforced inside the window.
+	// +kubebuilder:validation:Minimum=0
+	MinWarm int32 `json:"minWarm"`
+}
+
+// ScalePolicy carries the §4.6.2 scaling-formula tuning inputs and the
+// optional time-of-day schedule overrides. Per §4.6.3 the
+// PoolScalingController owns it; the WarmPoolController reads it when
+// sizing the pool.
+type ScalePolicy struct {
+	// PodWarmupSecondsBaseline is the pod creation-to-ready time the
+	// §4.6.2 scaling formula uses. It is roughly 30 seconds for
+	// SDK-warm pools and roughly 10 seconds for pod-warm pools.
+	// +optional
+	PodWarmupSecondsBaseline int64 `json:"podWarmupSecondsBaseline,omitempty"`
+
+	// SDKWarmCircuitBreakerMinOpenSeconds is how long the SDK-warm
+	// circuit breaker stays open once tripped before the
+	// PoolScalingController re-evaluates the demotion rate. It defaults
+	// to 1800 seconds when unset; 0 disables the grace window.
+	// +optional
+	SDKWarmCircuitBreakerMinOpenSeconds *int64 `json:"sdkWarmCircuitBreakerMinOpenSeconds,omitempty"`
+
+	// SDKConnectTimeoutSeconds is the §6.1 per-pod watchdog
+	// budget for the sdk_connecting phase: a pod that has not completed
+	// its SDK pre-connection and reached idle within this window is
+	// retired to failed and the WarmPoolController increments
+	// lenny_warmpool_sdk_connect_timeout_total. It applies only to
+	// preConnect pools and defaults to 60 seconds when unset.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	SDKConnectTimeoutSeconds int64 `json:"sdkConnectTimeoutSeconds,omitempty"`
+
+	// BootstrapMinWarm is the static warm-count target the pool uses
+	// while in bootstrap mode, before the scaling formula has enough
+	// observed demand to converge.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	BootstrapMinWarm int32 `json:"bootstrapMinWarm,omitempty"`
+
+	// Schedules are time-of-day windows that override the
+	// demand-derived warm count.
+	// +optional
+	// +listType=atomic
+	Schedules []ScheduleWindow `json:"schedules,omitempty"`
+
+	// ScaleToZero drives the pool to `minWarm: 0` during a recurring
+	// off-hours window (§4.6.1). The PoolScalingController evaluates the
+	// cron window on every pass and overrides the demand-derived warm
+	// floor to zero while the window is open. Sessions arriving in a
+	// zero-warm period incur cold-start latency. When unset the pool
+	// never scales to zero on a schedule.
+	// +optional
+	ScaleToZero *ScaleToZeroPolicy `json:"scaleToZero,omitempty"`
+}
+
+// ScaleToZeroPolicy is the §4.6.1 off-hours scale-to-zero window. The
+// window opens when the Schedule cron fires and closes when the
+// ResumeAt cron fires; while open the PoolScalingController sets the
+// pool's `minWarm` to 0. Both cron expressions are interpreted in
+// Timezone, defaulting to UTC.
+type ScaleToZeroPolicy struct {
+	// Schedule is the standard five-field cron expression whose firing
+	// opens the zero-warm window (for example `0 22 * * *` for 22:00).
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Schedule string `json:"schedule"`
+
+	// ResumeAt is the standard five-field cron expression whose firing
+	// closes the zero-warm window and restores the demand-derived warm
+	// floor (for example `0 6 * * *` for 06:00).
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	ResumeAt string `json:"resumeAt"`
+
+	// Timezone is an optional IANA timezone string (for example
+	// `America/New_York`) the two cron expressions are interpreted in.
+	// Both Schedule and ResumeAt are interpreted as UTC when it is unset.
+	// +optional
+	Timezone string `json:"timezone,omitempty"`
+}
+
+// SDKWarmCircuitBreakerStatus persists the SDK-warm circuit-breaker
+// open/closed decision (§6.1). It is the §4.6.3 ownership carve-out:
+// the PoolScalingController owns these fields within the otherwise
+// WarmPoolController-owned status, so the breaker decision survives a
+// PoolScalingController leader failover.
+type SDKWarmCircuitBreakerStatus struct {
+	// OpenedAt is when the PoolScalingController tripped the breaker.
+	// It is cleared when the breaker closes.
+	// +optional
+	OpenedAt *metav1.Time `json:"openedAt,omitempty"`
+
+	// OpenedReason is a machine-readable trip code, for example
+	// `demotion_rate_exceeded` or `operator_manual`.
+	// +optional
+	OpenedReason string `json:"openedReason,omitempty"`
+
+	// MinOpenUntil is the earliest time the breaker may auto-close. It
+	// is OpenedAt plus the configured minimum open duration; the
+	// breaker is held open until this time even across a
+	// PoolScalingController failover.
+	// +optional
+	MinOpenUntil *metav1.Time `json:"minOpenUntil,omitempty"`
+}
+
+// SandboxWarmPoolSpec is the desired state of a SandboxWarmPool — the
+// §5.2 warm-count management for one pool. Per §4.6.3 the
+// PoolScalingController owns spec.*, deriving the scaling parameters
+// from the Postgres pool definitions.
+type SandboxWarmPoolSpec struct {
+	// TemplateRef names the SandboxTemplate whose pods this warm pool
+	// manages.
+	// +kubebuilder:validation:Required
+	TemplateRef string `json:"templateRef"`
+
+	// MinWarm is the floor on idle ready pods the WarmPoolController
+	// maintains. A value of 0 lets the pool scale to zero with a
+	// documented cold-start penalty.
+	// +kubebuilder:validation:Minimum=0
+	MinWarm int32 `json:"minWarm"`
+
+	// MaxWarm is the ceiling on idle pods the pool warms ahead of
+	// demand.
+	// +kubebuilder:validation:Minimum=0
+	MaxWarm int32 `json:"maxWarm"`
+
+	// ScalePolicy carries the scaling-formula tuning inputs and the
+	// time-of-day schedule overrides.
+	// +optional
+	ScalePolicy *ScalePolicy `json:"scalePolicy,omitempty"`
+
+	// SDKWarmDisabled is the SDK-warm circuit-breaker flag. The
+	// PoolScalingController sets it true to stop warming pods to
+	// SDK-warm state when the demotion rate stays too high.
+	// +optional
+	SDKWarmDisabled bool `json:"sdkWarmDisabled,omitempty"`
+}
+
+// SandboxWarmPoolStatus is the observed state of a SandboxWarmPool.
+// Per §4.6.3 the WarmPoolController owns status.* except the
+// SDKWarmCircuitBreaker carve-out, which the PoolScalingController
+// owns.
+type SandboxWarmPoolStatus struct {
+	// WarmCount is the current number of unclaimed pods that are warming or
+	// idle, counting only pods that are not pinned to a tenant. An idle pod
+	// whose tenant pin is set and that no SandboxClaim holds is claimable
+	// only by its tenant and is not counted (§5.2 pinned idle inventory).
+	// +optional
+	WarmCount int32 `json:"warmCount,omitempty"`
+
+	// ReadyCount is the number of idle pods that have reached a
+	// claimable ready state and are not pinned to a tenant (§5.2 pinned
+	// idle inventory).
+	// +optional
+	ReadyCount int32 `json:"readyCount,omitempty"`
+
+	// SDKWarmCircuitBreaker persists the SDK-warm circuit-breaker
+	// state. Per §4.6.3 it is owned by the PoolScalingController, not
+	// the WarmPoolController.
+	// +optional
+	SDKWarmCircuitBreaker *SDKWarmCircuitBreakerStatus `json:"sdkWarmCircuitBreaker,omitempty"`
+
+	// ScalingMode is the §17.8.2 cold-start scaling mode the
+	// PoolScalingController operates the pool in: `bootstrap` while the
+	// pool is pinned to its bootstrapMinWarm override, or `formula`
+	// once the §17.8.2 step-4 convergence criteria are met (or no
+	// override is set). The §16.5 PoolBootstrapMode alert reads the
+	// matching lenny_pool_bootstrap_mode gauge. spec: §17.8.2 steps 2,
+	// 4.
+	// +kubebuilder:validation:Enum=bootstrap;formula
+	// +optional
+	ScalingMode string `json:"scalingMode,omitempty"`
+
+	// BootstrapHoursOfData is the whole hours of accumulated traffic
+	// data the PoolScalingController has observed for the pool while it
+	// operates under a §17.8.2 bootstrapMinWarm override. The admin pool
+	// GET surfaces it as bootstrapStatus.hoursOfData and projects
+	// estimatedConvergenceAt against the 48-hour window. It is only
+	// written while an override is in force; whole-hour granularity
+	// keeps the status subresource from churning. spec: §17.8.2 step 3.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	BootstrapHoursOfData int32 `json:"bootstrapHoursOfData,omitempty"`
+
+	// ObservedGeneration is the .metadata.generation the controller
+	// last reconciled.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// Conditions is the standard Kubernetes condition list.
+	// +optional
+	// +listType=map
+	// +listMapKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+// The lenny.dev/schema-version annotation is read at controller startup and
+// by lenny-preflight, and a mismatch with preflight.CurrentCRDSchemaVersion
+// is fatal, so a stale CRD never silently strips new fields. Bump the value
+// here and in that constant together. The top-level spec and status fields
+// carry +kubebuilder:pruning:PreserveUnknownFields for the same reason: a CRD
+// older than the controller does not prune fields a newer controller writes.
+// spec: §10.5 (Upgrade and Rollback Strategy). F-15.5.12.
+// +kubebuilder:metadata:annotations="lenny.dev/schema-version=1"
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:shortName=sbxwp
+// +kubebuilder:printcolumn:name="Template",type=string,JSONPath=`.spec.templateRef`
+// +kubebuilder:printcolumn:name="MinWarm",type=integer,JSONPath=`.spec.minWarm`
+// +kubebuilder:printcolumn:name="MaxWarm",type=integer,JSONPath=`.spec.maxWarm`
+// +kubebuilder:printcolumn:name="Warm",type=integer,JSONPath=`.status.warmCount`
+// +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=`.status.readyCount`
+
+// SandboxWarmPool is the lenny.dev/v1alpha1 record of warm-count management
+// for one pool (§5.2). The PoolScalingController owns the scaling
+// parameters; the WarmPoolController reconciles warm pods toward them.
+type SandboxWarmPool struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Spec SandboxWarmPoolSpec `json:"spec,omitempty"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Status SandboxWarmPoolStatus `json:"status,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+
+// SandboxWarmPoolList is a list of SandboxWarmPool resources.
+type SandboxWarmPoolList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []SandboxWarmPool `json:"items"`
+}
+
+func init() {
+	SchemeBuilder.Register(&SandboxWarmPool{}, &SandboxWarmPoolList{})
+}

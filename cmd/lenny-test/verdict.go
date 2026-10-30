@@ -13,23 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
-)
 
-// §7 tier-status values. Every tierStat.Status field carries one
-// of these, and the verdict-level Verdict carries one of the
-// corresponding PASS/FAIL/INCONCLUSIVE summary strings. Treating
-// them as constants keeps callsites consistent and gives IDEs
-// a real symbol to rename through.
-const (
-	statusPass         = "pass"
-	statusFail         = "fail"
-	statusSkipped      = "skipped"
-	statusInconclusive = "inconclusive"
-	statusNotSelected  = "not-selected"
-
-	verdictPASS         = "PASS"
-	verdictFAIL         = "FAIL"
-	verdictINCONCLUSIVE = "INCONCLUSIVE"
+	"github.com/lennylabs/lenny/cmd/lenny-test/verdictstatus"
 )
 
 // verdict is the §7 JSON shape, simplified for Phase 0.
@@ -103,7 +88,7 @@ func newVerdict(s selector) *verdict {
 		Trigger:    trigger{Mode: triggerMode(s)},
 		Infra:      infrastructureInfo{ContainerCache: "cold"},
 		Tiers:      map[string]tierStat{},
-		Verdict:    verdictPASS,
+		Verdict:    verdictstatus.VerdictPass,
 		SpecStatus: map[string]string{},
 		startedAt:  now,
 	}
@@ -167,7 +152,7 @@ func currentChangedPaths(since string) []string {
 	}
 	collect("status", "--porcelain")
 	if since != "" {
-		collect("diff", "--name-only", since+"...HEAD")
+		collect("diff", "--name-only", diffRange(since))
 	}
 	if len(seen) == 0 {
 		return nil
@@ -223,18 +208,41 @@ func (v *verdict) recordTierWithResult(name, status string, dur time.Duration, d
 	// one failing test is reported FAIL.
 	for _, f := range r.Failures {
 		for _, s := range f.SpecSections {
-			v.SpecStatus[s] = verdictFAIL
+			v.SpecStatus[s] = verdictstatus.VerdictFail
 		}
 	}
 }
 
 func (v *verdict) recordTier(name, status string, dur time.Duration, detail string) {
 	// Reclassify a "fail" whose detail looks like an infrastructure
-	// blow-up into "inconclusive" per §7 + §21.3. A genuine test
+	// blow-up into "inconclusive" per §7 and the harness's verdict rules. A genuine test
 	// failure stays FAIL; a docker-daemon crash or a kind bring-up
 	// timeout does not.
-	if status == statusFail && classifyInfraFailure(detail) {
-		status = statusInconclusive
+	if status == verdictstatus.Fail && classifyInfraFailure(detail) {
+		status = verdictstatus.Inconclusive
+	}
+	switch status {
+	case verdictstatus.Pass, verdictstatus.Skipped, verdictstatus.NotSelected:
+		// None of these raises the overall verdict: the tier either
+		// passed or never ran.
+	case verdictstatus.Fail:
+		v.promoteVerdict(verdictstatus.VerdictFail)
+	case verdictstatus.Inconclusive:
+		v.promoteVerdict(verdictstatus.VerdictInconclusive)
+	case verdictstatus.Unverified:
+		v.promoteVerdict(verdictstatus.VerdictUnverified)
+	default:
+		// Fail closed. The verdict starts at PASS, so a status this
+		// switch does not recognize would otherwise end the run at
+		// PASS with exit code 0 while nothing established that the
+		// tier passed. An unrecognized status proves nothing, which is
+		// what UNVERIFIED reports. The tier record is normalized to
+		// "unverified" so the document stays inside the tier-status
+		// enum every consumer switches on, and the value that was
+		// passed in survives in the detail so it stays diagnosable.
+		detail = unrecognizedStatusDetail(status, detail)
+		status = verdictstatus.Unverified
+		v.promoteVerdict(verdictstatus.VerdictUnverified)
 	}
 	v.Tiers[name] = tierStat{
 		Status:     status,
@@ -242,30 +250,68 @@ func (v *verdict) recordTier(name, status string, dur time.Duration, detail stri
 		Reason:     reasonFromStatus(status, detail),
 		Detail:     detail,
 	}
-	switch status {
-	case statusFail:
-		v.Verdict = verdictFAIL
-	case statusInconclusive:
-		// FAIL outranks INCONCLUSIVE; a real failure earlier in the
-		// run stays surfaced.
-		if v.Verdict != verdictFAIL {
-			v.Verdict = verdictINCONCLUSIVE
-		}
+}
+
+// unrecognizedStatusDetail renders the detail recorded for a tier whose
+// status fell through recordTier's switch, naming the value that was
+// passed in and preserving any detail that came with it.
+func unrecognizedStatusDetail(status, detail string) string {
+	out := fmt.Sprintf("unrecognized tier status %q", status)
+	if detail != "" {
+		out += ": " + detail
 	}
+	return out
+}
+
+// promoteVerdict raises the overall verdict to candidate when
+// candidate outranks the verdict already recorded, and leaves it alone
+// otherwise. Promotion is monotonic so the overall verdict does not
+// depend on the order the tiers are recorded in.
+func (v *verdict) promoteVerdict(candidate string) {
+	if verdictRank(candidate) > verdictRank(v.Verdict) {
+		v.Verdict = candidate
+	}
+}
+
+// verdictRank orders the verdict values from weakest to strongest
+// claim about the run. FAIL outranks every other value, so a real test
+// failure earlier or later in the run stays surfaced. INCONCLUSIVE
+// outranks UNVERIFIED, because an infrastructure-class failure carries
+// the retry-then-FAIL path the harness runs on exit code 2 (see the
+// harness's documented verdict rules), and ranking an unrelated unverified check above it would hide
+// that failure behind a verdict CI does not retry. UNVERIFIED outranks
+// PASS, because a check that could not reach a conclusion leaves the
+// run unproven. An unrecognized value ranks with PASS so it cannot
+// displace a verdict a tier established.
+func verdictRank(verdict string) int {
+	switch verdict {
+	case verdictstatus.VerdictFail:
+		return 3
+	case verdictstatus.VerdictInconclusive:
+		return 2
+	case verdictstatus.VerdictUnverified:
+		return 1
+	}
+	return 0
 }
 
 func reasonFromStatus(status, detail string) string {
 	switch status {
-	case statusSkipped:
+	case verdictstatus.Skipped:
 		if detail != "" {
 			return detail
 		}
-		return statusSkipped
-	case statusInconclusive:
+		return verdictstatus.Skipped
+	case verdictstatus.Inconclusive:
 		if detail != "" {
 			return detail
 		}
 		return "infrastructure failure"
+	case verdictstatus.Unverified:
+		if detail != "" {
+			return detail
+		}
+		return "a check could not reach a conclusion"
 	}
 	return ""
 }
@@ -371,14 +417,14 @@ func (v *verdict) finalize() {
 func (v *verdict) fillNotSelected() {
 	for _, name := range []string{
 		tierStatic, tierUnit, tierComponent, tierContract, tierIntegration,
-		tierE2EKind, tierE2ECloud, tierLoad, tierChaos, tierSecurity,
-		tierConformance, tierDocs,
+		tierE2EKind, tierE2ECloud, tierLoadLocal, tierLoadKind, tierChaos, tierSecurity,
+		tierConformance, tierDocs, tierLoadCloud,
 	} {
 		if _, already := v.Tiers[name]; already {
 			continue
 		}
 		v.Tiers[name] = tierStat{
-			Status: statusNotSelected,
+			Status: verdictstatus.NotSelected,
 			Reason: "outside the resolved selector",
 		}
 	}
@@ -410,7 +456,7 @@ func (v *verdict) write(path string) error {
 	// Bound the on-disk history: keep the 20 most recent rotated
 	// files; older verdicts are removed.
 	pruneOldVerdicts(dir, verdictRotationDepth)
-	// Append a one-line summary to history.jsonl per §21.2 so the
+	// Append a one-line summary to history.jsonl, documented for the harness, so the
 	// flake root-cause analyzer has a stable, append-only source.
 	if err := appendHistory(filepath.Join(dir, verdictHistoryFile), v); err != nil {
 		// Non-fatal: history is observational, not gating.
@@ -420,7 +466,7 @@ func (v *verdict) write(path string) error {
 }
 
 // appendHistory adds a one-line JSON record summarizing v to the
-// history file. Format mirrors §21.2: just enough fields to feed
+// history file. The format carries just enough fields to feed
 // the root-cause heuristics (run_id, started_at, finished_at,
 // verdict, trigger.mode, per-tier status). The file is open-append;
 // concurrent writers race only on the os.Write boundary, which is

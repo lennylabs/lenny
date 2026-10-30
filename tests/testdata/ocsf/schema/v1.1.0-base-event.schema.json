@@ -1,0 +1,93 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://lenny.internal/testdata/ocsf/v1.1.0-base-event.schema.json",
+  "_note": "Hand-derived JSON Schema for the OCSF v1.1.0 base_event envelope, scoped to the attributes that are required with no profile applied (fetched from https://schema.ocsf.io/api/1.1.0/classes/base_event?profiles=, https://schema.ocsf.io/api/1.1.0/objects/metadata?profiles=, and https://schema.ocsf.io/api/1.1.0/objects/product?profiles= on 2026-07-14). base_event's class-specific profile attributes (user, actor, cloud, device, api, finding_info, ...) are NOT included here: those are required only when the class or an activated profile requires them, and OCSF's own base_event export marks them required only under a `profile` gate, not unconditionally. This schema pins the unconditional envelope contract every OCSF v1.1.0 record satisfies, plus the value-level type and enum constraints (the OCSF severity_id dictionary enum, in particular) that a hand-picked key-presence check cannot catch.",
+  "version": "1.1.0",
+  "source": "https://schema.ocsf.io/1.1.0/",
+  "type": "object",
+  "required": [
+    "class_uid",
+    "category_uid",
+    "activity_id",
+    "type_uid",
+    "time",
+    "severity_id",
+    "metadata"
+  ],
+  "properties": {
+    "class_uid": {
+      "type": "integer",
+      "description": "OCSF class identifier."
+    },
+    "category_uid": {
+      "type": "integer",
+      "description": "OCSF category identifier the class belongs to."
+    },
+    "activity_id": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "OCSF activity identifier within the class."
+    },
+    "type_uid": {
+      "type": "integer",
+      "description": "OCSF composite type identifier: class_uid * 100 + activity_id."
+    },
+    "time": {
+      "type": "integer",
+      "description": "Event time as OCSF timestamp_t: UNIX epoch milliseconds, not ISO 8601."
+    },
+    "severity_id": {
+      "type": "integer",
+      "enum": [0, 1, 2, 3, 4, 5, 6, 99],
+      "description": "The published OCSF v1.1.0 severity_id dictionary enum: Unknown(0), Informational(1), Low(2), Medium(3), High(4), Critical(5), Fatal(6), Other(99)."
+    },
+    "metadata": {
+      "$ref": "#/definitions/Metadata"
+    },
+    "unmapped": {
+      "type": "object"
+    }
+  },
+  "definitions": {
+    "Metadata": {
+      "type": "object",
+      "required": ["version", "product"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "The OCSF wire schema version this record was serialized against."
+        },
+        "product": {
+          "$ref": "#/definitions/Product"
+        },
+        "uid": {
+          "type": "string"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "tenant_uid": {
+          "type": "string"
+        },
+        "correlation_uid": {
+          "type": "string"
+        },
+        "labels": {
+          "type": "object"
+        }
+      }
+    },
+    "Product": {
+      "type": "object",
+      "required": ["vendor_name"],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "vendor_name": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

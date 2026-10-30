@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package fuzz manages the §19.2 fuzz-crash corpus.
+// Package fuzz manages the TESTING.md §19.2 fuzz-crash corpus.
 //
 // Every fuzz target stores its discovered crashes under
 // `tests/testinfra/fuzz/crashes/<package>/<target>/` so subsequent
@@ -12,10 +12,10 @@
 // `testdata/fuzz/<TargetName>/`. This package mirrors those seeds
 // to a stable, repo-rooted location so:
 //
-//   1. Crashes survive across go-test caches and CI runners.
-//   2. The on-disk catalog is browsable: every entry names the
-//      package, target, and a content-addressed file.
-//   3. Tier 0 lints can count crashes and gate on no-new-crashes.
+//  1. Crashes survive across go-test caches and CI runners.
+//  2. The on-disk catalog is browsable: every entry names the
+//     package, target, and a content-addressed file.
+//  3. Tier 0 lints can count crashes and gate on no-new-crashes.
 //
 // The package is intentionally small: a single Mirror helper that
 // fuzz targets call to copy their `testdata/fuzz` corpus into the

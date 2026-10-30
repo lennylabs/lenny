@@ -1,0 +1,255 @@
+{{- /*
+The lenny-restore-test CronJob (§25.11 Test Restore). On a periodic
+schedule it runs the strongest form of backup verification: it restores
+a backup into a scratch namespace (lenny-restore-test-{job-id}), runs
+smoke tests against the temporary Postgres, samples the ArtifactStore
+replication target, and tears the scratch namespace down. §25.11
+recommends a monthly test restore for Tier 3; a verified-but-never-
+test-restored backup can silently rot.
+
+The CronJob is gated on backups.restoreTest.enabled — the Tier-2 base
+leaves it off, the Tier-3 preset turns it on. The Job runs the
+lenny-backup image in restore-test mode. Its ServiceAccount may create
+and delete a scratch Namespace and the restore Job inside it, and read
+the lenny-system ConfigMaps the restore needs; it has no access to the
+production Secrets, Deployments, or pods.
+
+The pod follows the §13.1 Restricted-PSS posture: non-root, all
+capabilities dropped, read-only root filesystem, RuntimeDefault
+seccomp.
+*/ -}}
+{{- if .Values.backups.restoreTest.enabled }}
+{{- /* §12.5 — when the self-managed MinIO serving cert is issued by a CA
+   outside the system trust store, the operator names a ConfigMap (key
+   ca.crt) via minio.tls.caBundleConfigMap; the gateway and the
+   bucket-lifecycle Job already mount it and point SSL_CERT_DIR at it so
+   their MinIO clients verify the endpoint against it in addition to the
+   system roots (§12.5 "TLS: MinIO connections MUST use TLS"). The
+   test-restore Job mirrors that mount so its own MinIO client can
+   complete the same handshake. */ -}}
+{{- $minio := .Values.minio | default dict -}}
+{{- $minioTLS := $minio.tls | default dict -}}
+{{- $minioCABundle := default "" $minioTLS.caBundleConfigMap -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lenny-restore-test
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: restore-test
+---
+{{/*
+The scratch namespace the test restore creates is cluster-scoped, so
+the verification Job needs a ClusterRole to create and delete it. The
+restore runs as a Job inside that namespace; namespaced Job and Pod
+access is granted cluster-wide because the scratch namespace name is
+generated per run and cannot be pinned at render time.
+*/ -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lenny-restore-test
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: restore-test
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "create", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: lenny-restore-test
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: restore-test
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lenny-restore-test
+subjects:
+  - kind: ServiceAccount
+    name: lenny-restore-test
+    namespace: {{ .Release.Namespace }}
+---
+{{/*
+The release-namespace Role grants the read-only ConfigMap access the
+restore needs to resolve platform configuration; it deliberately does
+not grant Secret access.
+*/ -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lenny-restore-test
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: restore-test
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lenny-restore-test
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: restore-test
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: lenny-restore-test
+subjects:
+  - kind: ServiceAccount
+    name: lenny-restore-test
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: lenny-restore-test
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: restore-test
+spec:
+  schedule: {{ .Values.backups.restoreTest.schedule | quote }}
+  # A slow run must not be skipped or run concurrently with the next
+  # tick: a test restore that overruns its window is forbidden from
+  # overlapping.
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: {{ .Values.backups.restoreTest.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.backups.restoreTest.failedJobsHistoryLimit }}
+  jobTemplate:
+    metadata:
+      labels:
+        {{- include "lenny.labels" . | nindent 8 }}
+        lenny.dev/component: restore-test
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: {{ .Values.backups.restoreTest.activeDeadlineSeconds }}
+      # The scratch namespace is torn down by the Job; the finished Job
+      # pod is cleaned an hour after completion so kubectl describe can
+      # still inspect a recent failure.
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            {{- include "lenny.labels" . | nindent 12 }}
+            lenny.dev/component: restore-test
+            # §25.11 "Backup Job NetworkPolicy": the lenny-backup-job
+            # NetworkPolicy podSelector matches app: lenny-backup. The
+            # test-restore Job runs the lenny-backup image, so its pod
+            # template carries this label to get the Postgres/MinIO/K8s
+            # API/DNS egress the policy grants under the namespace-wide
+            # default-deny-all.
+            app: lenny-backup
+        spec:
+          serviceAccountName: lenny-restore-test
+          {{- include "lenny.imagePullSecrets" . | nindent 10 }}
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: restore-test
+              image: {{ include "lenny.componentImage" (dict "root" $ "name" "lenny-backup" "image" .Values.backups.image) | quote }}
+              imagePullPolicy: {{ .Values.backups.image.pullPolicy }}
+              args:
+                - --mode=restore-test
+                - --namespace={{ .Release.Namespace }}
+                - --backup-selector={{ .Values.backups.restoreTest.backupSelector }}
+                - --artifact-sample-size={{ .Values.backups.verification.artifactSampleSize }}
+                {{- if .Values.backups.encryption.kmsKeyId }}
+                - --kms-key-id=$(LENNY_BACKUP_KMS_KEY_ID)
+                {{- end }}
+              env:
+                # The verify and restore-test read paths reach the
+                # ops_backups / ops_restore_test_results tables (report DSN)
+                # and the §25.11 backup bucket (MinIO). The DSN and MinIO
+                # credentials come from the same Secrets the backup Jobs
+                # mount; the scratch DSN points at a throwaway Postgres the
+                # Job restores into for the actual test restore.
+                - name: HOSTNAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
+                - name: LENNY_BACKUP_MINIO_ENDPOINT
+                  value: {{ .Values.backups.onDemand.minioEndpoint | quote }}
+                - name: LENNY_BACKUP_MINIO_BUCKET
+                  value: {{ .Values.backups.onDemand.minioBucket | quote }}
+                {{- if .Values.backups.encryption.kmsKeyId }}
+                - name: LENNY_BACKUP_KMS_KEY_ID
+                  value: {{ .Values.backups.encryption.kmsKeyId | quote }}
+                {{- end }}
+                - name: LENNY_OPS_POSTGRES_DSN
+                  valueFrom:
+                    secretKeyRef:
+                      name: lenny-backup-postgres
+                      key: postgres-dsn
+                - name: LENNY_BACKUP_SCRATCH_DSN
+                  value: {{ .Values.backups.restoreTest.scratchDSN | quote }}
+                - name: LENNY_BACKUP_MINIO_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: lenny-backup-minio
+                      key: minio-access-key
+                - name: LENNY_BACKUP_MINIO_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: lenny-backup-minio
+                      key: minio-secret-key
+                {{- if $minioCABundle }}
+                # §12.5 — add the operator-supplied MinIO CA directory to
+                # the test-restore Job's Go trust pool so it verifies the
+                # HTTPS endpoint against this CA in addition to the system
+                # roots.
+                - name: SSL_CERT_DIR
+                  value: /etc/lenny/minio-ca
+                {{- end }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+                {{- if $minioCABundle }}
+                # §12.5 — the operator-supplied MinIO CA bundle (key
+                # ca.crt), added to the Go trust pool via SSL_CERT_DIR
+                # above.
+                - name: lenny-minio-ca
+                  mountPath: /etc/lenny/minio-ca
+                  readOnly: true
+                {{- end }}
+              resources:
+                {{- toYaml .Values.backups.restoreTest.resources | nindent 16 }}
+          volumes:
+            # §25.11 Job Pod Specification: /tmp is writable via an
+            # emptyDir for staging the restored archive while the root
+            # filesystem stays read-only.
+            - name: tmp
+              emptyDir: {}
+            {{- if $minioCABundle }}
+            - name: lenny-minio-ca
+              configMap:
+                name: {{ $minioCABundle | quote }}
+                items:
+                  - key: ca.crt
+                    path: ca.crt
+            {{- end }}
+{{- end }}

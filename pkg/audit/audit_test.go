@@ -73,6 +73,34 @@ func TestPresetDaysMatchesSpec(t *testing.T) {
 	}
 }
 
+// spec: §16.4 — ResolveRetentionDays fixes the window from a named
+// preset and ignores customDays, while PresetCustom uses customDays
+// (falling back to the soc2 default when customDays is non-positive).
+// F-16.4.10.
+func TestResolveRetentionDays_spec_16_4(t *testing.T) {
+	cases := []struct {
+		name       string
+		preset     RetentionPreset
+		customDays int
+		want       int
+	}{
+		{"soc2 fixes 365 ignoring custom", PresetSOC2, 99, 365},
+		{"fedramp-high fixes 1095", PresetFedRAMPHigh, 0, 1095},
+		{"hipaa fixes 2190", PresetHIPAA, 10, 2190},
+		{"nis2-dora fixes 1825", PresetNIS2DORA, 0, 1825},
+		{"custom uses explicit days", PresetCustom, 730, 730},
+		{"custom non-positive falls back to soc2 default", PresetCustom, 0, 365},
+		{"custom negative falls back to soc2 default", PresetCustom, -5, 365},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ResolveRetentionDays(tc.preset, tc.customDays); got != tc.want {
+				t.Errorf("ResolveRetentionDays(%q, %d) = %d, want %d", tc.preset, tc.customDays, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPresetWindowMatchesDays(t *testing.T) {
 	if got := PresetSOC2.PresetWindow(); got != 365*24*time.Hour {
 		t.Errorf("PresetSOC2.PresetWindow() = %v, want 365d", got)
@@ -165,5 +193,75 @@ func TestOCSFStateIsTerminal(t *testing.T) {
 		if s.IsTerminal() {
 			t.Errorf("%q must not be terminal", s)
 		}
+	}
+}
+
+// spec: §12.8 — IsRegulated is true exactly for soc2, fedramp,
+// and hipaa; none and the empty profile are unregulated.
+func TestComplianceProfileIsRegulated(t *testing.T) {
+	regulated := map[ComplianceProfile]bool{
+		ComplianceSOC2:        true,
+		ComplianceFedRAMP:     true,
+		ComplianceHIPAA:       true,
+		ComplianceNone:        false,
+		ComplianceProfile(""): false,
+	}
+	for p, want := range regulated {
+		if got := p.IsRegulated(); got != want {
+			t.Errorf("ComplianceProfile(%q).IsRegulated() = %v, want %v", p, got, want)
+		}
+		// RequiresSIEM delegates to IsRegulated; the two must agree.
+		if p.RequiresSIEM() != p.IsRegulated() {
+			t.Errorf("RequiresSIEM(%q)=%v diverges from IsRegulated()=%v", p, p.RequiresSIEM(), p.IsRegulated())
+		}
+	}
+}
+
+// spec: §12.8 — audit.gdprRetentionDays must be at least 2190
+// (6 years) under any regulated complianceProfile; the default is 2555.
+func TestValidateGDPRRetentionDays(t *testing.T) {
+	cases := []struct {
+		name     string
+		days     int
+		profiles []string
+		wantErr  bool
+	}{
+		{"default under hipaa", GDPRRetentionDefaultDays, []string{"hipaa"}, false},
+		{"floor boundary under soc2", GDPRRetentionComplianceFloorDays, []string{"soc2"}, false},
+		{"one below floor under hipaa", GDPRRetentionComplianceFloorDays - 1, []string{"hipaa"}, true},
+		{"one below floor under fedramp", 1000, []string{"fedramp"}, true},
+		{"below floor but no regulated profile", 30, []string{"none", ""}, false},
+		{"below floor with mixed profiles", 100, []string{"none", "soc2"}, true},
+		{"zero treated as default under hipaa", 0, []string{"hipaa"}, false},
+		{"negative treated as default under hipaa", -5, []string{"hipaa"}, false},
+		{"no profiles", 1, nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateGDPRRetentionDays(tc.days, tc.profiles)
+			if tc.wantErr != (err != nil) {
+				t.Fatalf("ValidateGDPRRetentionDays(%d, %v) err=%v, wantErr=%v", tc.days, tc.profiles, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// spec: §12.8 — the startup rejection message is verbatim so
+// operators and tests can match on it.
+func TestGDPRRetentionFloorErrorMessage(t *testing.T) {
+	err := ValidateGDPRRetentionDays(100, []string{"hipaa"})
+	if err == nil {
+		t.Fatal("expected a floor error")
+	}
+	const want = "CONFIG_INVALID: audit.gdprRetentionDays below compliance floor"
+	if err.Error() != want {
+		t.Errorf("Error() = %q, want %q", err.Error(), want)
+	}
+	var floorErr *GDPRRetentionFloorError
+	if !errors.As(err, &floorErr) {
+		t.Fatalf("error is not a *GDPRRetentionFloorError: %T", err)
+	}
+	if floorErr.Profile != "hipaa" || floorErr.FloorDays != GDPRRetentionComplianceFloorDays || floorErr.RetentionDays != 100 {
+		t.Errorf("floor error fields = %+v", floorErr)
 	}
 }

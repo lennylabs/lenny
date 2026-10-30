@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
@@ -31,10 +32,12 @@ func TestPhase1SchemasParse(t *testing.T) {
 
 	root := schematest.RepoRoot(t)
 	cases := []string{
-		"schemas/outputpart.schema.json",
+		"schemas/messagepart.schema.json",
 		"schemas/lenny-adapter-jsonl.schema.json",
 		"schemas/workspaceplan-v1.json",
-		"schemas/lifecycle-events.schema.json",
+		"schemas/runtime-ops-events.schema.json",
+		// spec: §11.7 — per-version audit-event registry.
+		"schemas/audit-events/v1.json",
 	}
 
 	for _, rel := range cases {
@@ -78,6 +81,16 @@ func TestWorkspacePlanExamplesValidate(t *testing.T) {
 		{"schemas/examples/workspaceplan.full.json", true},
 		{"schemas/examples/workspaceplan.invalid-setuid.json", false},
 		{"schemas/examples/workspaceplan.invalid-ssh.json", false},
+		// spec: §14 — the published schema MUST use allOf +
+		// per-variant if/then so an unknown source.type matches no branch
+		// and passes (the consumer skips it per the open-string
+		// discriminator). A oneOf-based schema would reject this. F-14.1.4.
+		{"schemas/examples/workspaceplan.unknown-source-type.json", true},
+		// spec: §14 — per-variant field strictness: a known type
+		// carrying an unknown field is still rejected (the variant subschema
+		// keeps additionalProperties:false under the allOf construction).
+		// F-14.1.4.
+		{"schemas/examples/workspaceplan.invalid-unknown-field.json", false},
 	}
 
 	for _, ex := range examples {
@@ -97,18 +110,18 @@ func TestWorkspacePlanExamplesValidate(t *testing.T) {
 }
 
 // spec: 15.4
-// diagnosis: schemas/examples/outputpart.*.json failed to validate
+// diagnosis: schemas/examples/messagepart.*.json failed to validate
 //
-//	against schemas/outputpart.schema.json.
-func TestOutputPartExamplesValidate(t *testing.T) {
+//	against schemas/messagepart.schema.json.
+func TestMessagePartExamplesValidate(t *testing.T) {
 	t.Parallel()
-	validator := schematest.Compile(t, "schemas/outputpart.schema.json")
+	validator := schematest.Compile(t, "schemas/messagepart.schema.json")
 
 	root := schematest.RepoRoot(t)
 	for _, name := range []string{
-		"schemas/examples/outputpart.text.json",
-		"schemas/examples/outputpart.code.json",
-		"schemas/examples/outputpart.image_ref.json",
+		"schemas/examples/messagepart.text.json",
+		"schemas/examples/messagepart.code.json",
+		"schemas/examples/messagepart.image_ref.json",
 	} {
 		name := name
 		t.Run(filepath.Base(name), func(t *testing.T) {
@@ -121,27 +134,64 @@ func TestOutputPartExamplesValidate(t *testing.T) {
 	}
 }
 
-// spec: 15.4.3, 15.4.6
-// diagnosis: a lifecycle-events example failed to validate against
+// runtimeOpsEventSchema is the JSON Schema for the CH-RUNTIMEOPS
+// envelope, and runtimeOpsEventExamples are the committed fixtures that
+// carry one frame each. The two are named here rather than inside the
+// validation test so the bijection test asserts over the same list the
+// validation test consumes; a fixture added to the directory and left
+// out of the list is a fixture nothing validates.
 //
-//	schemas/lifecycle-events.schema.json. Verify the envelope
+// The file-name stem tracks the schema's own stem (§28.3 naming table),
+// so a reader who has the schema path can predict the fixture path.
+//
+// spec: §15.4.3, §15.4.6, §28.3
+const runtimeOpsEventSchema = "schemas/runtime-ops-events.schema.json"
+
+// runtimeOpsEventExamplesDir is the directory the fixtures live in, read
+// by the bijection test so an uncommitted-to-the-list fixture is caught.
+const runtimeOpsEventExamplesDir = "schemas/examples"
+
+// runtimeOpsEventExamplesPrefix is the fixture file-name stem the
+// CH-RUNTIMEOPS frames are written under. The examples directory holds
+// the fixtures of several schemas, so the bijection is over the files
+// carrying this prefix rather than over the whole directory.
+const runtimeOpsEventExamplesPrefix = "runtime-ops."
+
+var runtimeOpsEventExamples = []string{
+	"schemas/examples/runtime-ops.lifecycle_capabilities.json",
+	"schemas/examples/runtime-ops.lifecycle_support.json",
+	"schemas/examples/runtime-ops.checkpoint_request.json",
+	"schemas/examples/runtime-ops.checkpoint_ready.json",
+	"schemas/examples/runtime-ops.checkpoint_complete.json",
+	"schemas/examples/runtime-ops.interrupt_request.json",
+	"schemas/examples/runtime-ops.interrupt_acknowledged.json",
+	"schemas/examples/runtime-ops.credentials_rotated.json",
+	"schemas/examples/runtime-ops.deadline_approaching.json",
+	"schemas/examples/runtime-ops.files_updated.json",
+	// spec: §4.7 — llm_request_completed without token counts (a
+	// runtime that cannot extract them omits both fields) and with
+	// the optional direct-mode inputTokens/outputTokens source.
+	"schemas/examples/runtime-ops.llm_request_completed.json",
+	"schemas/examples/runtime-ops.llm_request_completed.tokens.json",
+}
+
+// spec: 15.4.3, 15.4.6, 4.7 (llm_request_completed direct-mode token
+//
+//	fields), 11.2 (direct-mode usage source), 28.5.3 (CH-RUNTIMEOPS
+//	Messages: the session-scoped frames carry sessionId)
+//
+// diagnosis: a runtime-ops-events example failed to validate against
+//
+//	schemas/runtime-ops-events.schema.json. Verify the envelope
 //	shape, the `type` discriminator, and the capability enum.
-func TestLifecycleEventExamplesValidate(t *testing.T) {
+//	The llm_request_completed.tokens example exercises the
+//	optional §4.7 inputTokens/outputTokens direct-mode source.
+func TestRuntimeOpsEventExamplesValidate(t *testing.T) {
 	t.Parallel()
-	validator := schematest.Compile(t, "schemas/lifecycle-events.schema.json")
+	validator := schematest.Compile(t, runtimeOpsEventSchema)
 
 	root := schematest.RepoRoot(t)
-	for _, name := range []string{
-		"schemas/examples/lifecycle.lifecycle_capabilities.json",
-		"schemas/examples/lifecycle.lifecycle_support.json",
-		"schemas/examples/lifecycle.checkpoint_request.json",
-		"schemas/examples/lifecycle.checkpoint_ready.json",
-		"schemas/examples/lifecycle.checkpoint_complete.json",
-		"schemas/examples/lifecycle.interrupt_request.json",
-		"schemas/examples/lifecycle.interrupt_acknowledged.json",
-		"schemas/examples/lifecycle.credentials_rotated.json",
-		"schemas/examples/lifecycle.deadline_signal.json",
-	} {
+	for _, name := range runtimeOpsEventExamples {
 		name := name
 		t.Run(filepath.Base(name), func(t *testing.T) {
 			t.Parallel()
@@ -153,17 +203,83 @@ func TestLifecycleEventExamplesValidate(t *testing.T) {
 	}
 }
 
-// spec: 15.4
+// spec: 15.4.3, 15.4.6, 28.3
+// diagnosis: the CH-RUNTIMEOPS example fixtures on disk and the list the
+//
+//	validation test walks have diverged. A fixture reported as
+//	unvalidated is committed under schemas/examples and absent
+//	from runtimeOpsEventExamples, so nothing checks it against
+//	schemas/runtime-ops-events.schema.json. A fixture reported as
+//	missing is listed and not committed, so the validation test
+//	is asserting over a file that is not there. A fixture
+//	reported under the retired stem was renamed on one carrier
+//	and not the other.
+func TestRuntimeOpsEventExamplesBijection(t *testing.T) {
+	t.Parallel()
+
+	root := schematest.RepoRoot(t)
+	entries, err := os.ReadDir(filepath.Join(root, runtimeOpsEventExamplesDir))
+	if err != nil {
+		t.Fatalf("read %s: %v", runtimeOpsEventExamplesDir, err)
+	}
+
+	listed := make(map[string]bool, len(runtimeOpsEventExamples))
+	for _, name := range runtimeOpsEventExamples {
+		base := filepath.Base(name)
+		if !strings.HasPrefix(base, runtimeOpsEventExamplesPrefix) {
+			t.Errorf("listed fixture %s does not carry the %q stem the §28.3 naming table fixes for CH-RUNTIMEOPS",
+				name, runtimeOpsEventExamplesPrefix)
+		}
+		if listed[base] {
+			t.Errorf("fixture %s is listed twice in runtimeOpsEventExamples", base)
+		}
+		listed[base] = true
+		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
+			t.Errorf("listed fixture %s is not committed: %v", name, err)
+		}
+	}
+	if len(listed) == 0 {
+		t.Fatal("runtimeOpsEventExamples is empty, so the validation test asserts nothing")
+	}
+
+	// The retired stem is composed rather than written whole so this
+	// assertion does not itself reintroduce the spelling it forbids.
+	retiredPrefix := "lifecycle" + "."
+	onDisk := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		if strings.HasPrefix(entry.Name(), retiredPrefix) {
+			t.Errorf("fixture %s/%s carries the retired stem; the CH-RUNTIMEOPS fixtures are named for %s",
+				runtimeOpsEventExamplesDir, entry.Name(), runtimeOpsEventSchema)
+			continue
+		}
+		if !strings.HasPrefix(entry.Name(), runtimeOpsEventExamplesPrefix) {
+			continue
+		}
+		onDisk++
+		if !listed[entry.Name()] {
+			t.Errorf("fixture %s/%s is committed and absent from runtimeOpsEventExamples, so nothing validates it against %s",
+				runtimeOpsEventExamplesDir, entry.Name(), runtimeOpsEventSchema)
+		}
+	}
+	if onDisk != len(listed) {
+		t.Errorf("the examples directory carries %d CH-RUNTIMEOPS fixtures and the validation list carries %d", onDisk, len(listed))
+	}
+}
+
+// spec: 15.4, 28.5.3 (CH-MSGSOCK session_start, session_started, and session_end)
 // diagnosis: an adapter JSONL example failed to validate against
 //
 //	schemas/lenny-adapter-jsonl.schema.json. Verify the
 //	envelope shape and the `type` discriminator.
 func TestAdapterJSONLExamplesValidate(t *testing.T) {
 	t.Parallel()
-	// The JSONL schema $refs the OutputPart schema by its $id URL.
+	// The JSONL schema $refs the MessagePart schema by its $id URL.
 	// Wire the compiler to resolve that URL locally.
 	c := schematest.NewCompiler(t)
-	schematest.MustAddLocalSchema(t, c, "https://schemas.lenny.dev/outputpart/v1.json", "schemas/outputpart.schema.json")
+	schematest.MustAddLocalSchema(t, c, "https://schemas.lenny.dev/messagepart/v1.json", "schemas/messagepart.schema.json")
 	jsonlSchema := schematest.MustCompile(t, c, "schemas/lenny-adapter-jsonl.schema.json")
 
 	root := schematest.RepoRoot(t)
@@ -172,9 +288,14 @@ func TestAdapterJSONLExamplesValidate(t *testing.T) {
 		"schemas/examples/jsonl.heartbeat.json",
 		"schemas/examples/jsonl.tool_call.json",
 		"schemas/examples/jsonl.response.json",
-		"schemas/examples/jsonl.task_complete.json",
-		"schemas/examples/jsonl.task_complete_acknowledged.json",
-		"schemas/examples/jsonl.task_ready.json",
+		"schemas/examples/jsonl.set_tracing_context.json",
+		// spec: §28.5.3 — the CH-MSGSOCK session frames: session_start
+		// with the session's own context, its acknowledgement in both
+		// the created and the failed-create form, and session_end.
+		"schemas/examples/jsonl.session_start.json",
+		"schemas/examples/jsonl.session_started.json",
+		"schemas/examples/jsonl.session_started.error.json",
+		"schemas/examples/jsonl.session_end.json",
 	} {
 		name := name
 		t.Run(filepath.Base(name), func(t *testing.T) {
@@ -184,5 +305,74 @@ func TestAdapterJSONLExamplesValidate(t *testing.T) {
 				t.Errorf("expected %s to validate, got: %v", name, err)
 			}
 		})
+	}
+}
+
+// spec: 15.4 (runtime adapter artifacts), 28.5.3 (intra-pod channels)
+// diagnosis: the `description` of schemas/lenny-adapter-jsonl.schema.json
+//
+//	states the wrong mechanism for the cooperative-quiesce,
+//	interrupt, credential-rotation, and deadline frames. Those are
+//	CH-RUNTIMEOPS frames the adapter and the runtime exchange on the
+//	intra-pod runtime-ops Unix socket, schematized in
+//	schemas/runtime-ops-events.schema.json, and this artifact
+//	schematizes none of them. A description that credits the
+//	gateway-to-adapter gRPC stream with them contradicts the §15.4
+//	artifact list and misroutes every reader of the published
+//	schema.
+func TestAdapterJSONLDescriptionScopesRuntimeOpsFramesOut(t *testing.T) {
+	t.Parallel()
+
+	root := schematest.RepoRoot(t)
+	const rel = "schemas/lenny-adapter-jsonl.schema.json"
+	data, err := os.ReadFile(filepath.Join(root, rel))
+	if err != nil {
+		t.Fatalf("read %s: %v", rel, err)
+	}
+	var parsed struct {
+		Description string                     `json:"description"`
+		Defs        map[string]json.RawMessage `json:"$defs"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("parse %s: %v", rel, err)
+	}
+	if parsed.Description == "" {
+		t.Fatalf("%s has no description to check", rel)
+	}
+
+	// The description must send the runtime-operations frames to the
+	// artifact that actually schematizes them.
+	for _, want := range []string{"CH-RUNTIMEOPS", "schemas/runtime-ops-events.schema.json"} {
+		if !strings.Contains(parsed.Description, want) {
+			t.Errorf("%s description must name %q, got: %s", rel, want, parsed.Description)
+		}
+	}
+
+	// It must not attribute them to the gateway-to-adapter gRPC stream,
+	// which carries the adapter-to-gateway operational events instead.
+	for _, unwanted := range []string{"CH-ADAPTEREVENTS", "AdapterEvents", "gRPC", "lenny-adapter.proto"} {
+		if strings.Contains(parsed.Description, unwanted) {
+			t.Errorf("%s description must not attribute the runtime-operations frames to %q, got: %s",
+				rel, unwanted, parsed.Description)
+		}
+	}
+
+	// The description is true only while the artifact defines none of
+	// the frames it scopes out.
+	for _, frame := range []string{
+		"lifecycle_capabilities",
+		"checkpoint_request",
+		"checkpoint_ready",
+		"interrupt_request",
+		"interrupt_acknowledged",
+		"credentials_rotated",
+		"credentials_acknowledged",
+		"deadline_approaching",
+		"files_updated",
+	} {
+		if _, defined := parsed.Defs[frame]; defined {
+			t.Errorf("%s must not schematize the CH-RUNTIMEOPS frame %q; it belongs to schemas/runtime-ops-events.schema.json",
+				rel, frame)
+		}
 	}
 }

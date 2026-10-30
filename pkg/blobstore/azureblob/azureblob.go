@@ -1,0 +1,625 @@
+// SPDX-License-Identifier: MIT
+
+// Package azureblob implements the §4.5 / §12.5 blobstore.Store over
+// Azure Blob Storage.
+//
+// The adapter writes blobs into a configured container under a stable
+// key derived from the §4.5 lenny-blob URI:
+// "{tenant}/{session}/{part}". Storage account-level CMK encryption
+// provides at-rest encryption; per-object Customer-Provided Keys
+// (CPK) via the Config.CPKResolver hook overrides the default when a
+// tenant carries a per-tenant key. Tombstoning records a
+// "lenny-deleted-at" blob-metadata key (RFC 3339 UTC).
+package azureblob
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+	"time"
+
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blockblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/sas"
+
+	"github.com/lennylabs/lenny/pkg/blobstore"
+)
+
+// objectClient narrows the Azure Blob client surface this Store uses.
+type objectClient interface {
+	UploadBuffer(ctx context.Context, key string, body []byte, opts *azblob.UploadBufferOptions) error
+	DownloadStream(ctx context.Context, key string, opts *azblob.DownloadStreamOptions) (azblob.DownloadStreamResponse, error)
+	GetProperties(ctx context.Context, key string, opts *blob.GetPropertiesOptions) (blob.GetPropertiesResponse, error)
+	SetMetadata(ctx context.Context, key string, metadata map[string]*string, opts *blob.SetMetadataOptions) (blob.SetMetadataResponse, error)
+	Delete(ctx context.Context, key string, opts *azblob.DeleteBlobOptions) error
+	List(ctx context.Context) ([]string, error)
+	// ListPage returns one ListBlobsFlat page of the blobs under prefix,
+	// with metadata, and the next marker ("" on the last page).
+	ListPage(ctx context.Context, prefix, marker string, maxResults int32) ([]listedBlob, string, error)
+}
+
+// CPKResolver returns the per-tenant customer-provided key info.
+//
+// Return semantics mirror the §4.5 MinIO backend so every artifact
+// store fails closed identically for a T4 tenant (§12.5):
+//   - (cpk, requireKey=false, nil) — use cpk when non-nil, otherwise
+//     fall through to the storage-account default (the T3 path).
+//   - (cpk, requireKey=true, nil) — T4 tenant. The Put MUST wrap under
+//     cpk; a nil cpk fails closed.
+//   - (nil, true, err) — T4 tenant whose key is unreachable at the
+//     resolver level. The Put fails closed with
+//     blobstore.ErrClassificationControlViolation.
+//
+// spec: §12.5; §12.9.
+type CPKResolver func(u blobstore.URI) (cpk *blob.CPKInfo, requireKey bool, err error)
+
+// Config configures a Store.
+type Config struct {
+	// ServiceURL is the Azure Blob storage account URL
+	// ("https://<account>.blob.core.windows.net").
+	ServiceURL string
+
+	// Credential is the Azure SDK credential.
+	Credential azcore.TokenCredential
+
+	// Container is the container name. Required.
+	Container string
+
+	// CPKResolver, when set, picks per-object customer-provided keys.
+	CPKResolver CPKResolver
+
+	// AccountName and AccountKey, when both set, install the account-key
+	// credential the §13.2 SAS-minting path signs with. The
+	// azcore.TokenCredential above cannot sign a service SAS, so a
+	// deployment that mints presigned checkpoint capabilities configures
+	// the shared account key here. Both empty leaves the Presigner
+	// methods failing closed.
+	//
+	// spec: §13.2 (capability model).
+	AccountName string
+	AccountKey  string
+}
+
+// Store implements blobstore.Store + blobstore.Tombstoner over Azure
+// Blob Storage.
+type Store struct {
+	client                objectClient
+	container             string
+	serviceURL            string
+	sharedKey             *sas.SharedKeyCredential
+	resolver              CPKResolver
+	onArtifactUploadError func(tenantID, errorType string)
+	onKMSUnavailable      func(tenantID string)
+}
+
+// SetOnArtifactUploadError registers the §12.5 / §16.5 callback the
+// gateway uses to drive lenny_artifact_upload_error_total. errorType
+// is the bounded §16.5 label value (`transport`, `auth`, `quota`,
+// `other`).
+//
+// spec: §16.5 ArtifactUploadError.
+func (s *Store) SetOnArtifactUploadError(fn func(tenantID, errorType string)) {
+	s.onArtifactUploadError = fn
+}
+
+// SetOnKMSUnavailable registers the §12.5 fail-closed write
+// callback the gateway uses to drive
+// lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}
+// whenever a Put rejects a T4 tenant whose per-tenant key is
+// unavailable.
+//
+// spec: §12.5.
+func (s *Store) SetOnKMSUnavailable(fn func(tenantID string)) {
+	s.onKMSUnavailable = fn
+}
+
+// resolveCPK resolves the per-tenant customer-provided key for u,
+// failing closed for a T4 tenant whose key is unavailable. A nil
+// returned *blob.CPKInfo leaves the storage-account default in force
+// (the T3 path).
+//
+// spec: §12.5; §12.9.
+func (s *Store) resolveCPK(u blobstore.URI) (*blob.CPKInfo, error) {
+	if s.resolver == nil {
+		return nil, nil
+	}
+	cpk, requireKey, err := s.resolver(u)
+	switch {
+	case err != nil && requireKey:
+		s.fireKMSUnavailable(u.TenantID)
+		return nil, fmt.Errorf("%w: tenant=%s: %v", blobstore.ErrClassificationControlViolation, u.TenantID, err)
+	case err != nil:
+		return nil, fmt.Errorf("blobstore/azureblob: CPK resolver for tenant %s: %w", u.TenantID, err)
+	case requireKey && cpk == nil:
+		s.fireKMSUnavailable(u.TenantID)
+		return nil, fmt.Errorf("%w: tenant=%s: resolver returned no key", blobstore.ErrClassificationControlViolation, u.TenantID)
+	}
+	return cpk, nil
+}
+
+// fireKMSUnavailable invokes the gateway-registered hook on a
+// fail-closed T4 write rejection. It is a no-op when no hook is wired.
+//
+// spec: §12.5.
+func (s *Store) fireKMSUnavailable(tenantID string) {
+	if s.onKMSUnavailable != nil {
+		s.onKMSUnavailable(tenantID)
+	}
+}
+
+// PresignPut implements blobstore.Presigner. It mints an account-key
+// service SAS granting create+write on a single blob key. A SAS carries
+// no per-request encryption scope and no Content-Length, so T4
+// encryption rests on the container default encryption scope with
+// override prevention (§12.5) rather than on the grant, and
+// Grant.Headers is empty.
+//
+// spec: §13.2 (capability model); §12.5 (per-provider T4 mechanism).
+func (s *Store) PresignPut(u blobstore.URI, _ int64, ttl time.Duration) (blobstore.Grant, error) {
+	return s.signSAS(u, sas.BlobPermissions{Create: true, Write: true}, ttl)
+}
+
+// PresignGet implements blobstore.Presigner. It mints an account-key
+// service SAS granting read on a single blob key, with an empty
+// Grant.Headers.
+//
+// spec: §13.2 (capability model).
+func (s *Store) PresignGet(u blobstore.URI, ttl time.Duration) (blobstore.Grant, error) {
+	return s.signSAS(u, sas.BlobPermissions{Read: true}, ttl)
+}
+
+// signSAS mints a single-blob, single-permission service SAS for u. It
+// fails closed when no account-key credential is configured, because
+// the azcore.TokenCredential the read/write path uses cannot sign a
+// SAS.
+func (s *Store) signSAS(u blobstore.URI, perms sas.BlobPermissions, ttl time.Duration) (blobstore.Grant, error) {
+	if s.sharedKey == nil {
+		return blobstore.Grant{}, errors.New("blobstore/azureblob: account-key credential required to mint a SAS capability")
+	}
+	key := objectKey(u)
+	now := time.Now().UTC()
+	expires := now.Add(ttl)
+	qp, err := sas.BlobSignatureValues{
+		Protocol:      sas.ProtocolHTTPS,
+		StartTime:     now.Add(-5 * time.Minute),
+		ExpiryTime:    expires,
+		Permissions:   perms.String(),
+		ContainerName: s.container,
+		BlobName:      key,
+	}.SignWithSharedKey(s.sharedKey)
+	if err != nil {
+		return blobstore.Grant{}, fmt.Errorf("blobstore/azureblob: sign SAS for %s: %w", key, err)
+	}
+	blobURL := fmt.Sprintf("%s/%s/%s", strings.TrimRight(s.serviceURL, "/"), s.container, key)
+	return blobstore.Grant{
+		URL:       blobURL + "?" + qp.Encode(),
+		Headers:   map[string]string{},
+		ExpiresAt: expires,
+	}, nil
+}
+
+// classifyAzurePutError maps an Azure Blob write error onto the §16.5
+// error_type label. The transport-class branches emit
+// `minio_unreachable` so the §16.5 MinIOUnavailable alert fires
+// uniformly across self-managed MinIO and managed-cloud backends.
+//
+// spec: §16.5 ArtifactUploadError; §12.5.
+func classifyAzurePutError(err error) string {
+	switch {
+	case bloberror.HasCode(err, "AuthenticationFailed"),
+		bloberror.HasCode(err, "AuthorizationFailure"),
+		bloberror.HasCode(err, "AuthorizationPermissionMismatch"),
+		bloberror.HasCode(err, "InvalidAuthenticationInfo"):
+		return "auth"
+	case bloberror.HasCode(err, "AccountIsDisabled"),
+		bloberror.HasCode(err, "InsufficientAccountPermissions"),
+		bloberror.HasCode(err, "ServerBusy"),
+		bloberror.HasCode(err, "RequestBodyTooLarge"):
+		// Treat capacity-style limits as quota; ServerBusy is
+		// transient throttling that surfaces as backend
+		// unreachability after retry exhaustion.
+		if bloberror.HasCode(err, "ServerBusy") {
+			return "minio_unreachable"
+		}
+		return "quota_exceeded"
+	}
+	s := err.Error()
+	switch {
+	case strings.Contains(s, "Timeout"),
+		strings.Contains(s, "DeadlineExceeded"),
+		strings.Contains(s, "connection"),
+		strings.Contains(s, "500"),
+		strings.Contains(s, "502"),
+		strings.Contains(s, "503"),
+		strings.Contains(s, "504"):
+		return "minio_unreachable"
+	case strings.Contains(s, "Unauthorized"),
+		strings.Contains(s, "Forbidden"),
+		strings.Contains(s, "401"),
+		strings.Contains(s, "403"):
+		return "auth"
+	}
+	return "other"
+}
+
+var (
+	_ blobstore.Store      = (*Store)(nil)
+	_ blobstore.Tombstoner = (*Store)(nil)
+	_ blobstore.Presigner  = (*Store)(nil)
+	// spec: §10.1.7 — the chunked checkpoint model needs every
+	// production backend to presign, list a chunk prefix, and delete by key.
+	_ blobstore.CheckpointStore = (*Store)(nil)
+)
+
+// New returns a Store. Returns an error when cfg.Container is empty
+// or the client cannot be created.
+func New(cfg Config) (*Store, error) {
+	if cfg.ServiceURL == "" {
+		return nil, errors.New("blobstore/azureblob: cfg.ServiceURL is required")
+	}
+	if cfg.Container == "" {
+		return nil, errors.New("blobstore/azureblob: cfg.Container is required")
+	}
+	if cfg.Credential == nil {
+		return nil, errors.New("blobstore/azureblob: cfg.Credential is required")
+	}
+	cli, err := azblob.NewClient(cfg.ServiceURL, cfg.Credential, nil)
+	if err != nil {
+		return nil, fmt.Errorf("blobstore/azureblob: azblob.NewClient: %w", err)
+	}
+	var sharedKey *sas.SharedKeyCredential
+	if cfg.AccountName != "" && cfg.AccountKey != "" {
+		sharedKey, err = azblob.NewSharedKeyCredential(cfg.AccountName, cfg.AccountKey)
+		if err != nil {
+			return nil, fmt.Errorf("blobstore/azureblob: build shared-key credential: %w", err)
+		}
+	}
+	return &Store{
+		client:     newClientAdapter(cli, cfg.Container),
+		container:  cfg.Container,
+		serviceURL: cfg.ServiceURL,
+		sharedKey:  sharedKey,
+		resolver:   cfg.CPKResolver,
+	}, nil
+}
+
+// newWithClient is the test-injection constructor.
+func newWithClient(c objectClient, containerName string, resolver CPKResolver) *Store {
+	return &Store{client: c, container: containerName, resolver: resolver}
+}
+
+// objectKey maps a blobstore.URI to the Azure blob key. The key
+// follows the §12.5 ll. 295 canonical layout
+// `{tenant_id}/{object_type}/{session_id}/{part_id}` so the §12.5
+// GC sweep can prefix-scope by object class.
+//
+// spec: §12.5 ll. 295, 315.
+func objectKey(u blobstore.URI) string {
+	objType := u.ObjectType
+	if objType == "" {
+		objType = blobstore.ObjectTypeUpload
+	}
+	return fmt.Sprintf("%s/%s/%s/%s", u.TenantID, objType, u.SessionID, u.PartID)
+}
+
+const tombstoneMeta = "lenny_deleted_at"
+
+func metaPtr(v string) *string { return &v }
+
+// Put implements blobstore.Store.
+func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, error) {
+	ctx := context.Background()
+	key := objectKey(u)
+	if props, err := s.client.GetProperties(ctx, key, nil); err == nil {
+		if _, tombstoned := props.Metadata[tombstoneMeta]; !tombstoned {
+			return "", blobstore.ErrConflict
+		}
+	} else if !isNotFound(err) {
+		return "", fmt.Errorf("blobstore/azureblob: GetProperties: %w", err)
+	}
+	body, err := io.ReadAll(data)
+	if err != nil {
+		return "", fmt.Errorf("blobstore/azureblob: read body: %w", err)
+	}
+	opts := &azblob.UploadBufferOptions{
+		HTTPHeaders: &blob.HTTPHeaders{BlobContentType: &mimeType},
+	}
+	cpk, err := s.resolveCPK(u)
+	if err != nil {
+		return "", err
+	}
+	if cpk != nil {
+		opts.CPKInfo = cpk
+	}
+	if err := s.client.UploadBuffer(ctx, key, body, opts); err != nil {
+		if s.onArtifactUploadError != nil {
+			s.onArtifactUploadError(u.TenantID, classifyAzurePutError(err))
+		}
+		return "", fmt.Errorf("blobstore/azureblob: UploadBuffer: %w", err)
+	}
+	return u.String(), nil
+}
+
+// Get implements blobstore.Store.
+func (s *Store) Get(u blobstore.URI) (blobstore.BlobInfo, io.ReadCloser, error) {
+	ctx := context.Background()
+	key := objectKey(u)
+	if tombstoned, err := s.isTombstoned(ctx, key); err != nil {
+		return blobstore.BlobInfo{}, nil, err
+	} else if tombstoned {
+		return blobstore.BlobInfo{}, nil, blobstore.ErrNotFound
+	}
+	out, err := s.client.DownloadStream(ctx, key, nil)
+	if err != nil {
+		if isNotFound(err) {
+			return blobstore.BlobInfo{}, nil, blobstore.ErrNotFound
+		}
+		return blobstore.BlobInfo{}, nil, fmt.Errorf("blobstore/azureblob: DownloadStream: %w", err)
+	}
+	info := blobstore.BlobInfo{
+		URI:      u,
+		MimeType: ptrStr(out.ContentType),
+		Size:     ptrInt64(out.ContentLength),
+	}
+	if out.LastModified != nil {
+		info.StoredAt = out.LastModified.UTC()
+	}
+	return info, out.Body, nil
+}
+
+// Stat implements blobstore.Store.
+func (s *Store) Stat(u blobstore.URI) (blobstore.BlobInfo, error) {
+	ctx := context.Background()
+	key := objectKey(u)
+	if tombstoned, err := s.isTombstoned(ctx, key); err != nil {
+		return blobstore.BlobInfo{}, err
+	} else if tombstoned {
+		return blobstore.BlobInfo{}, blobstore.ErrNotFound
+	}
+	props, err := s.client.GetProperties(ctx, key, nil)
+	if err != nil {
+		if isNotFound(err) {
+			return blobstore.BlobInfo{}, blobstore.ErrNotFound
+		}
+		return blobstore.BlobInfo{}, fmt.Errorf("blobstore/azureblob: GetProperties: %w", err)
+	}
+	info := blobstore.BlobInfo{
+		URI:      u,
+		MimeType: ptrStr(props.ContentType),
+		Size:     ptrInt64(props.ContentLength),
+	}
+	if props.LastModified != nil {
+		info.StoredAt = props.LastModified.UTC()
+	}
+	return info, nil
+}
+
+// SoftDelete implements blobstore.Tombstoner.
+func (s *Store) SoftDelete(u blobstore.URI) error {
+	ctx := context.Background()
+	key := objectKey(u)
+	if _, err := s.client.GetProperties(ctx, key, nil); err != nil {
+		if isNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("blobstore/azureblob: GetProperties: %w", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	meta := map[string]*string{tombstoneMeta: metaPtr(now)}
+	if _, err := s.client.SetMetadata(ctx, key, meta, nil); err != nil {
+		return fmt.Errorf("blobstore/azureblob: SetMetadata: %w", err)
+	}
+	return nil
+}
+
+// StatIncludingTombstones implements blobstore.Tombstoner. It returns
+// the blob's metadata and §12.5 lifecycle state: Active for a live
+// object, SoftDeleted when the lenny_deleted_at metadata key is
+// present, NotFound when the blob is absent. The GC sweep uses this
+// surface to tell "soft-deleted, awaiting hard-prune" apart from
+// "physically absent".
+//
+// spec: §12.5 ll. 333-339.
+func (s *Store) StatIncludingTombstones(u blobstore.URI) (blobstore.BlobInfo, blobstore.BlobState, error) {
+	ctx := context.Background()
+	key := objectKey(u)
+	props, err := s.client.GetProperties(ctx, key, nil)
+	if err != nil {
+		if isNotFound(err) {
+			return blobstore.BlobInfo{}, blobstore.BlobStateNotFound, blobstore.ErrNotFound
+		}
+		return blobstore.BlobInfo{}, blobstore.BlobStateNotFound, fmt.Errorf("blobstore/azureblob: GetProperties: %w", err)
+	}
+	info := blobstore.BlobInfo{
+		URI:      u,
+		MimeType: ptrStr(props.ContentType),
+		Size:     ptrInt64(props.ContentLength),
+	}
+	if props.LastModified != nil {
+		info.StoredAt = props.LastModified.UTC()
+	}
+	if _, tombstoned := props.Metadata[tombstoneMeta]; tombstoned {
+		return info, blobstore.BlobStateSoftDeleted, nil
+	}
+	return info, blobstore.BlobStateActive, nil
+}
+
+// HardPrune implements blobstore.Tombstoner.
+func (s *Store) HardPrune(now time.Time, retention time.Duration) int {
+	ctx := context.Background()
+	cutoff := now.Add(-retention).UTC()
+	keys, err := s.client.List(ctx)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, key := range keys {
+		props, err := s.client.GetProperties(ctx, key, nil)
+		if err != nil {
+			continue
+		}
+		rawPtr, ok := props.Metadata[tombstoneMeta]
+		if !ok || rawPtr == nil {
+			continue
+		}
+		deletedAt, err := time.Parse(time.RFC3339, *rawPtr)
+		if err != nil || deletedAt.After(cutoff) {
+			continue
+		}
+		if err := s.client.Delete(ctx, key, nil); err == nil {
+			count++
+		}
+	}
+	return count
+}
+
+// HardDeleteObject implements blobstore.Tombstoner. It Delete's the
+// single blob named by u; a missing blob is a no-op.
+//
+// spec: §12.5 — catalog-driven targeted prune.
+func (s *Store) HardDeleteObject(u blobstore.URI) error {
+	ctx := context.Background()
+	if err := s.client.Delete(ctx, objectKey(u), nil); err != nil && !isNotFound(err) {
+		return fmt.Errorf("blobstore/azureblob: HardDeleteObject: %w", err)
+	}
+	return nil
+}
+
+// DeleteByUser implements the §12.1 Eraser primitive. Artifact erasure
+// is session-scoped (§12.8 step 7), so this whole-user call is a no-op
+// returning (0, nil).
+func (s *Store) DeleteByUser(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
+}
+
+var _ blobstore.Eraser = (*Store)(nil)
+
+// DeleteByTenant implements blobstore.TenantPrefixDeleter: a
+// prefix-scoped bulk delete on `{tenant_id}/*` for the §12.8 Phase 4
+// tenant-deletion orchestrator. It lists the container, removes every
+// blob under the tenant prefix, and returns the count removed. A
+// tenant with no blobs is a no-op returning (0, nil); an empty
+// tenantID matches nothing.
+//
+// spec: §12.5 ll. 295.
+func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, nil
+	}
+	prefix := tenantID + "/"
+	keys, err := s.client.List(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("blobstore/azureblob: list: %w", err)
+	}
+	count := 0
+	for _, key := range keys {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		if err := s.client.Delete(ctx, key, nil); err != nil {
+			return count, fmt.Errorf("blobstore/azureblob: delete %s: %w", key, err)
+		}
+		count++
+	}
+	return count, nil
+}
+
+func (s *Store) isTombstoned(ctx context.Context, key string) (bool, error) {
+	props, err := s.client.GetProperties(ctx, key, nil)
+	if err != nil {
+		if isNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("blobstore/azureblob: GetProperties: %w", err)
+	}
+	_, ok := props.Metadata[tombstoneMeta]
+	return ok, nil
+}
+
+func isNotFound(err error) bool {
+	if bloberror.HasCode(err, bloberror.BlobNotFound) || bloberror.HasCode(err, bloberror.ContainerNotFound) {
+		return true
+	}
+	var rerr *azcore.ResponseError
+	if errors.As(err, &rerr) && rerr.StatusCode == 404 {
+		return true
+	}
+	return strings.Contains(err.Error(), "BlobNotFound") || strings.Contains(err.Error(), "404")
+}
+
+func ptrStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+func ptrInt64(p *int64) int64 {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+// clientAdapter wraps a real *azblob.Client.
+type clientAdapter struct {
+	cli       *azblob.Client
+	container string
+}
+
+func newClientAdapter(cli *azblob.Client, container string) objectClient {
+	return &clientAdapter{cli: cli, container: container}
+}
+
+func (a *clientAdapter) UploadBuffer(ctx context.Context, key string, body []byte, opts *azblob.UploadBufferOptions) error {
+	_, err := a.cli.UploadBuffer(ctx, a.container, key, body, opts)
+	return err
+}
+
+func (a *clientAdapter) DownloadStream(ctx context.Context, key string, opts *azblob.DownloadStreamOptions) (azblob.DownloadStreamResponse, error) {
+	return a.cli.DownloadStream(ctx, a.container, key, opts)
+}
+
+func (a *clientAdapter) GetProperties(ctx context.Context, key string, opts *blob.GetPropertiesOptions) (blob.GetPropertiesResponse, error) {
+	return a.cli.ServiceClient().NewContainerClient(a.container).NewBlobClient(key).GetProperties(ctx, opts)
+}
+
+func (a *clientAdapter) SetMetadata(ctx context.Context, key string, metadata map[string]*string, opts *blob.SetMetadataOptions) (blob.SetMetadataResponse, error) {
+	return a.cli.ServiceClient().NewContainerClient(a.container).NewBlobClient(key).SetMetadata(ctx, metadata, opts)
+}
+
+func (a *clientAdapter) Delete(ctx context.Context, key string, opts *azblob.DeleteBlobOptions) error {
+	_, err := a.cli.DeleteBlob(ctx, a.container, key, opts)
+	return err
+}
+
+func (a *clientAdapter) List(ctx context.Context) ([]string, error) {
+	out := []string{}
+	pager := a.cli.NewListBlobsFlatPager(a.container, nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range page.Segment.BlobItems {
+			if item.Name != nil {
+				out = append(out, *item.Name)
+			}
+		}
+	}
+	return out, nil
+}
+
+// Compile-time imports kept alive so tests can reference them.
+var (
+	_ = bytes.NewReader
+	_ = container.NewClient
+	_ = blockblob.NewClient
+)

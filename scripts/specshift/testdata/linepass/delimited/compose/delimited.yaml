@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: MIT
+#
+# The carrier writes a requirement identifier behind its member, which is
+# the greppable tie between the rule and the policy that implements it.
+services:
+  gateway:
+    environment:
+      # §13.2 line 432 (NET-002) — the internet egress profile. Pods stamped
+      # with it reach the provider allowlist and nothing else.
+      LENNY_EGRESS_PROFILE: "internet"

@@ -132,8 +132,9 @@ Create a new agent session. Claims a warm pod, assigns credentials, and prepares
 | `labels` | object | No | Key-value labels for filtering and organization |
 | `environment` | string | No | Environment name to scope the session |
 | `callbackUrl` | string | No | Webhook URL for completion notification |
-| `idempotencyKey` | string | No | Client-supplied key for idempotent creation |
 | `dataResidencyRegion` | string | No | Required data residency region constraint |
+
+For idempotent creation, set the `Idempotency-Key` HTTP header on the JSON-RPC POST that carries this tool call (see [Idempotency](../api/rest.html#idempotency)). The MCP tool input has no `idempotencyKey` field today.
 
 **Output schema:**
 
@@ -141,7 +142,13 @@ Create a new agent session. Claims a warm pod, assigns credentials, and prepares
 {
   "sessionId": "sess_01J5K9...",
   "uploadToken": "ut_abc123...",
-  "sessionIsolationLevel": "gvisor",
+  "sessionIsolationLevel": {
+    "executionMode": "session",
+    "isolationProfile": "gvisor",
+    "podReuse": false,
+    "residualStateWarning": false,
+    "conversationContinuity": "platform"
+  },
   "status": "created",
   "runtime": "claude-worker",
   "pool": "default-pool",
@@ -149,6 +156,8 @@ Create a new agent session. Claims a warm pod, assigns credentials, and prepares
   "expiresAt": "2026-04-09T10:05:00Z"
 }
 ```
+
+`sessionIsolationLevel` is an object describing the assigned pool's isolation posture. `executionMode` is `session` or `service`; `podReuse` and `residualStateWarning` are `true` when the pool recycles pods, runs `maxConcurrentSessions > 1`, or is service mode; `scrubPolicy` is present only when `podReuse: true`; on a recycling pool whose pod keeps its runtime process across sessions, a session may run in a runtime process that served an earlier session of the same tenant, which `residualStateWarning` signals; and `conversationContinuity` is `"platform"` for session mode and `"none"` for service mode. In service mode every message is self-contained, so a `multi_turn` runtime's client must re-inject any needed context into each message's `input`.
 
 **Error codes:**
 
@@ -160,7 +169,10 @@ Create a new agent session. Claims a warm pod, assigns credentials, and prepares
 | `QUOTA_EXCEEDED` | Tenant session quota exceeded |
 | `CREDENTIAL_POOL_EXHAUSTED` | No credentials available |
 | `CIRCUIT_BREAKER_OPEN` | Operator circuit breaker active |
-| `ERASURE_IN_PROGRESS` | User has pending GDPR erasure |
+| `ERASURE_IN_PROGRESS` | The caller or the session's owner has a pending GDPR erasure job |
+| `USER_INVALIDATED` | The caller or the session's owner is invalidated |
+| `TENANT_SUSPENDED` | The tenant is suspended |
+| `TENANT_NOT_ACTIVE` | The tenant is not `active`, such as during tenant deletion |
 
 **Example:**
 
@@ -260,29 +272,33 @@ Same as `create_session`, plus:
 
 ### `upload_files`
 
-Upload workspace files to a session. Valid before finalization (state: `created`) and mid-session if the runtime declares `capabilities.midSessionUpload: true`.
+Upload one workspace file to a session. Valid before finalization (state: `created`) and mid-session if the runtime declares `capabilities.midSessionUpload: true`. The tool forwards the content to `POST /v1/sessions/{id}/upload` and returns the same response.
 
 **Input schema:**
 
 | Parameter | Type | Required | Description |
 |:----------|:-----|:---------|:------------|
 | `sessionId` | string | Yes | Target session ID |
-| `files` | array | Yes | Files to upload. Each entry: `{ "path": "string", "content": "string", "encoding": "utf-8 \| base64" }` |
+| `uploadToken` | string | Yes | The upload token that `create_session` returned |
+| `contentBase64` | string | Yes | The file content, base64-encoded |
+| `mimeType` | string | No | Content type of the file. Defaults to `application/octet-stream`. |
 
-**Output schema:**
+**Output schema:** the REST upload response. Its `uploadRef` field is an opaque reference to the stored upload; pass it verbatim as the `uploadRef` of an `uploadFile` source in the `workspacePlan` of `finalize_workspace`.
 
 ```json
 {
-  "uploaded": 3,
-  "totalBytes": 24576,
-  "paths": ["src/main.go", "go.mod", "go.sum"]
+  "uploadRef": "<uploadRef>",
+  "size": 2048
 }
 ```
+
+Uploading a file does not place it in the workspace. The gateway materializes only the uploads that a source of the session's bound plan names (see [Workspace sources](../getting-started/concepts.md#workspace-sources)).
 
 **Error codes:**
 
 | Code | When |
 |:-----|:-----|
+| `VALIDATION_ERROR` | `sessionId`, `uploadToken`, or `contentBase64` is missing, or `contentBase64` is not valid base64 |
 | `RESOURCE_NOT_FOUND` | Session does not exist |
 | `INVALID_STATE_TRANSITION` | Session already finalized or started (and mid-session upload not enabled) |
 | `UPLOAD_TOKEN_EXPIRED` | Upload token TTL elapsed |
@@ -297,13 +313,9 @@ Upload workspace files to a session. Valid before finalization (state: `created`
     "name": "upload_files",
     "arguments": {
       "sessionId": "sess_01J5K9...",
-      "files": [
-        {
-          "path": "src/main.go",
-          "content": "package main\n\nfunc main() {\n\tprintln(\"hello\")\n}\n",
-          "encoding": "utf-8"
-        }
-      ]
+      "uploadToken": "<uploadToken>",
+      "contentBase64": "cGFja2FnZSBtYWluCgpmdW5jIG1haW4oKSB7fQo=",
+      "mimeType": "text/x-go"
     }
   }
 }
@@ -313,13 +325,14 @@ Upload workspace files to a session. Valid before finalization (state: `created`
 
 ### `finalize_workspace`
 
-Seal the workspace and run setup commands. After finalization, no further file uploads are accepted (unless mid-session upload is enabled).
+Bind the session's workspace plan when creation carried none, materialize the workspace, and run setup commands. After finalization, no further file uploads are accepted (unless mid-session upload is enabled). The tool forwards to `POST /v1/sessions/{id}/finalize`.
 
 **Input schema:**
 
 | Parameter | Type | Required | Description |
 |:----------|:-----|:---------|:------------|
 | `sessionId` | string | Yes | Target session ID |
+| `workspacePlan` | object | No | The [workspace plan](../reference/workspace-plan.md) to bind, allowed only when the session was created without one. Its `uploadFile` sources name uploads to this session by the `uploadRef` that `upload_files` returned. When the argument is absent or `null`, finalize materializes the plan bound at creation, or the empty plan. |
 
 **Output schema:**
 
@@ -336,8 +349,13 @@ Seal the workspace and run setup commands. After finalization, no further file u
 
 | Code | When |
 |:-----|:-----|
+| `VALIDATION_ERROR` | `details.reason` is `plan_already_set` (the session was created with a plan), `invalid_upload_ref` (an `uploadRef` is not an upload reference), or `upload_ref_foreign_session` (an `uploadRef` names another session's upload) |
+| `WORKSPACE_PLAN_INVALID` | The `workspacePlan` fails schema validation |
+| `GIT_CLONE_AUTH_UNSUPPORTED_HOST`, `GIT_CLONE_AUTH_HOST_AMBIGUOUS`, `GIT_CLONE_REF_UNRESOLVABLE`, `GIT_CLONE_REF_RESOLVE_TRANSIENT` | A `gitClone` source cannot be authenticated or its `ref` cannot be resolved |
 | `RESOURCE_NOT_FOUND` | Session does not exist |
-| `INVALID_STATE_TRANSITION` | Session not in `created` state |
+| `INVALID_STATE_TRANSITION` | Session not in `created` state, or the session ended while finalization was in progress |
+
+A call rejected for its `workspacePlan` binds nothing and leaves the session in `created`.
 
 **Example:**
 
@@ -347,11 +365,19 @@ Seal the workspace and run setup commands. After finalization, no further file u
   "params": {
     "name": "finalize_workspace",
     "arguments": {
-      "sessionId": "sess_01J5K9..."
+      "sessionId": "sess_01J5K9...",
+      "workspacePlan": {
+        "schemaVersion": 1,
+        "sources": [
+          { "type": "uploadFile", "path": "src/main.go", "uploadRef": "<uploadRef>" }
+        ]
+      }
     }
   }
 }
 ```
+
+`<uploadRef>` is the value from the `upload_files` response.
 
 ---
 
@@ -424,7 +450,7 @@ Returns an MCP Task with streaming progress notifications:
 }
 ```
 
-Progress notifications stream as MCP Task updates containing `OutputPart` arrays translated to MCP content blocks.
+Progress notifications stream as MCP Task updates containing `MessagePart` arrays translated to MCP content blocks.
 
 **Error codes:**
 
@@ -451,7 +477,7 @@ Progress notifications stream as MCP Task updates containing `OutputPart` arrays
 
 ### `send_message`
 
-Send a message to a running or suspended session. This is the unified message delivery endpoint -- it replaces the earlier `send_prompt` tool.
+Send a message to a running or suspended session. This is the unified message delivery endpoint -- it replaces the earlier `send_prompt` tool. A message to a `suspended` session resumes the session, whatever its `delivery` value, after the concurrent-session admission check that `resume_session` runs admits it.
 
 **Input schema:**
 
@@ -461,7 +487,7 @@ Send a message to a running or suspended session. This is the unified message de
 | `message` | string | Yes | Message content to send |
 | `delivery` | string | No | `"immediate"` (interrupt and deliver) or `"queued"` (buffer for next pause). Default: `"queued"`. |
 | `inReplyTo` | string | No | Message ID this is replying to. If it matches an outstanding `request_input`, resolves that call directly. |
-| `threadId` | string | No | Thread identifier (one implicit thread per session; multi-thread support is post-v1 — see [Spec §21.4](https://github.com/lennylabs/lenny/blob/main/spec/21_planned-post-v1.md)) |
+| `threadId` | string | No | Thread identifier (one implicit thread per session; multi-thread support is post-v1 — see [Spec TESTING.md §21.4](https://github.com/lennylabs/lenny/blob/main/spec/21_planned-post-v1.md)) |
 
 **Output schema:**
 
@@ -486,6 +512,7 @@ Possible `status` values: `delivered`, `queued`, `dropped`, `expired`, `rate_lim
 | `DUPLICATE_MESSAGE_ID` | Sender-supplied message ID already exists |
 | `INVALID_DELIVERY_VALUE` | Unknown `delivery` value |
 | `TARGET_NOT_READY` | Session is in a pre-running state with no inbox |
+| `QUOTA_EXCEEDED` | Session is `suspended` and a concurrent-session limit it counts toward is full; the message is neither held nor delivered |
 
 **Example:**
 
@@ -576,7 +603,7 @@ Query the current state of a session, including whether it is suspended, awaitin
 }
 ```
 
-Possible `status` values: `created`, `finalizing`, `ready`, `starting`, `running`, `suspended`, `resume_pending`, `awaiting_client_action`, `completed`, `failed`, `cancelled`, `expired`.
+Possible `status` values: `created`, `finalizing`, `ready`, `starting`, `running`, `input_required`, `suspended`, `resume_pending`, `awaiting_client_action`, `completed`, `failed`, `cancelled`, `expired`.
 
 **Error codes:**
 
@@ -816,7 +843,7 @@ Returns the artifact content as an MCP resource with the appropriate MIME type. 
 
 ### `terminate_session`
 
-End a session. Valid in any non-terminal state. Triggers graceful shutdown of the agent runtime.
+End a session. Valid in any non-terminal state. Ending a session ends the session and sends the runtime process no signal.
 
 **Input schema:**
 
@@ -845,9 +872,16 @@ End a session. Valid in any non-terminal state. Triggers graceful shutdown of th
 
 ### `resume_session`
 
-Resume a suspended or paused session. Behavior depends on the session state:
-- `suspended`: Resumes the agent runtime.
-- `awaiting_client_action`: Triggers pod re-acquisition and session restoration.
+Resume a session in `awaiting_client_action` or a `suspended` session. The REST equivalent is `POST /v1/sessions/{id}/resume`.
+
+The gateway recovers a session automatically after a pod or stream failure: the session enters `resume_pending`, and the gateway's resume driver restores it onto a replacement pod. A session whose automatic retries are exhausted, or whose `maxResumeWindowSeconds` resume window elapses, moves to `awaiting_client_action`. This tool is the client override. A `send_message` call to a `suspended` session also resumes it, whatever its `delivery` value.
+
+The tool returns the session in its new state. Behavior depends on the session state:
+- `suspended`, with its pod still held: the session moves to `running` on the same pod.
+- `suspended`, with its pod released: the session moves to `resume_pending`, and the resume driver restores it onto a replacement pod. The restore's outcome arrives on the event stream as a `status_change` event.
+- `awaiting_client_action`: the session moves to `resume_pending`, and the resume driver restores it onto a replacement pod. The restore's outcome arrives on the event stream as a `status_change` event.
+
+A `suspended` session does not count toward the concurrent-session limits, and resuming it counts it again. When a limit the session counts toward is full, the tool returns the `QUOTA_EXCEEDED` error with the details a refused session creation carries, and the session stays `suspended`.
 
 **Input schema:**
 
@@ -860,7 +894,7 @@ Resume a suspended or paused session. Behavior depends on the session state:
 ```json
 {
   "sessionId": "sess_01J5K9...",
-  "status": "running",
+  "status": "resume_pending",
   "resumedAt": "2026-04-09T10:25:00Z"
 }
 ```
@@ -871,6 +905,7 @@ Resume a suspended or paused session. Behavior depends on the session state:
 |:-----|:-----|
 | `RESOURCE_NOT_FOUND` | Session does not exist |
 | `INVALID_STATE_TRANSITION` | Session not in a resumable state |
+| `QUOTA_EXCEEDED` | Session is `suspended` and a concurrent-session limit it counts toward is full |
 
 ---
 
@@ -998,7 +1033,7 @@ CI includes contract tests that call the REST endpoint and every built-in adapte
 
 ### 5. REST-only operations
 
-The following REST endpoints have **no MCP tool equivalents**: `derive`, `replay`, `extend-retention`, `eval`, `tool-use/{tool_call_id}/approve`, `tool-use/{tool_call_id}/deny`, `elicitations/{elicitation_id}/respond`, and `elicitations/{elicitation_id}/dismiss`. The first four are developer workflow or administrative operations typically driven by CI pipelines or human operators, not by agents mid-session. The tool-use approval and elicitation response endpoints carry no MCP tool equivalents because MCP clients receive and resolve these prompts through the native MCP Elicitation feature — the gateway surfaces pending elicitations and tool-approval requests as MCP elicitation exchanges on the session's streaming transport, and the client's response flows back over that same channel. MCP-first clients needing the REST-only operations should use the REST API directly.
+The following REST endpoints have **no MCP tool equivalents**: `derive`, `replay`, `extend-retention`, `eval`, `tool-use/{toolCallId}/approve`, `tool-use/{toolCallId}/deny`, `elicitations/{elicitationId}/respond`, and `elicitations/{elicitationId}/dismiss`. The first four are developer workflow or administrative operations typically driven by CI pipelines or human operators, not by agents mid-session. The tool-use approval and elicitation response endpoints carry no MCP tool equivalents because MCP clients receive and resolve these prompts through the native MCP Elicitation feature — the gateway surfaces pending elicitations and tool-approval requests as MCP elicitation exchanges on the session's streaming transport, and the client's response flows back over that same channel. MCP-first clients needing the REST-only operations should use the REST API directly.
 
 ---
 
@@ -1013,6 +1048,7 @@ Lenny sessions map to MCP Tasks as follows:
 | `ready` | Task in progress (setup complete) |
 | `starting` | Task in progress |
 | `running` | Task in progress (streaming output) |
+| `input_required` | Task requires input |
 | `suspended` | Task paused |
 | `resume_pending` | Task in progress (resuming) |
 | `awaiting_client_action` | Task requires input |
@@ -1021,6 +1057,6 @@ Lenny sessions map to MCP Tasks as follows:
 | `cancelled` | Task cancelled |
 | `expired` | Task failed (lease/budget exhausted) |
 
-When a session transitions to `running`, the attached MCP Task streams `OutputPart` arrays translated to MCP content blocks (TextContent, ImageContent, ResourceContent) using the [Translation Fidelity Matrix](internal.html#translation-fidelity-matrix) rules.
+When a session transitions to `running`, the attached MCP Task streams `MessagePart` arrays translated to MCP content blocks (TextContent, ImageContent, ResourceContent) using the [Translation Fidelity Matrix](internal.html#translation-fidelity-matrix) rules.
 
 Elicitation requests from the agent are surfaced as MCP Elicitation prompts, enabling the client to collect human input and relay it back to the session.

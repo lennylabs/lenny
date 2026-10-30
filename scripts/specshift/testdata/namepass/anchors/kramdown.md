@@ -1,0 +1,2 @@
+## Lifecycle
+{: #lifecycle-channel }

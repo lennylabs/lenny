@@ -3,92 +3,619 @@
 // SPDX-License-Identifier: MIT
 
 // Package workspaceplan_test is the Tier 3 contract suite for the
-// WorkspacePlan schema (schemas/workspaceplan-v1.json). Phase 1 ships
-// the schema; Phase 2 implements the gateway-side WorkspacePlan parser
-// and validator that this suite exercises end-to-end via REST. The
-// stubs below skip with §17.9 not-yet-applicable diagnoses until that
-// parser exists.
+// WorkspacePlan schema (schemas/workspaceplan-v1.json) and its parser
+// (pkg/workspaceplan). The suite exercises the wire contract end to
+// end: it feeds the parser canonical JSON documents drawn from
+// schemas/examples and asserts the typed plan, warnings, and §14
+// `400 WORKSPACE_PLAN_INVALID` envelope conform to the spec.
+//
+// The suite is a wire-level contract: it verifies the parser's
+// response to documents identical to those a REST client would send,
+// and it covers each §14 validation rule the spec calls out (modes,
+// paths, gitClone, gateway-written fields, unknown source-type
+// pass-through, schemaVersion gate). The unit tests under
+// pkg/workspaceplan exercise the parser internals; this suite owns
+// the contract surface against the canonical example fixtures.
 package workspaceplan_test
 
 import (
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 
-// spec: 14
-// diagnosis: pkg/workspaceplan/ does not yet exist. Phase 2 implements
-//
-//	a parser that consumes a WorkspacePlan JSON document and
-//	returns a typed plan, materialising sources in the
-//	declared order. This test will round-trip every example
-//	under schemas/examples/workspaceplan.*.json through the
-//	parser.
+// repoRoot walks up from the working directory to the module root
+// (the directory holding go.mod). It is the canonical anchor every
+// contract-tier test uses to locate the committed schemas/examples
+// corpus.
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	wd, _ := os.Getwd()
+	for d := wd; d != "/" && d != ""; d = filepath.Dir(d) {
+		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
+			return d
+		}
+	}
+	t.Fatalf("no go.mod found from %s", wd)
+	return ""
+}
+
+// readExample loads a canonical workspaceplan example by base name
+// from schemas/examples and returns its raw bytes.
+func readExample(t *testing.T, name string) []byte {
+	t.Helper()
+	path := filepath.Join(repoRoot(t), "schemas", "examples", name)
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return body
+}
+
+// expectValidationError fails the test unless the error is a §14
+// *ValidationError whose Reason or one of its SubErrs matches the
+// supplied reason string.
+func expectValidationError(t *testing.T, err error, wantReason string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected validation error %q, got nil", wantReason)
+	}
+	var ve *workspaceplan.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("expected *ValidationError, got %T (%v)", err, err)
+	}
+	if ve.Reason == wantReason {
+		return
+	}
+	for _, sub := range ve.SubErrs {
+		if sub.Reason == wantReason {
+			return
+		}
+	}
+	t.Fatalf("expected reason %q, got reason %q (subErrs=%+v)", wantReason, ve.Reason, ve.SubErrs)
+}
+
+// spec: §14
+// diagnosis: the parser must accept every canonical WorkspacePlan
+// fixture in schemas/examples/. The minimal and full examples
+// represent the §14 wire contract; either rejecting a canonical
+// example or losing a recognised source on a round trip means the
+// parser drifted from the documented schema and the gateway will
+// reject a payload the spec promises to accept.
 func TestParserAcceptsCanonicalPlans(t *testing.T) {
-	t.Skip("not-yet-applicable: phase-2 — pkg/workspaceplan parser per spec §14")
+	fixtures := []struct {
+		name        string
+		wantSources int
+		wantWarn    int
+	}{
+		// The minimal plan: a single mkdir, no warnings.
+		{name: "workspaceplan.minimal.json", wantSources: 1, wantWarn: 0},
+		// The full plan: gitClone + inlineFile + uploadArchive + mkdir.
+		// No collisions because each writes a distinct path.
+		{name: "workspaceplan.full.json", wantSources: 4, wantWarn: 0},
+	}
+	for _, fx := range fixtures {
+		t.Run(fx.name, func(t *testing.T) {
+			body := readExample(t, fx.name)
+			plan, warnings, err := workspaceplan.Parse(body)
+			if err != nil {
+				t.Fatalf("Parse %s: %v", fx.name, err)
+			}
+			if len(plan.Sources) != fx.wantSources {
+				t.Errorf("%s: got %d sources, want %d", fx.name, len(plan.Sources), fx.wantSources)
+			}
+			if len(warnings) != fx.wantWarn {
+				t.Errorf("%s: got %d warnings, want %d: %+v", fx.name, len(warnings), fx.wantWarn, warnings)
+			}
+			if plan.SchemaVersion != workspaceplan.SchemaVersion {
+				t.Errorf("%s: schemaVersion = %d, want %d", fx.name, plan.SchemaVersion, workspaceplan.SchemaVersion)
+			}
+		})
+	}
 }
 
-// spec: 14
-// diagnosis: Path-collision warnings (`workspace_plan_path_collision`)
-//
-//	must be emitted when two sources write to the same path.
-//	Last-writer-wins. Phase 2 ships the collision detector.
+// spec: §14, §15.1 WorkspacePlan JSON Schema
+// diagnosis: the hand-rolled parser (pkg/workspaceplan.Parse) and the
+// published JSON Schema (schemas/workspaceplan-v1.json) disagree on a
+// canonical fixture. The §15.1 contract is that a WorkspacePlan is
+// governed by the published JSON Schema; the gateway validates with the
+// hand-rolled parser instead. Both surfaces must agree on every
+// canonical fixture, or a client whose payload passes the schema is
+// rejected by the gateway (or the reverse). This table is the
+// fixture-drift guard for F-CS5: it routes all six canonical
+// schemas/examples/ fixtures through the parser and asserts each
+// accept/reject matches the tier-0 schema validator's expectValid flag
+// in tests/tier0_static/schemas_test.go (TestWorkspacePlanExamplesValidate),
+// so a fixture file can no longer drift from the parser uncaught.
+// The setuid, unknown-field, and unknown-source-type fixtures reach the
+// parser only through this table; previously they were exercised solely
+// against the schema validator and against inline-JSON copies in the
+// parser tests, which a fixture edit could not invalidate.
+func TestParserMatchesSchemaValidatorOnCanonicalFixtures_spec_15_1(t *testing.T) {
+	// expectValid mirrors the tier-0 truth table in
+	// TestWorkspacePlanExamplesValidate (schemas_test.go). The parser is
+	// a hand-rolled superset validator: it must reject every fixture the
+	// schema rejects and accept every fixture the schema accepts. The
+	// unknown-source-type fixture is accepted by both surfaces (the
+	// open-string source.type discriminator passes the unknown variant
+	// through with a warning rather than a hard reject).
+	fixtures := []struct {
+		name        string
+		expectValid bool
+	}{
+		{"workspaceplan.minimal.json", true},
+		{"workspaceplan.full.json", true},
+		{"workspaceplan.invalid-setuid.json", false},
+		{"workspaceplan.invalid-ssh.json", false},
+		{"workspaceplan.unknown-source-type.json", true},
+		{"workspaceplan.invalid-unknown-field.json", false},
+	}
+	for _, fx := range fixtures {
+		t.Run(fx.name, func(t *testing.T) {
+			body := readExample(t, fx.name)
+			_, _, err := workspaceplan.Parse(body)
+			if fx.expectValid && err != nil {
+				t.Errorf("%s: schema accepts it but the parser rejected it: %v", fx.name, err)
+			}
+			if !fx.expectValid {
+				if err == nil {
+					t.Errorf("%s: schema rejects it but the parser accepted it; a §14 invariant is missing from the parser", fx.name)
+				} else {
+					var ve *workspaceplan.ValidationError
+					if !errors.As(err, &ve) {
+						t.Errorf("%s: parser rejection must be a *ValidationError (the §14 400 WORKSPACE_PLAN_INVALID envelope), got %T (%v)", fx.name, err, err)
+					}
+				}
+			}
+		})
+	}
+}
+
+// spec: §14
+// diagnosis: §14 specifies that two sources writing to the same
+// workspace-relative path produce a `workspace_plan_path_collision`
+// warning with last-writer-wins semantics. A missing warning would
+// hide a downstream materialisation surprise; the gateway echoes the
+// warning to the client per §14 "consumer-warning enum".
 func TestParserEmitsPathCollisionWarning(t *testing.T) {
-	t.Skip("not-yet-applicable: phase-2 — collision warning per spec §14")
+	body := `{
+		"schemaVersion": 1,
+		"sources": [
+			{"type": "inlineFile", "path": "shared/file", "content": "first"},
+			{"type": "inlineFile", "path": "shared/file", "content": "second"}
+		]
+	}`
+	plan, warnings, err := workspaceplan.Parse([]byte(body))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(plan.Sources) != 2 {
+		t.Fatalf("sources: got %d, want 2", len(plan.Sources))
+	}
+	// Exactly one warning, of code workspace_plan_path_collision,
+	// against the second source (last-writer-wins indexed at j).
+	var collisions []workspaceplan.Warning
+	for _, w := range warnings {
+		if w.Code == workspaceplan.WarnPathCollision {
+			collisions = append(collisions, w)
+		}
+	}
+	if len(collisions) != 1 {
+		t.Fatalf("collision warnings: got %d, want 1; warnings=%+v", len(collisions), warnings)
+	}
+	if collisions[0].SourceIndex != 1 {
+		t.Errorf("collision warning sourceIndex: got %d, want 1 (last writer)", collisions[0].SourceIndex)
+	}
+	if collisions[0].Field != "path" {
+		t.Errorf("collision warning field: got %q, want %q", collisions[0].Field, "path")
+	}
 }
 
-// spec: 14
-// diagnosis: Setuid/setgid file modes must be rejected with
-//
-//	400 WORKSPACE_PLAN_INVALID, reason `setuid_setgid_prohibited`.
-//	Sticky-on-file likewise. Tier 0 schema validation already
-//	rejects on shape; this test exercises the gateway's
-//	full-validation layer where the error code is attached.
+// spec: §14 — workspace_plan_path_collision warning carries
+// the structured fields `path`, `winningSourceIndex`, and
+// `losingSourceIndex` so consumers can distinguish overwriter from
+// overwritten without re-parsing the plan. F-14.1.23.
+// diagnosis: a failure means the path-collision warning omits or
+// mislabels its structured fields, so consumers cannot tell the
+// overwriting source from the overwritten one without re-parsing.
+func TestPathCollisionWarningCarriesStructuredFields_spec_14_338(t *testing.T) {
+	body := `{
+		"schemaVersion": 1,
+		"sources": [
+			{"type": "inlineFile", "path": "shared/file", "content": "first"},
+			{"type": "inlineFile", "path": "shared/file", "content": "second"}
+		]
+	}`
+	_, warnings, err := workspaceplan.Parse([]byte(body))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(warnings) != 1 || warnings[0].Code != workspaceplan.WarnPathCollision {
+		t.Fatalf("collision warning: got %+v", warnings)
+	}
+	w := warnings[0]
+	if w.Path != "shared/file" {
+		t.Errorf("warning.path: got %q, want %q", w.Path, "shared/file")
+	}
+	if w.WinningSourceIndex == nil || *w.WinningSourceIndex != 1 {
+		t.Errorf("warning.winningSourceIndex: got %v, want 1", w.WinningSourceIndex)
+	}
+	if w.LosingSourceIndex == nil || *w.LosingSourceIndex != 0 {
+		t.Errorf("warning.losingSourceIndex: got %v, want 0", w.LosingSourceIndex)
+	}
+	// The structured fields must round-trip via JSON so the gateway
+	// can forward them to the client per §14 "consumer-warning enum".
+	out, err := json.Marshal(w)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	s := string(out)
+	for _, want := range []string{
+		`"path":"shared/file"`,
+		`"winningSourceIndex":1`,
+		`"losingSourceIndex":0`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("warning JSON missing %q; got %s", want, s)
+		}
+	}
+}
+
+// spec: §14 — the WarningCode constants the parser emits MUST match
+// the spec catalog character-for-character so observability sinks
+// (events, dashboards, alerts) key on the spec-named values. A future
+// rename would silently diverge from the spec; this test traps the
+// drift at compile time. F-14.1.22.
+// diagnosis: a failure means a parser WarningCode constant no longer
+// matches the spec catalog character-for-character, so observability
+// sinks keyed on the spec-named value would silently miss the warning.
+func TestWarningCodeCatalogMatchesSpec_spec_14(t *testing.T) {
+	// The closed §14 catalog.
+	want := map[string]workspaceplan.WarningCode{
+		"workspace_plan_unknown_source_type":   workspaceplan.WarnUnknownSourceType,
+		"workspace_plan_strip_components_skip": workspaceplan.WarnStripComponentsSkip,
+		"workspace_plan_path_collision":        workspaceplan.WarnPathCollision,
+	}
+	for specName, got := range want {
+		if string(got) != specName {
+			t.Errorf("WarningCode for %q: got %q, want exact match", specName, string(got))
+		}
+	}
+	// Cross-check the corpus from the spec wire side: every code the
+	// parser emits today is one of the catalog members. The
+	// path-collision branch is exercised by
+	// TestPathCollisionWarningCarriesStructuredFields above; the
+	// unknown-type branch is exercised by TestParserSkipsUnknownSourceType
+	// later in this file; the strip-components-skip branch is emitted
+	// by the materializer (pkg/adapter/workspace) and covered by
+	// pkg/adapter/workspace/strip_skip_warnings_test.go.
+}
+
+// spec: §14 — gitClone.path default is `.` (the repo root).
+// The parser must surface the default explicitly so the round-tripped
+// plan stored in Postgres carries the canonical value and downstream
+// consumers do not need to mirror the spec default themselves.
+// F-14.1.21.
+// diagnosis: a failure means the parser does not surface the gitClone.path
+// default of `.`, so the round-tripped plan would omit the canonical
+// value and force downstream consumers to mirror the spec default.
+func TestGitCloneDefaultPathIsDot_spec_14_91(t *testing.T) {
+	body := `{
+		"schemaVersion": 1,
+		"sources": [
+			{"type": "gitClone", "url": "https://example.com/a.git", "ref": "main"}
+		]
+	}`
+	plan, _, err := workspaceplan.Parse([]byte(body))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(plan.Sources) != 1 {
+		t.Fatalf("sources: got %d, want 1", len(plan.Sources))
+	}
+	gc, ok := plan.Sources[0].Variant.(workspaceplan.GitClone)
+	if !ok {
+		t.Fatalf("variant: got %T, want GitClone", plan.Sources[0].Variant)
+	}
+	if gc.PathField != "." {
+		t.Errorf("gitClone.path default: got %q, want %q", gc.PathField, ".")
+	}
+	if got := plan.Sources[0].Variant.Path(); got != "." {
+		t.Errorf("variant.Path(): got %q, want %q", got, ".")
+	}
+	// Explicit non-default value must round-trip unchanged.
+	body = `{
+		"schemaVersion": 1,
+		"sources": [
+			{"type": "gitClone", "url": "https://example.com/a.git", "ref": "main", "path": "vendor/a"}
+		]
+	}`
+	plan, _, err = workspaceplan.Parse([]byte(body))
+	if err != nil {
+		t.Fatalf("Parse (explicit path): %v", err)
+	}
+	gc = plan.Sources[0].Variant.(workspaceplan.GitClone)
+	if gc.PathField != "vendor/a" {
+		t.Errorf("gitClone.path explicit: got %q, want %q", gc.PathField, "vendor/a")
+	}
+}
+
+// spec: §14 mode-field notes
+// diagnosis: §14 prohibits setuid (04xxx) and setgid (02xxx) on every
+// source variant. The parser must reject these with the §14
+// `setuid_setgid_prohibited` reason in the
+// `400 WORKSPACE_PLAN_INVALID` envelope. A payload that slipped past
+// this check would let a session materialise a file capable of
+// privilege escalation when executed in the sandbox.
 func TestParserRejectsSetuidMode(t *testing.T) {
-	t.Skip("not-yet-applicable: phase-2 — error-code attachment per spec §14")
+	// Lead with the canonical schemas/examples fixture so the parser is
+	// exercised against the exact wire payload the tier-0 schema
+	// validator rejects (F-CS5). The fixture's mode "4755" omits the
+	// leading zero the parser's octal regex requires, so the parser
+	// rejects it as invalid_mode_format rather than
+	// setuid_setgid_prohibited; either is a §14 400 WORKSPACE_PLAN_INVALID
+	// rejection, which is what the tier-0 expectValid=false flag asserts.
+	fixture := readExample(t, "workspaceplan.invalid-setuid.json")
+	if _, _, err := workspaceplan.Parse(fixture); err == nil {
+		t.Fatalf("setuid fixture must be rejected; the parser accepted it")
+	}
+
+	// Use the canonical octal-prefixed form the parser accepts; the
+	// regex requires a leading zero (see §14 mode-string format). This
+	// inline case pins the specific setuid_setgid_prohibited reason the
+	// fixture's leading-zero-less mode cannot exercise.
+	body := `{
+		"schemaVersion": 1,
+		"sources": [
+			{"type": "inlineFile", "path": "evil", "content": "exit 0", "mode": "04755"}
+		]
+	}`
+	_, _, err := workspaceplan.Parse([]byte(body))
+	expectValidationError(t, err, workspaceplan.ReasonSetuidSetgidProhibited)
+
+	// Setgid follows the same rule on the same variant.
+	body = `{
+		"schemaVersion": 1,
+		"sources": [
+			{"type": "inlineFile", "path": "evil", "content": "exit 0", "mode": "02755"}
+		]
+	}`
+	_, _, err = workspaceplan.Parse([]byte(body))
+	expectValidationError(t, err, workspaceplan.ReasonSetuidSetgidProhibited)
+
+	// uploadFile is subject to the same prohibition.
+	body = `{
+		"schemaVersion": 1,
+		"sources": [
+			{"type": "uploadFile", "path": "evil", "uploadRef": "lenny-blob://abc", "mode": "04755"}
+		]
+	}`
+	_, _, err = workspaceplan.Parse([]byte(body))
+	expectValidationError(t, err, workspaceplan.ReasonSetuidSetgidProhibited)
 }
 
-// spec: 14
-// diagnosis: gitClone.url must reject non-HTTPS protocols. Tier 0
-//
-//	schema validation rejects on pattern; this test exercises
-//	the gateway's reason-code attachment.
+// spec: §14 gitClone
+// diagnosis: §14 restricts gitClone.url to HTTPS in v1; the
+// canonical invalid-ssh fixture is the wire payload an SSH client
+// would send. The parser must reject it with the §14 `git_non_https`
+// reason. Accepting an SSH URL would bypass the §13.5
+// credential-lease auth path that gates HTTPS clones.
 func TestParserRejectsSSHGitURL(t *testing.T) {
-	t.Skip("not-yet-applicable: phase-2 — gitClone protocol guard per spec §14")
+	body := readExample(t, "workspaceplan.invalid-ssh.json")
+	_, _, err := workspaceplan.Parse(body)
+	// The SSH form (git@github.com:acme/example.git) is not a valid
+	// URI under url.Parse; the parser surfaces it as
+	// `git_invalid_url`. Either reason satisfies the §14 "HTTPS only"
+	// rule.
+	if err == nil {
+		t.Fatalf("expected validation error on SSH gitClone, got nil")
+	}
+	var ve *workspaceplan.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("expected *ValidationError, got %T (%v)", err, err)
+	}
+	ok := false
+	for _, sub := range ve.SubErrs {
+		if sub.Reason == workspaceplan.ReasonGitNonHTTPS || sub.Reason == workspaceplan.ReasonGitInvalidURL {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		t.Fatalf("expected git_non_https or git_invalid_url, got subErrs=%+v", ve.SubErrs)
+	}
+
+	// A plain `git://` URL also fails the HTTPS-only contract with a
+	// `git_non_https` reason.
+	body = []byte(`{
+		"schemaVersion": 1,
+		"sources": [
+			{"type": "gitClone", "url": "git://example.com/repo.git", "ref": "main"}
+		]
+	}`)
+	_, _, err = workspaceplan.Parse(body)
+	expectValidationError(t, err, workspaceplan.ReasonGitNonHTTPS)
 }
 
-// spec: 14
-// diagnosis: A gitClone with resolvedCommitSha set in the request must be
-//
-//	rejected with 400 WORKSPACE_PLAN_INVALID,
-//	reason `gateway_written_field`.
+// spec: §14 gateway-written fields
+// diagnosis: §14 names `gitClone.resolvedCommitSha` as a
+// gateway-written field. A client supplying this field must be
+// rejected with the §14 `gateway_written_field` reason; the gateway
+// pins the commit at session creation and writes it back through the
+// stored-plan path. ParseStored accepts the field for read-back; the
+// public Parse rejects it.
 func TestParserRejectsClientResolvedCommitSha(t *testing.T) {
-	t.Skip("not-yet-applicable: phase-2 — resolvedCommitSha guard per spec §14")
+	body := `{
+		"schemaVersion": 1,
+		"sources": [
+			{
+				"type": "gitClone",
+				"url": "https://github.com/example/repo.git",
+				"ref": "main",
+				"resolvedCommitSha": "0123456789abcdef0123456789abcdef01234567"
+			}
+		]
+	}`
+	_, _, err := workspaceplan.Parse([]byte(body))
+	expectValidationError(t, err, workspaceplan.ReasonGatewayWrittenField)
+
+	// ParseStored accepts the same payload: the gateway reads back a
+	// previously-pinned plan from storage and must be able to round
+	// trip the field it wrote.
+	_, _, err = workspaceplan.ParseStored([]byte(body))
+	if err != nil {
+		t.Errorf("ParseStored rejected a gateway-written field on read-back: %v", err)
+	}
 }
 
-// spec: 14.1
-// diagnosis: A plan with schemaVersion > known must be rejected with
-//
-//	422 WORKSPACE_PLAN_SCHEMA_UNSUPPORTED. Phase 2 ships the
-//	version-gate.
+// spec: §14.1
+// diagnosis: §14.1 commits the gateway to a strict schemaVersion
+// gate. A plan with `schemaVersion > known` must be rejected with
+// `WORKSPACE_PLAN_SCHEMA_UNSUPPORTED` so a future client cannot
+// silently downgrade onto an older gateway. The parser maps this to
+// the §14 `unsupported_schema_version` reason; the gateway echoes
+// `422 WORKSPACE_PLAN_SCHEMA_UNSUPPORTED` upstream.
 func TestParserRejectsUnsupportedSchemaVersion(t *testing.T) {
-	t.Skip("not-yet-applicable: phase-2 — schema-version gate per spec §14.1")
+	body := `{"schemaVersion": 2, "sources": []}`
+	_, _, err := workspaceplan.Parse([]byte(body))
+	expectValidationError(t, err, workspaceplan.ReasonUnsupportedSchemaVersion)
+
+	body = `{"schemaVersion": 9999, "sources": []}`
+	_, _, err = workspaceplan.Parse([]byte(body))
+	expectValidationError(t, err, workspaceplan.ReasonUnsupportedSchemaVersion)
 }
 
-// spec: 14.1 (proto3 default 0 must be rejected at ingress)
+// spec: §14.1 (proto3 default 0 must be rejected at ingress)
 // diagnosis: WorkspacePlan.schema_version is proto3 int32 with default
-//
-//	0; a producer that forgets to stamp the version sends 0
-//	on the wire. The gateway validator MUST reject this with
-//	400 WORKSPACE_PLAN_INVALID rather than silently treating
-//	it as "unset → v1".
+// 0; a producer that forgets to stamp the version sends 0 on the
+// wire. The parser MUST reject this with the §14
+// `zero_schema_version` reason; silently treating 0 as "unset → v1"
+// would let a future schemaVersion=0 wire format collide with the v1
+// document.
 func TestParserRejectsZeroSchemaVersion(t *testing.T) {
-	t.Skip("not-yet-applicable: phase-2 — schema-version-zero guard per spec §14.1 / schemas/lenny-adapter.proto")
+	body := `{"schemaVersion": 0, "sources": []}`
+	_, _, err := workspaceplan.Parse([]byte(body))
+	expectValidationError(t, err, workspaceplan.ReasonZeroSchemaVersion)
 }
 
-// spec: 14
-// diagnosis: An unknown source.type must be skipped, not rejected, with a
-//
-//	workspace_plan_unknown_source_type warning emitted. Phase 2
-//	ships the open-string discriminator with pass-through.
+// spec: §14
+// diagnosis: §14 makes the source.type discriminator an open string:
+// an unknown type passes through with a
+// `workspace_plan_unknown_source_type` warning rather than a hard
+// reject. The consumer is then free to skip the unknown variant. A
+// hard reject would break forward compatibility for runtimes that
+// advertise additional source types after the gateway is deployed.
 func TestParserSkipsUnknownSourceType(t *testing.T) {
-	t.Skip("not-yet-applicable: phase-2 — unknown-type pass-through per spec §14")
+	// The unknown variant is the only source in the plan; mixing
+	// known and unknown variants in the same plan hits a separate
+	// parser code path (path-collision iteration) that is out of
+	// scope for the contract surface this test covers.
+	//
+	// Drive the canonical schemas/examples fixture so the parser is
+	// exercised against the exact payload the tier-0 schema validator
+	// accepts (F-CS5); the fixture is the {"type":"futureKind",...}
+	// open-string-discriminator wire form.
+	body := readExample(t, "workspaceplan.unknown-source-type.json")
+	plan, warnings, err := workspaceplan.Parse(body)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(plan.Sources) != 1 {
+		t.Fatalf("sources: got %d, want 1", len(plan.Sources))
+	}
+	if plan.Sources[0].Type != "futureKind" {
+		t.Errorf("sources[0].type: got %q, want futureKind", plan.Sources[0].Type)
+	}
+	if plan.Sources[0].Variant != nil {
+		t.Errorf("sources[0].variant: want nil for unknown type, got %T", plan.Sources[0].Variant)
+	}
+	// The raw map round-trips the unknown variant's extra fields so
+	// the consumer can inspect what the client sent.
+	if _, ok := plan.Sources[0].Raw["futureProp"]; !ok {
+		t.Errorf("sources[0].raw lost futureProp: %v", plan.Sources[0].Raw)
+	}
+
+	// Exactly one warning of code workspace_plan_unknown_source_type,
+	// targeting the first (and only) source.
+	var unknownWarns []workspaceplan.Warning
+	for _, w := range warnings {
+		if w.Code == workspaceplan.WarnUnknownSourceType {
+			unknownWarns = append(unknownWarns, w)
+		}
+	}
+	if len(unknownWarns) != 1 {
+		t.Fatalf("unknown-source warnings: got %d, want 1; warnings=%+v", len(unknownWarns), warnings)
+	}
+	if unknownWarns[0].SourceIndex != 0 {
+		t.Errorf("unknown-source warning sourceIndex: got %d, want 0", unknownWarns[0].SourceIndex)
+	}
+	if !strings.Contains(unknownWarns[0].Message, "futureKind") {
+		t.Errorf("unknown-source warning message should mention the unknown type; got %q", unknownWarns[0].Message)
+	}
+
+	// JSON-encode the warning to confirm the wire shape carries the
+	// §14 fields the gateway echoes to the client.
+	out, err := json.Marshal(unknownWarns[0])
+	if err != nil {
+		t.Fatalf("marshal warning: %v", err)
+	}
+	if !strings.Contains(string(out), `"workspace_plan_unknown_source_type"`) {
+		t.Errorf("warning JSON missing code: %s", out)
+	}
+}
+
+// publishedUploadRefDescription is the description the published
+// WorkspacePlan schema carries on every uploadRef field.
+const publishedUploadRefDescription = "Opaque uploadRef returned by POST /v1/sessions/{id}/upload or /upload-archive for the session the plan binds to."
+
+// spec: §14 (Workspace Plan Schema, uploadRef field note), §14.1
+// (WorkspacePlan Schema Versioning, Plan binding).
+// diagnosis: a failure here means the published WorkspacePlan schema
+// again tells a client an uploadRef is a lenny-blob:// URI or an upload
+// id, leaves an upload source's uploadRef undescribed, or places plan
+// binding and ref resolution at session creation or pod claim. A plan
+// names only the opaque uploadRef the session's own upload returned, the
+// plan may bind at finalize, and gitClone.ref resolves when the plan
+// binds. Restore the descriptions in schemas/workspaceplan-v1.json.
+func TestPublishedSchemaDescribesOpaqueUploadRefAndBindTime(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "schemas", "workspaceplan-v1.json"))
+	if err != nil {
+		t.Fatalf("read schemas/workspaceplan-v1.json: %v", err)
+	}
+	var schema struct {
+		Description string `json:"description"`
+		Defs        map[string]struct {
+			Properties map[string]struct {
+				Description string `json:"description"`
+			} `json:"properties"`
+		} `json:"$defs"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("decode schemas/workspaceplan-v1.json: %v", err)
+	}
+
+	for _, source := range []string{"uploadFile", "uploadArchive"} {
+		def, ok := schema.Defs[source]
+		if !ok {
+			t.Errorf("published schema has no $defs.%s", source)
+			continue
+		}
+		if got := def.Properties["uploadRef"].Description; got != publishedUploadRefDescription {
+			t.Errorf("$defs.%s.uploadRef description = %q, want %q", source, got, publishedUploadRefDescription)
+		}
+	}
+
+	ref := schema.Defs["gitClone"].Properties["ref"].Description
+	if !strings.Contains(ref, "when the plan binds") || strings.Contains(ref, "at session creation") {
+		t.Errorf("$defs.gitClone.ref description = %q, want resolution when the plan binds", ref)
+	}
+	if strings.Contains(schema.Description, "pod claim time") ||
+		!strings.Contains(schema.Description, "the finalize request body's workspacePlan") {
+		t.Errorf("top-level description = %q, want both plan carriers and no pod-claim timing", schema.Description)
+	}
 }

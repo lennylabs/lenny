@@ -45,6 +45,20 @@ func (s Status) IsValid() bool {
 // participate.
 func (s Status) IsRoutable() bool { return s == StatusActive }
 
+// CanTransitionTo reports whether an experiment may move from status s
+// to next per the §10.7 lifecycle: active and paused may move to each
+// other or to concluded, and a concluded experiment is immutable.
+func (s Status) CanTransitionTo(next Status) bool {
+	switch s {
+	case StatusActive:
+		return next == StatusPaused || next == StatusConcluded
+	case StatusPaused:
+		return next == StatusActive || next == StatusConcluded
+	default: // concluded — immutable
+		return false
+	}
+}
+
 // TargetingMode is the §10.7 targeting.mode enum.
 type TargetingMode string
 
@@ -116,6 +130,46 @@ func (p Propagation) IsValid() bool {
 	return false
 }
 
+// ContextPropagation is the outcome of applying a §10.7 propagation
+// mode to a recursive-delegation child.
+type ContextPropagation struct {
+	// UseParentContext is true when the child must adopt the
+	// ExperimentID/VariantID below verbatim and the ExperimentRouter is
+	// skipped — the inherit and control modes. It is false for the
+	// independent mode, where the caller routes the child afresh.
+	UseParentContext bool
+	// ExperimentID and VariantID are the child's enrollment when
+	// UseParentContext is true. The child records this context with
+	// inherited=true.
+	ExperimentID string
+	VariantID    string
+}
+
+// PropagateContext applies a §10.7 experiment-context propagation mode
+// to a delegation child whose parent is enrolled in parentExperimentID
+// at parentVariantID. Under `inherit` the child receives the parent's
+// enrollment verbatim; under `control` the child is forced onto the
+// reserved control variant of the parent's experiment; under
+// `independent` the child is routed afresh (UseParentContext false).
+func PropagateContext(parentExperimentID, parentVariantID string, mode Propagation) ContextPropagation {
+	switch mode {
+	case PropagationInherit:
+		return ContextPropagation{
+			UseParentContext: true,
+			ExperimentID:     parentExperimentID,
+			VariantID:        parentVariantID,
+		}
+	case PropagationControl:
+		return ContextPropagation{
+			UseParentContext: true,
+			ExperimentID:     parentExperimentID,
+			VariantID:        ControlVariantID,
+		}
+	default: // independent — the child is routed independently.
+		return ContextPropagation{UseParentContext: false}
+	}
+}
+
 // ControlVariantID is the §10.7 reserved variant identifier the
 // gateway auto-assigns to sessions that do not land in any named
 // variant. Deployers cannot define a variant with this id; attempts
@@ -126,7 +180,12 @@ const ControlVariantID = "control"
 type Variant struct {
 	// ID is the variant identifier. Cannot equal ControlVariantID.
 	ID string
-	// Weight is the traffic fraction routed to this variant; in (0, 1).
+	// Weight is the traffic fraction routed to this variant; in [0, 1).
+	// spec: §10.7 — each variant weight is a fraction in [0.0, 1.0], and
+	// the cross-variant Σ < 1.0 rule bars 1.0 in a single-variant
+	// experiment. A weight of 0.0 is operationally a no-op (no traffic
+	// to the variant) and is admitted so deployers can stage a variant
+	// before turning on traffic.
 	Weight float64
 }
 
@@ -143,48 +202,83 @@ type Definition struct {
 }
 
 // Validate reports the §10.7 admission errors for an
-// ExperimentDefinition at admin POST/PUT time.
+// ExperimentDefinition at admin POST/PUT time. Violations are tagged
+// with a §15.1 error code so the admin handler can surface `RESERVED_IDENTIFIER` or `INVALID_VARIANT_WEIGHTS`
+// (§4.6.2) distinctly from the generic `VALIDATION_ERROR`.
 func (d Definition) Validate() error {
-	v := []string{}
+	var v []Violation
 	if d.ID == "" {
-		v = append(v, "id is required")
+		v = append(v, Violation{Code: CodeValidationError, Field: "id", Message: "id is required"})
 	}
 	if !d.Status.IsValid() {
-		v = append(v, fmt.Sprintf("status %q is not in {active, paused, concluded}", d.Status))
+		v = append(v, Violation{
+			Code: CodeValidationError, Field: "status", Value: string(d.Status),
+			Message: fmt.Sprintf("status %q is not in {active, paused, concluded}", d.Status),
+		})
 	}
 	if d.BaseRuntime == "" {
-		v = append(v, "baseRuntime is required")
+		v = append(v, Violation{Code: CodeValidationError, Field: "baseRuntime", Message: "baseRuntime is required"})
 	}
 	if !d.TargetingMode.IsValid() {
-		v = append(v, fmt.Sprintf("targeting.mode %q is not in {percentage, external}", d.TargetingMode))
+		v = append(v, Violation{
+			Code: CodeValidationError, Field: "targeting.mode", Value: string(d.TargetingMode),
+			Message: fmt.Sprintf("targeting.mode %q is not in {percentage, external}", d.TargetingMode),
+		})
 	}
 	if !d.Sticky.IsValid() {
-		v = append(v, fmt.Sprintf("targeting.sticky %q is not in {user, session, none}", d.Sticky))
+		v = append(v, Violation{
+			Code: CodeValidationError, Field: "targeting.sticky", Value: string(d.Sticky),
+			Message: fmt.Sprintf("targeting.sticky %q is not in {user, session, none}", d.Sticky),
+		})
 	}
 	if !d.Propagation.IsValid() {
-		v = append(v, fmt.Sprintf("propagation.childSessions %q is not in {inherit, control, independent}", d.Propagation))
+		v = append(v, Violation{
+			Code: CodeValidationError, Field: "propagation.childSessions", Value: string(d.Propagation),
+			Message: fmt.Sprintf("propagation.childSessions %q is not in {inherit, control, independent}", d.Propagation),
+		})
 	}
 	var totalWeight float64
 	seen := map[string]bool{}
 	for i, vt := range d.Variants {
+		field := fmt.Sprintf("variants[%d].id", i)
 		if vt.ID == "" {
-			v = append(v, fmt.Sprintf("variants[%d].id is required", i))
+			v = append(v, Violation{Code: CodeValidationError, Field: field, Message: field + " is required"})
 			continue
 		}
 		if vt.ID == ControlVariantID {
-			v = append(v, fmt.Sprintf("variants[%d].id %q is a reserved identifier", i, vt.ID))
+			// spec: §10.7 / §15.1 — variant id
+			// "control" is reserved; admin must surface
+			// RESERVED_IDENTIFIER with details.field + details.value.
+			v = append(v, Violation{
+				Code: CodeReservedIdentifier, Field: field, Value: vt.ID,
+				Message: fmt.Sprintf("variants[%d].id %q is a reserved identifier", i, vt.ID),
+			})
 		}
 		if seen[vt.ID] {
-			v = append(v, fmt.Sprintf("variants[%d].id %q duplicates an earlier variant", i, vt.ID))
+			v = append(v, Violation{
+				Code: CodeValidationError, Field: field, Value: vt.ID,
+				Message: fmt.Sprintf("variants[%d].id %q duplicates an earlier variant", i, vt.ID),
+			})
 		}
 		seen[vt.ID] = true
-		if vt.Weight <= 0 || vt.Weight >= 1 {
-			v = append(v, fmt.Sprintf("variants[%d].weight %g must be in (0, 1)", i, vt.Weight))
+		if vt.Weight < 0 || vt.Weight >= 1 {
+			// spec: §10.7 — weight in [0.0, 1.0); 1.0 always violates
+			// the cross-variant Σ < 1.0 rule; 0.0 is admitted (staged
+			// variant with no traffic).
+			v = append(v, Violation{
+				Code: CodeInvalidVariantWeights, Field: fmt.Sprintf("variants[%d].weight", i), Value: vt.Weight,
+				Message: fmt.Sprintf("variants[%d].weight %g must be in [0, 1)", i, vt.Weight),
+			})
 		}
 		totalWeight += vt.Weight
 	}
 	if totalWeight >= 1 {
-		v = append(v, fmt.Sprintf("Σ variant_weights %g must be < 1 (remainder is the control group)", totalWeight))
+		// spec: §4.6.2 — Σ variant_weights ≥ 1 returns
+		// INVALID_VARIANT_WEIGHTS at admission.
+		v = append(v, Violation{
+			Code: CodeInvalidVariantWeights, Field: "variants", Value: totalWeight,
+			Message: fmt.Sprintf("Σ variant_weights %g must be < 1 (remainder is the control group)", totalWeight),
+		})
 	}
 	if len(v) == 0 {
 		return nil
@@ -192,16 +286,62 @@ func (d Definition) Validate() error {
 	return &ValidationError{ID: d.ID, Violations: v}
 }
 
+// Violation codes surfaced by Definition.Validate; the admin handler
+// maps each to its §15.1 error code.
+const (
+	CodeValidationError       = "VALIDATION_ERROR"
+	CodeReservedIdentifier    = "RESERVED_IDENTIFIER"
+	CodeInvalidVariantWeights = "INVALID_VARIANT_WEIGHTS"
+)
+
+// Violation is one §10.7 admission-time defect. Code is the §15.1
+// error code, Field is the JSON-path of the offending field, Value is
+// the rejected value (when applicable), and Message is the human
+// description.
+type Violation struct {
+	Code    string
+	Field   string
+	Value   any
+	Message string
+}
+
 // ValidationError captures Definition.Validate failures. The admin
 // API surfaces this as 422 with a `RESERVED_IDENTIFIER` /
-// `INVALID_VARIANT_WEIGHTS` error code per §10.7.
+// `INVALID_VARIANT_WEIGHTS` / `VALIDATION_ERROR` error code per §10.7
+// — see Violation.Code on each entry.
 type ValidationError struct {
 	ID         string
-	Violations []string
+	Violations []Violation
 }
 
 func (e *ValidationError) Error() string {
-	return fmt.Sprintf("experiment: %s: %v", e.ID, e.Violations)
+	msgs := make([]string, len(e.Violations))
+	for i, v := range e.Violations {
+		msgs[i] = v.Message
+	}
+	return fmt.Sprintf("experiment: %s: %v", e.ID, msgs)
+}
+
+// HasCode reports whether any violation carries the given §15.1 code.
+func (e *ValidationError) HasCode(code string) bool {
+	for _, v := range e.Violations {
+		if v.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+// FirstWithCode returns the first violation tagged with code, or a
+// zero Violation when none exists. Used by the admin handler to
+// populate `details.field` / `details.value` for the §15.1 error.
+func (e *ValidationError) FirstWithCode(code string) Violation {
+	for _, v := range e.Violations {
+		if v.Code == code {
+			return v
+		}
+	}
+	return Violation{}
 }
 
 // AssignVariant implements the §10.7 percentage-mode bucketing
@@ -229,6 +369,71 @@ func AssignVariant(assignmentKey, experimentID string, variants []Variant) strin
 		}
 	}
 	return ControlVariantID
+}
+
+// Assignment is the outcome of routing a session through a tenant's
+// active experiments. A zero Assignment means no experiment enrolled
+// the session — it runs the base runtime with no experiment context.
+type Assignment struct {
+	ExperimentID string
+	VariantID    string
+}
+
+// Route applies the §10.7 first-match multi-experiment rule over
+// percentage-mode experiments. The experiments are evaluated in the
+// given order (the caller sorts by created_at), and the first routable
+// percentage-mode experiment that assigns the session to a non-control
+// variant wins. Paused and concluded experiments are skipped, as are
+// external-mode experiments — their assignment is resolved by an
+// OpenFeature provider; use RouteMixed to include them. When no
+// experiment produces a non-control variant the returned Assignment is
+// zero.
+//
+// The §10.7 assignment key depends on each experiment's sticky mode:
+// `user` keys on userID, `session` and `none` key on sessionID. An
+// empty key (sticky:user with an anonymous session) yields control.
+func Route(experiments []Definition, userID, sessionID string) Assignment {
+	return RouteMixed(experiments, userID, sessionID, nil)
+}
+
+// SkippedAfter returns the §16.6 experiment.multi_eligible_skipped
+// audit set for a session that RouteMixed enrolled in enrolledID: the
+// routable experiments that the first-match rule left unevaluated
+// because enrolledID — an earlier candidate in evaluation order —
+// already assigned a non-control variant. The experiments slice must
+// be in the same evaluation order passed to RouteMixed. Paused and
+// concluded experiments are always excluded — RouteMixed never
+// evaluates them.
+//
+// externalEvaluated reports whether RouteMixed ran with a non-nil
+// ExternalEvaluator. When false, external-mode experiments are
+// excluded because RouteMixed skipped every one of them regardless of
+// the first-match rule (the tenant configures no external targeting);
+// when true, an external-mode experiment after enrolledID was a live
+// candidate that the first-match rule skipped, so it is included.
+//
+// Returns nil when enrolledID is empty, is not present, or is the last
+// routable candidate.
+func SkippedAfter(experiments []Definition, enrolledID string, externalEvaluated bool) []string {
+	if enrolledID == "" {
+		return nil
+	}
+	var skipped []string
+	seenEnrolled := false
+	for _, e := range experiments {
+		if e.ID == enrolledID {
+			seenEnrolled = true
+			continue
+		}
+		if !seenEnrolled || !e.Status.IsRoutable() {
+			continue
+		}
+		if e.TargetingMode == TargetingExternal && !externalEvaluated {
+			continue
+		}
+		skipped = append(skipped, e.ID)
+	}
+	return skipped
 }
 
 // AssignVariantDeterministic verifies the §10.7 determinism

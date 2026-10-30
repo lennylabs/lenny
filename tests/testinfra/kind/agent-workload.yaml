@@ -1,0 +1,440 @@
+# SPDX-License-Identifier: MIT
+#
+# Runtime CRs and the runc RuntimeClass for the tier-5/8/9 e2e suite.
+# install.sh applies this after the Lenny chart.
+#
+# Pools (SandboxTemplate + SandboxWarmPool) are NOT defined here. The
+# admission plane treats §5.2 pools as Postgres-authoritative: the
+# pool-config-validator webhook rejects any manual kubectl write to a
+# SandboxTemplate or SandboxWarmPool with UNAUTHORIZED_POOL_CONFIG_WRITE,
+# because only the §4.6.2 PoolScalingController service account may
+# create them. The pools are therefore seeded into Postgres through the
+# §17.6 bootstrap.pools list in e2e-values.yaml; the PoolScalingController
+# reconciles each Postgres pool row into its SandboxTemplate +
+# SandboxWarmPool CRD pair, keyed by pool name, in the lenny-agents
+# namespace. The Sandbox reconciler then produces real agent pods so the
+# tier-5/8/9 tests that need a live agent pod run against a real workload.
+#
+# The Runtime CRs below stay kubectl-applied: the Sandbox reconciler reads
+# the Runtime CR's spec.image to build each agent pod (§4.7), so the
+# digest-pinned image must exist as a Kubernetes object. The Runtime CRD
+# is not gated by the pool-config-validator webhook (only SandboxTemplate
+# and SandboxWarmPool are); the §13.1 admin/CRD digest requirement is what
+# rejects a bare :e2e tag. install.sh therefore substitutes each
+# __*_IMAGE__ placeholder below with the runtime image's current
+# `image:e2e@sha256:<digest>` reference (resolved with `docker image
+# inspect`) before `kubectl apply`, so the reference is always pinned to
+# the freshly-built image rather than a stale hardcoded digest.
+#
+# The Sandbox reconciler stamps runtimeClassName onto every agent pod from
+# the §5.3 isolation profile (standard -> runc). Kind nodes run containerd
+# whose default handler is runc, but no RuntimeClass object named runc
+# exists by default, so this RuntimeClass maps the standard profile onto
+# the node's stock runc handler.
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: runc
+handler: runc
+---
+# §4.7 sidecar deployment model: cmd/runtimes/echo is a stdin/stdout JSONL
+# exec target and the lenny-adapter sidecar bridges it over an abstract
+# Unix socket. Backs the pod-warm echo-pool-sidecar pool.
+#
+# capabilities.injection.supported is true (§5.1) so the tier5/8/9
+# sessiondriver harness can exercise a mid-session lenny/send_message /
+# POST .../messages round trip against this runtime's real pod, not
+# only the initial prompt delivered at session start. echocore
+# (pkg/runtimekit/echocore) already answers every inbound `message`
+# frame, so the runtime is genuinely multi_turn-capable.
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: echo-runtime-sidecar
+spec:
+  type: agent
+  image: __ECHO_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/lenny"]
+  integrationLevel: basic
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: sidecar
+  capabilities:
+    interaction: multi_turn
+    injection:
+      supported: true
+      modes: [immediate, queued]
+---
+# §4.7 embedded deployment model: cmd/runtimes/echo-embedded links the
+# adapter into one container that serves the gRPC contract directly. Backs
+# the echo-pool-embedded pool.
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: echo-runtime-embedded
+spec:
+  type: agent
+  image: __ECHO_EMBEDDED_IMAGE__
+  integrationLevel: basic
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: embedded
+---
+# §6.1 SDK-warm reference runtime. preconnect-echo declares
+# capabilities.preConnect, so the WarmPoolController warms its pods
+# through the warming -> sdk_connecting -> idle path and the gateway drives
+# them via ConfigureWorkspace / DemoteSDK. The §6.3 startup_latency
+# benchmark drives a session against the preconnect-echo-pool as the
+# SDK-warm arm and against echo-pool-sidecar as the pod-warm arm, on the
+# runc/standard class the Kind cluster carries. spec: §6.1, §6.3.
+#
+# deploymentModel is embedded: cmd/runtimes/preconnect-echo links the
+# adapter into its own process and serves the adapter gRPC contract on
+# :50051 directly (the same single-container embedded model as
+# echo-runtime-embedded). Declaring it sidecar makes the Sandbox reconciler
+# inject a separate lenny-adapter container that also binds :50051, so the
+# embedded runtime fails with "address already in use" and the pod never
+# becomes Ready. spec: §4.7.
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: preconnect-echo-runtime
+spec:
+  type: agent
+  image: __PRECONNECT_ECHO_IMAGE__
+  integrationLevel: basic
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: embedded
+  capabilities:
+    preConnect: true
+---
+# TESTING.md §12.9.8 tier-9 credential-leakage probe runtime. The cred-shell-echo
+# image keeps /bin/sh so kubectl exec ... cat /proc/<pid>/environ works.
+# cred-shell-echo is a stdin/stdout §28.5.3 binary (it does not link the
+# adapter), so the §4.7 sidecar deployment model is the correct fit: the
+# lenny-adapter sidecar serves the gRPC contract and bridges to
+# cred-shell-echo over the abstract Unix socket. Production installs reject
+# this runtime via the lenny-pod-security webhook; the e2e overlay deploys
+# it explicitly for the tier-9 scaffolds.
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: cred-shell-echo-runtime
+spec:
+  type: agent
+  image: __CRED_SHELL_ECHO_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on. The
+  # image is built from cmd/runtimes/cred-shell-echo/Dockerfile, whose
+  # ENTRYPOINT is /usr/local/bin/cred-shell-echo.
+  command: ["/usr/local/bin/cred-shell-echo"]
+  integrationLevel: basic
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: sidecar
+---
+# §9.2 Standard-level elicitation runtime. The elicitation-echo runtime
+# calls lenny/request_elicitation on every inbound message and raises §9.2
+# elicitations that the gateway resolves server-internally. In v1 no
+# intermediate pod re-emits, so this runtime drives no live tamper-detect
+# path end to end; the tier-9 admin probes use it as the raising pod for
+# the enforce, detect-only, and floor wire contract.
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: elicitation-echo-runtime
+spec:
+  type: agent
+  image: __ELICITATION_ECHO_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/lenny"]
+  integrationLevel: standard
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: sidecar
+---
+# §5.3 sandboxed isolation profile reference runtime. Backs
+# gvisor-echo-pool, the only pool on this overlay whose isolation
+# profile is sandboxed rather than standard. install.sh's Step 3a
+# (tests/testinfra/kind/install-gvisor.sh) installs runsc on the
+# sandbox-gvisor labelled node and applies the gvisor RuntimeClass
+# before this pod is scheduled, so the Sandbox reconciler's §5.3
+# RuntimeClass stamp resolves to a real gVisor-backed pod instead of a
+# Degraded pool. Uses the same distroless echo image as
+# echo-runtime-sidecar: gvisor_isolation_test.go fingerprints the
+# gVisor sentry kernel through a short-lived ephemeral debug container
+# rather than execing into this shell-less image directly. spec: §5.3.
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: gvisor-echo-runtime
+spec:
+  type: agent
+  image: __ECHO_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/lenny"]
+  integrationLevel: basic
+  executionMode: session
+  isolationProfile: sandboxed
+  deploymentModel: sidecar
+---
+# §5.2 sessionId dispatch-loop reference runtime. cmd/runtimes/echo-concurrent
+# is a stdin/stdout §28.5.3 binary that demultiplexes several simultaneous
+# slots over the single connection, keyed on the inbound frame's sessionId, so
+# the §4.7 sidecar deployment model bridges it over the abstract Unix
+# socket the same way echo-runtime-sidecar does. Backs concurrent-echo-pool
+# (sessionPolicy.maxConcurrentSessions > 1), the tier-5 real-pod
+# counterpart of the tier-4 concurrent_workspace_test.go in-process flow.
+# capabilities.injection.supported is true (§5.1): each slot's echocore loop
+# answers every inbound `message` frame, so the tier-5 harness can send
+# several messages on each slot session.
+# spec: §5.2, §6.4.
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: echo-runtime-concurrent
+spec:
+  type: agent
+  image: __ECHO_CONCURRENT_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/lenny"]
+  integrationLevel: basic
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: sidecar
+  capabilities:
+    interaction: multi_turn
+    injection:
+      supported: true
+      modes: [immediate, queued]
+---
+# §5.2 sequential-pod-reuse ("task mode") reference runtime. Reuses the
+# same cmd/runtimes/echo image as echo-runtime-sidecar under a distinct
+# Runtime name so task-mode-echo-pool has a runtimeRef no other pool on
+# this overlay shares — podsession.ResolvePool rejects a (runtimeRef,
+# isolationProfile) pair matched by more than one pool with
+# ErrAmbiguousPool, and echo-pool-sidecar already claims
+# echo-runtime-sidecar at isolationProfile: standard. spec: §5.2.
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: echo-runtime-task-mode
+spec:
+  type: agent
+  image: __ECHO_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/lenny"]
+  integrationLevel: basic
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: sidecar
+---
+# Test-only fixture runtimes for the tier-5 stream-failure cases
+# (tests/tier5_e2e_kind/stream_failure_kind_test.go). Each image layers the
+# tests/testinfra/heartbeatsilence fixture on top of a reference runtime
+# image: the fixture runs the reference binary unchanged as a child and
+# stops forwarding heartbeats once a session sends the fixture's directive,
+# so the adapter ends the session's stream as for a runtime that hangs
+# between turns. Only the heartbeat-silence pools in install.sh use these
+# runtimes, and the shipped echo runtimes ack every heartbeat.
+# heartbeat-silence-echo-runtime wraps cmd/runtimes/echo and backs a
+# recycling pool with maxConcurrentSessions: 1. capabilities.injection.
+# supported is true (§5.1): the echo loop answers every inbound `message`
+# frame, so a session can carry several messages.
+# spec: §28.5.1, §28.5.3, §5.2.
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: heartbeat-silence-echo-runtime
+spec:
+  type: agent
+  image: __HEARTBEAT_SILENCE_ECHO_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/heartbeat-silence", "/usr/local/bin/lenny"]
+  integrationLevel: basic
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: sidecar
+  capabilities:
+    interaction: multi_turn
+    injection:
+      supported: true
+      modes: [immediate, queued]
+---
+# heartbeat-silence-concurrent-runtime wraps cmd/runtimes/echo-concurrent
+# and backs a pool with maxConcurrentSessions: 2. Heartbeats are pod-global,
+# so one session's directive silences the acks for every slot on the pod.
+# spec: §28.5.1, §28.5.3, §5.2.
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: heartbeat-silence-concurrent-runtime
+spec:
+  type: agent
+  image: __HEARTBEAT_SILENCE_ECHO_CONCURRENT_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/heartbeat-silence", "/usr/local/bin/lenny"]
+  integrationLevel: basic
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: sidecar
+  capabilities:
+    interaction: multi_turn
+    injection:
+      supported: true
+      modes: [immediate, queued]
+---
+# Test-only supervise-probe runtimes (tests/testinfra/superviseprobe) for the
+# runtime supervisor's cluster tiers. Each backs one supervised probe pool in
+# install.sh's bootstrap overlay. The probe image sets PROBE_IMAGE_ENV with
+# ENV, which no env list below sets, so a test can assert that the
+# supervisor's launch environment carries the Runtime's env and the
+# platform's variables and drops the image ENV (§4.7.10 Runtime supervisor,
+# Environment). The restart pool's Runtime is not applied while gateway pool
+# admission refuses recycle.runtimeProcess: restart (proposal 0084 removes
+# that refusal). spec: §5.1 (command; env), §4.7.10.
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: supervise-probe-keep
+spec:
+  type: agent
+  image: __SUPERVISE_PROBE_IMAGE__
+  command: ["/usr/local/bin/lenny"]
+  env:
+    - name: PROBE_RUNTIME_ENV
+      value: from-runtime-env
+    # Asynchronous preemption off frees SIGURG from the Go runtime, so the
+    # probe counts it and the tier-9 signal case observes a forwarded copy.
+    - name: GODEBUG
+      value: asyncpreemptoff=1
+  # The Runtime controller mirrors this CR into the runtime registry over the
+  # bootstrap row, so the CR carries the same argv-only setup-command policy
+  # the bootstrap overlay seeds: the distroless adapter image has no /bin/sh
+  # for a shell-mode setup command. spec: §7.5.
+  setupCommandPolicy:
+    shell: false
+  integrationLevel: standard
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: sidecar
+  capabilities:
+    interaction: multi_turn
+    injection:
+      supported: true
+      modes: [immediate, queued]
+---
+# Keep probe runtime of supervise-probe-idle-pool, which warms one idle pod
+# so a test can make a used pod the pool's only idle pod and place the next
+# session start on it (§4.7.10 Runtime supervisor, Liveness).
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: supervise-probe-idle
+spec:
+  type: agent
+  image: __SUPERVISE_PROBE_IMAGE__
+  command: ["/usr/local/bin/lenny"]
+  env:
+    - name: PROBE_RUNTIME_ENV
+      value: from-runtime-env
+  integrationLevel: standard
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: sidecar
+  capabilities:
+    interaction: multi_turn
+    injection:
+      supported: true
+      modes: [immediate, queued]
+---
+# Sidecar preConnect probe runtime. PROBE_DIAL_DELAY delays the warm-up
+# launch's CH-MSGSOCK dial by 30s: longer than the rendered
+# --supervise-ping-interval plus --supervise-ping-timeout (2s + 2s in
+# e2e-values.yaml), so a supervisor stopped during the delay misses a ping
+# before the probe connects, and shorter than the rendered --warm-up-timeout
+# (2m by default), so an undisturbed pod connects before the warm-up wait
+# ends. Only the pod's first launch, the warm-up launch, takes the delay:
+# the probe marks the pod's /tmp volume, so the startup step 7 launch that
+# serves a session after DemoteSDK dials at once, inside the launching
+# start's deadline.
+# spec: §4.7.10 (Runtime supervisor, Launch; SDK-warm), §28.5.3
+# (CH-SUPERVISE, Timing).
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: supervise-probe-preconnect
+spec:
+  type: agent
+  image: __SUPERVISE_PROBE_IMAGE__
+  command: ["/usr/local/bin/lenny"]
+  env:
+    - name: PROBE_RUNTIME_ENV
+      value: from-runtime-env
+    - name: PROBE_DIAL_DELAY
+      value: 30s
+  integrationLevel: standard
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: sidecar
+  capabilities:
+    preConnect: true
+    interaction: multi_turn
+    injection:
+      supported: true
+      modes: [immediate, queued]
+---
+# Sidecar preConnect probe runtime whose pool is seeded with the SDK-warm
+# circuit breaker forced open, so its pods launch at startup step 7
+# (--launch-mode=preconnect-pod-warm). spec: §6.1 (Circuit-breaker for
+# SDK-warm pools).
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: supervise-probe-podwarm
+spec:
+  type: agent
+  image: __SUPERVISE_PROBE_IMAGE__
+  command: ["/usr/local/bin/lenny"]
+  env:
+    - name: PROBE_RUNTIME_ENV
+      value: from-runtime-env
+  integrationLevel: standard
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: sidecar
+  capabilities:
+    preConnect: true
+    interaction: multi_turn
+    injection:
+      supported: true
+      modes: [immediate, queued]
+---
+# Supervised service-mode probe runtime, with the same dial delay as the
+# preConnect probe. spec: §4.7.10 (Runtime supervisor, Launch; Liveness).
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: supervise-probe-service
+spec:
+  type: agent
+  image: __SUPERVISE_PROBE_IMAGE__
+  command: ["/usr/local/bin/lenny"]
+  env:
+    - name: PROBE_RUNTIME_ENV
+      value: from-runtime-env
+    - name: PROBE_DIAL_DELAY
+      value: 30s
+  integrationLevel: standard
+  executionMode: service
+  isolationProfile: standard
+  deploymentModel: sidecar

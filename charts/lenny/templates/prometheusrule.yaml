@@ -1,0 +1,111 @@
+{{- /*
+The §16.5 bundled alerting rules (§16.9, §25.13). The full §16.5 alert
+catalog is authored once in the shared Go package pkg/alerting/rules and
+rendered into files/alerting-rules.yaml by `make generate` (the
+cmd/gen-alerting-rules build step). Both the gateway's in-process alert
+evaluator and these manifests derive from that single source, so the
+rendered rules cannot drift from what the gateway evaluates.
+
+Rendering is gated by monitoring.bundleRules and monitoring.format:
+
+  - monitoring.format: prometheusrule  — render a PrometheusRule CRD for
+    deployers running the Prometheus Operator (kube-prometheus-stack,
+    OpenShift Monitoring). The operator reloads Prometheus automatically.
+  - monitoring.format: configmap       — render a ConfigMap carrying the
+    same rules in standard Prometheus rule-file YAML, for deployers on
+    vanilla Prometheus that mount rule_files.
+  - monitoring.format: both            — render both.
+
+monitoring.alertOverrides applies per-rule replacements (§25.13): each entry merges over the bundled rule by §16.5 alert name; an
+override carrying `enabled: false` prunes the bundled rule from the
+rendered manifest. The override map is applied to both the
+PrometheusRule and the ConfigMap output so a deployer running both
+formats sees the same customised rule set. F-25.13.1.
+*/ -}}
+{{- /* spec: §16.9 / §25.13 — reject an out-of-range monitoring.format
+       before any gate so a typo fails loudly instead of silently
+       rendering nothing. F-16.9.8. */ -}}
+{{- include "lenny.monitoring.validateFormat" . -}}
+{{- if .Values.monitoring.bundleRules }}
+{{- /* spec: §16.9 R8 — when the configured format selects the operator
+       PrometheusRule CRD but the Prometheus Operator is absent, the
+       effective format degrades to configmap so the install does not fail
+       kubectl apply on a missing CRD. F-16.9.4. */ -}}
+{{- $format := include "lenny.monitoring.effectiveFormat" . }}
+{{- $ruleNS := .Values.monitoring.prometheusRule.namespace | default .Values.monitoring.namespace }}
+{{- $rules := .Files.Get "files/alerting-rules.yaml" }}
+{{- $overrides := .Values.monitoring.alertOverrides | default dict }}
+{{- $hasOverrides := gt (len $overrides) 0 }}
+{{- /* When no overrides are configured, splice the bundled YAML
+       fragment verbatim so the bundled-vs-catalog cross-check sees an
+       unchanged manifest. Operators only pay the YAML walk when they
+       supply overrides. */ -}}
+{{- if $hasOverrides }}
+  {{- $parsed := $rules | fromYaml }}
+  {{- $newGroups := list }}
+  {{- range $parsed.groups }}
+    {{- $newRules := list }}
+    {{- range .rules }}
+      {{- $name := .alert }}
+      {{- $override := index $overrides $name }}
+      {{- if $override }}
+        {{- /* §25.13 — `enabled: false` prunes the rule from
+               the bundled manifest. Any other override field replaces
+               the corresponding bundled field via mergeOverwrite so
+               operators tweak one field without re-stating the whole
+               rule. */ -}}
+        {{- if and (hasKey $override "enabled") (eq (index $override "enabled") false) }}
+          {{- /* pruned */ -}}
+        {{- else }}
+          {{- /* Drop the "enabled" key (renderer signal, not a
+                 PrometheusRule field) before merging. */ -}}
+          {{- $clean := omit $override "enabled" }}
+          {{- $merged := mergeOverwrite (deepCopy .) $clean }}
+          {{- $newRules = append $newRules $merged }}
+        {{- end }}
+      {{- else }}
+        {{- $newRules = append $newRules . }}
+      {{- end }}
+    {{- end }}
+    {{- if gt (len $newRules) 0 }}
+      {{- $newGroups = append $newGroups (dict "name" .name "rules" $newRules) }}
+    {{- end }}
+  {{- end }}
+  {{- $rules = (dict "groups" $newGroups) | toYaml }}
+{{- end }}
+{{- /* Strip the generated-file comment header so the spec.groups
+       fragment splices in cleanly under the CRD spec. */ -}}
+{{- $groups := regexReplaceAll "(?m)^#.*\n" $rules "" }}
+{{- if or (eq $format "prometheusrule") (eq $format "both") }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: lenny-alerting-rules
+  namespace: {{ $ruleNS }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: alerting-rules
+    {{- with .Values.monitoring.prometheusRule.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- $groups | nindent 2 }}
+{{- end }}
+{{- if or (eq $format "configmap") (eq $format "both") }}
+{{- if eq $format "both" }}
+---
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.monitoring.configMap.name }}
+  {{- /* spec: §25.13 — configMap.namespace defaults to lenny-system, not the release namespace */}}
+  namespace: {{ .Values.monitoring.configMap.namespace | default "lenny-system" }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: alerting-rules
+data:
+  rules.yaml: |
+    {{- $rules | nindent 4 }}
+{{- end }}
+{{- end }}

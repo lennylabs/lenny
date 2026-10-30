@@ -1,0 +1,46 @@
+suite: NET-070 admin-API plaintext opt-in guard (§25.4)
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - ops-tls-guard.yaml
+tests:
+  # spec: §25.4 NET-070 — TLS is the default (ops.tls.internalEnabled:
+  # true), so the guard renders no object and passes on a stock install.
+  - it: renders nothing when ops.tls.internalEnabled is true (the default)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # spec: §25.4 NET-070 — disabling TLS without acknowledging plaintext
+  # outside dev mode fails the render with the verbatim guard message.
+  - it: fails the render for unacknowledged plaintext outside dev mode
+    set:
+      global.devMode: false
+      ops.tls.internalEnabled: false
+      ops.acknowledgePlaintextAdminAPI: false
+    asserts:
+      - failedTemplate:
+          errorPattern: "ops.tls.internalEnabled is false without ops.acknowledgePlaintextAdminAPI=true"
+
+  # spec: §25.4 NET-070 — the explicit acknowledgement lets the render
+  # proceed (the deprecation banner is printed by NOTES.txt).
+  - it: renders nothing once acknowledgePlaintextAdminAPI is set
+    set:
+      global.devMode: false
+      ops.tls.internalEnabled: false
+      ops.acknowledgePlaintextAdminAPI: true
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # spec: §25.4 NET-070 — dev mode auto-implies the acknowledgement so
+  # local installs retain plaintext for convenience.
+  - it: allows plaintext in dev mode without acknowledgement
+    set:
+      global.devMode: true
+      ops.tls.internalEnabled: false
+      ops.acknowledgePlaintextAdminAPI: false
+    asserts:
+      - hasDocuments:
+          count: 0

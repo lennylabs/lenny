@@ -1,0 +1,60 @@
+// SPDX-License-Identifier: MIT
+
+// Command {{.Name}} is a Standard-level Lenny agent runtime built on the
+// TypeScript runtime-author SDK. It echoes every inbound message back.
+// Replace the body of onMessage with a model call to build a real
+// agent.
+//
+// The handler implements the three Handler methods. The SDK drives the
+// adapter binary protocol around it: it reads inbound message frames,
+// invokes onMessage, serializes the returned Reply into a response
+// frame, answers heartbeats, and exits on shutdown.
+//
+// This skeleton is generated at the Standard integration level: run is
+// called with level "standard", so the SDK dials the platform MCP
+// server and connector MCP servers advertised in the adapter manifest.
+//
+// Exit codes: 0 success, 1 runtime error, 2 protocol error.
+
+import { isProtocolError, run, text } from "@lennylabs/runtime-sdk";
+import type { Handler, Message, Reply } from "@lennylabs/runtime-sdk";
+
+const EXIT_OK = 0;
+const EXIT_RUNTIME_ERROR = 1;
+const EXIT_PROTOCOL_ERROR = 2;
+
+// Handler is a Standard-level handler. It holds a per-process sequence
+// counter so multi-message sessions can be correlated.
+class RuntimeHandler implements Handler {
+  private seq = 0;
+
+  // onCreate receives the task-scoped context snapshot. This skeleton
+  // has no task-scoped setup.
+  onCreate(): void {}
+
+  // onMessage echoes the inbound parts. Text parts are prefixed with
+  // the per-session sequence number; non-text parts are returned
+  // unchanged.
+  onMessage(msg: Message): Reply {
+    this.seq += 1;
+    const input = msg.envelope.input ?? [];
+    const out = input.map((p) =>
+      p.type === "text" && p.inline
+        ? text(`[{{.Name}} seq=${this.seq}] ${p.inline}`)
+        : p,
+    );
+    return { parts: out, final: true };
+  }
+
+  // onTerminate runs once when the session ends. This skeleton has no
+  // teardown.
+  onTerminate(): void {}
+}
+
+run(new RuntimeHandler(), { level: "standard" }).then(
+  () => process.exit(EXIT_OK),
+  (err: unknown) => {
+    process.stderr.write(String(err) + "\n");
+    process.exit(isProtocolError(err) ? EXIT_PROTOCOL_ERROR : EXIT_RUNTIME_ERROR);
+  },
+);

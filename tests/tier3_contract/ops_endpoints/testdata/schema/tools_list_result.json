@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lenny.test/schemas/tools_list_result.json",
+  "title": "tools/list result (MCP management server, spec 25.12)",
+  "description": "The result object of a 25.12 tools/list response. Every tool descriptor carries a name, a description, a JSON Schema inputSchema, and the x-lenny-* extension metadata the capability-filtering and security layers read.",
+  "type": "object",
+  "required": ["tools"],
+  "properties": {
+    "tools": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "inputSchema",
+          "x-lenny-category",
+          "x-lenny-required-role",
+          "x-lenny-scope",
+          "x-lenny-dry-run-support"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string"
+          },
+          "inputSchema": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "type": "string"
+              }
+            }
+          },
+          "x-lenny-category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "x-lenny-required-role": {
+            "type": "string",
+            "minLength": 1
+          },
+          "x-lenny-scope": {
+            "type": "string",
+            "minLength": 1
+          },
+          "x-lenny-dry-run-support": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,227 @@
+// SPDX-License-Identifier: MIT
+
+//go:build integration
+
+// Tier-4 integration test for the §25.1 enforcement-point-2 scope gate
+// ("MCP tool invocation — /mcp/management tools/call checks the scope
+// before dispatch") driven with a real, signed Bearer JWT against the
+// deployed cmd/lenny-ops binary.
+//
+// The existing scope-enforcement coverage (pkg/common/scopes,
+// pkg/ops/mcp/server_test.go, tests/tier3_contract/ops_endpoints/
+// mcp_test.go and locks_test.go, pkg/gateway/admin/me_test.go,
+// pkg/ops/me/service_test.go, pkg/gateway/playground/playground_test.go)
+// pins the matching logic and the rejection response entirely in-process:
+// pkg/ops/mcp/server_test.go injects the caller's scope claim via the
+// X-Lenny-Scope test header directly against a mock Invoker, never
+// through a verified Bearer JWT. None of it runs the real cmd/lenny-ops
+// composition root's OIDC auth middleware (pkg/gateway/middleware/auth),
+// so none of it proves the caller's RFC 9068 `scope` claim actually
+// survives from a signed token, through the verifier, onto the
+// authenticated Principal, and into the §25.1 scope gate the MCP
+// dispatch loop enforces on the replayed REST call.
+//
+// This test signs a real Bearer JWT with the §17.4 bearer-trust HMAC key
+// mechanism cmd/lenny-ops's own auth_config_test.go (TestBuildAuthConfig_
+// WithKeyAndIssuer) and the tier5 e2e Kind suite (admin_scope_narrowing_
+// test.go) both use to stand up a verifiable token without a live OIDC
+// provider: --bearer-trust-hmac-key-file configures the same trust-key
+// verification path a deployer configures against their OIDC provider's
+// embedded key, and --oidc-issuer-url pins the expected `iss` claim the
+// same way. It boots the real binary with that verifier wired, presents
+// the token as `Authorization: Bearer`, and calls a mutating tool
+// (admin.set_pool_warm_count, x-lenny-scope tools:pool:write) through
+// POST /mcp/management with a token scoped only to tools:health:read.
+//
+// spec: §25.1 — "Scopes are enforced in three places: ...
+// 2. MCP tool invocation — /mcp/management tools/call checks the scope
+// before dispatch." and "A request for a tool not permitted by any scope
+// returns 403 SCOPE_FORBIDDEN with a response body listing the caller's
+// active scopes."
+package tier4_integration_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/tests/testinfra/containers"
+	"github.com/lennylabs/lenny/tests/testinfra/opsprocess"
+)
+
+// scopeLiveBearerHMACKeyFile mirrors the on-disk format
+// jwt.LoadHMACKeyFile reads (pkg/auth/jwt/keyfile.go): a key id and a
+// raw secret, with encoding/json base64-decoding the secret
+// automatically because its Go type is []byte. This is the same format
+// cmd/lenny-ops/auth_config_test.go's writeHMACKeyFile and
+// tests/tier5_e2e_kind/admin_scope_narrowing_test.go's hmacKeyFile use.
+type scopeLiveBearerHMACKeyFile struct {
+	KeyID  string `json:"keyId"`
+	Secret []byte `json:"secret"`
+}
+
+// writeScopeLiveBearerHMACKeyFile writes a key file cmd/lenny-ops's
+// --bearer-trust-hmac-key-file flag accepts and returns its path.
+func writeScopeLiveBearerHMACKeyFile(t *testing.T, keyID, secret string) string {
+	t.Helper()
+	raw, err := json.Marshal(scopeLiveBearerHMACKeyFile{KeyID: keyID, Secret: []byte(secret)})
+	if err != nil {
+		t.Fatalf("marshal hmac key file: %v", err)
+	}
+	p := filepath.Join(t.TempDir(), "bearer-trust-key.json")
+	if err := os.WriteFile(p, raw, 0o600); err != nil {
+		t.Fatalf("write hmac key file: %v", err)
+	}
+	return p
+}
+
+// rpcCallToolsCall posts a §25.12 tools/call JSON-RPC request to the
+// deployed lenny-ops /mcp/management endpoint, presenting bearer as the
+// caller's Authorization: Bearer credential, and returns the decoded
+// JSON-RPC response envelope.
+func rpcCallToolsCall(t *testing.T, baseURL, bearer, toolName string, args map[string]any) map[string]any {
+	t.Helper()
+	reqBody := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      toolName,
+			"arguments": args,
+		},
+	}
+	raw, err := json.Marshal(reqBody)
+	if err != nil {
+		t.Fatalf("marshal tools/call request: %v", err)
+	}
+	httpReq, err := http.NewRequest(http.MethodPost, baseURL+"/mcp/management", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("build tools/call request: %v", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+bearer)
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		t.Fatalf("POST /mcp/management tools/call: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read tools/call response body: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /mcp/management tools/call: status %d, want 200 (JSON-RPC envelope); body=%s", resp.StatusCode, body)
+	}
+	var env map[string]any
+	if err := json.Unmarshal(body, &env); err != nil {
+		t.Fatalf("decode JSON-RPC response: %v; body=%s", err, body)
+	}
+	return env
+}
+
+// spec: §25.1 and §25.12 ("A caller whose scope doesn't match
+// receives 403 SCOPE_FORBIDDEN from the MCP adapter before any REST call
+// is issued.").
+//
+// diagnosis: a failure here means the deployed cmd/lenny-ops binary's
+// §25.12 MCP-boundary scope gate does not enforce a real Bearer JWT's RFC
+// 9068 `scope` claim before dispatch. The gateway-owned
+// admin.set_pool_warm_count is proxied to the gateway rather than
+// replayed locally, so the scope claim must be caught at the pre-dispatch
+// MCP-boundary gate: a narrowly-scoped, genuinely signed and verified
+// token invoking a tool outside its scope must be rejected with a
+// JSON-RPC -32001/SCOPE_FORBIDDEN error before any gateway call is issued.
+// A regression that let the call through to dispatch, or that surfaced the
+// denial only as a downstream REST-replay error envelope, would break the
+// §25.12 guarantee that the scope claim gates the MCP boundary. Every
+// existing scope-rejection test injects the claim in-process (a mock
+// Principal or the X-Lenny-Scope test header) rather than through a
+// verified Authorization: Bearer token bridged onto the MCP context, so
+// none of them would catch a regression in the OIDC auth middleware ->
+// Principal.Scopes -> MCP-boundary bridge this test exercises end to end.
+func TestOpsMCPToolsCallScopeGateRejectsLiveBearerE2E(t *testing.T) {
+	t.Parallel()
+	opsprocess.SkipUnlessAvailable(t)
+
+	pg := sharedDatabase(t)
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+
+	const keyID = "tier4-scope-probe-key"
+	const secret = "tier4-scope-probe-secret-material"
+	const issuer = "https://idp.acme.test/scope-probe"
+	keyPath := writeScopeLiveBearerHMACKeyFile(t, keyID, secret)
+
+	ops := opsprocess.StartWith(
+		t,
+		"--postgres-dsn="+pg.DSN,
+		"--redis-url=redis://"+rd.Addr+"/0",
+		"--redis-allow-insecure",
+		"--bearer-trust-hmac-key-file="+keyPath,
+		"--oidc-issuer-url="+issuer,
+	)
+	base := ops.BaseURL()
+
+	// Sign the token with the same HMAC trust key --bearer-trust-hmac-
+	// key-file wires into the deployed lenny-ops verifier, so this is a
+	// genuine Authorization: Bearer credential the running binary
+	// verifies (signature + issuer) rather than an injected Principal.
+	signer := jwt.NewHMACSigner(keyID, []byte(secret))
+	now := time.Now()
+	bearer, err := signer.Sign(jwt.Claims{
+		Subject:  "sa-tier4-pool-scaling-bot",
+		Issuer:   issuer,
+		Roles:    []auth.Role{auth.RolePlatformAdmin},
+		Scope:    "tools:health:read",
+		IssuedAt: now.Unix(),
+		Expiry:   now.Add(time.Hour).Unix(),
+		JWTID:    fmt.Sprintf("tier4-scope-probe-%d", now.UnixNano()),
+	})
+	if err != nil {
+		t.Fatalf("sign scoped bearer: %v", err)
+	}
+
+	// admin.set_pool_warm_count declares x-lenny-scope tools:pool:write
+	// (pkg/ops/mcp/generated_tools.go): the §25.17 pool-scale tool this
+	// finding's suggested test names. It is gateway-owned (absent from
+	// RouteSchemas(), proxied to PUT /v1/admin/pools/{name}/warm-count),
+	// so it is not replayed locally. The bearer above carries only
+	// tools:health:read, so the §25.12 MCP-boundary scope gate must reject
+	// it with a pre-dispatch JSON-RPC error before any gateway call is
+	// issued.
+	env := rpcCallToolsCall(t, base, bearer, "admin.set_pool_warm_count",
+		map[string]any{"name": "tier4-scope-probe-pool"})
+
+	// §25.12: the scope mismatch is caught at the MCP boundary before
+	// dispatch, so the response is a JSON-RPC -32001 error rather than a
+	// tool result carrying a downstream REST-replay error envelope.
+	if env["result"] != nil {
+		t.Fatalf("tools/call returned a tool result instead of a pre-dispatch JSON-RPC error: %v", env["result"])
+	}
+	rpcErr, ok := env["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("tools/call carries no JSON-RPC error object: %v", env)
+	}
+	if code, _ := rpcErr["code"].(float64); code != -32001 {
+		t.Errorf("error.code = %v, want -32001 SCOPE_FORBIDDEN", rpcErr["code"])
+	}
+	data, _ := rpcErr["data"].(map[string]any)
+	if data["code"] != "SCOPE_FORBIDDEN" {
+		t.Errorf("data.code = %v, want SCOPE_FORBIDDEN", data["code"])
+	}
+	if got := data["requiredScope"]; got != "tools:pool:write" {
+		t.Errorf("data.requiredScope = %v, want tools:pool:write", got)
+	}
+	// The gate reports the caller's active JWT scope claim (the space-
+	// separated Raw value the verifier parsed off the Bearer token).
+	if got := data["activeScope"]; got != "tools:health:read" {
+		t.Errorf("data.activeScope = %v, want tools:health:read (the caller's active JWT scope claim)", got)
+	}
+}

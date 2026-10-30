@@ -1,0 +1,194 @@
+// SPDX-License-Identifier: MIT
+
+// Command echo-embedded is the Basic-level reference runtime for the
+// §4.7 embedded deployment model. It is the embedded counterpart of
+// cmd/runtimes/echo: the same §28.5.3 echo loop (pkg/runtimekit/echocore),
+// the same observable behaviour, packaged as a single binary that links
+// the §4.7 adapter as a library and serves the adapter gRPC contract to
+// the gateway itself.
+//
+// §4.7 deployment models:
+//
+//   - sidecar (cmd/runtimes/echo): the adapter runs as a separate
+//     container and bridges the runtime over an abstract Unix socket.
+//     The runtime author implements only the §28.5.3 JSONL protocol.
+//   - embedded (this binary): a first-party runtime image links the
+//     adapter and serves the gRPC contract directly. One process, one
+//     container, no adapter↔runtime socket and no SO_PEERCRED or
+//     nonce-handshake boundary — the §4.7 trade-off table trades that
+//     process isolation for lower latency and resource overhead.
+//
+// echo-embedded shows the wiring a first-party Go runtime uses for the
+// embedded model: build an adapter.Server, attach an
+// adapter.InProcessRuntime whose loop is the runtime's §28.5.3 handler,
+// and serve adapter.NewGRPCServer. The gateway speaks the identical
+// adapter gRPC contract to this binary as it does to a sidecar adapter.
+//
+// The gateway↔runtime link is mTLS in production, configured exactly as
+// for lenny-adapter: supply --tls-cert-file, --tls-key-file, and
+// --tls-client-ca-file. With no certificate the server is plaintext,
+// intended only for local development.
+//
+// Usage:
+//
+//	echo-embedded --addr :50051 \
+//	  --tls-cert-file /etc/lenny/adapter-tls/tls.crt \
+//	  --tls-key-file  /etc/lenny/adapter-tls/tls.key \
+//	  --tls-client-ca-file /etc/lenny/adapter-tls/ca.crt
+package main
+
+import (
+	"context"
+	"flag"
+	"io"
+	"log"
+	"net"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"google.golang.org/grpc"
+
+	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/adapter/prestop"
+	"github.com/lennylabs/lenny/pkg/adapter/sharedassets"
+	"github.com/lennylabs/lenny/pkg/observability/logging"
+	"github.com/lennylabs/lenny/pkg/runtimekit/echocore"
+)
+
+// version is the runtime build version, reported during gateway
+// version negotiation.
+var version = "0.1.0"
+
+func main() {
+	// spec: §16.4 — structured JSON logs; routes the stdlib
+	// log package through the §16.4 handler (component=echo-embedded).
+	// F-16.4.1.
+	logging.Setup(os.Stderr, "echo-embedded")
+
+	// spec: §4.6.1, §4.7 — in the embedded model the pod builder attaches
+	// the preStop drain hook to this container, so the binary dispatches
+	// the `prestop` subcommand before parsing its server flags, exactly as
+	// lenny-adapter does.
+	if len(os.Args) > 1 && os.Args[1] == prestop.Verb {
+		os.Exit(prestop.Run(os.Args[2:], log.Printf))
+	}
+
+	addr := flag.String("addr", ":50051", "address the embedded runtime gRPC server binds to")
+	certFile := flag.String("tls-cert-file", "", "path to the server certificate")
+	keyFile := flag.String("tls-key-file", "", "path to the server private key")
+	clientCAFile := flag.String("tls-client-ca-file", "",
+		"path to the CA bundle that verifies gateway client certificates")
+	// spec: §6.4 — every session on every pod owns a per-slot tree under
+	// the workspace base, `<base>/slots/{sessionId}/current/` for its cwd
+	// and `<base>/slots/{sessionId}/staging/` for its uploads. The
+	// embedded runtime is the adapter, so it parses the same base the
+	// controller renders onto the runtime container's argv.
+	workspaceBase := flag.String("workspace-base", "/workspace",
+		"§6.4 workspace base the per-session `slots/{sessionId}` trees nest under")
+	stagingDir := flag.String("staging-dir", "/workspace/.staging",
+		"directory PrepareWorkspace streams uploaded files into before "+
+			"FinalizeWorkspace materializes them")
+	credentialsDir := flag.String("credentials-dir", "/run/lenny",
+		"directory the §4.7 credential file and adapter manifest are materialized into")
+	sharedAssetsDir := flag.String("shared-assets-dir", "/workspace/shared",
+		"§6.4 directory the embedded runtime materializes read-only shared assets "+
+			"into at warm time; empty skips the populate step")
+	sharedAssets := flag.String("shared-assets", "",
+		"§6.4 base64-encoded JSON array of inline shared-asset file specs "+
+			"(sharedassets.Encode); empty leaves /workspace/shared empty")
+	// spec: §9.1/§4.7 — in the embedded model the runtime process is the
+	// adapter, so it accepts the same platform-MCP flags the controller
+	// injects onto a type:agent runtime container. Without these the
+	// controller-injected flags would be unknown to flag.Parse and crash
+	// the container.
+	mcpSocket := flag.String("mcp-socket", "",
+		"§9.1/§4.7 abstract Unix socket the platform MCP server binds for a type:agent runtime; empty disables it")
+	gatewayGRPCAddr := flag.String("gateway-grpc-addr", "",
+		"§9.1/§8.6 gateway GatewayControl address the embedded runtime dials to forward platform tool calls; empty serves an empty catalog")
+	// spec: §4.4/§13.2 — the reconciler renders the checkpoint-probe flags
+	// onto the pod's gateway-facing container, which in the embedded model
+	// is the runtime. They are accepted and ignored: this fixture never
+	// checkpoints, so it needs no size probe and dials no object store.
+	// Without them flag.Parse exits 2 and the pool crash-loops.
+	_ = flag.Int64("workspace-size-limit-bytes", 0,
+		"§4.4 per-pod workspace-size limit for the pre-checkpoint size probe; accepted and ignored by this fixture")
+	_ = flag.String("objectstore-ca-bundle", "",
+		"§13.2 mounted object-store CA trust bundle; accepted and ignored by this fixture")
+	flag.Parse()
+
+	tlsOpt, err := adapter.TLSServerOption(*certFile, *keyFile, *clientCAFile)
+	if err != nil {
+		log.Fatalf("echo-embedded: %v", err)
+	}
+	var opts []grpc.ServerOption
+	if tlsOpt != nil {
+		opts = append(opts, tlsOpt)
+	}
+
+	adapterSrv := adapter.New(version)
+	adapterSrv.WorkspaceBase = *workspaceBase
+	adapterSrv.StagingDir = *stagingDir
+	adapterSrv.CredentialsDir = *credentialsDir
+	adapterSrv.ManifestDir = *credentialsDir
+	// §6.4: the embedded runtime is the adapter, so it populates
+	// /workspace/shared itself from the inline shared-asset set the
+	// controller renders onto --shared-assets.
+	adapterSrv.SharedAssetsDir = *sharedAssetsDir
+	parsedShared, err := sharedassets.Decode(*sharedAssets)
+	if err != nil {
+		log.Fatalf("echo-embedded: %v", err)
+	}
+	adapterSrv.SharedAssets = parsedShared
+	// §6.1 / §6.4: create /workspace/slots, the staging area, and the
+	// read-only /workspace/shared tree before the pod is claimed.
+	if err := adapterSrv.EnsureWarmWorkspaceLayout(); err != nil {
+		log.Fatalf("echo-embedded: %v", err)
+	}
+	// §9.1/§4.7: bind the platform MCP socket and, when a gateway address is
+	// configured, dial the gateway's GatewayControl service. ManifestDir is
+	// set above, since the platform MCP server reads the authenticating nonce
+	// from the manifest. The embedded model is a single trusted process with
+	// no adapter-agent socket boundary, so the MCP listener applies no
+	// SO_PEERCRED peer check and the manifest nonce authenticates the
+	// connection. EmbeddedPeerAuth states that posture explicitly, because
+	// the zero-value posture fails closed.
+	// spec: §4.7.11 (Separate UIDs and connection authentication).
+	adapterSrv.PeerAuth = adapter.EmbeddedPeerAuth()
+	gwCloser, err := adapterSrv.ConnectGateway(*mcpSocket, *gatewayGRPCAddr, *certFile, *keyFile, *clientCAFile)
+	if err != nil {
+		log.Fatalf("echo-embedded: %v", err)
+	}
+	defer func() { _ = gwCloser.Close() }()
+	// §4.7 embedded model: the runtime logic runs in this process. The
+	// adapter drives it through an in-process pipe instead of a socket
+	// or a child process's stdin/stdout — the §28.5.3 framing is the
+	// same, only the transport differs.
+	adapterSrv.Runtime = adapter.NewInProcessRuntime(echoLoop)
+
+	srv := adapter.NewGRPCServer(adapterSrv, opts...)
+
+	lis, err := net.Listen("tcp", *addr)
+	if err != nil {
+		log.Fatalf("echo-embedded: listen on %s: %v", *addr, err)
+	}
+
+	go func() {
+		stop := make(chan os.Signal, 1)
+		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+		<-stop
+		adapterSrv.ExitOnSignal(adapter.DemoteTimeoutFromEnv(), srv)
+	}()
+
+	log.Printf("echo-embedded: serving the §4.7 embedded runtime on %s (tls=%t)", *addr, tlsOpt != nil)
+	if err := srv.Serve(lis); err != nil {
+		log.Fatalf("echo-embedded: serve: %v", err)
+	}
+}
+
+// echoLoop is the §28.5.3 echo handler the adapter drives in-process.
+// It is the same echocore loop cmd/runtimes/echo runs over a socket or
+// stdin/stdout; here it runs over the adapter's in-memory pipe.
+func echoLoop(ctx context.Context, in io.Reader, out io.Writer) error {
+	return echocore.Run(ctx, in, out, os.Stderr)
+}

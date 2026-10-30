@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: MIT
+#
+# The senses driving the name pass over the fixture tree, keyed by file
+# and by the occurrence's position in that file.
+kind: reserved-phrase-senses
+version: 1
+entries:
+  # The path half of a link destination is prose the register resolves.
+  # The fragment of the same destination is an addressable link target,
+  # so it takes no entry and is left as it stands.
+  - file: docs/reference/links.md
+    occurrence: 1
+    identifiers:
+      - CH-PODLIFECYCLE
+  - file: spec/13_security-model.md
+    occurrence: 1
+    identifiers:
+      - LNK-GWCONTROL
+  - file: spec/16_observability.md
+    occurrence: 1
+    identifiers:
+      - LNK-POD-GRPC
+      - CH-LLMPROXY
+    replacement: LNK-POD-GRPC and CH-LLMPROXY links
+  - file: pkg/carrier/carrier.go
+    occurrence: 1
+    identifiers:
+      - CH-PODLIFECYCLE
+  # The first site of this carrier wraps immediately after the hyphen of
+  # the compound spelling, so the join leaves the hyphen and the join
+  # byte together between the two words. It is enumerated ahead of the
+  # site that stands on one line below it, and the two name different
+  # identifiers, so an enumeration that read the wrap as no site would
+  # write this identifier at the site after it.
+  - file: pkg/carrier/notify.go
+    occurrence: 1
+    identifiers:
+      - CH-PODLIFECYCLE
+  - file: pkg/carrier/notify.go
+    occurrence: 2
+    identifiers:
+      - LNK-GWCONTROL
+  # The site of this markdown carrier sits in a fenced Go snippet and
+  # wraps across two comment lines of it, which the one continuation join
+  # folds together in a markdown document the same way it does in a Go
+  # file.
+  - file: docs/reference/snippets.md
+    occurrence: 1
+    identifiers:
+      - CH-PODLIFECYCLE
+  # The site of this carrier stands in the comment documenting a
+  # declaration. The comment between the elements of the package-level
+  # literal below it and the comment trailing the code it annotates are
+  # both outside the doc-comment position the law governs, so neither
+  # takes an entry.
+  - file: pkg/catalog/catalog.go
+    occurrence: 1
+    identifiers:
+      - CH-PODLIFECYCLE
+  # A tracked Go file under sdks/ is a carrier like any other tracked Go
+  # file, and this site wraps across two comment lines.
+  - file: sdks/runtime/go/runtime/lifecycle_test.go
+    occurrence: 1
+    identifiers:
+      - CH-PODLIFECYCLE
+  - file: schemas/lenny-adapter.schema.json
+    occurrence: 1
+    identifiers:
+      - CH-PODLIFECYCLE
+  # The site of this schema document wraps across two of its comment
+  # lines. A number sign opens a comment in a YAML document, so the fold
+  # is one comment there even though the same marker opens a heading in a
+  # markdown document.
+  - file: schemas/lenny-adapter-defaults.yaml
+    occurrence: 1
+    identifiers:
+      - CH-PODLIFECYCLE
+  - file: schemas/lenny-adapter.proto
+    occurrence: 1
+    identifiers:
+      - CH-PODLIFECYCLE
+  - file: schemas/lenny-adapter.proto
+    occurrence: 2
+    identifiers:
+      - CH-PODLIFECYCLE
+  # The header comment block of this carrier is separated from the
+  # package clause by the build constraint, so it is no doc comment and
+  # the phrase it wraps across two of its lines takes no entry. The first
+  # site is the string literal the pinned-literal register names as
+  # pinning a sentence of the specification, and the second is the
+  # comment documenting a declaration below it. The two name distinct
+  # identifiers, so an enumeration reading the header block or the
+  # unpinned literal as a site would write a resolved identifier at the
+  # wrong site.
+  - file: tests/tier11_docs/route_test.go
+    occurrence: 1
+    identifiers:
+      - LNK-GWCONTROL
+  - file: tests/tier11_docs/route_test.go
+    occurrence: 2
+    identifiers:
+      - CH-PODLIFECYCLE

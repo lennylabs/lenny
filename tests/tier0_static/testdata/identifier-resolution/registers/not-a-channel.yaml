@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+#
+# The occurrence stands in the file argument of an Azure storage
+# management-policy command, which names a policy document rather than
+# the mechanism the naming table retires the spelling for.
+kind: identifier-senses
+version: 1
+entries:
+  - file: spec/17_deployment-topology.md
+    occurrence: 1
+    not-a-channel: true

@@ -1,0 +1,489 @@
+// SPDX-License-Identifier: MIT
+
+package sessionserver
+
+import (
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	pkgauth "github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
+	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+)
+
+// isDeriveFailureRow reports whether row is a §7.1 derive-failure audit
+// row (terminal `failed`, failureClass `derive_failure`). Per §15.1 these rows never materialised a workspace, transcript, logs, tree,
+// usage data, or delivered messages, so every session subresource GET
+// returns 404 RESOURCE_NOT_FOUND even though GET /v1/sessions/{id} itself
+// returns 200 with the audit envelope. spec: §15.1; §7.1 derive
+// rule 2. F-15.1.3.
+func isDeriveFailureRow(row sessionstore.Session) bool {
+	return row.State == session.StateFailed &&
+		row.FailureClass == session.FailureClassDeriveFailure
+}
+
+// artifactPayload is the §15.1 GET /v1/sessions/{id}/artifacts wire row.
+// It surfaces the §12.5 catalog fields a client needs to discover and
+// dereference a session artifact (the `ref` is the `lenny-blob://` URI
+// the §15.1 GET /v1/blobs/{ref} handler resolves). spec: §15.1; §12.5. F-15.2.3 / F-15.1.3.
+type artifactPayload struct {
+	Ref       string `json:"ref"`
+	PartID    string `json:"partId,omitempty"`
+	Type      string `json:"type"`
+	MimeType  string `json:"mimeType,omitempty"`
+	SizeBytes int64  `json:"sizeBytes"`
+	LegalHold bool   `json:"legalHold,omitempty"`
+	CreatedAt string `json:"createdAt,omitempty"`
+}
+
+// handleListArtifacts implements GET /v1/sessions/{id}/artifacts per
+// §15.1: the live §12.5 artifact catalog rows for one session. The
+// listing is scoped to the caller's resolved tenant; soft-deleted and
+// tombstoned rows are excluded so a client sees only dereferenceable
+// artifacts. A session with no catalog wired or no rows returns an empty
+// `{items: []}` envelope rather than an error. spec: §15.1;
+// §12.5. F-15.2.3 / F-15.1.3.
+func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
+	tenantID := s.resolveTenant(r)
+	id := r.PathValue("id")
+
+	// Confirm the session exists and is visible to the caller's tenant
+	// before exposing its artifacts, mirroring the GET /v1/sessions/{id}
+	// 404 contract so a cross-tenant probe cannot enumerate artifacts.
+	row, err := s.store.Get(r.Context(), tenantID, id)
+	if err != nil {
+		if errors.Is(err, sessionstore.ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
+			return
+		}
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	// spec: §15.1 — a derive_failure audit row never materialised
+	// a workspace, so it owns no artifacts; the subresource GET 404s.
+	if isDeriveFailureRow(row) {
+		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session has no artifacts", nil)
+		return
+	}
+
+	items := []artifactPayload{}
+	if s.artifacts != nil {
+		rows, err := s.artifacts.ListBySession(r.Context(), tenantID, id)
+		if err != nil {
+			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+			return
+		}
+		for _, row := range rows {
+			if row.State != artifactcatalog.StateLive {
+				continue
+			}
+			items = append(items, toArtifactPayload(row))
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{"items": items})
+}
+
+// toArtifactPayload projects a §12.5 catalog row onto the wire row,
+// defaulting an empty artifact-type tag to `workspace` (the migration
+// 0063 default).
+func toArtifactPayload(row artifactcatalog.Record) artifactPayload {
+	kind := string(row.ArtifactType)
+	if kind == "" {
+		kind = string(artifactcatalog.ArtifactTypeWorkspace)
+	}
+	p := artifactPayload{
+		Ref:       row.URI,
+		PartID:    row.PartID,
+		Type:      kind,
+		MimeType:  row.MimeType,
+		SizeBytes: row.SizeBytes,
+		LegalHold: row.LegalHold,
+	}
+	if !row.CreatedAt.IsZero() {
+		p.CreatedAt = row.CreatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return p
+}
+
+// handleSessionUsage implements GET /v1/sessions/{id}/usage per §15.1:
+// the reconciled token + compute total drawn from the §11.2.1 billing
+// ledger. Per §15.1 the total is tree-aggregated — when the
+// session has a §8 delegation subtree the report folds in every
+// descendant task's usage, not just this session's own ledger rows. A
+// leaf session's subtree is itself, so the single-session total is
+// unchanged. It requires the §10.2 view_usage permission (the same gate
+// the tenant /v1/usage and /v1/metering/events reports run). A session
+// with no billing events, or a gateway with metering disabled, returns a
+// zero-valued report rather than an error. spec: §15.1;
+// §11.2.1; §10.2 view_usage. F-15.1.31 / F-15.2.3 / F-15.1.3.
+func (s *Server) handleSessionUsage(w http.ResponseWriter, r *http.Request) {
+	principal, ok := getPrincipal(r)
+	if ok && !pkgauth.RolesGrant(principal.Roles, pkgauth.PermViewUsage) {
+		s.writeError(w, http.StatusForbidden, "FORBIDDEN",
+			"session usage requires the view_usage permission", nil)
+		return
+	}
+
+	tenantID := s.resolveTenant(r)
+	id := r.PathValue("id")
+	row, err := s.store.Get(r.Context(), tenantID, id)
+	if err != nil {
+		if errors.Is(err, sessionstore.ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
+			return
+		}
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	// spec: §15.1 — a derive_failure audit row never accrued any
+	// usage; the subresource GET 404s rather than reporting a zero total.
+	if isDeriveFailureRow(row) {
+		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session has no usage data", nil)
+		return
+	}
+
+	// spec: §15.1 — sum the §11.2.1 ledger totals across the
+	// session and every descendant in its delegation subtree. The subtree
+	// is {id} for a leaf, so a non-delegating session reports its own
+	// total unchanged. F-15.1.31.
+	usage := billingstore.SessionUsage{}
+	treeAggregated := false
+	if s.billing != nil {
+		ids := s.subtreeSessionIDs(r.Context(), tenantID, row)
+		treeAggregated = len(ids) > 1
+		for _, sid := range ids {
+			u, err := s.billing.SessionTotals(r.Context(), tenantID, sid)
+			if err != nil {
+				s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+				return
+			}
+			usage.TokensInput += u.TokensInput
+			usage.TokensOutput += u.TokensOutput
+			usage.PodMinutes += u.PodMinutes
+			usage.EventCount += u.EventCount
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"sessionId":      id,
+		"tokensInput":    usage.TokensInput,
+		"tokensOutput":   usage.TokensOutput,
+		"podMinutes":     usage.PodMinutes,
+		"eventCount":     usage.EventCount,
+		"treeAggregated": treeAggregated,
+	})
+}
+
+// handleSetupOutput implements GET /v1/sessions/{id}/setup-output per
+// §15.1: the §7.5 captured stdout/stderr/exit for
+// each setup command the adapter ran, plus the §7.5 synthetic
+// rejection-reason entries the gateway recorded when it rejected a
+// command at admission. The same records already ride the single-session
+// GET /v1/sessions/{id} envelope as `setupOutput`; this dedicated
+// endpoint serves clients that want the setup output without fetching the
+// whole session detail. The listing is tenant-scoped behind the same
+// 404 contract as the session read, so a cross-tenant probe cannot
+// confirm a foreign session id. A session that ran no setup commands and
+// had none rejected returns an empty `{items: []}` envelope, mirroring
+// GET /v1/sessions/{id}/artifacts. spec: §15.1; §7.5. F-15.1.3 / F-7.5.4 / F-7.5.11.
+func (s *Server) handleSetupOutput(w http.ResponseWriter, r *http.Request) {
+	tenantID := s.resolveTenant(r)
+	id := r.PathValue("id")
+
+	row, err := s.store.Get(r.Context(), tenantID, id)
+	if err != nil {
+		if errors.Is(err, sessionstore.ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
+			return
+		}
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	// spec: §15.1 — a derive_failure audit row never ran setup,
+	// so the subresource GET 404s rather than returning an empty list. A
+	// normal session that ran no setup commands still returns 200 {items:
+	// []}; the distinguishing factor is the derive_failure audit class.
+	if isDeriveFailureRow(row) {
+		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session has no setup output", nil)
+		return
+	}
+
+	items := make([]SetupOutputEntry, 0, len(row.SetupOutput))
+	for _, e := range row.SetupOutput {
+		items = append(items, SetupOutputEntry{
+			Cmd:             e.Cmd,
+			ExitCode:        e.ExitCode,
+			Stdout:          e.Stdout,
+			Stderr:          e.Stderr,
+			DurationMs:      e.DurationMs,
+			Truncated:       e.Truncated,
+			Rejected:        e.Rejected,
+			RejectionReason: e.RejectionReason,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{"items": items})
+}
+
+// handleWorkspace implements GET /v1/sessions/{id}/workspace per §15.1: it streams the session's workspace snapshot tar.gz from
+// the §4.5 object store. The snapshot ref is resolved from the session
+// row (`WorkspaceSnapshot.Ref`), then read through the tenant-scoped
+// blob-store view so a caller cannot reach a snapshot outside its own
+// tenant. The §15.1 contract is honoured directly: a session
+// that never produced a snapshot — including a failed-derive row that is
+// terminal from birth — returns 404 RESOURCE_NOT_FOUND because no
+// workspace ever existed. The bytes are streamed with the stored MIME
+// type and a `Content-Disposition` naming the archive after the session.
+// spec: §15.1; §4.5.
+// F-15.1.3.
+func (s *Server) handleWorkspace(w http.ResponseWriter, r *http.Request) {
+	tenantID := s.resolveTenant(r)
+	id := r.PathValue("id")
+
+	row, err := s.store.Get(r.Context(), tenantID, id)
+	if err != nil {
+		if errors.Is(err, sessionstore.ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
+			return
+		}
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+
+	// spec: §15.1 — a derive_failure audit row never materialised
+	// a workspace; the download 404s. (The no-snapshot guard below also
+	// covers this, but the explicit class check keeps the contract legible
+	// and holds even if a stale ref were ever attached to such a row.)
+	if isDeriveFailureRow(row) {
+		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND",
+			"session has no workspace snapshot", nil)
+		return
+	}
+
+	// spec: §15.1 — no snapshot ever written (never-ran or
+	// failed-derive row) is a 404, not an empty stream.
+	if row.WorkspaceSnapshot == nil || row.WorkspaceSnapshot.Ref == "" {
+		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND",
+			"session has no workspace snapshot", nil)
+		return
+	}
+	if s.blobs == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "BLOBSTORE_UNAVAILABLE",
+			"gateway has no blob store configured", nil)
+		return
+	}
+
+	// spec: §10.1, §15.1 — a chunked checkpoint stores no
+	// single snapshot object; the workspace archive is the concatenation of
+	// the manifest row's chunks in index order. The gateway reads the chunk
+	// bodies directly (the caller is the API client, not a pod) and streams
+	// them in order. When no manifest row resolves — a checkpoint that
+	// predates the chunked model, or a gateway without the manifest reader
+	// wired — the handler falls through to the legacy single-snapshot path.
+	if s.streamChunkedWorkspace(w, r, row, tenantID) {
+		return
+	}
+
+	uri, ok := parseSnapshotRef(row.WorkspaceSnapshot.Ref, tenantID)
+	if !ok {
+		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND",
+			"session has no resolvable workspace snapshot", nil)
+		return
+	}
+
+	info, body, err := blobstore.NewTenantScoped(tenantID, s.blobs).Get(uri)
+	if err != nil {
+		if errors.Is(err, blobstore.ErrCrossTenant) {
+			s.writeError(w, http.StatusForbidden, "FORBIDDEN",
+				"caller has no read access to this workspace snapshot", nil)
+			return
+		}
+		if errors.Is(err, blobstore.ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND",
+				"workspace snapshot not found or expired", nil)
+			return
+		}
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	defer body.Close()
+
+	mime := info.MimeType
+	if mime == "" {
+		mime = "application/gzip"
+	}
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+id+`-workspace.tar.gz"`)
+	if hash := row.WorkspaceSnapshot.ContentHash; hash != "" {
+		w.Header().Set("X-Lenny-Workspace-Content-Hash", hash)
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, body)
+}
+
+// checkpointIDFromSnapshotRef extracts the checkpoint_id (the checkpoint
+// manifest primary key) from a stored WorkspaceSnapshot.Ref. spec: §10.1 — the ref is the four-segment object-path form the parsers accept
+// (/{tenant}/checkpoints/{session}/{checkpoint_id}) whose last segment is
+// the checkpoint_id the manifest row is keyed by. A ref carrying only the
+// bare checkpoint_id (no path segments) is returned unchanged, so both
+// forms resolve to the same manifest key.
+func checkpointIDFromSnapshotRef(ref string) string {
+	trimmed := strings.TrimSuffix(ref, "/")
+	if i := strings.LastIndex(trimmed, "/"); i >= 0 {
+		return trimmed[i+1:]
+	}
+	return trimmed
+}
+
+// streamChunkedWorkspace serves GET /v1/sessions/{id}/workspace from a
+// §10.1 chunked checkpoint: it resolves the manifest row from the
+// checkpoint_id carried in WorkspaceSnapshot.Ref (the last segment of the
+// four-segment object-path form), then streams each chunk object in
+// ascending index order [0, chunk_count) as one continuous archive. The
+// gateway reads the bodies itself — the caller is the API client, so no
+// presigned capability is minted. It reports handled=true when it wrote a
+// response (success or a terminal error), and handled=false when no chunked
+// manifest resolved so the caller should fall through to the legacy
+// single-snapshot path.
+//
+// spec: §10.1 — reassembly in index order; §15.1.
+// chunkReadTTL is the read-time TTL the gateway-direct workspace download
+// applies to a chunk object. A blob backend that derives expiry from the
+// read URI (miniostore) would otherwise treat a TTL-less read as already
+// expired; the checkpoint chunk's real lifetime is governed by §12.5 GC, so
+// the read serves any physically-present object.
+const chunkReadTTL = 100 * 365 * 24 * time.Hour
+
+func (s *Server) streamChunkedWorkspace(w http.ResponseWriter, r *http.Request, row sessionstore.Session, tenantID string) bool {
+	if s.checkpointManifests == nil {
+		return false
+	}
+	checkpointID := checkpointIDFromSnapshotRef(row.WorkspaceSnapshot.Ref)
+	rec, err := s.checkpointManifests.Get(r.Context(), tenantID, checkpointID)
+	if err != nil {
+		// No manifest row for this ref (a checkpoint predating the chunked
+		// model, or a legacy single-snapshot ref): fall through.
+		return false
+	}
+	if rec.ChunkCount <= 0 {
+		// An empty manifest holds no bytes; there is nothing to stream and
+		// no single-snapshot object to fall back to.
+		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND",
+			"session checkpoint has no workspace bytes", nil)
+		return true
+	}
+	encoding := rec.ChunkEncoding
+	if encoding == "" {
+		encoding = partialmanifeststore.ChunkEncodingTarGz
+	}
+
+	scoped := blobstore.NewTenantScoped(tenantID, s.blobs)
+	// Resolve every chunk object before writing any byte so a missing chunk
+	// yields a clean error status rather than a truncated 200 body.
+	bodies := make([]io.ReadCloser, 0, rec.ChunkCount)
+	closeAll := func() {
+		for _, b := range bodies {
+			_ = b.Close()
+		}
+	}
+	for n := 0; n < rec.ChunkCount; n++ {
+		uri := resumechunks.ChunkObjectURI(row.TenantID, row.ID, checkpointID, uint32(n), encoding)
+		// The gateway-direct read serves any physically-present chunk, the
+		// same liveness signal the presigned-GET resume path uses; §12.5 GC
+		// is the sole authority on a chunk's lifetime, so the read-time TTL
+		// is set wide rather than re-deriving a retention deadline here.
+		uri.TTL = chunkReadTTL
+		_, body, gerr := scoped.Get(uri)
+		if gerr != nil {
+			closeAll()
+			if errors.Is(gerr, blobstore.ErrCrossTenant) {
+				s.writeError(w, http.StatusForbidden, "FORBIDDEN",
+					"caller has no read access to this workspace checkpoint", nil)
+				return true
+			}
+			if errors.Is(gerr, blobstore.ErrNotFound) {
+				s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND",
+					"workspace checkpoint chunk not found or expired", nil)
+				return true
+			}
+			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+			return true
+		}
+		bodies = append(bodies, body)
+	}
+	defer closeAll()
+
+	mime := "application/gzip"
+	if encoding == partialmanifeststore.ChunkEncodingTar {
+		mime = "application/x-tar"
+	}
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+row.ID+`-workspace.tar`+chunkArchiveSuffix(encoding)+`"`)
+	if hash := row.WorkspaceSnapshot.ContentHash; hash != "" {
+		w.Header().Set("X-Lenny-Workspace-Content-Hash", hash)
+	}
+	w.WriteHeader(http.StatusOK)
+	for _, body := range bodies {
+		if _, cerr := io.Copy(w, body); cerr != nil {
+			// The response is already committed; the client observes a
+			// truncated stream. Nothing further to write.
+			return true
+		}
+	}
+	return true
+}
+
+// chunkArchiveSuffix maps a §10.1 chunk_encoding to the archive filename
+// suffix after `.tar` (`.gz` for tar.gz, empty for tar).
+func chunkArchiveSuffix(encoding partialmanifeststore.ChunkEncoding) string {
+	if encoding == partialmanifeststore.ChunkEncodingTarGz {
+		return ".gz"
+	}
+	return ""
+}
+
+// parseSnapshotRef resolves a stored workspace-snapshot reference into a
+// blob-store URI, accepting both the `lenny-blob://` URI form and the
+// path-style object key (`/{tenant}/{objectType}/{session}/{part}`) the
+// gateway records for sealed and derived snapshots. The resolved URI's
+// tenant must match the caller's tenant; a mismatch returns ok=false so
+// the handler fails the read closed before touching the store. spec:
+// §4.5 MinIO path `/{tenant_id}/{object_type}/{session_id}/...`.
+func parseSnapshotRef(ref, tenantID string) (blobstore.URI, bool) {
+	if strings.HasPrefix(ref, blobstore.Scheme+"://") {
+		uri, err := blobstore.ParseURI(ref)
+		if err != nil {
+			return blobstore.URI{}, false
+		}
+		if uri.TenantID != tenantID {
+			return blobstore.URI{}, false
+		}
+		return uri, true
+	}
+	parts := strings.SplitN(strings.TrimPrefix(ref, "/"), "/", 4)
+	if len(parts) < 4 || parts[0] != tenantID {
+		return blobstore.URI{}, false
+	}
+	return blobstore.URI{
+		TenantID:   parts[0],
+		ObjectType: blobstore.ObjectType(parts[1]),
+		SessionID:  parts[2],
+		PartID:     parts[3],
+	}, true
+}

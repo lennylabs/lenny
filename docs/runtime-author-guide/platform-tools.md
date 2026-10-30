@@ -7,18 +7,20 @@ nav_order: 6
 
 # Platform MCP Tools
 
-Lenny's local tool server exposes 11 tools to agent runtimes at the Standard and Full levels. These tools are available via the abstract Unix socket specified in the adapter manifest (`platformMcpServer.socket`). You connect to this server using an MCP client library and present the `mcpNonce` from the manifest during the `initialize` handshake.
+Lenny's platform MCP server exposes a set of tools to `type: agent` runtimes at the Standard and Full integration levels. The tools cover delegation, child-session control, streaming output, human elicitation, blocking on input, inter-session messaging, the memory store, the task tree, and tracing-context propagation. The server is reachable over the abstract Unix socket named in the adapter manifest (`platformMcpServer.socket`). Connect to it with an MCP client library and present the `mcpNonce` from the manifest during the `initialize` handshake.
+
+These tools are unavailable at the Basic level and to `type: mcp` runtimes. A Basic-level runtime uses only the stdin/stdout protocol and the adapter-local file tools. A `type: mcp` runtime hosts its own MCP server and does not participate in the task lifecycle, so the platform tools do not apply to it. See [Integration Levels](integration-levels.md) for the level definitions.
 
 ---
 
 ## Connection Setup
 
-Before calling any platform tool, connect to Lenny's local tool server:
+Before calling any platform tool, connect to the platform MCP server:
 
 1. Read `/run/lenny/adapter-manifest.json`.
-2. Extract `platformMcpServer.socket` (e.g., `@lenny-platform-mcp`) and `mcpNonce`.
-3. Connect via abstract Unix socket.
-4. Send MCP `initialize` with the nonce:
+2. Extract `platformMcpServer.socket` (e.g., `@lenny-platform-mcp`) and `mcpNonce`. The nonce is a 256-bit hex string written with each manifest. It authenticates a connection to the pod's intra-pod MCP servers, which are pod-wide and started at most once per pod.
+3. Connect over the abstract Unix socket. Abstract sockets are a Linux kernel feature, so they are available wherever the adapter runs inside an in-cluster Linux pod. Under Embedded Mode (`lenny up`) the adapter runs in an in-cluster pod, which on macOS and Windows runs under Docker Desktop's Linux VM, so Standard- and Full-level runtime authors can develop against Embedded Mode on any host. Only Source Mode (`make run`), which runs the adapter on the host, requires a Linux host for these levels.
+4. Send MCP `initialize` with the nonce as the top-level `_lennyNonce` field in `params`. The server speaks MCP `2025-03-26` and also accepts `2024-11-05` for a transition window. The adapter validates `_lennyNonce` against the nonce the manifest carried at the start that bound the server you are connecting to, strips it from `params`, and rejects any connection that does not present a valid nonce before dispatching tools. A later session's manifest write does not re-arm a running server. The server resolves the calling session at call time and refuses the call unless the pod's shared runtime process has been given exactly one session and that session is the caller.
 
 ```json
 {
@@ -32,6 +34,8 @@ Before calling any platform tool, connect to Lenny's local tool server:
 ```
 
 5. Call `tools/list` to discover available tools.
+
+The `_lennyNonce` member of `initialize` is the form the nonce takes on an MCP connection. The other runtime sockets, the message channel when your binary dials it as a socket and the CH-RUNTIMEOPS, take the same `mcpNonce` as a first line on the connection, `{"_lennyNonce":"<nonce_hex>"}`, checked once when the adapter accepts the connection. For those sockets, wait for the manifest before dialing, answer a nonce-only `_lennyChallenge` that arrives before the first protocol frame, and read the manifest again and redial when the adapter closes the connection before that frame. The [Adapter Contract](../reference/adapter-contract.md#connection-handshake) states the handshake in full.
 
 ---
 
@@ -47,7 +51,7 @@ Spawn a child session on another runtime. The target is opaque --- your runtime 
 |-----------|------|----------|-------------|
 | `target` | string | Yes | Opaque runtime identifier (discovered via `lenny/discover_agents`) |
 | `task` | object | Yes | Task specification containing input and optional file exports |
-| `task.input` | OutputPart[] | Yes | Input content for the child session |
+| `task.input` | MessagePart[] | Yes | Input content for the child session |
 | `task.workspaceFiles` | object | No | File export specification |
 | `task.workspaceFiles.export` | array | No | Array of `{glob, destPrefix}` entries defining which parent workspace files to include in the child's workspace |
 | `lease_slice` | object | No | Budget allocation from parent to child |
@@ -181,7 +185,7 @@ List available delegation targets, filtered by the calling session's effective d
 
 - Only returns `type: agent` runtimes --- `type: mcp` runtimes are excluded.
 - Results are scoped by the calling session's delegation policy. You only see targets you are authorized to delegate to.
-- Not-found and not-authorized produce identical (empty) responses --- no enumeration.
+- A target that does not exist and a target you are not authorized to reach both produce the same empty response, so the result cannot be used to enumerate runtimes.
 
 ---
 
@@ -193,7 +197,7 @@ Emit output parts to the parent session or client. Use this for incremental stre
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `output` | OutputPart[] | Yes | Array of output parts to emit |
+| `output` | MessagePart[] | Yes | Array of output parts to emit |
 
 **Returns:** Acknowledgement.
 
@@ -232,7 +236,7 @@ Request human input via the elicitation chain. The request is forwarded hop-by-h
 | `schema` | object | Yes | JSON Schema describing the input to collect |
 | `message` | string | Yes | Human-readable prompt displayed to the user |
 
-**Returns:** The user's response (matching the provided schema), or an error if the elicitation was dismissed or timed out.
+**Returns:** The user's response (matching the provided schema), or an error if the elicitation was dismissed or timed out. When the session leaves its pod before the user answers, through the release of a suspended session's pod, a pod failure, or the end of the session, the pending elicitation expires and its answer is never delivered. A runtime restored onto a new pod raises the elicitation again if it still needs the input. While your runtime waits inside the call, the call counts as activity for the session. The wait keeps the session from idle suspension when the call began before the adapter sealed the session. The pod or slot release that follows a seal ends a call your runtime began after the seal, as the [session seal](../reference/adapter-contract.md#session-seal) section of the adapter contract states.
 
 **Example:**
 
@@ -260,9 +264,9 @@ Request human input via the elicitation chain. The request is forwarded hop-by-h
 
 **Budget:** Deployers can configure `maxElicitationsPerSession` (default: 50) to limit elicitation spam.
 
-**Depth suppression:** At delegation depth >= 3, agent-initiated elicitations are auto-suppressed by default. Your runtime receives a `SUPPRESSED` response, which should be handled the same as "user declined."
+**Depth suppression:** At delegation depth >= 3, agent-initiated elicitations are auto-suppressed by default unless the elicitation type appears in the pool's allow list (deployers configure this through `elicitationDepthPolicy` per pool). A suppressed call returns a `SUPPRESSED` response, which your runtime should handle the same as "user declined."
 
-**Content integrity (gateway-origin binding).** The gateway is the authoritative source for elicitation display text. Intermediate pods in a delegation chain forward elicitations by `elicitation_id` only — they may observe the original `{message, schema}` pair (for policy, logging, or suppression decisions) but must not modify the rendered text. The forward-hop wire mechanism is the native MCP `elicitation/create` frame: an intermediate pod re-emits the upstream `elicitation/create` frame carrying the original `{message, schema}` payload; the gateway matches the forwarded payload against its recorded original. If your runtime needs to present transformed text (translation, rephrasing, audience-targeted summarization) for a different viewer, emit a new `lenny/request_elicitation` establishing a fresh `elicitation_id` and your runtime's own `origin_pod` — do not rewrite an existing one. Under the tenant's effective elicitation content integrity enforcement mode `enforce` (the default), attempting to forward an existing `elicitation_id` with a diverging `{message, schema}` is rejected with `ELICITATION_CONTENT_TAMPERED` (HTTP 409) and raises the `ElicitationContentTamperDetected` critical alert. Operators may configure a tenant's mode to `detect-only` (the divergence is forwarded but audited) or `off` (no check) via the admin API; regardless of the enforcement mode, runtime authors should always forward unchanged and emit a fresh elicitation for any transformed text — a `detect-only` or `off` posture exists for operator visibility and legacy-adapter accommodation, not as a license to rewrite forwarded content.
+**Content integrity (gateway-origin binding).** The gateway is the authoritative source for elicitation display text. Intermediate pods in a delegation chain forward elicitations by `elicitation_id` only — they may observe the original `{message, schema}` pair (for policy, logging, or suppression decisions) but must not modify the rendered text. The forward-hop wire mechanism is the native MCP `elicitation/create` frame: an intermediate pod re-emits the upstream `elicitation/create` frame carrying the original `{message, schema}` payload; the gateway matches the forwarded payload against its recorded original. If your runtime needs to present transformed text (translation, rephrasing, audience-targeted summarization) for a different viewer, emit a new `lenny/request_elicitation` establishing a fresh `elicitation_id` and your runtime's own `origin_pod` — do not rewrite an existing one. Under the tenant's effective elicitation content integrity enforcement mode `enforce` (the default), attempting to forward an existing `elicitation_id` with a diverging `{message, schema}` is rejected with `ELICITATION_CONTENT_TAMPERED` (HTTP 409) and raises the `ElicitationContentTamperDetected` critical alert. Operators may configure a tenant's mode to `detect-only` (the divergence is forwarded but audited) or `off` (no check) via the admin API. Regardless of the enforcement mode, runtime authors should always forward unchanged and emit a fresh elicitation for any transformed text. The `detect-only` and `off` postures exist for operator visibility and legacy-adapter accommodation; they do not license a runtime to rewrite forwarded content.
 
 ---
 
@@ -274,7 +278,7 @@ Block until the parent or client provides a response. This is the mechanism for 
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `parts` | OutputPart[] | Yes | Content describing what input is needed |
+| `parts` | MessagePart[] | Yes | Content describing what input is needed |
 
 **Returns:** `MessageEnvelope` containing the response.
 
@@ -302,7 +306,7 @@ Send a message to any task by ID, subject to messaging scope restrictions.
 |-----------|------|----------|-------------|
 | `to` | string | Yes | Target task/session ID |
 | `message` | object | Yes | Message content |
-| `message.parts` | OutputPart[] | Yes | Content parts |
+| `message.parts` | MessagePart[] | Yes | Content parts |
 | `message.inReplyTo` | string | No | If responding to a `request_input`, the request ID |
 | `message.delivery` | string | No | `"immediate"` to interrupt a running session |
 
@@ -403,7 +407,27 @@ Return the task hierarchy with states. No input parameters required.
 **Notes:**
 
 - `siblings` messaging scope requires `treeVisibility: full`. The gateway rejects `messagingScope: siblings` when visibility is restricted.
-- The task tree is a snapshot --- siblings spawned after you call `get_task_tree` will not appear until you call it again.
+- The task tree is a snapshot. Siblings spawned after you call `get_task_tree` will not appear until you call it again.
+
+---
+
+### `lenny/set_tracing_context`
+
+Register tracing identifiers that the gateway propagates to child sessions. Use this to stitch your runtime's native traces into the parent's trace tree across delegation.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `context` | object | Yes | Map of string keys to string values carrying non-sensitive tracing identifiers (e.g., `{ "langsmith_run_id": "run_abc123" }`) |
+
+**Returns:** Acknowledgement.
+
+**Notes:**
+
+- The gateway merges the submitted context into your session's recorded context, validates the merged result at registration time, and attaches the registered context to each child's delegation lease when you delegate. The adapter itself stores no context and attaches none to later calls. The LLM never sees or sets the tracing context; the runtime manages it as infrastructure plumbing.
+- A child runtime can extend the inherited context with additional entries. Child entries merge with parent entries and cannot overwrite or remove them.
+- The same registration is available to all integration levels through the stdout JSONL `set_tracing_context` message. The MCP tool exists for Standard- and Full-level runtimes that already hold an MCP connection. The JSONL frame carries the per-session identifier in `sessionId` on every pod, whatever the pool's `maxConcurrentSessions`, and the runtime echoes the identifier the adapter handed it. A frame that carries no identifier resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected, counted in `lenny_adapter_unaddressed_frame_rejected_total`, and logged. A frame whose identifier names no live binding on the receiving stream is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total`, and logged. See [Adapter Contract](../reference/adapter-contract.md).
 
 ---
 
@@ -422,5 +446,6 @@ Return the task hierarchy with states. No input parameters required.
 | `lenny/memory_write` | -- | Yes | Yes |
 | `lenny/memory_query` | -- | Yes | Yes |
 | `lenny/get_task_tree` | -- | Yes | Yes |
+| `lenny/set_tracing_context` | -- | Yes | Yes |
 
-All platform tools require the Standard level or higher. Basic-level runtimes use only the stdin/stdout protocol and adapter-local tools (`read_file`, `write_file`, `list_dir`, `delete_file`).
+All platform tools require the Standard level or higher. Basic-level runtimes use only the stdin/stdout protocol and the adapter-local file tools (`read_file`, `write_file`, `list_dir`, and `delete_file`). A Basic-level runtime that needs to propagate a tracing context can still do so through the stdout JSONL `set_tracing_context` message, which is available at every level. The frame carries the per-session identifier in `sessionId` on every pod, and a Basic-level runtime echoes the identifier the adapter handed it. A frame that carries no identifier resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected, counted in `lenny_adapter_unaddressed_frame_rejected_total`, and logged. A frame whose identifier names no live binding on the receiving stream is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total`, and logged.

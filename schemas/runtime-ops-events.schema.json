@@ -1,0 +1,208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lenny.dev/schemas/runtime-ops-events.json",
+  "title": "Lenny runtime lifecycle events",
+  "description": "JSON envelopes exchanged on the adapter↔runtime CH-RUNTIMEOPS, a Unix socket distinct from the stdin/stdout JSONL message channel (schemas/lenny-adapter-jsonl.schema.json). Field names are camelCase to match the CH-RUNTIMEOPS message-schema table and the adapter wire (pkg/adapter/runtimeops.go). See spec/28_communication-channels.md §28.5.3, the CH-RUNTIMEOPS card.",
+  "oneOf": [
+    { "$ref": "#/$defs/lifecycle_capabilities" },
+    { "$ref": "#/$defs/lifecycle_support" },
+    { "$ref": "#/$defs/checkpoint_request" },
+    { "$ref": "#/$defs/checkpoint_ready" },
+    { "$ref": "#/$defs/checkpoint_complete" },
+    { "$ref": "#/$defs/interrupt_request" },
+    { "$ref": "#/$defs/interrupt_acknowledged" },
+    { "$ref": "#/$defs/credentials_rotated" },
+    { "$ref": "#/$defs/credentials_acknowledged" },
+    { "$ref": "#/$defs/deadline_approaching" },
+    { "$ref": "#/$defs/files_updated" },
+    { "$ref": "#/$defs/llm_request_started" },
+    { "$ref": "#/$defs/llm_request_completed" }
+  ],
+  "$defs": {
+    "lifecycle_capabilities": {
+      "title": "lifecycle_capabilities",
+      "description": "Adapter → runtime, the first frame after the connection handshake. Advertises the lifecycle capabilities the adapter supports. Process-scoped: it carries no sessionId and has no session precondition, while the session-scoped frames the adapter writes for a session follow the session_started that answers the session's session_start on CH-MSGSOCK. The runtime replies with lifecycle_support.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "lifecycle_capabilities" },
+        "protocolVersion": { "type": "string", "minLength": 1 },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "checkpoint",
+              "interrupt",
+              "credential_rotation",
+              "deadline_signal"
+            ]
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": ["type", "protocolVersion", "capabilities"],
+      "additionalProperties": false
+    },
+    "lifecycle_support": {
+      "title": "lifecycle_support",
+      "description": "Runtime → adapter, reply to lifecycle_capabilities. The runtime declares the subset of advertised capabilities it implements.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "lifecycle_support" },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "checkpoint",
+              "interrupt",
+              "credential_rotation",
+              "deadline_signal"
+            ]
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": ["type", "capabilities"],
+      "additionalProperties": false
+    },
+    "checkpoint_request": {
+      "title": "checkpoint_request",
+      "description": "Adapter → runtime. Asks the runtime to quiesce the named session's work so the adapter can take a consistent snapshot. The runtime must reply with checkpoint_ready within deadlineMs.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "checkpoint_request" },
+        "sessionId": { "type": "string", "minLength": 1, "description": "The session the frame concerns. A runtime that keeps per-session context drops, without a reply, a frame that names a session it does not hold." },
+        "checkpointId": { "type": "string", "minLength": 1 },
+        "deadlineMs": { "type": "integer", "minimum": 100 }
+      },
+      "required": ["type", "sessionId", "checkpointId", "deadlineMs"],
+      "additionalProperties": false
+    },
+    "checkpoint_ready": {
+      "title": "checkpoint_ready",
+      "description": "Runtime → adapter. The runtime has quiesced and is ready for the snapshot.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "checkpoint_ready" },
+        "checkpointId": { "type": "string", "minLength": 1 }
+      },
+      "required": ["type", "checkpointId"],
+      "additionalProperties": false
+    },
+    "checkpoint_complete": {
+      "title": "checkpoint_complete",
+      "description": "Adapter → runtime. Confirms the snapshot upload result; the named session's work may resume. reason is present when status is failed.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "checkpoint_complete" },
+        "sessionId": { "type": "string", "minLength": 1, "description": "The session the frame concerns. A runtime that keeps per-session context drops, without a reply, a frame that names a session it does not hold." },
+        "checkpointId": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["ok", "failed"] },
+        "reason": { "type": "string" }
+      },
+      "required": ["type", "sessionId", "checkpointId", "status"],
+      "additionalProperties": false
+    },
+    "interrupt_request": {
+      "title": "interrupt_request",
+      "description": "Adapter → runtime. Asks the named session's work to reach a safe stop point and the runtime to acknowledge with interrupt_acknowledged within deadlineMs.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "interrupt_request" },
+        "sessionId": { "type": "string", "minLength": 1, "description": "The session the frame concerns. A runtime that keeps per-session context drops, without a reply, a frame that names a session it does not hold." },
+        "interruptId": { "type": "string", "minLength": 1 },
+        "deadlineMs": { "type": "integer", "minimum": 100 }
+      },
+      "required": ["type", "sessionId", "interruptId", "deadlineMs"],
+      "additionalProperties": false
+    },
+    "interrupt_acknowledged": {
+      "title": "interrupt_acknowledged",
+      "description": "Runtime → adapter. The runtime has reached a safe stop point. The original interruptId is echoed.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "interrupt_acknowledged" },
+        "interruptId": { "type": "string", "minLength": 1 }
+      },
+      "required": ["type", "interruptId"],
+      "additionalProperties": false
+    },
+    "credentials_rotated": {
+      "title": "credentials_rotated",
+      "description": "Adapter → runtime. New credentials for the named session have been written to credentialsPath. The runtime must rebind that session and reply with credentials_acknowledged.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "credentials_rotated" },
+        "sessionId": { "type": "string", "minLength": 1, "description": "The session the frame concerns. A runtime that keeps per-session context drops, without a reply, a frame that names a session it does not hold." },
+        "provider": { "type": "string", "minLength": 1 },
+        "credentialsPath": { "type": "string", "minLength": 1 },
+        "leaseId": { "type": "string", "minLength": 1 }
+      },
+      "required": ["type", "sessionId", "provider", "credentialsPath", "leaseId"],
+      "additionalProperties": false
+    },
+    "credentials_acknowledged": {
+      "title": "credentials_acknowledged",
+      "description": "Runtime → adapter. The runtime has rebound to the new credential. The adapter releases queued LLM requests with the new credential.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "credentials_acknowledged" },
+        "leaseId": { "type": "string", "minLength": 1 },
+        "provider": { "type": "string", "minLength": 1 }
+      },
+      "required": ["type", "leaseId", "provider"],
+      "additionalProperties": false
+    },
+    "deadline_approaching": {
+      "title": "deadline_approaching",
+      "description": "Adapter → runtime. Advance warning before the named session's forced termination. remainingMs is the time left until session expiry or budget exhaustion. A runtime writes no response for the session in reply to this frame when no message for the session is in flight.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "deadline_approaching" },
+        "sessionId": { "type": "string", "minLength": 1, "description": "The session the frame concerns. A runtime that keeps per-session context drops, without a reply, a frame that names a session it does not hold." },
+        "remainingMs": { "type": "integer", "minimum": 0 },
+        "trigger": { "enum": ["session_age", "budget"] }
+      },
+      "required": ["type", "sessionId", "remainingMs", "trigger"],
+      "additionalProperties": false
+    },
+    "files_updated": {
+      "title": "files_updated",
+      "description": "Adapter → runtime. A §7.4 mid-session upload promoted new files into the named session's workspace, `/workspace/slots/{sessionId}/current`. Sent only after the atomic overlay completes, so the runtime never observes partially-written files. The agent re-reads the workspace. One-way: no acknowledgement is expected.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "files_updated" },
+        "sessionId": { "type": "string", "minLength": 1, "description": "The session the frame concerns. A runtime that keeps per-session context drops, without a reply, a frame that names a session it does not hold." }
+      },
+      "required": ["type", "sessionId"],
+      "additionalProperties": false
+    },
+    "llm_request_started": {
+      "title": "llm_request_started",
+      "description": "Runtime → adapter. The runtime is about to send an outbound LLM request directly to the provider (direct mode). The adapter increments the in-flight counter for this provider.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "llm_request_started" },
+        "requestId": { "type": "string", "minLength": 1 },
+        "provider": { "type": "string", "minLength": 1 }
+      },
+      "required": ["type", "requestId", "provider"],
+      "additionalProperties": false
+    },
+    "llm_request_completed": {
+      "title": "llm_request_completed",
+      "description": "Runtime → adapter. The runtime's outbound LLM request has completed or errored. The adapter decrements the in-flight counter; when it reaches zero and a rotation is pending, the adapter sends credentials_rotated. In direct mode (§11.2) the runtime optionally carries the prompt and completion token counts extracted from the provider response, which the adapter accumulates into the cumulative total of the session sessionId names and reports as the incremental delta since the last read over the §4.7 ReportUsage RPC.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "llm_request_completed" },
+        "sessionId": { "type": "string", "minLength": 1, "description": "The session the frame concerns, the session whose request completed. The adapter accumulates the token counts into that session's cumulative total and drops them when the pod holds no binding for that session." },
+        "requestId": { "type": "string", "minLength": 1 },
+        "provider": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["ok", "error"] },
+        "inputTokens": { "type": "integer", "minimum": 0 },
+        "outputTokens": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "sessionId", "requestId", "provider", "status"],
+      "additionalProperties": false
+    }
+  }
+}

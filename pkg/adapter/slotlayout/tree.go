@@ -1,0 +1,69 @@
+// SPDX-License-Identifier: MIT
+
+package slotlayout
+
+import (
+	"fmt"
+	"os"
+)
+
+// EnsureTree creates the per-slot directory tree §6.4 makes the adapter
+// responsible for, on the adapter's first reference to an identifier the
+// gateway minted at claim time: the slot's `current/`, `staging/`,
+// `/sessions/{sessionId}/`, `/artifacts/{sessionId}/`, and the
+// `/run/lenny/slots/{sessionId}/` credential directory. It is idempotent —
+// re-creating an existing slot tree is a no-op — so a retried slot bind
+// does not error. Each directory is chmod'd to its exact mode after
+// MkdirAll so the process umask cannot strip the bits the runtime or the
+// lenny-cred-readers group needs. A path that is empty (its root was
+// unconfigured) is skipped.
+//
+// spec: §6.4 — "The gateway mints the sessionId at claim time; the
+// adapter creates the session's slot tree on the first reference to that
+// identifier".
+func EnsureTree(p SlotPaths) error {
+	for _, d := range []struct {
+		path string
+		mode os.FileMode
+	}{
+		{p.Current, CurrentMode},
+		{p.Staging, StagingMode},
+		{p.Sessions, SessionsMode},
+		{p.Artifacts, ArtifactsMode},
+		{p.CredentialsDir, CredentialsDirMode},
+	} {
+		if d.path == "" {
+			continue
+		}
+		if err := os.MkdirAll(d.path, d.mode); err != nil {
+			return fmt.Errorf("slotlayout: create %q: %w", d.path, err)
+		}
+		if err := os.Chmod(d.path, d.mode); err != nil {
+			return fmt.Errorf("slotlayout: chmod %q: %w", d.path, err)
+		}
+	}
+	return nil
+}
+
+// RemoveTree removes the per-slot directory tree on slot cleanup. It
+// removes the slot's `/workspace/slots/{sessionId}` root (current + staging),
+// `/sessions/{sessionId}`, `/artifacts/{sessionId}`, and
+// `/run/lenny/slots/{sessionId}` credential directory. Removal is
+// best-effort across the trees: a removal error on one tree is
+// accumulated but does not abort the others, so a partial cleanup still
+// drops as much per-slot state as possible. An already-absent tree is not
+// an error (os.RemoveAll returns nil for a missing path).
+//
+// spec: §6.4 — "... removes it during slot cleanup".
+func RemoveTree(p SlotPaths) error {
+	var firstErr error
+	for _, dir := range []string{p.slotRoot(), p.Sessions, p.Artifacts, p.CredentialsDir} {
+		if dir == "" {
+			continue
+		}
+		if err := os.RemoveAll(dir); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("slotlayout: remove %q: %w", dir, err)
+		}
+	}
+	return firstErr
+}

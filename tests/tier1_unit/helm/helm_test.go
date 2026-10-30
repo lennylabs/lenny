@@ -4,9 +4,8 @@
 // helm-unittest reads YAML test cases under charts/<chart>/tests/
 // and asserts the rendered manifest matches expectations. The Go
 // harness here shells out to `helm unittest <chart>`; it skips
-// gracefully when the helm CLI or the helm-unittest plugin aren't
-// installed, and when charts/lenny/ does not yet exist (Phase 3
-// deliverable).
+// gracefully when the helm CLI or the helm-unittest plugin are not
+// installed.
 
 package helm_test
 
@@ -41,9 +40,6 @@ func repoRoot(t *testing.T) string {
 func TestChartTemplatesViaHelmUnittest(t *testing.T) {
 	root := repoRoot(t)
 	chart := filepath.Join(root, "charts", "lenny")
-	if _, err := os.Stat(chart); errors.Is(err, fs.ErrNotExist) {
-		t.Skipf("charts/lenny/ not present (Phase 3 deliverable); helm-unittest cases will run when the chart lands")
-	}
 
 	helm, err := exec.LookPath("helm")
 	if err != nil {
@@ -75,9 +71,6 @@ func TestChartTemplatesViaHelmUnittest(t *testing.T) {
 func TestEveryChartHasUnittestCases(t *testing.T) {
 	root := repoRoot(t)
 	charts := filepath.Join(root, "charts")
-	if _, err := os.Stat(charts); errors.Is(err, fs.ErrNotExist) {
-		t.Skipf("charts/ not present (Phase 3 deliverable)")
-	}
 	entries, err := os.ReadDir(charts)
 	if err != nil {
 		t.Fatalf("read charts: %v", err)

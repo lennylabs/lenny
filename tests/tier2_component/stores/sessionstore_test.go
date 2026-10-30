@@ -1,0 +1,1607 @@
+//go:build component
+
+// SPDX-License-Identifier: MIT
+
+// Contract test for the TESTING.md §12.2.1 SessionStore, exercising the
+// Postgres-backed pkg/gateway/sessionstore/pgstore against a real
+// container with the production migrations applied. Covers CRUD, the
+// sentinel errors, cross-tenant isolation, the SELECT ... FOR UPDATE
+// mutate path, strict-monotonic UpdatedAt, List filters, and the
+// session_messages FK cascade.
+package stores_test
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"reflect"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/common/seqname"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/tests/testinfra/containers"
+	"github.com/lennylabs/lenny/tests/testinfra/schematest"
+)
+
+// newUUID returns a fresh random UUIDv4 string. Session IDs are UUIDs
+// per §12.6; the sessions.id column is typed UUID.
+func newUUID(t *testing.T) string {
+	t.Helper()
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		t.Fatalf("rand: %v", err)
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// freshTenant inserts a uniquely-named tenant and returns its id so
+// each sub-test operates on an isolated tenant. It also provisions the
+// tenant's per-tenant audit Postgres sequence (audit_seq_<40hex>, the
+// §10.2 safe-derived name) so the §11.7 audit store's nextval-based
+// append path resolves a real sequence object; production provisions
+// this sequence at tenant-creation time through the runtime-DDL path.
+// The narrower billing sequence is provisioned by billingTenant on top
+// of this helper.
+//
+// spec: §11.7, §10.2.
+func freshTenant(t *testing.T, ctx context.Context, pg *containers.Postgres) string {
+	t.Helper()
+	id := "t-" + newUUID(t)[:8]
+	if _, err := pg.Pool.Exec(
+		ctx,
+		`INSERT INTO tenants (id, genesis_nonce) VALUES ($1, $2)`, id, []byte{0x01},
+	); err != nil {
+		t.Fatalf("seed tenant %q: %v", id, err)
+	}
+	if _, err := pg.Pool.Exec(ctx,
+		"CREATE SEQUENCE IF NOT EXISTS "+seqname.AuditSequenceName(id)+
+			" START WITH 1 INCREMENT BY 1 NO CYCLE"); err != nil {
+		t.Fatalf("provision audit sequence for %q: %v", id, err)
+	}
+	return id
+}
+
+// startStore brings up a Postgres container with the production
+// migrations and returns the pgstore plus the raw handle.
+func startStore(t *testing.T) (*pgstore.Store, *containers.Postgres) {
+	t.Helper()
+	pg := containers.StartPostgres(t, containers.PostgresOptions{
+		MigrationsDir: schematest.RepoRoot(t) + "/migrations",
+	})
+	return pgstore.New(pg.Pool), pg
+}
+
+// rowLockWaitDeadline bounds how long a serialization test waits for a
+// concurrent Update to reach the Postgres row-lock wait.
+const rowLockWaitDeadline = 30 * time.Second
+
+// awaitSessionRowLockWaiter polls pg_stat_activity through the pool's
+// own connection until another backend in this test's database is
+// blocked on a lock while holding the tuple lock of a sessions row,
+// which is where the store's SELECT ... FOR UPDATE waits.
+// It fails the test when the deadline passes or when the waiting
+// Update returns on done before ever blocking, which means the store
+// ran the second mutation without waiting for the row lock. The
+// datname filter keeps a backend of another database on the same
+// server from matching.
+func awaitSessionRowLockWaiter[T any](t *testing.T, ctx context.Context, pg *containers.Postgres, done <-chan T) {
+	t.Helper()
+	// pg_stat_activity.query is cut at track_activity_query_size
+	// (1024 bytes by default), and the sessions select list is longer
+	// than that, so the FOR UPDATE clause never appears in the text.
+	// The waiter is identified by its locks instead: a backend blocked
+	// on another transaction's row lock holds the tuple lock on the
+	// sessions row it is waiting for.
+	const q = `SELECT count(*) FROM pg_stat_activity a
+		WHERE a.datname = current_database()
+		  AND a.pid <> pg_backend_pid()
+		  AND a.wait_event_type = 'Lock'
+		  AND EXISTS (
+			SELECT 1 FROM pg_locks l
+			WHERE l.pid = a.pid
+			  AND l.locktype = 'tuple'
+			  AND l.relation = 'sessions'::regclass)`
+	deadline := time.Now().Add(rowLockWaitDeadline)
+	for {
+		var waiting int
+		if err := pg.Pool.QueryRow(ctx, q).Scan(&waiting); err != nil {
+			t.Fatalf("poll pg_stat_activity: %v", err)
+		}
+		if waiting > 0 {
+			return
+		}
+		select {
+		case r := <-done:
+			t.Fatalf("concurrent Update returned without waiting on the row lock: %+v", r)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no backend waited on the sessions row lock within %s", rowLockWaitDeadline)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// awaitUpdateResult receives one goroutine's Update result, failing the
+// test when it does not arrive within rowLockWaitDeadline.
+func awaitUpdateResult[T any](t *testing.T, name string, done <-chan T) T {
+	t.Helper()
+	select {
+	case r := <-done:
+		return r
+	case <-time.After(rowLockWaitDeadline):
+		t.Fatalf("%s: Update did not return within %s", name, rowLockWaitDeadline)
+	}
+	var zero T
+	return zero
+}
+
+// spec: 12.2.1
+// diagnosis: the Postgres-backed SessionStore in
+// pkg/gateway/sessionstore/pgstore did not behave as specified. Create
+// and Get must round-trip a session including its jsonb workspace
+// plan, the sentinel errors and cross-tenant isolation must hold, the
+// SELECT ... FOR UPDATE mutate path must strictly advance UpdatedAt,
+// List filters must apply, Update must persist the workspace plan, and
+// Delete must cascade to session_messages.
+// A guarded Update that runs concurrently with another Update on the
+// same row must block on the row lock, see the committed state, and
+// refuse without writing.
+func TestSessionStoreContract(t *testing.T) {
+	t.Parallel()
+	store, pg := startStore(t)
+	ctx := context.Background()
+
+	t.Run("create and get round-trip", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		ts := time.Now().UTC().Truncate(time.Microsecond)
+		want := sessionstore.Session{
+			ID:                 newUUID(t),
+			TenantID:           tenant,
+			UserID:             "alice@acme.com",
+			State:              session.StateRunning,
+			RuntimeRef:         "echo",
+			PoolRef:            "pool-standard",
+			IsolationProfile:   isolation.ProfileSandboxed,
+			ParentWorkspaceRef: "lenny-blob://acme/workspace/parent",
+			RetentionExpiresAt: ts.Add(48 * time.Hour),
+			UploadTokenDigest:  "sha256:deadbeef",
+			UploadTokenExpiry:  ts.Add(time.Hour),
+			CreatedAt:          ts,
+			UpdatedAt:          ts,
+			WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{
+				Ref:       "lenny-blob://acme/snapshot/x",
+				Source:    sessionstore.WorkspaceSnapshotSealed,
+				Timestamp: ts.Add(-time.Minute),
+			},
+		}
+		if err := store.Create(ctx, want); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, want.ID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.UserID != want.UserID || got.State != want.State ||
+			got.RuntimeRef != want.RuntimeRef || got.PoolRef != want.PoolRef ||
+			got.IsolationProfile != want.IsolationProfile ||
+			got.ParentWorkspaceRef != want.ParentWorkspaceRef ||
+			got.UploadTokenDigest != want.UploadTokenDigest {
+			t.Errorf("scalar field mismatch:\n got %+v\nwant %+v", got, want)
+		}
+		if !got.RetentionExpiresAt.Equal(want.RetentionExpiresAt) ||
+			!got.UploadTokenExpiry.Equal(want.UploadTokenExpiry) ||
+			!got.CreatedAt.Equal(want.CreatedAt) {
+			t.Errorf("timestamp mismatch: got %+v want %+v", got, want)
+		}
+		if got.WorkspaceSnapshot == nil {
+			t.Fatal("WorkspaceSnapshot lost in round-trip")
+		}
+		if got.WorkspaceSnapshot.Ref != want.WorkspaceSnapshot.Ref ||
+			got.WorkspaceSnapshot.Source != want.WorkspaceSnapshot.Source ||
+			!got.WorkspaceSnapshot.Timestamp.Equal(want.WorkspaceSnapshot.Timestamp) {
+			t.Errorf("WorkspaceSnapshot mismatch: got %+v want %+v",
+				got.WorkspaceSnapshot, want.WorkspaceSnapshot)
+		}
+	})
+
+	// spec: §24.11 — GetByID resolves a session by its
+	// global id under the platform-admin cross-tenant context
+	// (app.current_tenant = '__all__'), backing the admin
+	// session-investigation surface where the operator supplies only the
+	// id. It crosses the tenant boundary that the tenant-scoped Get
+	// enforces, and still returns ErrNotFound for a missing id. F-24.11.2.
+	t.Run("GetByID resolves across tenants", func(t *testing.T) {
+		a := freshTenant(t, ctx, pg)
+		b := freshTenant(t, ctx, pg)
+		idA, idB := newUUID(t), newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: idA, TenantID: a, State: session.StateRunning,
+			RuntimeRef: "echo", PodAssignment: "pod-a",
+		}); err != nil {
+			t.Fatalf("Create A: %v", err)
+		}
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: idB, TenantID: b, State: session.StateCompleted, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create B: %v", err)
+		}
+
+		gotA, err := store.GetByID(ctx, idA)
+		if err != nil {
+			t.Fatalf("GetByID A: %v", err)
+		}
+		if gotA.TenantID != a || gotA.State != session.StateRunning || gotA.PodAssignment != "pod-a" {
+			t.Errorf("GetByID A = %+v, want tenant %s running pod-a", gotA, a)
+		}
+		gotB, err := store.GetByID(ctx, idB)
+		if err != nil {
+			t.Fatalf("GetByID B: %v", err)
+		}
+		if gotB.TenantID != b {
+			t.Errorf("GetByID B tenant = %s, want %s", gotB.TenantID, b)
+		}
+		if _, err := store.GetByID(ctx, newUUID(t)); !errors.Is(err, sessionstore.ErrNotFound) {
+			t.Errorf("GetByID missing: want ErrNotFound, got %v", err)
+		}
+	})
+
+	t.Run("workspace plan round-trip", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		want := sessionstore.Session{
+			ID:         newUUID(t),
+			TenantID:   tenant,
+			State:      session.StateCreated,
+			RuntimeRef: "echo",
+			WorkspacePlan: json.RawMessage(
+				`{"schemaVersion":1,"sources":[{"type":"mkdir","path":"out/"}]}`,
+			),
+		}
+		if err := store.Create(ctx, want); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, want.ID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if len(got.WorkspacePlan) == 0 {
+			t.Fatal("WorkspacePlan lost in round-trip")
+		}
+		// jsonb normalizes whitespace and key order, so compare the
+		// decoded documents rather than the raw bytes.
+		var gotDoc, wantDoc any
+		if err := json.Unmarshal(got.WorkspacePlan, &gotDoc); err != nil {
+			t.Fatalf("stored plan is not valid JSON: %v", err)
+		}
+		if err := json.Unmarshal(want.WorkspacePlan, &wantDoc); err != nil {
+			t.Fatalf("source plan is not valid JSON: %v", err)
+		}
+		if !reflect.DeepEqual(gotDoc, wantDoc) {
+			t.Errorf("WorkspacePlan mismatch:\n got %s\nwant %s", got.WorkspacePlan, want.WorkspacePlan)
+		}
+	})
+
+	// spec: §7.1, 15.1 (finalize precondition) — POST /finalize binds
+	// its workspace plan into the row inside the Update that commits
+	// `finalizing`, and /start reads the plan back from the row. The
+	// Update must therefore persist a plan the mutation sets, and keep
+	// the stored plan when the mutation leaves it alone.
+	t.Run("update persists the workspace plan", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateCreated, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		plan := json.RawMessage(`{"schemaVersion":1,"sources":[{"type":"mkdir","path":"out/"}]}`)
+		if _, err := store.Update(ctx, tenant, id, func(row *sessionstore.Session) error {
+			row.State = session.StateFinalizing
+			row.WorkspacePlan = plan
+			return nil
+		}); err != nil {
+			t.Fatalf("Update setting the plan: %v", err)
+		}
+		if _, err := store.Update(ctx, tenant, id, func(row *sessionstore.Session) error {
+			row.State = session.StateReady
+			return nil
+		}); err != nil {
+			t.Fatalf("Update leaving the plan alone: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		var gotDoc, wantDoc any
+		if err := json.Unmarshal(got.WorkspacePlan, &gotDoc); err != nil {
+			t.Fatalf("stored plan %q is not valid JSON: %v", got.WorkspacePlan, err)
+		}
+		if err := json.Unmarshal(plan, &wantDoc); err != nil {
+			t.Fatalf("source plan is not valid JSON: %v", err)
+		}
+		if !reflect.DeepEqual(gotDoc, wantDoc) {
+			t.Errorf("stored WorkspacePlan = %s, want %s", got.WorkspacePlan, plan)
+		}
+	})
+
+	// spec: §7.1, 15.1 (finalize precondition) — Update rewrites the
+	// workspace_plan column from the row it read under FOR UPDATE, so
+	// every mutation that does not touch the plan must carry the stored
+	// plan through unchanged. This pins the write-set half of that
+	// contract: a plan fixed at Create survives an unrelated Update, and
+	// a nil plan stays NULL rather than becoming a JSON null document.
+	t.Run("update that leaves the plan alone preserves the stored plan", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		plan := json.RawMessage(`{"schemaVersion":1,"sources":[{"type":"mkdir","path":"in/"}]}`)
+		withPlan := sessionstore.Session{
+			ID: newUUID(t), TenantID: tenant, State: session.StateCreated,
+			RuntimeRef: "echo", WorkspacePlan: plan,
+		}
+		withoutPlan := sessionstore.Session{
+			ID: newUUID(t), TenantID: tenant, State: session.StateCreated, RuntimeRef: "echo",
+		}
+		for _, s := range []sessionstore.Session{withPlan, withoutPlan} {
+			if err := store.Create(ctx, s); err != nil {
+				t.Fatalf("Create %s: %v", s.ID, err)
+			}
+			if _, err := store.Update(ctx, tenant, s.ID, func(row *sessionstore.Session) error {
+				row.State = session.StateFinalizing
+				return nil
+			}); err != nil {
+				t.Fatalf("Update %s: %v", s.ID, err)
+			}
+		}
+
+		got, err := store.Get(ctx, tenant, withPlan.ID)
+		if err != nil {
+			t.Fatalf("Get with plan: %v", err)
+		}
+		var gotDoc, wantDoc any
+		if err := json.Unmarshal(got.WorkspacePlan, &gotDoc); err != nil {
+			t.Fatalf("stored plan %q is not valid JSON: %v", got.WorkspacePlan, err)
+		}
+		if err := json.Unmarshal(plan, &wantDoc); err != nil {
+			t.Fatalf("source plan is not valid JSON: %v", err)
+		}
+		if !reflect.DeepEqual(gotDoc, wantDoc) {
+			t.Errorf("stored WorkspacePlan = %s, want the Create-time plan %s", got.WorkspacePlan, plan)
+		}
+
+		got, err = store.Get(ctx, tenant, withoutPlan.ID)
+		if err != nil {
+			t.Fatalf("Get without plan: %v", err)
+		}
+		if got.WorkspacePlan != nil {
+			t.Errorf("WorkspacePlan = %s, want nil after an Update on a session created without a plan", got.WorkspacePlan)
+		}
+		var isNull bool
+		if err := pg.Pool.QueryRow(ctx,
+			`SELECT workspace_plan IS NULL FROM sessions WHERE id = $1::uuid AND tenant_id = $2`,
+			withoutPlan.ID, tenant).Scan(&isNull); err != nil {
+			t.Fatalf("read workspace_plan column: %v", err)
+		}
+		if !isNull {
+			t.Error("workspace_plan column is non-NULL after an Update that left a nil plan alone")
+		}
+	})
+
+	t.Run("absent workspace plan stays nil", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		want := sessionstore.Session{
+			ID: newUUID(t), TenantID: tenant, State: session.StateCreated, RuntimeRef: "echo",
+		}
+		if err := store.Create(ctx, want); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, want.ID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.WorkspacePlan != nil {
+			t.Errorf("WorkspacePlan = %s, want nil for a session created without a plan", got.WorkspacePlan)
+		}
+	})
+
+	t.Run("duplicate create is rejected", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		s := sessionstore.Session{ID: newUUID(t), TenantID: tenant, State: session.StateCreated, RuntimeRef: "echo"}
+		if err := store.Create(ctx, s); err != nil {
+			t.Fatalf("first Create: %v", err)
+		}
+		if err := store.Create(ctx, s); !errors.Is(err, sessionstore.ErrAlreadyExists) {
+			t.Errorf("duplicate Create: got %v, want ErrAlreadyExists", err)
+		}
+	})
+
+	t.Run("get missing returns ErrNotFound", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		if _, err := store.Get(ctx, tenant, newUUID(t)); !errors.Is(err, sessionstore.ErrNotFound) {
+			t.Errorf("Get missing: got %v, want ErrNotFound", err)
+		}
+		// A malformed (non-UUID) id is also "no such session".
+		if _, err := store.Get(ctx, tenant, "not-a-uuid"); !errors.Is(err, sessionstore.ErrNotFound) {
+			t.Errorf("Get malformed id: got %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("cross-tenant get is isolated", func(t *testing.T) {
+		owner := freshTenant(t, ctx, pg)
+		intruder := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: owner, State: session.StateRunning, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if _, err := store.Get(ctx, intruder, id); !errors.Is(err, sessionstore.ErrNotFound) {
+			t.Errorf("cross-tenant Get: got %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("update mutates and rejects missing", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		updated, err := store.Update(ctx, tenant, id, func(s *sessionstore.Session) error {
+			s.State = session.StateCompleted
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		if updated.State != session.StateCompleted {
+			t.Errorf("Update returned state %q, want completed", updated.State)
+		}
+		got, _ := store.Get(ctx, tenant, id)
+		if got.State != session.StateCompleted {
+			t.Errorf("persisted state %q, want completed", got.State)
+		}
+		if _, err := store.Update(ctx, tenant, newUUID(t), func(*sessionstore.Session) error {
+			return nil
+		}); !errors.Is(err, sessionstore.ErrNotFound) {
+			t.Errorf("Update missing: got %v, want ErrNotFound", err)
+		}
+		// A mutate error aborts the write.
+		sentinel := errors.New("mutate boom")
+		if _, err := store.Update(ctx, tenant, id, func(*sessionstore.Session) error {
+			return sentinel
+		}); !errors.Is(err, sentinel) {
+			t.Errorf("Update mutate error: got %v, want sentinel", err)
+		}
+	})
+
+	t.Run("updated_at strictly advances", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		nop := func(*sessionstore.Session) error { return nil }
+		first, err := store.Update(ctx, tenant, id, nop)
+		if err != nil {
+			t.Fatalf("first Update: %v", err)
+		}
+		second, err := store.Update(ctx, tenant, id, nop)
+		if err != nil {
+			t.Fatalf("second Update: %v", err)
+		}
+		if !second.UpdatedAt.After(first.UpdatedAt) {
+			t.Errorf("UpdatedAt did not advance: first=%v second=%v",
+				first.UpdatedAt, second.UpdatedAt)
+		}
+	})
+
+	t.Run("guarded mutation serializes on the locked row", func(t *testing.T) {
+		// spec: 15.1 (finalize precondition) — the created → finalizing
+		// admission re-checks the precondition inside the Update
+		// mutation, so two overlapping finalize calls serialize on the
+		// SELECT ... FOR UPDATE row lock and the second one reads the
+		// first one's committed state and refuses. This subtest pins the
+		// store half of that compare-and-swap: B's mutation must not run
+		// until A commits, and B's refusal must leave A's write intact.
+		// The guard is inlined because the handler's helper is
+		// unexported in another package.
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateCreated, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		admitCreated := func(row *sessionstore.Session) error {
+			if row.State != session.StateCreated {
+				return &session.PreconditionError{CurrentState: row.State}
+			}
+			return nil
+		}
+		planA := json.RawMessage(`{"schemaVersion":1,"sources":[{"type":"mkdir","path":"a/"}]}`)
+		planB := json.RawMessage(`{"schemaVersion":1,"sources":[{"type":"mkdir","path":"b/"}]}`)
+
+		type updateResult struct {
+			sess sessionstore.Session
+			err  error
+		}
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		var releaseOnce sync.Once
+		releaseA := func() { releaseOnce.Do(func() { close(release) }) }
+		// A fatal exit below must still unblock A so its transaction
+		// ends and the container cleanup does not wait on it.
+		defer releaseA()
+
+		aDone := make(chan updateResult, 1)
+		go func() {
+			s, err := store.Update(ctx, tenant, id, func(row *sessionstore.Session) error {
+				if err := admitCreated(row); err != nil {
+					return err
+				}
+				row.State = session.StateFinalizing
+				row.WorkspacePlan = planA
+				close(entered)
+				<-release
+				return nil
+			})
+			aDone <- updateResult{s, err}
+		}()
+		select {
+		case <-entered:
+		case r := <-aDone:
+			t.Fatalf("A returned before entering its mutation: %v", r.err)
+		case <-time.After(30 * time.Second):
+			t.Fatal("A did not enter its mutation within 30s")
+		}
+
+		bDone := make(chan updateResult, 1)
+		go func() {
+			s, err := store.Update(ctx, tenant, id, func(row *sessionstore.Session) error {
+				if err := admitCreated(row); err != nil {
+					return err
+				}
+				row.State = session.StateFinalizing
+				row.WorkspacePlan = planB
+				return nil
+			})
+			bDone <- updateResult{s, err}
+		}()
+		awaitSessionRowLockWaiter(t, ctx, pg, bDone)
+		releaseA()
+
+		a := awaitUpdateResult(t, "A", aDone)
+		if a.err != nil {
+			t.Fatalf("A: Update: %v", a.err)
+		}
+		b := awaitUpdateResult(t, "B", bDone)
+		var pe *session.PreconditionError
+		if !errors.As(b.err, &pe) {
+			t.Fatalf("B: want *session.PreconditionError, got %v", b.err)
+		}
+		if pe.CurrentState != session.StateFinalizing {
+			t.Errorf("B: PreconditionError.CurrentState = %q, want %q", pe.CurrentState, session.StateFinalizing)
+		}
+
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.State != session.StateFinalizing {
+			t.Errorf("stored state = %q, want %q", got.State, session.StateFinalizing)
+		}
+		var gotDoc, wantDoc any
+		if err := json.Unmarshal(got.WorkspacePlan, &gotDoc); err != nil {
+			t.Fatalf("stored plan is not valid JSON: %v", err)
+		}
+		if err := json.Unmarshal(planA, &wantDoc); err != nil {
+			t.Fatalf("plan A is not valid JSON: %v", err)
+		}
+		if !reflect.DeepEqual(gotDoc, wantDoc) {
+			t.Errorf("stored WorkspacePlan = %s, want A's plan %s", got.WorkspacePlan, planA)
+		}
+		// B's refusal must write nothing, so the stored UpdatedAt is
+		// exactly the value A's commit returned.
+		if !got.UpdatedAt.Equal(a.sess.UpdatedAt) {
+			t.Errorf("stored UpdatedAt = %v, want A's %v (B wrote the row)", got.UpdatedAt, a.sess.UpdatedAt)
+		}
+	})
+
+	t.Run("terminal write racing the finalize entry write keeps the bound plan", func(t *testing.T) {
+		// spec: 15.1 (finalize precondition), 7.1 — the finalize entry
+		// write binds the request's WorkspacePlan in the same Update that
+		// moves the session to finalizing, and /start later reads that
+		// plan back from the row. Update rewrites workspace_plan from the
+		// row it read under FOR UPDATE for every caller, so a terminal
+		// write (DELETE, terminate, or the watchdog) queued behind the
+		// entry write must read the committed plan and carry it through.
+		// A store that did not persist the plan on Update, or that wrote
+		// it from a read taken before the lock, would leave the
+		// Create-time plan in the row.
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		createPlan := json.RawMessage(`{"schemaVersion":1,"sources":[{"type":"mkdir","path":"create/"}]}`)
+		entryPlan := json.RawMessage(`{"schemaVersion":1,"sources":[{"type":"mkdir","path":"entry/"}]}`)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateCreated, RuntimeRef: "echo",
+			WorkspacePlan: createPlan,
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+
+		type updateResult struct {
+			sess sessionstore.Session
+			err  error
+		}
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		var releaseOnce sync.Once
+		releaseEntry := func() { releaseOnce.Do(func() { close(release) }) }
+		// A fatal exit below must still unblock the entry write so its
+		// transaction ends and the container cleanup does not wait on it.
+		defer releaseEntry()
+
+		entryDone := make(chan updateResult, 1)
+		go func() {
+			s, err := store.Update(ctx, tenant, id, func(row *sessionstore.Session) error {
+				row.State = session.StateFinalizing
+				row.WorkspacePlan = entryPlan
+				close(entered)
+				<-release
+				return nil
+			})
+			entryDone <- updateResult{s, err}
+		}()
+		select {
+		case <-entered:
+		case r := <-entryDone:
+			t.Fatalf("entry write returned before entering its mutation: %v", r.err)
+		case <-time.After(rowLockWaitDeadline):
+			t.Fatalf("entry write did not enter its mutation within %s", rowLockWaitDeadline)
+		}
+
+		terminalDone := make(chan updateResult, 1)
+		go func() {
+			s, err := store.Update(ctx, tenant, id, func(row *sessionstore.Session) error {
+				row.State = session.StateCancelled
+				return nil
+			})
+			terminalDone <- updateResult{s, err}
+		}()
+		awaitSessionRowLockWaiter(t, ctx, pg, terminalDone)
+		releaseEntry()
+
+		if r := awaitUpdateResult(t, "entry", entryDone); r.err != nil {
+			t.Fatalf("entry write: Update: %v", r.err)
+		}
+		if r := awaitUpdateResult(t, "terminal", terminalDone); r.err != nil {
+			t.Fatalf("terminal write: Update: %v", r.err)
+		}
+
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.State != session.StateCancelled {
+			t.Errorf("stored state = %q, want %q", got.State, session.StateCancelled)
+		}
+		assertStoredPlan(t, got.WorkspacePlan, entryPlan)
+	})
+
+	t.Run("list orders newest-first and applies filters", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		base := time.Now().UTC().Truncate(time.Microsecond).Add(-time.Hour)
+		oldest := sessionstore.Session{
+			ID: newUUID(t), TenantID: tenant, State: session.StateCompleted,
+			RuntimeRef: "echo", CreatedAt: base, UpdatedAt: base,
+		}
+		middle := sessionstore.Session{
+			ID: newUUID(t), TenantID: tenant, State: session.StateRunning,
+			RuntimeRef: "claude", CreatedAt: base.Add(time.Minute), UpdatedAt: base.Add(time.Minute),
+		}
+		newest := sessionstore.Session{
+			ID: newUUID(t), TenantID: tenant, State: session.StateFailed,
+			RuntimeRef: "echo", FailureClass: session.FailureClassRuntime,
+			CreatedAt: base.Add(2 * time.Minute), UpdatedAt: base.Add(2 * time.Minute),
+		}
+		for _, s := range []sessionstore.Session{oldest, middle, newest} {
+			if err := store.Create(ctx, s); err != nil {
+				t.Fatalf("Create %s: %v", s.ID, err)
+			}
+		}
+		all, err := store.List(ctx, tenant, sessionstore.ListFilter{})
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		if len(all) != 3 {
+			t.Fatalf("List returned %d sessions, want 3", len(all))
+		}
+		if all[0].ID != newest.ID || all[2].ID != oldest.ID {
+			t.Errorf("List order wrong: got %s..%s, want newest..oldest",
+				all[0].ID, all[2].ID)
+		}
+		byState, err := store.List(ctx, tenant, sessionstore.ListFilter{State: session.StateRunning})
+		if err != nil || len(byState) != 1 || byState[0].ID != middle.ID {
+			t.Errorf("List by state: got %d rows (%v), want [middle]", len(byState), err)
+		}
+		byRuntime, err := store.List(ctx, tenant, sessionstore.ListFilter{RuntimeRef: "echo"})
+		if err != nil || len(byRuntime) != 2 {
+			t.Errorf("List by runtime echo: got %d rows, want 2", len(byRuntime))
+		}
+		byFailure, err := store.List(ctx, tenant,
+			sessionstore.ListFilter{FailureClass: session.FailureClassRuntime})
+		if err != nil || len(byFailure) != 1 || byFailure[0].ID != newest.ID {
+			t.Errorf("List by failure class: got %d rows (%v), want [newest]", len(byFailure), err)
+		}
+	})
+
+	t.Run("delete removes the row", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateCompleted, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := store.Delete(ctx, tenant, id); err != nil {
+			t.Fatalf("Delete: %v", err)
+		}
+		if _, err := store.Get(ctx, tenant, id); !errors.Is(err, sessionstore.ErrNotFound) {
+			t.Errorf("Get after Delete: got %v, want ErrNotFound", err)
+		}
+		if err := store.Delete(ctx, tenant, id); !errors.Is(err, sessionstore.ErrNotFound) {
+			t.Errorf("Delete missing: got %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("delete cascades to session_messages", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		insertMessage(t, ctx, pg, tenant, id)
+		if n := messageCount(t, ctx, pg, id); n != 1 {
+			t.Fatalf("seeded message count = %d, want 1", n)
+		}
+		if err := store.Delete(ctx, tenant, id); err != nil {
+			t.Fatalf("Delete: %v", err)
+		}
+		if n := messageCount(t, ctx, pg, id); n != 0 {
+			t.Errorf("session_messages count after cascade = %d, want 0", n)
+		}
+	})
+
+	// spec: §4.4 — `last_successful_checkpoint_at` round-trips
+	// through Postgres and is nullable so a session that has never
+	// been checkpointed reads as zero rather than the UNIX epoch.
+	t.Run("last_successful_checkpoint_at round-trip", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		ts := time.Now().UTC().Truncate(time.Microsecond)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+			LastSuccessfulCheckpointAt: ts,
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if !got.LastSuccessfulCheckpointAt.Equal(ts) {
+			t.Errorf("LastSuccessfulCheckpointAt = %v, want %v", got.LastSuccessfulCheckpointAt, ts)
+		}
+
+		// Update bumps the timestamp and the read path observes the
+		// new value.
+		when := ts.Add(2 * time.Minute)
+		updated, err := store.Update(ctx, tenant, id, func(s *sessionstore.Session) error {
+			s.LastSuccessfulCheckpointAt = when
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		if !updated.LastSuccessfulCheckpointAt.Equal(when) {
+			t.Errorf("Update LastSuccessfulCheckpointAt = %v, want %v", updated.LastSuccessfulCheckpointAt, when)
+		}
+	})
+
+	// spec: §6.2 — `last_agent_activity_at` round-trips
+	// through Postgres and is nullable so a session with no recorded
+	// qualifying activity reads as zero (the idle watchdog then anchors on
+	// updated_at). F-11.3.7.
+	t.Run("last_agent_activity_at round-trip and zero-default", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		// Unset on Create reads back as zero.
+		idZero := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: idZero, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, idZero)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if !got.LastAgentActivityAt.IsZero() {
+			t.Errorf("unset LastAgentActivityAt = %v, want zero", got.LastAgentActivityAt)
+		}
+
+		// A value set on Create round-trips, and an Update advances it.
+		id := newUUID(t)
+		ts := time.Now().UTC().Truncate(time.Microsecond)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+			LastAgentActivityAt: ts,
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err = store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if !got.LastAgentActivityAt.Equal(ts) {
+			t.Errorf("LastAgentActivityAt = %v, want %v", got.LastAgentActivityAt, ts)
+		}
+		when := ts.Add(90 * time.Second)
+		updated, err := store.Update(ctx, tenant, id, func(s *sessionstore.Session) error {
+			s.LastAgentActivityAt = when
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		if !updated.LastAgentActivityAt.Equal(when) {
+			t.Errorf("Update LastAgentActivityAt = %v, want %v", updated.LastAgentActivityAt, when)
+		}
+	})
+
+	// spec: §7.1, §7.2, §8.8 — the §7.1
+	// conversation_continuity envelope half and the §7.2 / §8.8
+	// Terminated/Suspended session-condition facts relocated off
+	// Sandbox.status.conditions must round-trip through pgstore's
+	// Create/Update/Get the same way execution_mode/scrub_policy do
+	// (migration 0168). conversation_continuity and the reason strings
+	// are NOT NULL DEFAULT '' columns, and the condition timestamps are
+	// nullable: a zero TerminatedAt/SuspendedAt persists as SQL NULL and
+	// reads back as the zero time (the "condition has not fired"
+	// sentinel).
+	t.Run("session-condition and continuity columns round-trip", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+
+		// Unset on Create: continuity and reasons read as "", and the
+		// condition timestamps read as the zero time (SQL NULL).
+		idZero := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: idZero, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		gotZero, err := store.Get(ctx, tenant, idZero)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if gotZero.ConversationContinuity != "" || gotZero.TerminatedReason != "" ||
+			gotZero.SuspendedReason != "" {
+			t.Errorf("unset string columns nonempty: continuity=%q terminatedReason=%q suspendedReason=%q",
+				gotZero.ConversationContinuity, gotZero.TerminatedReason, gotZero.SuspendedReason)
+		}
+		if !gotZero.TerminatedAt.IsZero() || !gotZero.SuspendedAt.IsZero() {
+			t.Errorf("unset condition timestamps nonzero: terminatedAt=%v suspendedAt=%v",
+				gotZero.TerminatedAt, gotZero.SuspendedAt)
+		}
+
+		// Values set on Create round-trip through Get.
+		id := newUUID(t)
+		ts := time.Now().UTC().Truncate(time.Microsecond)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateSuspended, RuntimeRef: "echo",
+			ConversationContinuity: "platform",
+			SuspendedAt:            ts,
+			SuspendedReason:        "INTERRUPT_REQUESTED",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.ConversationContinuity != "platform" {
+			t.Errorf("ConversationContinuity = %q, want platform", got.ConversationContinuity)
+		}
+		if !got.SuspendedAt.Equal(ts) || got.SuspendedReason != "INTERRUPT_REQUESTED" {
+			t.Errorf("Suspended fact = (%v, %q), want (%v, INTERRUPT_REQUESTED)",
+				got.SuspendedAt, got.SuspendedReason, ts)
+		}
+		if !got.TerminatedAt.IsZero() || got.TerminatedReason != "" {
+			t.Errorf("Terminated fact set without write: (%v, %q)", got.TerminatedAt, got.TerminatedReason)
+		}
+
+		// Update stamps the Terminated fact and clears the Suspended one,
+		// confirming both nullable timestamps are wired through updateSQL.
+		when := ts.Add(time.Minute)
+		updated, err := store.Update(ctx, tenant, id, func(s *sessionstore.Session) error {
+			s.State = session.StateCompleted
+			s.TerminatedAt = when
+			s.TerminatedReason = "COMPLETED"
+			s.SuspendedAt = time.Time{}
+			s.SuspendedReason = ""
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		if !updated.TerminatedAt.Equal(when) || updated.TerminatedReason != "COMPLETED" {
+			t.Errorf("Update Terminated fact = (%v, %q), want (%v, COMPLETED)",
+				updated.TerminatedAt, updated.TerminatedReason, when)
+		}
+		reread, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get after Update: %v", err)
+		}
+		if !reread.TerminatedAt.Equal(when) || reread.TerminatedReason != "COMPLETED" {
+			t.Errorf("persisted Terminated fact = (%v, %q), want (%v, COMPLETED)",
+				reread.TerminatedAt, reread.TerminatedReason, when)
+		}
+		if !reread.SuspendedAt.IsZero() || reread.SuspendedReason != "" {
+			t.Errorf("cleared Suspended fact persisted as (%v, %q), want zero",
+				reread.SuspendedAt, reread.SuspendedReason)
+		}
+	})
+
+	// spec: §4.4 — never-checkpointed sessions read NULL on
+	// the column, which the sessionstore maps to the zero time.Time
+	// so the `FreshnessCheck` helper can treat them as stale.
+	t.Run("last_successful_checkpoint_at defaults to zero when unset", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if !got.LastSuccessfulCheckpointAt.IsZero() {
+			t.Errorf("LastSuccessfulCheckpointAt = %v, want zero", got.LastSuccessfulCheckpointAt)
+		}
+	})
+
+	// spec: §8.2 / §8.3 — the gateway copies the
+	// parent's registered tracingContext onto every delegated child so
+	// child traces stitch into the parent's trace tree. A pod restart
+	// that triggers a Postgres reload must round-trip the context.
+	// F-8.2.14.
+	t.Run("tracing_context round-trip through pgstore F_8_2_14", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		want := map[string]string{
+			"traceparent": "00-1234567890abcdef1234567890abcdef-1234567890abcdef-01",
+			"tracestate":  "acme=stitched",
+		}
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+			TracingContext: want,
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if !reflect.DeepEqual(got.TracingContext, want) {
+			t.Errorf("TracingContext = %#v, want %#v", got.TracingContext, want)
+		}
+
+		// Update writes a new key and a missing key drops on read.
+		next := map[string]string{"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"}
+		updated, err := store.Update(ctx, tenant, id, func(s *sessionstore.Session) error {
+			s.TracingContext = next
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		if !reflect.DeepEqual(updated.TracingContext, next) {
+			t.Errorf("Update TracingContext = %#v, want %#v", updated.TracingContext, next)
+		}
+		got, err = store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get reload: %v", err)
+		}
+		if !reflect.DeepEqual(got.TracingContext, next) {
+			t.Errorf("reload TracingContext = %#v, want %#v", got.TracingContext, next)
+		}
+	})
+
+	// spec: §8.2 — a session registered with no tracingContext
+	// reads back as a nil map (the "no context registered" case). The
+	// pgstore stores SQL NULL for that case. F-8.2.14.
+	t.Run("tracing_context absent reads as nil F_8_2_14", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.TracingContext != nil {
+			t.Errorf("TracingContext = %#v, want nil", got.TracingContext)
+		}
+	})
+
+	// spec: §8.3 / §8.10 — cascadeOnFailure persists per-tree
+	// so a Postgres-backed reload returns the same policy the lease
+	// declared. F-8.2.15.
+	t.Run("cascade_on_failure round-trip through pgstore F_8_2_15", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+			CascadeOnFailure: session.CascadeAwaitCompletion,
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.CascadeOnFailure != session.CascadeAwaitCompletion {
+			t.Errorf("CascadeOnFailure = %q, want %q", got.CascadeOnFailure, session.CascadeAwaitCompletion)
+		}
+
+		// Update flips to `detach`.
+		updated, err := store.Update(ctx, tenant, id, func(s *sessionstore.Session) error {
+			s.CascadeOnFailure = session.CascadeDetach
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		if updated.CascadeOnFailure != session.CascadeDetach {
+			t.Errorf("Update CascadeOnFailure = %q, want %q", updated.CascadeOnFailure, session.CascadeDetach)
+		}
+		got, err = store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get reload: %v", err)
+		}
+		if got.CascadeOnFailure != session.CascadeDetach {
+			t.Errorf("reload CascadeOnFailure = %q, want %q", got.CascadeOnFailure, session.CascadeDetach)
+		}
+	})
+
+	// spec: §8.10 — an unset cascadeOnFailure reads back as the empty
+	// CascadePolicy so the in-Go convention "empty resolves to default"
+	// (cancel_all per session.DefaultCascadePolicy) keeps applying after
+	// a Postgres reload. F-8.2.15.
+	t.Run("cascade_on_failure absent resolves to default F_8_2_15", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.CascadeOnFailure != "" {
+			t.Errorf("CascadeOnFailure = %q, want empty", got.CascadeOnFailure)
+		}
+		if got.CascadeOnFailure.Resolve() != session.CascadeCancelAll {
+			t.Errorf("CascadeOnFailure.Resolve() = %q, want %q", got.CascadeOnFailure.Resolve(), session.CascadeCancelAll)
+		}
+	})
+
+	// spec: 8.3 (Delegation Policy and Lease, Delegation Lease: "Credential
+	// pool identity in multi-hop `inherit` chains") — credential_origin_session_id records the
+	// origin credential pool a `credentialPropagation: inherit` hop draws
+	// from. The delegation Service stamps the origin (an ancestor id) on an
+	// inherited child; the value must survive a Postgres reload so a later
+	// hop and the finalize-time assignment resolve the same origin without
+	// re-walking lineage.
+	t.Run("credential_origin_session_id round-trip through pgstore", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		originID := newUUID(t)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+			CredentialOriginSessionID: originID,
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.CredentialOriginSessionID != originID {
+			t.Errorf("CredentialOriginSessionID = %q, want %q", got.CredentialOriginSessionID, originID)
+		}
+	})
+
+	// spec: 8.3 (Delegation Policy and Lease, Delegation Lease: "Credential
+	// pool identity in multi-hop `inherit` chains") — a self-origin session (independent, deny,
+	// root, or top-level) carries no explicit origin. The delegation Service
+	// leaves CredentialOriginSessionID empty, which persists as SQL NULL and
+	// the read path COALESCEs back to the empty string. The finalize path
+	// treats an empty (or self) value as "not inherited", so an absent
+	// origin must not read back as a non-empty ancestor id.
+	t.Run("credential_origin_session_id absent reads as empty", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.CredentialOriginSessionID != "" {
+			t.Errorf("CredentialOriginSessionID = %q, want empty", got.CredentialOriginSessionID)
+		}
+	})
+
+	// spec: 8.3 (deny marker persistence) — credential_deny records that the
+	// delegate hop that created this child set credentialPropagation: deny, so
+	// the child receives no LLM credentials. A deny child is self-origin,
+	// byte-identical to an independent child, so this boolean is the only signal
+	// the row carries. The bit must survive a Postgres reload or the
+	// finalize-time §4.9 engine would re-credential a deny child after a
+	// restart.
+	t.Run("credential_deny round-trip through pgstore", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+			CredentialDeny: true,
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if !got.CredentialDeny {
+			t.Errorf("CredentialDeny = false, want true")
+		}
+	})
+
+	// spec: 8.3 (deny marker persistence) — the column is BOOLEAN NOT NULL
+	// DEFAULT false (migration 0179), so a session created without the marker
+	// reads back false. A non-deny child (inherit, independent, root, or
+	// top-level) must never read as deny, or it would be wrongly denied
+	// credentials at finalize.
+	t.Run("credential_deny absent defaults false", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.CredentialDeny {
+			t.Errorf("CredentialDeny = true, want false")
+		}
+	})
+
+	// spec: §14.1, §15 (built-in adapter
+	// single-shot compute model) — the OpenResponsesAdapter
+	// previous_response_id lineage rides the §14.1 request-envelope JSONB
+	// bundle rather than a dedicated column. A session carrying only a
+	// ContinuationParentID (no other bundled field) must not be dropped by the
+	// all-empty nil guard: the pointer must survive a Postgres reload so
+	// GET /v1/responses/{id} echoes the originating previous_response_id.
+	// diagnosis: if this fails, the continuation lineage does not persist
+	// through the request-envelope bundle, so a single-shot continuation loses
+	// its previous_response_id across a coordinator handoff or replica reload
+	// and GET /v1/responses/{id} echoes empty.
+	t.Run("continuation_parent_id envelope round-trip", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		prevID := newUUID(t)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateCompleted, RuntimeRef: "echo",
+			ContinuationParentID: prevID,
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.ContinuationParentID != prevID {
+			t.Errorf("ContinuationParentID = %q, want %q", got.ContinuationParentID, prevID)
+		}
+
+		// A chain-root session carrying no continuation pointer reads back
+		// empty, so GET echoes an empty previous_response_id.
+		rootID := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: rootID, TenantID: tenant, State: session.StateCompleted, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create root: %v", err)
+		}
+		gotRoot, err := store.Get(ctx, tenant, rootID)
+		if err != nil {
+			t.Fatalf("Get root: %v", err)
+		}
+		if gotRoot.ContinuationParentID != "" {
+			t.Errorf("chain-root ContinuationParentID = %q, want empty", gotRoot.ContinuationParentID)
+		}
+	})
+}
+
+// spec: 4.2 (a newly created session row carries
+// coordination_generation = 1), 10.1 (the first coordinator handoff's
+// compare-and-swap mints a generation strictly above the value a replica
+// already holds for the session)
+// diagnosis: pgstore.Create did not floor an unset CoordinationGeneration to
+//
+//	the §4.2 baseline. Create names coordination_generation in its insert
+//	column list, so the column default set by migration 0181 baselines nothing
+//	and this floor is the whole enforcement on the Postgres path. A row written
+//	at 0 is fenced on resume at the gateway's floor of 1 while its row still
+//	reads 0, so the first crash takeover's compare-and-swap mints 1 as well and
+//	the pod refuses that fence as coordinator_handoff_stale.
+func TestSessionStoreCreateBaselinesCoordinationGeneration_spec_4_2(t *testing.T) {
+	t.Parallel()
+	store, pg := startStore(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+
+	unset := sessionstore.Session{
+		ID:         newUUID(t),
+		TenantID:   tenant,
+		State:      session.StateCreated,
+		RuntimeRef: "echo",
+	}
+	if err := store.Create(ctx, unset); err != nil {
+		t.Fatalf("Create with an unset CoordinationGeneration: %v", err)
+	}
+	got, err := store.Get(ctx, tenant, unset.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.CoordinationGeneration != 1 {
+		t.Errorf("CoordinationGeneration = %d, want 1 (the §4.2 baseline)", got.CoordinationGeneration)
+	}
+
+	// An explicit value above the baseline is written through unchanged, so
+	// the floor cannot lower a generation a caller already advanced.
+	explicit := sessionstore.Session{
+		ID:                     newUUID(t),
+		TenantID:               tenant,
+		State:                  session.StateCreated,
+		RuntimeRef:             "echo",
+		CoordinationGeneration: 5,
+	}
+	if err := store.Create(ctx, explicit); err != nil {
+		t.Fatalf("Create with an explicit CoordinationGeneration: %v", err)
+	}
+	gotExplicit, err := store.Get(ctx, tenant, explicit.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if gotExplicit.CoordinationGeneration != 5 {
+		t.Errorf("CoordinationGeneration = %d, want the explicit 5 preserved", gotExplicit.CoordinationGeneration)
+	}
+}
+
+// spec: 6.2 (maxSessionAge timer behavior across states)
+// diagnosis: the Postgres session store did not accrue
+//
+//	accumulated_session_age_seconds in Update the way the §6.2 maxSessionAge
+//	timer requires. Either a write in a counting state (starting, running,
+//	input_required) did not add the interval since the previous write, a write
+//	in a paused state (suspended, resume_pending, resuming,
+//	awaiting_client_action) or a pre-running or terminal state added one, the
+//	column did not round-trip through Create, Get, and List, or a mutator's
+//	own write to the field was persisted. The watchdog then expires sessions
+//	on time they spent paused, or never expires them.
+func TestSessionStoreAccruesActiveAge_spec_6_2(t *testing.T) {
+	t.Parallel()
+	store, pg := startStore(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+
+	counting := map[session.State]bool{
+		session.StateStarting:      true,
+		session.StateRunning:       true,
+		session.StateInputRequired: true,
+	}
+	const (
+		seeded = 10.0
+		gap    = time.Hour
+		// The store stamps updated_at from its own clock, so the accrued
+		// interval exceeds gap by the test's own run time.
+		slack = 60.0
+	)
+	states := append(session.AllStates(), session.StateResuming)
+	for _, st := range states {
+		t.Run(string(st), func(t *testing.T) {
+			id := newUUID(t)
+			prev := time.Now().UTC().Add(-gap).Truncate(time.Microsecond)
+			if err := store.Create(ctx, sessionstore.Session{
+				ID: id, TenantID: tenant, State: st, RuntimeRef: "echo",
+				CreatedAt: prev.Add(-24 * time.Hour), UpdatedAt: prev,
+				AccumulatedSessionAgeSeconds: seeded,
+			}); err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			got, err := store.Get(ctx, tenant, id)
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if got.AccumulatedSessionAgeSeconds != seeded {
+				t.Fatalf("Create round-trip: accumulated %v, want %v", got.AccumulatedSessionAgeSeconds, seeded)
+			}
+			// A write that keeps the state, with a mutator that tries to
+			// reset the age budget.
+			updated, err := store.Update(ctx, tenant, id, func(r *sessionstore.Session) error {
+				r.AccumulatedSessionAgeSeconds = 0
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("Update: %v", err)
+			}
+			want := seeded
+			if counting[st] {
+				want += gap.Seconds()
+			}
+			if d := updated.AccumulatedSessionAgeSeconds - want; d < 0 || d > slack {
+				t.Fatalf("accumulated after an hour in %q = %v, want %v (within %vs)", st, updated.AccumulatedSessionAgeSeconds, want, slack)
+			}
+			reread, err := store.Get(ctx, tenant, id)
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if reread.AccumulatedSessionAgeSeconds != updated.AccumulatedSessionAgeSeconds {
+				t.Fatalf("persisted accumulated %v, returned %v", reread.AccumulatedSessionAgeSeconds, updated.AccumulatedSessionAgeSeconds)
+			}
+			listed, err := store.List(ctx, tenant, sessionstore.ListFilter{State: st})
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			found := false
+			for _, r := range listed {
+				if r.ID == id {
+					found = true
+					if r.AccumulatedSessionAgeSeconds != updated.AccumulatedSessionAgeSeconds {
+						t.Fatalf("List accumulated %v, want %v", r.AccumulatedSessionAgeSeconds, updated.AccumulatedSessionAgeSeconds)
+					}
+				}
+			}
+			if !found {
+				t.Fatalf("List did not return %s", id)
+			}
+		})
+	}
+}
+
+// spec: 6.2 (maxSessionAge timer behavior across states)
+// diagnosis: a transition out of a counting state did not accrue the
+//
+//	interval up to the transition on the Postgres store, or a transition into
+//	a counting state accrued the paused interval before it. The §6.2 timer
+//	pauses on entry to suspended and the recovery states and resumes on entry
+//	to running, so the column must carry exactly the counting intervals.
+func TestSessionStoreAgeAccruesAcrossTransitions_spec_6_2(t *testing.T) {
+	t.Parallel()
+	store, pg := startStore(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+	setState := func(id string, st session.State) sessionstore.Session {
+		t.Helper()
+		row, err := store.Update(ctx, tenant, id, func(r *sessionstore.Session) error {
+			r.State = st
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Update to %s: %v", st, err)
+		}
+		return row
+	}
+
+	// Running for an hour, then suspended: the transition accrues the hour.
+	running := newUUID(t)
+	if err := store.Create(ctx, sessionstore.Session{
+		ID: running, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+		UpdatedAt: time.Now().UTC().Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	row := setState(running, session.StateSuspended)
+	if a := row.AccumulatedSessionAgeSeconds; a < 3600 || a > 3660 {
+		t.Fatalf("accumulated on running → suspended = %v, want about 3600", a)
+	}
+
+	// Paused for an hour in each paused state, then running: the transition
+	// accrues nothing, because the timer resumes only on entry to running.
+	for _, paused := range []session.State{
+		session.StateSuspended, session.StateResumePending,
+		session.StateResuming, session.StateAwaitingClientAction,
+	} {
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: paused, RuntimeRef: "echo",
+			UpdatedAt:                    time.Now().UTC().Add(-time.Hour),
+			AccumulatedSessionAgeSeconds: 5,
+		}); err != nil {
+			t.Fatalf("Create %s: %v", paused, err)
+		}
+		if a := setState(id, session.StateRunning).AccumulatedSessionAgeSeconds; a != 5 {
+			t.Fatalf("accumulated on %s → running = %v, want the paused row's 5", paused, a)
+		}
+	}
+}
+
+// insertMessage writes one session_messages row under the tenant
+// context required by lenny_tenant_guard.
+func insertMessage(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant, sessionID string) {
+	t.Helper()
+	tx, err := pg.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("insertMessage begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx,
+		"SELECT set_config('app.current_tenant', $1, true)", tenant); err != nil {
+		t.Fatalf("insertMessage set context: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO session_messages (id, session_id, tenant_id, seq, role, content)
+		 VALUES (gen_random_uuid(), $1::uuid, $2, 1, 'user', 'hello')`,
+		sessionID, tenant); err != nil {
+		t.Fatalf("insertMessage insert: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("insertMessage commit: %v", err)
+	}
+}
+
+func messageCount(t *testing.T, ctx context.Context, pg *containers.Postgres, sessionID string) int {
+	t.Helper()
+	var n int
+	if err := pg.Pool.QueryRow(
+		ctx,
+		`SELECT COUNT(*) FROM session_messages WHERE session_id = $1::uuid`, sessionID,
+	).Scan(&n); err != nil {
+		t.Fatalf("messageCount: %v", err)
+	}
+	return n
+}
+
+// assertStoredPlan fails the test when the stored workspace plan is not
+// the same JSON document as want. The comparison is on the decoded
+// value because the jsonb column normalizes key order and whitespace.
+func assertStoredPlan(t *testing.T, got, want json.RawMessage) {
+	t.Helper()
+	var gotDoc, wantDoc any
+	if err := json.Unmarshal(got, &gotDoc); err != nil {
+		t.Fatalf("stored plan %q is not valid JSON: %v", got, err)
+	}
+	if err := json.Unmarshal(want, &wantDoc); err != nil {
+		t.Fatalf("expected plan %q is not valid JSON: %v", want, err)
+	}
+	if !reflect.DeepEqual(gotDoc, wantDoc) {
+		t.Errorf("stored WorkspacePlan = %s, want %s", got, want)
+	}
+}
+
+// spec: 11.1 (Concurrent-session count)
+// diagnosis: a pgstore concurrent-session count disagrees with
+//
+//	session.CountsTowardConcurrencyCaps or with the memstore count for the
+//	same rows. The SQL predicate and the Go predicate have diverged: either a
+//	suspended row (with or without its pod) is counted, so an idle session
+//	holds an admission slot, or a resuming, resume_pending, or
+//	awaiting_client_action row is not counted, so a cap can be exceeded.
+func TestSessionStoreConcurrencyCountsMatchPredicate_spec_11_1(t *testing.T) {
+	t.Parallel()
+	store, pg := startStore(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+	mem := memstore.New()
+
+	rows := []sessionstore.Session{}
+	states := append(session.AllStates(), session.StateResuming)
+	for _, st := range states {
+		for _, user := range []string{"alice", "bob"} {
+			rows = append(rows, sessionstore.Session{
+				ID: newUUID(t), TenantID: tenant, UserID: user, State: st,
+				RuntimeRef: "echo", PodAssignment: "pod-" + user,
+			})
+		}
+	}
+	// A podless suspended row and a row on another runtime.
+	rows = append(
+		rows,
+		sessionstore.Session{ID: newUUID(t), TenantID: tenant, UserID: "alice", State: session.StateSuspended, RuntimeRef: "echo"},
+		sessionstore.Session{ID: newUUID(t), TenantID: tenant, UserID: "alice", State: session.StateRunning, RuntimeRef: "other"},
+	)
+	wantTenant, wantAlice, wantEcho := 0, 0, 0
+	for _, r := range rows {
+		if err := store.Create(ctx, r); err != nil {
+			t.Fatalf("pgstore Create %s: %v", r.State, err)
+		}
+		if err := mem.Create(ctx, r); err != nil {
+			t.Fatalf("memstore Create %s: %v", r.State, err)
+		}
+		if !session.CountsTowardConcurrencyCaps(r.State) {
+			continue
+		}
+		wantTenant++
+		if r.UserID == "alice" {
+			wantAlice++
+		}
+		if r.RuntimeRef == "echo" {
+			wantEcho++
+		}
+	}
+
+	type count func(sessionstore.Store) (int, error)
+	scopes := []struct {
+		name string
+		fn   count
+		want int
+	}{
+		{"tenant", func(s sessionstore.Store) (int, error) { return s.CountActiveSessions(ctx, tenant) }, wantTenant},
+		{"user", func(s sessionstore.Store) (int, error) { return s.CountActiveSessionsByUser(ctx, tenant, "alice") }, wantAlice},
+		{"runtime", func(s sessionstore.Store) (int, error) { return s.CountActiveSessionsByRuntime(ctx, tenant, "echo") }, wantEcho},
+		// The container holds only this test's rows, so the global count
+		// equals the tenant count.
+		{"global", func(s sessionstore.Store) (int, error) { return s.CountActiveSessionsGlobal(ctx) }, wantTenant},
+	}
+	for _, sc := range scopes {
+		pgGot, err := sc.fn(store)
+		if err != nil {
+			t.Fatalf("pgstore %s count: %v", sc.name, err)
+		}
+		memGot, err := sc.fn(mem)
+		if err != nil {
+			t.Fatalf("memstore %s count: %v", sc.name, err)
+		}
+		if pgGot != sc.want || memGot != sc.want {
+			t.Errorf("%s count: pgstore %d, memstore %d, want %d", sc.name, pgGot, memGot, sc.want)
+		}
+	}
+
+	// The recovery count, the §16.5 numerator, is unchanged and stays a
+	// subset of the global count.
+	recovery, err := store.CountActiveSessionsInRecoveryGlobal(ctx)
+	if err != nil {
+		t.Fatalf("recovery count: %v", err)
+	}
+	if want := 2 * len(session.RecoveryStates()); recovery != want {
+		t.Errorf("recovery count = %d, want %d", recovery, want)
+	}
+}

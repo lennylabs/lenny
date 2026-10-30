@@ -115,15 +115,93 @@ func TestCatalogValidates(t *testing.T) {
 	if len(c) == 0 {
 		t.Fatal("Catalog should not be empty")
 	}
-	names := map[string]bool{}
+	// A rule's identity is its Name plus its static disambiguating
+	// labels: the §17.2 AdmissionPlaneFeatureFlagDowngrade alert is
+	// rendered as four rules that share one Name but carry distinct
+	// (flag_name, expected_webhook_name) labels, so keying uniqueness on
+	// Name alone would falsely flag that spec-mandated decomposition while
+	// still catching accidental copy-paste of an identical rule.
+	identities := map[string]bool{}
 	for _, r := range c {
 		if err := r.Validate(); err != nil {
 			t.Errorf("Catalog rule %q fails Validate: %v", r.Name, err)
 		}
-		if names[r.Name] {
-			t.Errorf("duplicate rule name %q in Catalog", r.Name)
+		id := r.Name + "\x00" + r.Labels["flag_name"] + "\x00" + r.Labels["expected_webhook_name"]
+		if identities[id] {
+			t.Errorf("duplicate rule identity %q in Catalog (name + disambiguating labels)", id)
 		}
-		names[r.Name] = true
+		identities[id] = true
+	}
+}
+
+// TestAdmissionPlaneFeatureFlagDowngradePairs verifies the §16.5 / §17.2
+// AdmissionPlaneFeatureFlagDowngrade alert is the union of one rule per
+// (flag, webhook) pair in the §17.2 Feature-gated chart inventory: four
+// pairs sharing the alert Name, each with the static flag_name /
+// expected_webhook_name labels and an expression matching the
+// kube-state-metrics slug label the phase-stamp ConfigMap renders.
+// F-17.2.6.
+func TestAdmissionPlaneFeatureFlagDowngradePairs_spec_17_2(t *testing.T) {
+	type pair struct {
+		flag     string
+		labelKey string
+	}
+	want := map[string]pair{
+		"lenny-direct-mode-isolation":    {"features.llmProxy", "label_lenny_dev_flag_llm_proxy_enabled"},
+		"lenny-drain-readiness":          {"features.drainReadiness", "label_lenny_dev_flag_drain_readiness_enabled"},
+		"lenny-data-residency-validator": {"features.compliance", "label_lenny_dev_flag_compliance_enabled"},
+		"lenny-t4-node-isolation":        {"features.compliance", "label_lenny_dev_flag_compliance_enabled"},
+	}
+	got := map[string]bool{}
+	for _, r := range Catalog() {
+		if r.Name != "AdmissionPlaneFeatureFlagDowngrade" {
+			continue
+		}
+		webhook := r.Labels["expected_webhook_name"]
+		exp, ok := want[webhook]
+		if !ok {
+			t.Errorf("unexpected downgrade pair for webhook %q", webhook)
+			continue
+		}
+		got[webhook] = true
+		if r.Labels["flag_name"] != exp.flag {
+			t.Errorf("pair %q flag_name = %q, want %q", webhook, r.Labels["flag_name"], exp.flag)
+		}
+		if r.Severity != SeverityWarning {
+			t.Errorf("pair %q severity = %q, want warning", webhook, r.Severity)
+		}
+		if r.For != 2*time.Minute {
+			t.Errorf("pair %q For = %v, want 2m", webhook, r.For)
+		}
+		if !strings.Contains(r.Expr, exp.labelKey+`="true"`) {
+			t.Errorf("pair %q expr missing flag label %q: %s", webhook, exp.labelKey, r.Expr)
+		}
+		if !strings.Contains(r.Expr, `name="`+webhook+`"`) {
+			t.Errorf("pair %q expr missing webhook matcher: %s", webhook, r.Expr)
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("found %d downgrade pairs, want %d", len(got), len(want))
+	}
+}
+
+// TestAdmissionPlaneDowngradeLabelsRender verifies the per-pair static
+// labels survive into the rendered PrometheusRule alongside the
+// mandatory severity label. F-17.2.6.
+func TestAdmissionPlaneDowngradeLabelsRender_spec_17_2(t *testing.T) {
+	groups, err := RenderRuleGroupsBySeverity("lenny", Catalog())
+	if err != nil {
+		t.Fatalf("RenderRuleGroupsBySeverity: %v", err)
+	}
+	rendered := string(groups)
+	for _, frag := range []string{
+		`expected_webhook_name: lenny-direct-mode-isolation`,
+		`expected_webhook_name: lenny-t4-node-isolation`,
+		`flag_name: features.compliance`,
+	} {
+		if !strings.Contains(rendered, frag) {
+			t.Errorf("rendered rule groups missing %q", frag)
+		}
 	}
 }
 
@@ -132,6 +210,10 @@ func TestCatalogCoversCanonicalAlerts(t *testing.T) {
 		"WarmPoolExhausted",
 		"PostgresReplicationLagHigh",
 		"CredentialPoolLow",
+		"ExperimentIsolationRejections",
+		"StorageQuotaHigh",
+		"CircuitBreakerActive",
+		"CircuitBreakerStale",
 	}
 	got := map[string]bool{}
 	for _, r := range Catalog() {
@@ -141,5 +223,711 @@ func TestCatalogCoversCanonicalAlerts(t *testing.T) {
 		if !got[w] {
 			t.Errorf("Catalog missing canonical rule %q", w)
 		}
+	}
+}
+
+// spec165CriticalAlerts is the §16.5 "Critical alerts (page)" table —
+// every first-column alert name, transcribed in spec order.
+var spec165CriticalAlerts = []string{
+	"WarmPoolExhausted", "PostgresReplicationLagHigh", "GatewayNoHealthyReplicas",
+	"SessionStoreUnavailable", "RedisUnavailable", "CheckpointStorageUnavailable",
+	"MinIOUnavailable", "T4KmsKeyUnusable", "EtcdUnavailable", "CredentialPoolExhausted",
+	"CredentialCompromised", "TokenServiceUnavailable", "ControllerLeaderElectionFailed",
+	"DedicatedDNSUnavailable", "CosignWebhookUnavailable", "AuditGrantDrift",
+	"NetworkPolicyCIDRDrift", "AdmissionWebhookUnavailable", "SandboxClaimGuardUnavailable",
+	"DualStoreUnavailable", "DataResidencyWebhookUnavailable", "DataResidencyViolationAttempt",
+	"ArtifactReplicationResidencyViolation", "LegalHoldEscrowResidencyViolation",
+	"PlatformAuditResidencyViolation", "PgBouncerAllReplicasDown", "SessionEvictionTotalLoss",
+	"DelegationBudgetKeysExpired", "BillingStreamEntryAgeHigh", "OTLPPlaintextEgressDetected",
+	"OpsAdminAPIPlaintextDetected", "ElicitationContentTamperDetected",
+}
+
+// spec165WarningAlerts is the §16.5 "Warning alerts" table — every
+// first-column alert name. The table mixes a few Critical-severity
+// rows in among the warnings (AuditRedactionReceiptMissing,
+// LLMUpstreamEgressAnomaly, TokenStoreUnavailable, BackupReconcileBlocked,
+// MinIOArtifactReplicationLagCritical, OpsLockSplitBrainDetected);
+// the catalog files those under criticalAlerts() but the name still
+// belongs to the §16.5 surface this test enumerates.
+var spec165WarningAlerts = []string{
+	"WarmPoolLow", "RedisMemoryHigh", "CredentialPoolLow", "CredentialProactiveRenewalExhausted",
+	"OutstandingInflightAtRotationCeiling", "GatewayActiveStreamsHigh", "GatewaySessionBudgetNearExhaustion",
+	"PDBBlockedEvictions", "Tier3GCPressureHigh", "ArtifactGCBacklog", "CheckpointStale",
+	"RateLimitDegraded", "QuotaFailOpenCumulativeThreshold", "QuotaFailOpenUserFractionInoperative",
+	"CertExpiryImminent", "ElicitationBacklogHigh", "ElicitationContentIntegrityPermissiveTamper",
+	"ElicitationContentIntegrityWeakened", "DelegationBudgetNearExhaustion", "DelegationBudgetIrrecoverable",
+	"CycleDetectionModeUnsafe", "CycleDetectionWarnModeBlocking", "AuditSIEMNotConfigured",
+	"AuditChainGap", "AuditRedactionReceiptMissing", "CheckpointStorageHigh", "StorageQuotaHigh",
+	"CheckpointDurationHigh", "PreStopCapFallbackRateHigh", "PodClaimQueueSaturated",
+	"PodStateMirrorStale", "KMSSigningUnavailable", "KMSSignQuotaApproaching", "GatewaySubsystemCircuitOpen",
+	"GatewayQueueDepthHigh", "GatewayLatencyHigh", "PoolConfigDrift", "PoolConfigValidatorUnavailable",
+	"PoolScalingAdmissionStuck", "LabelImmutabilityWebhookUnavailable", "DirectModeIsolationWebhookUnavailable",
+	"T4NodeIsolationWebhookUnavailable", "DrainReadinessWebhookUnavailable", "CrdConversionWebhookUnavailable",
+	"EphemeralContainerCredGuardUnavailable", "AdmissionPlaneFeatureFlagDowngrade",
+	"WarmPoolReplenishmentSlow", "WarmPoolReplenishmentFailing", "PoolScaleoutBlockedByQuota",
+	"SDKConnectTimeout", "ErasureJobFailed", "ErasureJobOverdue", "MemoryStoreGrowthHigh",
+	"MemoryStoreErasureDurationHigh", "LegalHoldOverrideUsed", "LegalHoldOverrideUsedTenant",
+	"CompliancePostureDecommissioned", "LegalHoldCheckpointAccumulationProjectedBreach",
+	"TenantDeletionOverdue", "KmsKeyDeletionFailed", "BillingCorrectionRateHigh",
+	"BillingStreamBackpressure", "BillingCorrectionApprovalBacklog", "BillingWriteAheadBufferHigh",
+	"AuditRetentionLow", "PostgresWriteSaturation", "ScatterGatherSlowQuery", "PostgresWriteBurstIops",
+	"PgBouncerPoolSaturated", "PoolBootstrapMode", "PoolBootstrapUnderprovisioned",
+	"WarmPoolIdleCostHigh", "SandboxClaimOrphanRateHigh", "OrphanTasksPerTenantHigh",
+	"EtcdQuotaNearLimit", "EtcdWriteLatencyHigh", "ControllerWorkQueueDepthHigh", "WorkspaceSealStuck",
+	"InboxDrainFailure", "DurableInboxRedisUnavailable", "FinalizerStuck", "DedicatedDNSDegraded",
+	"AuditSIEMDeliveryLag", "AuditPartitionDropBlocked", "WarmPoolBootstrapping", "PoolSecurityDegraded",
+	"CRDSSAConflictStuck",
+	"ExperimentTargetingCircuitOpen", "LLMUpstreamEgressAnomaly", "TokenUsageAnomaly",
+	"InterceptorMTLSHandshakeFailure",
+	"PgAuditSinkDeliveryFailed", "OCSFTranslationBacklog", "AuditLockContention",
+	"EventBusPublishDropped", "EventBusPublishFinalFailure", "TokenStoreUnavailable",
+	"TokenRevocationPropagationLag", "GatewayClockDrift", "GatewayRateLimitStorm",
+	"DelegationLuaScriptLatencyHigh", "CoordinatorHandoffSlow", "RuntimeUpgradeStuck",
+	"CircuitBreakerActive", "CircuitBreakerStale", "LLMTranslationLatencyHigh",
+	"LLMTranslationSchemaDrift", "ExperimentIsolationRejections", "PlatformUpgradeAvailable",
+	"PlatformUpgradeStuck", "PlatformVersionDrift", "BackupOverdue", "BackupFailed",
+	"BackupStorageHigh", "BackupReconcileBlocked", "MinIOArtifactReplicationLagHigh",
+	"MinIOArtifactReplicationLagCritical", "MinIOArtifactReplicationFailed", "CircuitBreakerOpen",
+	"OpsSelfHealthDegraded", "OpsLockSplitBrainDetected", "OperationStalled",
+	"OpsClockSkewExceeded",
+}
+
+// spec165BurnRateSLOs is the §16.5 "SLO error-budget burn-rate alerts"
+// table. Each name yields a fast-window critical rule and a slow-window
+// warning rule.
+var spec165BurnRateSLOs = []string{
+	"SessionCreationSuccessRateBurnRate", "SessionCreationLatencyBurnRate",
+	"SessionAvailabilityBurnRate", "GatewayAvailabilityBurnRate", "StartupLatencyBurnRate",
+	"StartupLatencyGVisorBurnRate", "TTFTBurnRate", "CheckpointDurationBurnRate",
+}
+
+// TestCatalogIsCompleteAgainstSpec165 asserts the catalog contains
+// every alert §16.5 enumerates: the critical table, the warning table,
+// and both windows of every multi-window burn-rate SLO. This is the
+// completion-gate check that the Catalog is the §16.5 surface in code,
+// not a representative sample.
+func TestCatalogIsCompleteAgainstSpec165(t *testing.T) {
+	got := map[string]bool{}
+	for _, r := range Catalog() {
+		got[r.Name] = true
+	}
+	for _, name := range spec165CriticalAlerts {
+		if !got[name] {
+			t.Errorf("§16.5 critical alert %q is missing from Catalog", name)
+		}
+	}
+	for _, name := range spec165WarningAlerts {
+		if !got[name] {
+			t.Errorf("§16.5 warning alert %q is missing from Catalog", name)
+		}
+	}
+	for _, name := range spec165BurnRateSLOs {
+		if !got[name] {
+			t.Errorf("§16.5 burn-rate SLO %q is missing its fast-window rule", name)
+		}
+		if !got[name+"Slow"] {
+			t.Errorf("§16.5 burn-rate SLO %q is missing its slow-window rule (%sSlow)", name, name)
+		}
+	}
+}
+
+// TestCatalogHasNoUnspecifiedAlerts asserts the catalog does not invent
+// alerts §16.5 does not list. Every Catalog rule must be either a named
+// §16.5 alert or the slow-window sibling of a §16.5 burn-rate SLO.
+func TestCatalogHasNoUnspecifiedAlerts(t *testing.T) {
+	allowed := map[string]bool{}
+	for _, n := range spec165CriticalAlerts {
+		allowed[n] = true
+	}
+	for _, n := range spec165WarningAlerts {
+		allowed[n] = true
+	}
+	for _, n := range spec165BurnRateSLOs {
+		allowed[n] = true
+		allowed[n+"Slow"] = true
+	}
+	for _, r := range Catalog() {
+		if !allowed[r.Name] {
+			t.Errorf("Catalog rule %q is not a §16.5 alert — the catalog must transcribe §16.5, not invent rules", r.Name)
+		}
+	}
+}
+
+// TestPostgresWriteBurstIopsCalibration asserts the §16.5
+// PostgresWriteBurstIops alert encodes the "> 3 in 10 minutes" trigger
+// the spec stipulates. A single burst is not actionable; the alert
+// must require repetition across a 10-minute window before paging
+// operators. The expression is a count_over_time over a 1-minute
+// resolution subquery of the burst-exceedance indicator; the test
+// asserts the expression carries the count-over-time tally, the 10m
+// window, the 1m resolution, and the > 3 repetition threshold.
+func TestPostgresWriteBurstIopsCalibration(t *testing.T) {
+	var got Rule
+	for _, r := range Catalog() {
+		if r.Name == "PostgresWriteBurstIops" {
+			got = r
+			break
+		}
+	}
+	if got.Name == "" {
+		t.Fatal("PostgresWriteBurstIops missing from Catalog")
+	}
+	if got.Severity != SeverityWarning {
+		t.Errorf("severity = %q, want warning", got.Severity)
+	}
+	wantFragments := []string{
+		"count_over_time",
+		"lenny_postgres_write_burst_iops",
+		"lenny_postgres_write_burst_ceiling_iops",
+		"[10m:1m]",
+		"> 3",
+	}
+	for _, frag := range wantFragments {
+		if !strings.Contains(got.Expr, frag) {
+			t.Errorf("expression %q is missing required fragment %q "+
+				"(§16.5 burst-exceedance count_over_time calibration)", got.Expr, frag)
+		}
+	}
+}
+
+// TestPoolSecurityDegradedRule pins the §16.5 / §4.7 PoolSecurityDegraded
+// warning alert to the WarmPoolController-published gauge and to its
+// nonce-only-mode runbook. The rule is defined on
+// lenny_pool_security_degraded == 1 rather than on the adapter counter
+// because no default scrape surface reaches agent pods (§16.9), so a
+// counter rule would evaluate an empty vector. The runbook slug must
+// resolve to docs/runbooks/nonce-only-mode.md (the tier-11 docs gate
+// cross-checks this).
+//
+// spec: §4.7 (escalation requirement); §16.5 (PoolSecurityDegraded);
+// §17.7 (runbook). F-5.3.14.
+// TestOpsClockSkewExceededRule_spec_16_5 pins the F-SH-1
+// OpsClockSkewExceeded warning alert: it selects the postgres-redis pair
+// on the lenny_ops_clock_skew_seconds gauge, fires above the 10s NTP
+// tolerance, and resolves to the ops-clock-skew runbook. Pre-fix the
+// alert did not exist, so the gauge a producer now publishes had no rule
+// to read it.
+//
+// spec: §16.5 (OpsClockSkewExceeded warning-alert row); §25.4
+// (Postgres-Redis skew >10s alert).
+func TestOpsClockSkewExceededRule_spec_16_5(t *testing.T) {
+	var got Rule
+	for _, r := range Catalog() {
+		if r.Name == "OpsClockSkewExceeded" {
+			got = r
+			break
+		}
+	}
+	if got.Name == "" {
+		t.Fatal("OpsClockSkewExceeded missing from Catalog")
+	}
+	if got.Severity != SeverityWarning {
+		t.Errorf("severity = %q, want warning", got.Severity)
+	}
+	if got.Expr != `lenny_ops_clock_skew_seconds{pair="postgres-redis"} > 10` {
+		t.Errorf("expr = %q, want the postgres-redis pair gauge above the 10s tolerance", got.Expr)
+	}
+	if !strings.Contains(got.Expr, `pair="postgres-redis"`) {
+		t.Errorf("expr %q must select the postgres-redis pair label", got.Expr)
+	}
+	if !strings.Contains(got.Expr, "> 10") {
+		t.Errorf("expr %q must fire above the 10s tolerance per §25.4", got.Expr)
+	}
+	if got.RunbookSlug() != "ops-clock-skew" {
+		t.Errorf("runbook slug = %q, want ops-clock-skew", got.RunbookSlug())
+	}
+	if err := got.Validate(); err != nil {
+		t.Errorf("OpsClockSkewExceeded does not validate: %v", err)
+	}
+}
+
+// TestTokenUsageAnomalyRule_spec_16_5 pins the §16.5 TokenUsageAnomaly
+// warning alert. Its Expr must transcribe the §16.5 spec-table PromQL
+// exactly, including the space between the `sum by (tenant_id)` grouping
+// clause and the `rate(...)` selector, because the §16.5 alert table is
+// the human-facing mirror rendered from Catalog(). Pre-fix the Expr
+// dropped that space (`sum by (tenant_id)(rate(...`), diverging from the
+// spec surface it mirrors and from every sibling
+// `sum by (tenant_id) (rate(...))` alert in the catalog; this test fails
+// against that form. The rule is Warning severity (a residual-risk
+// signal, not a page) and resolves to the token-usage-anomaly runbook.
+//
+// spec: §16.5 (TokenUsageAnomaly warning-alert row); §11.2 (direct-mode
+// token-integrity residual-risk detector).
+func TestTokenUsageAnomalyRule_spec_16_5(t *testing.T) {
+	var got Rule
+	for _, r := range Catalog() {
+		if r.Name == "TokenUsageAnomaly" {
+			got = r
+			break
+		}
+	}
+	if got.Name == "" {
+		t.Fatal("TokenUsageAnomaly missing from Catalog")
+	}
+	if got.Severity != SeverityWarning {
+		t.Errorf("severity = %q, want warning (direct-mode integrity is a residual-risk signal, not a page)", got.Severity)
+	}
+	// The exact §16.5 spec-table PromQL at spec/16_observability.md, with
+	// the space between the grouping clause and rate() that the spec table
+	// and every sibling per-tenant rate alert carry.
+	const wantExpr = `sum by (tenant_id) (rate(lenny_gateway_token_usage_anomaly_total[5m])) > 0`
+	if got.Expr != wantExpr {
+		t.Errorf("expr = %q, want the §16.5 spec-table PromQL %q byte-for-byte", got.Expr, wantExpr)
+	}
+	if got.For != 5*time.Minute {
+		t.Errorf("for = %v, want 5m per the §16.5 row", got.For)
+	}
+	if got.RunbookSlug() != "token-usage-anomaly" {
+		t.Errorf("runbook slug = %q, want token-usage-anomaly", got.RunbookSlug())
+	}
+	if err := got.Validate(); err != nil {
+		t.Errorf("TokenUsageAnomaly does not validate: %v", err)
+	}
+}
+
+// catalogRule returns the Catalog rule named name, failing the test when
+// the catalog has none.
+func catalogRule(t *testing.T, name string) Rule {
+	t.Helper()
+	for _, r := range Catalog() {
+		if r.Name == name {
+			return r
+		}
+	}
+	t.Fatalf("%s missing from Catalog", name)
+	return Rule{}
+}
+
+// TestKMSSignQuotaApproachingRule_spec_16_5 pins the §16.5
+// KMSSignQuotaApproaching warning alert: the fleet-wide rate of sign
+// requests that reach the KMS (every outcome except circuit_open) above
+// 80% of the configured quota for more than 10 minutes. The threshold
+// reads the quota gauge through max() so the gauge every gateway replica
+// publishes collapses to one series, and through a `> 0` filter so an
+// unset quota yields no series and the alert never fires.
+//
+// spec: §16.5 (KMSSignQuotaApproaching warning-alert row); §10.2.
+func TestKMSSignQuotaApproachingRule_spec_16_5(t *testing.T) {
+	got := catalogRule(t, "KMSSignQuotaApproaching")
+	const wantExpr = `sum(rate(lenny_jwt_sign_requests_total{outcome!="circuit_open"}[5m])) > 0.8 * scalar(max(lenny_kms_sign_quota_per_second) > 0)`
+	if got.Expr != wantExpr {
+		t.Errorf("expr = %q, want %q", got.Expr, wantExpr)
+	}
+	if got.For != 10*time.Minute {
+		t.Errorf("for = %v, want 10m per the §16.5 row", got.For)
+	}
+	if got.Severity != SeverityWarning {
+		t.Errorf("severity = %q, want warning", got.Severity)
+	}
+	if got.SpecRef != "§16.5" {
+		t.Errorf("spec ref = %q, want §16.5", got.SpecRef)
+	}
+	const wantURL = "https://docs.lenny.dev/runbooks/jwt-key-rotation#kms-sign-quota"
+	if got.RunbookURL != wantURL {
+		t.Errorf("runbook URL = %q, want the KMS Sign quota section %q", got.RunbookURL, wantURL)
+	}
+	if got.RunbookSlug() != "jwt-key-rotation" {
+		t.Errorf("runbook slug = %q, want jwt-key-rotation", got.RunbookSlug())
+	}
+	if err := got.Validate(); err != nil {
+		t.Errorf("KMSSignQuotaApproaching does not validate: %v", err)
+	}
+}
+
+// TestKMSSigningUnavailableNamesBothSigners_spec_16_5 pins the §16.5
+// KMSSigningUnavailable text: a JWTSigner breaker on either the gateway
+// or the Token Service trips it, and the operator checks the KMS IAM
+// binding of the ServiceAccount the alert's job label names. The text it
+// replaced described only the gateway signer and session creation.
+//
+// spec: §16.5 (KMSSigningUnavailable warning-alert row); §10.2.
+func TestKMSSigningUnavailableNamesBothSigners_spec_16_5(t *testing.T) {
+	got := catalogRule(t, "KMSSigningUnavailable")
+	if got.Expr != `rate(lenny_gateway_kms_signing_errors_total[30s]) > 1` {
+		t.Errorf("expr = %q, want the unchanged signing-error rate expression", got.Expr)
+	}
+	if got.For != 60*time.Second {
+		t.Errorf("for = %v, want 60s", got.For)
+	}
+	text := got.Summary + " " + got.Description
+	for _, want := range []string{"gateway", "Token Service", "KMS_SIGNING_UNAVAILABLE", "IAM binding", "ServiceAccount", "job label"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("summary and description %q do not mention %q", text, want)
+		}
+	}
+	if strings.Contains(got.Description, "new session creation") {
+		t.Errorf("description %q still scopes the failure to session creation", got.Description)
+	}
+}
+
+// TestTokenStoreUnavailableNamesNoDelegationMint_spec_16_5 pins the
+// TokenStoreUnavailable description to the §16.5 row: an unreachable
+// Postgres primary fails session creation and credential leasing.
+// Internal delegation through lenny/delegate_task mints no token (§8.2),
+// so the description must not name a delegation mint among the failing
+// paths. The pre-fix description listed "delegation minting" and fails
+// this test.
+//
+// spec: §16.5 (TokenStoreUnavailable critical-alert row); §8.2; §13.3.
+func TestTokenStoreUnavailableNamesNoDelegationMint_spec_16_5(t *testing.T) {
+	got := catalogRule(t, "TokenStoreUnavailable")
+	const want = "session creation and credential leasing are both failing."
+	if !strings.Contains(got.Description, want) {
+		t.Errorf("description %q does not contain %q", got.Description, want)
+	}
+	if strings.Contains(strings.ToLower(got.Description), "delegation") {
+		t.Errorf("description %q still names a delegation mint", got.Description)
+	}
+	if got.Severity != SeverityCritical {
+		t.Errorf("severity = %q, want critical", got.Severity)
+	}
+}
+
+// TestRunbookSlugDropsSectionFragment pins that a RunbookURL pointing at
+// one section of a runbook page still yields the page slug for the
+// alert_fired payload's runbook field, which routes on the page name.
+//
+// spec: §25.7; §25.17.
+func TestRunbookSlugDropsSectionFragment(t *testing.T) {
+	cases := []struct {
+		name string
+		rule Rule
+		want string
+	}{
+		{"page", Rule{RunbookURL: runbook("kms-unavailable")}, "kms-unavailable"},
+		{"section", Rule{RunbookURL: runbookSection("jwt-key-rotation", "kms-sign-quota")}, "jwt-key-rotation"},
+		{"short name wins", Rule{RunbookURL: runbookSection("a", "b"), RunbookShortName: "c"}, "c"},
+		{"fragment only", Rule{RunbookURL: "#kms-sign-quota"}, ""},
+		{"empty", Rule{}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.rule.RunbookSlug(); got != c.want {
+				t.Errorf("RunbookSlug() = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestPoolSecurityDegradedRule(t *testing.T) {
+	var got Rule
+	for _, r := range Catalog() {
+		if r.Name == "PoolSecurityDegraded" {
+			got = r
+			break
+		}
+	}
+	if got.Name == "" {
+		t.Fatal("PoolSecurityDegraded missing from Catalog")
+	}
+	if got.Severity != SeverityWarning {
+		t.Errorf("severity = %q, want warning", got.Severity)
+	}
+	if got.Expr != "lenny_pool_security_degraded == 1" {
+		t.Errorf("expr = %q, want the WarmPoolController gauge lenny_pool_security_degraded == 1", got.Expr)
+	}
+	if strings.Contains(got.Expr, "lenny_adapter_sopeercred_disabled_total") {
+		t.Errorf("expr %q must not key off the agent-pod adapter counter; no default scrape surface reaches agent pods (§16.9)", got.Expr)
+	}
+	if got.RunbookSlug() != "nonce-only-mode" {
+		t.Errorf("runbook slug = %q, want nonce-only-mode", got.RunbookSlug())
+	}
+	if err := got.Validate(); err != nil {
+		t.Errorf("PoolSecurityDegraded does not validate: %v", err)
+	}
+}
+
+// spec: §12.3 / §16.5 — PgBouncerPoolSaturated must
+// evaluate the pgbouncer_exporter sidecar's native client-wait stat
+// (pgbouncer_pools_client_maxwait_seconds). The earlier
+// lenny_pgbouncer_client_waiting_seconds metric was never emitted by any
+// code or exporter, so the alert silently matched no series. F-12.3.11.
+func TestPgBouncerPoolSaturatedUsesExporterMetric_spec_12_3_F_12_3_11(t *testing.T) {
+	var got Rule
+	for _, r := range Catalog() {
+		if r.Name == "PgBouncerPoolSaturated" {
+			got = r
+			break
+		}
+	}
+	if got.Name == "" {
+		t.Fatal("PgBouncerPoolSaturated missing from Catalog")
+	}
+	if !strings.Contains(got.Expr, "pgbouncer_pools_client_maxwait_seconds") {
+		t.Errorf("expression %q must reference the exporter metric pgbouncer_pools_client_maxwait_seconds", got.Expr)
+	}
+	if strings.Contains(got.Expr, "lenny_pgbouncer_client_waiting_seconds") {
+		t.Errorf("expression %q still references the never-emitted lenny_pgbouncer_client_waiting_seconds metric", got.Expr)
+	}
+}
+
+// spec: §16.5, §12.3, §11.7 audit sequencing — the
+// AuditChainGap catalog Description must classify state="broken" as a
+// committed-row tamper or removal (a non-linking prev_hash), must not
+// equate a benign intact-link sequence gap with the broken-chain
+// trigger, and must state buffered T2 crash-window loss as the
+// accepted unsignaled tradeoff of the opt-in batching path this alert
+// does not cover, with SIEM-replay scoped to the tamper/removal case.
+// This is the Path A reconciliation from proposal 0025 (F-11.2.10):
+// under the retired text a state="broken" event was glossed as
+// "buffered events lost during a prior crash or tampering", which
+// equated a benign nextval gap with a tamper break and pointed the
+// wrong recovery (SIEM-replay) at unrecoverable buffered T2 loss. The
+// assertions below fail against that pre-fix Description.
+func TestAuditChainGapDescriptionScopesBrokenToTamper_spec_16_5_F_11_2_10(t *testing.T) {
+	var got Rule
+	for _, r := range Catalog() {
+		if r.Name == "AuditChainGap" {
+			got = r
+			break
+		}
+	}
+	if got.Name == "" {
+		t.Fatal("AuditChainGap missing from Catalog")
+	}
+	if got.Expr != `increase(lenny_audit_chain_integrity_total{state="broken"}[15m]) > 0` {
+		t.Errorf("expr = %q, want increase(lenny_audit_chain_integrity_total{state=\"broken\"}[15m]) > 0", got.Expr)
+	}
+	desc := got.Description
+	// state="broken" must be tied to a committed-row tamper or removal
+	// (a non-linking prev_hash), the Path A classification.
+	wantFragments := []string{
+		"committed-row tamper or removal",
+		"non-linking prev_hash",
+		// The benign intact-link gap must be named as detected-but-not-the-trigger.
+		"intact-prev_hash-link sequence gap",
+		// Buffered T2 loss must be stated as the accepted unsignaled tradeoff.
+		"audit.batchingEnabled",
+		"never committed",
+		// SIEM-replay must be scoped to the committed-row case.
+		"replay",
+		"outbox",
+	}
+	for _, frag := range wantFragments {
+		if !strings.Contains(desc, frag) {
+			t.Errorf("AuditChainGap Description is missing required fragment %q:\n%s", frag, desc)
+		}
+	}
+	// The retired "gap in audit sequence" gloss that equated a benign
+	// sequence gap with the broken-chain trigger must be gone, and the
+	// pre-fix sentence that attributed state="broken" to buffered loss
+	// or a bare "prior crash" must not reappear.
+	notWant := []string{
+		"gap in audit sequence",
+		"buffered events lost during a prior crash",
+	}
+	for _, frag := range notWant {
+		if strings.Contains(desc, frag) {
+			t.Errorf("AuditChainGap Description still contains retired fragment %q:\n%s", frag, desc)
+		}
+	}
+	if err := got.Validate(); err != nil {
+		t.Errorf("AuditChainGap does not validate: %v", err)
+	}
+}
+
+// spec: §16.5 (AuditRedactionReceiptMissing alert), §12.8 (RedactionReceipt,
+// redacted_gdpr). Proposal 0028 C2 (F-12.8.4): the shipped redaction rewrites
+// only the payload columns and leaves prev_hash untouched, so there is no
+// physical "chain rewrite boundary". A missing-receipt condition is a receipt
+// that is absent, signature-invalid, or whose original_hash does not match the
+// redacted row's preserved pre-redaction hash. This test would fail against the
+// pre-fix catalog, whose Description read "mismatches the chain rewrite
+// boundary".
+func TestAuditRedactionReceiptMissingDescriptionUsesReceiptModel_spec_16_5_F_12_8_4(t *testing.T) {
+	var got Rule
+	for _, r := range Catalog() {
+		if r.Name == "AuditRedactionReceiptMissing" {
+			got = r
+			break
+		}
+	}
+	if got.Name == "" {
+		t.Fatal("AuditRedactionReceiptMissing missing from Catalog")
+	}
+	desc := got.Description
+	// The missing-receipt condition must be stated as the receipt-authorized
+	// discontinuity the shipped verifier reconciles through original_hash.
+	wantFragments := []string{
+		"absent",
+		"signature-invalid",
+		"original_hash does not match the redacted row's preserved pre-redaction hash",
+	}
+	for _, frag := range wantFragments {
+		if !strings.Contains(desc, frag) {
+			t.Errorf("AuditRedactionReceiptMissing Description is missing required fragment %q:\n%s", frag, desc)
+		}
+	}
+	// The retired physical-re-seal model ("chain rewrite boundary") must be
+	// gone; the redaction never writes a hash into any row's prev_hash.
+	if strings.Contains(desc, "chain rewrite boundary") {
+		t.Errorf("AuditRedactionReceiptMissing Description still contains the retired phantom \"chain rewrite boundary\" model:\n%s", desc)
+	}
+	if got.Severity != SeverityCritical {
+		t.Errorf("severity = %q, want %q", got.Severity, SeverityCritical)
+	}
+	if err := got.Validate(); err != nil {
+		t.Errorf("AuditRedactionReceiptMissing does not validate: %v", err)
+	}
+}
+
+// spec: §6.3, §16.5 — TTFTBurnRate must reference
+// the lenny_session_time_to_first_token_seconds histogram directly
+// via the le="10" bucket (the 10s TTFT SLO). The earlier
+// lenny_session_time_to_first_token_slow_ratio recording rule was
+// never shipped and the alert silently matched no series.
+func TestTTFTBurnRateUsesInlineHistogramExpression_spec_6_3_F_6_3_3(t *testing.T) {
+	var got Rule
+	for _, r := range Catalog() {
+		if r.Name == "TTFTBurnRate" {
+			got = r
+			break
+		}
+	}
+	if got.Name == "" {
+		t.Fatalf("TTFTBurnRate not found in Catalog")
+	}
+	wantFragments := []string{
+		"lenny_session_time_to_first_token_seconds_bucket",
+		`le="10"`,
+		"lenny_session_time_to_first_token_seconds_count",
+		"/ 0.05",
+		// §16.5 — the fast-window page threshold is the
+		// operator-tunable multiplier scalar (default 14). F-16.5.3.
+		"> scalar(lenny_slo_burn_rate_fast_multiplier or vector(14))",
+	}
+	for _, frag := range wantFragments {
+		if !strings.Contains(got.Expr, frag) {
+			t.Errorf("TTFTBurnRate expression %q is missing required fragment %q", got.Expr, frag)
+		}
+	}
+	notWant := "lenny_session_time_to_first_token_slow_ratio"
+	if strings.Contains(got.Expr, notWant) {
+		t.Errorf("TTFTBurnRate still references the never-shipped recording rule %q", notWant)
+	}
+}
+
+// TestBurnRateRulesAreDualWindow asserts each burn-rate SLO is rendered
+// as a fast-window critical rule and a slow-window warning rule, per
+// the §16.5 multi-window burn-rate requirement.
+func TestBurnRateRulesAreDualWindow(t *testing.T) {
+	bySeverity := map[string]Severity{}
+	byFor := map[string]time.Duration{}
+	for _, r := range Catalog() {
+		bySeverity[r.Name] = r.Severity
+		byFor[r.Name] = r.For
+	}
+	for _, name := range spec165BurnRateSLOs {
+		if bySeverity[name] != SeverityCritical {
+			t.Errorf("%s (fast window) severity = %q, want critical", name, bySeverity[name])
+		}
+		if byFor[name] != time.Hour {
+			t.Errorf("%s (fast window) for = %v, want 1h", name, byFor[name])
+		}
+		slow := name + "Slow"
+		if bySeverity[slow] != SeverityWarning {
+			t.Errorf("%s (slow window) severity = %q, want warning", slow, bySeverity[slow])
+		}
+		if byFor[slow] != 6*time.Hour {
+			t.Errorf("%s (slow window) for = %v, want 6h", slow, byFor[slow])
+		}
+	}
+}
+
+// TestWarmPoolReplenishmentSlowDerivesFromPerPoolBaseline asserts the
+// alert compares P95 startup against 2× the per-pool
+// lenny_pool_warmup_seconds_baseline gauge the PoolScalingController
+// mirrors, rather than the prior fixed 60s threshold. spec: §16.5.
+func TestWarmPoolReplenishmentSlowDerivesFromPerPoolBaseline_spec_16_5_488(t *testing.T) {
+	var got Rule
+	for _, r := range Catalog() {
+		if r.Name == "WarmPoolReplenishmentSlow" {
+			got = r
+			break
+		}
+	}
+	if got.Name == "" {
+		t.Fatal("WarmPoolReplenishmentSlow not found in Catalog")
+	}
+	wantFragments := []string{
+		"lenny_warmpool_pod_startup_duration_seconds_bucket",
+		"sum by (le, pool)",
+		"> 2 * lenny_pool_warmup_seconds_baseline",
+	}
+	for _, frag := range wantFragments {
+		if !strings.Contains(got.Expr, frag) {
+			t.Errorf("WarmPoolReplenishmentSlow expression %q is missing required fragment %q", got.Expr, frag)
+		}
+	}
+	// The fixed 2×30s default threshold must be gone — an explicitly
+	// baselined pool no longer alerts at the wrong multiple.
+	if strings.Contains(got.Expr, "> 60") {
+		t.Errorf("WarmPoolReplenishmentSlow still uses the fixed > 60 threshold: %q", got.Expr)
+	}
+}
+
+// TestProductionAuditAlertDescriptions_spec_16_5 pins the wording of the
+// two production-only audit alerts. Each description names production mode
+// as the §17.9.1 Environment value prod, so an operator reading a fired
+// alert sees the one setting that turns it on rather than the retired
+// LENNY_ENV=production spelling, and each expression still gates on the
+// lenny_env_production gauge.
+//
+// spec: §16.5 (AuditSIEMNotConfigured and AuditRetentionLow warning-alert
+// rows); §16.4; §17.9.1 (Composition Dimensions) "Production mode".
+func TestProductionAuditAlertDescriptions_spec_16_5(t *testing.T) {
+	cases := []struct {
+		name       string
+		wantPrefix string
+		wantExpr   string
+	}{
+		{
+			name:       "AuditSIEMNotConfigured",
+			wantPrefix: "The deployment runs in production mode (environment prod) and audit.siem.endpoint is not set.",
+			wantExpr:   `lenny_audit_siem_configured == 0 and lenny_env_production == 1`,
+		},
+		{
+			name:       "AuditRetentionLow",
+			wantPrefix: "The deployment runs in production mode (environment prod) and audit.retentionDays is below 365 days without a configured SIEM.",
+			wantExpr:   `lenny_audit_retention_days < 365 and lenny_audit_siem_configured == 0 and lenny_env_production == 1`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := catalogRule(t, tc.name)
+			if !strings.HasPrefix(got.Description, tc.wantPrefix) {
+				t.Errorf("description = %q, want prefix %q", got.Description, tc.wantPrefix)
+			}
+			if strings.Contains(got.Description, "LENNY_ENV") {
+				t.Errorf("description %q names the retired LENNY_ENV spelling", got.Description)
+			}
+			if got.Expr != tc.wantExpr {
+				t.Errorf("expr = %q, want %q unchanged", got.Expr, tc.wantExpr)
+			}
+		})
+	}
+}
+
+// TestWarmPoolReplenishmentFailingNamesNoWarmUpCause_spec_16_5 pins the
+// WarmPoolReplenishmentFailing description to the counter's own scope: the
+// warm-up failure counter is classified by its error_type label, and the
+// description no longer asserts that every failure is a pod failing to
+// reach idle during warm-up. The expression is unchanged.
+//
+// spec: 16.5 (Alerting Rules and SLOs), 16.1 (Metrics)
+func TestWarmPoolReplenishmentFailingNamesNoWarmUpCause_spec_16_5(t *testing.T) {
+	r := catalogRule(t, "WarmPoolReplenishmentFailing")
+	if want := `rate(lenny_warmpool_warmup_failure_total[5m]) * 60 > 1`; r.Expr != want {
+		t.Errorf("Expr = %q, want %q unchanged", r.Expr, want)
+	}
+	if !strings.Contains(r.Description, "error_type") {
+		t.Errorf("Description = %q, want it to name the error_type label", r.Description)
+	}
+	if strings.Contains(r.Description, "reach idle") {
+		t.Errorf("Description = %q, must not attribute every failure to reaching idle", r.Description)
+	}
+	if r.For != 5*time.Minute || r.SpecRef != "§16.5" {
+		t.Errorf("For/SpecRef = %v/%q, want 5m/§16.5 unchanged", r.For, r.SpecRef)
 	}
 }

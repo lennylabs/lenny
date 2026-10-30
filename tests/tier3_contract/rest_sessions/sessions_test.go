@@ -23,8 +23,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 )
 
 // newTestServer returns a running httptest.Server backed by a fresh
@@ -32,7 +32,7 @@ import (
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts
@@ -262,11 +262,13 @@ func TestFinalizeRejectsFromReady(t *testing.T) {
 	assertInvalidStateTransition(t, body, "ready", []string{"created"})
 }
 
-// spec: 15.1 (resume requires state=awaiting_client_action)
-// diagnosis: Resume from running returned non-409. The transition
+// spec: 15.1 (resume admits awaiting_client_action and suspended), 7.3
+// (Retry and Resume)
+// diagnosis: Resume from running returned non-409, or the refusal's
 //
-//	table is wrong, or the resume endpoint is dispatching
-//	without checking state.
+//	allowedStates does not name both admitted states. The transition
+//	table is wrong, or the resume endpoint is dispatching without
+//	checking state.
 func TestResumeRejectsFromRunning(t *testing.T) {
 	ts := newTestServer(t)
 	id := createSession(t, ts)
@@ -276,7 +278,7 @@ func TestResumeRejectsFromRunning(t *testing.T) {
 	if resp.StatusCode != http.StatusConflict {
 		t.Errorf("resume-from-running: want 409, got %d", resp.StatusCode)
 	}
-	assertInvalidStateTransition(t, body, "running", []string{"awaiting_client_action"})
+	assertInvalidStateTransition(t, body, "running", []string{"awaiting_client_action", "suspended"})
 }
 
 // spec: 15.1 (terminate is admitted from every non-terminal state)
@@ -344,7 +346,7 @@ func TestListReturnsCreatedSessions(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("list: want 200, got %d", resp.StatusCode)
 	}
-	sessions, ok := body["sessions"].([]any)
+	sessions, ok := body["items"].([]any)
 	if !ok {
 		t.Fatalf("expected sessions array, got %v", body)
 	}
@@ -376,7 +378,7 @@ func TestListFiltersByState(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("list filter: want 200, got %d", resp.StatusCode)
 	}
-	sessions := body["sessions"].([]any)
+	sessions := body["items"].([]any)
 	if len(sessions) != 1 || sessions[0].(map[string]any)["id"] != idA {
 		t.Errorf("filter ?state=running: want [idA], got %v", sessions)
 	}
@@ -412,5 +414,56 @@ func assertInvalidStateTransition(t *testing.T, body map[string]any, wantCurrent
 		if !found {
 			t.Errorf("details.allowedStates: want to contain %q, got %v", want, allowed)
 		}
+	}
+}
+
+// spec: §4.2 — the session envelope carries the §4.2 record
+// fields the spec lists for client visibility: recoveryGeneration
+// (counter visible per spec line 156), schemaVersion, and the optional
+// cwd and podAssignment when present. The counter and the schema
+// version are emitted on every response so clients can read them
+// uniformly across created / running / terminal states.
+// diagnosis: the §4.2 wire-level fields are missing from the
+// SessionResponse envelope. Recheck pkg/gateway/sessionserver
+// SessionResponse and toResponse for the camelCase JSON tags
+// (recoveryGeneration, schemaVersion, cwd, podAssignment).
+func TestSessionEnvelopeCarriesSpec42Fields(t *testing.T) {
+	ts := newTestServer(t)
+	id := createSession(t, ts)
+
+	resp, body := do(t, ts, "GET", "/v1/sessions/"+id, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET: want 200, got %d", resp.StatusCode)
+	}
+
+	// recoveryGeneration starts at 0 and is always present (the
+	// counter is visible to clients per spec line 156 and the JSON
+	// tag omits the empty-flag so a fresh session reports zero).
+	got, ok := body["recoveryGeneration"]
+	if !ok {
+		t.Errorf("envelope missing 'recoveryGeneration' field (§4.2)")
+	}
+	// JSON numbers round-trip as float64 in map[string]any.
+	if f, _ := got.(float64); f != 0 {
+		t.Errorf("recoveryGeneration: want 0 on a fresh session, got %v", got)
+	}
+
+	// schemaVersion: v1 sessions report schema_version=1.
+	gotSV, ok := body["schemaVersion"]
+	if !ok {
+		t.Errorf("envelope missing 'schemaVersion' field (§4.2)")
+	}
+	if f, _ := gotSV.(float64); f != 1 {
+		t.Errorf("schemaVersion: want 1 on a v1 session, got %v", gotSV)
+	}
+
+	// cwd / podAssignment are omitempty (a fresh `created` session has
+	// neither). The envelope must not include them when empty so the
+	// minimal wire form stays compact.
+	if _, ok := body["cwd"]; ok {
+		t.Errorf("envelope must omit 'cwd' when empty (§4.2 omitempty contract)")
+	}
+	if _, ok := body["podAssignment"]; ok {
+		t.Errorf("envelope must omit 'podAssignment' when empty (§4.2 omitempty contract)")
 	}
 }

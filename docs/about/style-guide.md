@@ -72,7 +72,7 @@ Use these spellings and formulations everywhere. Do not introduce synonyms.
 | `runtime` | The agent adapter image (e.g. `claude-code`, `chat`). Not "worker", "executor", or "handler". |
 | `pool` | A horizontally-scaled, pre-warmed set of pods for a runtime. |
 | `gateway` | The client-facing service. Not "proxy" or "API server". |
-| `workspace` | The mounted, session-local filesystem at `/workspace/current`. |
+| `workspace` | The mounted, session-local filesystem at `/workspace/slots/{sessionId}/current`. |
 | `WorkspacePlan` | Camel-case when used as the schema name; lowercase "workspace plan" in prose only when not referring to the schema. |
 | `isolation profile` | Canonical: `standard` (runc, dev only), `sandboxed` (gVisor, default), `microvm` (Kata). |
 | `RuntimeClass` | Kubernetes-level: `runc`, `gvisor`, `kata`. Distinct from isolation profile. |
@@ -80,17 +80,17 @@ Use these spellings and formulations everywhere. Do not introduce synonyms.
 | `delegation` | Parent session creating a child session via the gateway. Never "subagent" or "sub-task" at the platform level. |
 | `elicitation` | Mid-session prompt for user input. Never "human-in-the-loop popup" or similar. |
 | `connector` | Gateway-managed OAuth-backed MCP server (GitHub, Jira, Slack). Distinct from a runtime. |
-| `OutputPart` | The discriminated-union type for streamed output elements. Canonical types: `text`, `code`, `reasoning_trace`, `citation`, `screenshot`, `image`, `diff`, `file`, `execution_result`, `error`. |
+| `MessagePart` | The discriminated-union type for streamed output elements. Canonical types: `text`, `code`, `reasoning_trace`, `citation`, `screenshot`, `image`, `diff`, `file`, `execution_result`, `error`. |
 | `platform-admin` / `tenant-admin` / `tenant-viewer` / `billing-viewer` / `user` | Built-in role names. Hyphenated, lowercase, in backticks in reference material. |
 
 **API shapes (do not paraphrase):**
 
 - Inbound message body: `{"type":"message","input":[{"type":"text","inline":"..."}]}`
 - Outbound response body: `{"type":"response","output":[{"type":"text","inline":"..."}]}`
-- TaskResult: `{"output":{"parts":[OutputPart[]], "artifactRefs":[...]}}` — note this has an extra `output.` wrapper, unlike the outbound response
+- TaskResult: `{"output":{"parts":[MessagePart[]], "artifactRefs":[...]}}` — note this has an extra `output.` wrapper, unlike the outbound response
 - Streaming endpoint: `GET /v1/sessions/{id}/logs` (with `Accept: text/event-stream` for SSE)
 - Message send: `POST /v1/sessions/{id}/messages`
-- Upload token header: `X-Upload-Token: <token>`
+- Upload token header: `X-Lenny-Upload-Token: <token>`
 
 ---
 

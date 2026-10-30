@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MIT
+kind: reserved-phrase-senses
+version: 1
+entries:
+  - occurrence: 1
+    identifiers:
+      - CH-PODLIFECYCLE
