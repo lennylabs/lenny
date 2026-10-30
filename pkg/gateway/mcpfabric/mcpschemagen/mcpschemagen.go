@@ -39,6 +39,31 @@ type Options struct {
 	// ExtraRequired adds property names to the schema's `required` list on
 	// top of the OpenAPI-derived required set.
 	ExtraRequired []string
+	// Params adjusts how OpenAPI parameters appear as MCP arguments, keyed
+	// by the OpenAPI parameter name. A per-session REST operation names its
+	// path parameter `id`, while the per-session MCP tools take the session
+	// as `sessionId`, so the tool renames the parameter rather than
+	// hand-writing its schema. A key that names no parameter of the
+	// operation fails the generation, so a renamed OpenAPI parameter cannot
+	// silently drop the MCP argument.
+	Params map[string]ParamOptions
+	// OptionalQuery names optional query parameters the tool accepts as
+	// optional arguments. The generator leaves optional query parameters out
+	// by default; a tool that forwards one (for example `since` on
+	// get_session_logs) names it here. A name that is not an optional query
+	// parameter of the operation fails the generation.
+	OptionalQuery []string
+}
+
+// ParamOptions adjusts one OpenAPI parameter's MCP argument.
+type ParamOptions struct {
+	// Name is the MCP argument name. Empty keeps the OpenAPI name.
+	Name string
+	// Description is set on the argument schema when the OpenAPI parameter
+	// schema carries no description of its own. The OpenAPI description,
+	// when present, wins, because the OpenAPI document is the source of
+	// truth.
+	Description string
 }
 
 // OverlapSpec binds an MCP tool to the OpenAPI operation it overlaps.
@@ -55,13 +80,13 @@ type OverlapSpec struct {
 // from OpenAPI. The list is the single source of truth shared by the
 // generator command and the drift-guard test, so the two cannot diverge.
 //
-// Only operations with a documented `application/json` request body and a
-// matching MCP tool qualify. `POST /v1/sessions/{id}/messages` is excluded
-// because its OpenAPI entry documents no request body and the MCP
+// An operation qualifies when an MCP tool forwards its arguments as the
+// operation's JSON request body, path parameters, and query parameters.
+// `POST /v1/sessions/{id}/messages` is excluded because the MCP
 // `lenny/send_message` surface (`to`/`message` delegation routing) does not
 // overlap the REST message-injection body.
 func DefaultOverlaps() []OverlapSpec {
-	return []OverlapSpec{
+	return append([]OverlapSpec{
 		{
 			ToolName:    "lenny/create_session",
 			OperationID: "postV1Sessions",
@@ -74,6 +99,45 @@ func DefaultOverlaps() []OverlapSpec {
 				ExtraProperties: map[string]json.RawMessage{
 					"idempotencyKey": json.RawMessage(`{"type":"string","maxLength":128,"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached result without re-executing."}`),
 				},
+			},
+		},
+	}, perSessionOverlaps()...)
+}
+
+// sessionIDParam renames a per-session operation's `id` path parameter to
+// the `sessionId` argument the per-session MCP tools take.
+var sessionIDParam = ParamOptions{Name: "sessionId", Description: "The target session id."}
+
+// perSessionOverlaps lists the per-session MCP tools whose REST counterpart
+// is a `/v1/sessions/{id}/...` operation. Each renames the `id` path
+// parameter to `sessionId`; the tool handler strips `sessionId` from the
+// arguments and forwards the remainder as the REST body.
+//
+// spec: §15.2 (the client-facing tools); §15.2.1 (REST/MCP Consistency
+// Contract, item 4).
+func perSessionOverlaps() []OverlapSpec {
+	byID := Options{Params: map[string]ParamOptions{"id": sessionIDParam}}
+	return []OverlapSpec{
+		{ToolName: "lenny/start_session", OperationID: "postV1SessionsByIdStart", Options: byID},
+		{ToolName: "lenny/finalize_workspace", OperationID: "postV1SessionsByIdFinalize", Options: byID},
+		{ToolName: "lenny/terminate_session", OperationID: "postV1SessionsByIdTerminate", Options: byID},
+		{ToolName: "lenny/resume_session", OperationID: "postV1SessionsByIdResume", Options: byID},
+		{ToolName: "lenny/interrupt_session", OperationID: "postV1SessionsByIdInterrupt", Options: byID},
+		{ToolName: "lenny/get_session_status", OperationID: "getV1SessionsById", Options: byID},
+		{ToolName: "lenny/list_artifacts", OperationID: "getV1SessionsByIdArtifacts", Options: byID},
+		{ToolName: "lenny/get_token_usage", OperationID: "getV1SessionsByIdUsage", Options: byID},
+		{
+			ToolName:    "lenny/get_session_logs",
+			OperationID: "getV1SessionsByIdLogs",
+			Options: Options{
+				Params: map[string]ParamOptions{
+					"id":    sessionIDParam,
+					"since": {Description: "RFC3339 lower bound; only log lines at or after this time are returned."},
+					"limit": {Description: "Maximum number of log lines to return."},
+				},
+				// The tool forwards `since` and `limit`; it does not page
+				// with `cursor`.
+				OptionalQuery: []string{"since", "limit"},
 			},
 		},
 	}
@@ -133,10 +197,19 @@ func BuildToolInputSchema(rawDoc []byte, operationID string, opts Options) (json
 	// Path parameters become required input properties; a tool that
 	// overlaps a `/v1/sessions/{id}/...` operation must accept the path id
 	// as a tool argument. Required query parameters carry over the same
-	// way. Optional query parameters are advisory and left out so the MCP
-	// surface stays a strict structural subset of the REST request.
+	// way. Optional query parameters are advisory and left out, so the MCP
+	// surface stays a strict structural subset of the REST request, unless
+	// the tool names them in opts.OptionalQuery.
+	if err := checkParamOptions(op, opts); err != nil {
+		return nil, fmt.Errorf("operation %q: %w", operationID, err)
+	}
+	optionalQuery := map[string]bool{}
+	for _, name := range opts.OptionalQuery {
+		optionalQuery[name] = true
+	}
 	for _, p := range op.Parameters {
-		if p.In != "path" && !(p.In == "query" && p.Required) {
+		included := p.In == "path" || (p.In == "query" && (p.Required || optionalQuery[p.Name]))
+		if !included {
 			continue
 		}
 		schema := map[string]any{}
@@ -147,14 +220,29 @@ func BuildToolInputSchema(rawDoc []byte, operationID string, opts Options) (json
 		} else {
 			schema["type"] = "string"
 		}
+		po := opts.Params[p.Name]
+		if _, has := schema["description"]; !has && po.Description != "" {
+			schema["description"] = po.Description
+		}
 		resolved, err := resolveRefs(schema, doc.Components.Schemas, nil)
 		if err != nil {
 			return nil, err
 		}
-		properties[p.Name] = resolved
-		if p.In == "path" || p.Required {
-			required[p.Name] = true
+		name := p.Name
+		if po.Name != "" {
+			name = po.Name
 		}
+		if _, dup := properties[name]; dup {
+			return nil, fmt.Errorf("operation %q: two parameters map to the MCP argument %q", operationID, name)
+		}
+		properties[name] = resolved
+		if p.In == "path" || p.Required {
+			required[name] = true
+		}
+	}
+	paramNames := make(map[string]bool, len(properties))
+	for name := range properties {
+		paramNames[name] = true
 	}
 
 	// Merge the request-body object's properties and required list.
@@ -177,6 +265,9 @@ func BuildToolInputSchema(rawDoc []byte, operationID string, opts Options) (json
 		}
 		if props, ok := obj["properties"].(map[string]any); ok {
 			for k, v := range props {
+				if paramNames[k] {
+					return nil, fmt.Errorf("operation %q: request body property %q collides with a parameter argument", operationID, k)
+				}
 				properties[k] = v
 			}
 		}
@@ -219,6 +310,33 @@ func BuildToolInputSchema(rawDoc []byte, operationID string, opts Options) (json
 		return nil, fmt.Errorf("marshal generated schema: %w", err)
 	}
 	return json.RawMessage(out), nil
+}
+
+// checkParamOptions fails when opts.Params or opts.OptionalQuery names a
+// parameter the operation does not declare, so an OpenAPI rename surfaces
+// as a generation error rather than a silently dropped argument.
+func checkParamOptions(op operation, opts Options) error {
+	declared := map[string]parameter{}
+	for _, p := range op.Parameters {
+		declared[p.Name] = p
+	}
+	names := make([]string, 0, len(opts.Params))
+	for name := range opts.Params {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if _, ok := declared[name]; !ok {
+			return fmt.Errorf("parameter option names %q, which the operation does not declare", name)
+		}
+	}
+	for _, name := range opts.OptionalQuery {
+		p, ok := declared[name]
+		if !ok || p.In != "query" || p.Required {
+			return fmt.Errorf("optional query parameter %q is not an optional query parameter of the operation", name)
+		}
+	}
+	return nil
 }
 
 func findOperation(doc openapiDoc, operationID string) (operation, bool) {

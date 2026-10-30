@@ -4190,14 +4190,21 @@ D2), which stays with the upload route proposal.
   - [ ] **F-7.5.16** (Medium): at creation the setup-command policy is read from the requested runtime rather
     than the routed one. Run the check against the runtime the row records after routing; if that needs an
     ordering the specification does not state, it goes to a proposal.
-  - [ ] **F-16.1.8** (Medium): `lenny_warmpool_warmup_failure_total` has no warm-up emitter and only the
-    `error_type` label, so `PoolScaleoutBlockedByQuota` never fires. Emit it from the warm-pool controller
-    with the §16.1 labels, after 0086's S8 and S12.
-  - [ ] **F-15.2.29** (Low): per-session MCP tool schemas are hand-written against §15.2.1 item 4. Add a
-    path-parameter rename option to `mcpschemagen` and generate them.
-  - [ ] **F-12.6.27** and **F-12.6.28** (Low, behavior-free refactors): remove `ClaimOpts.RequiresDemotion`
+  - [x] **F-16.1.8** (Medium): `lenny_warmpool_warmup_failure_total` has no warm-up emitter and only the
+    `error_type` label, so `PoolScaleoutBlockedByQuota` never fires. The Sandbox reconciler now emits
+    `image_pull_error`, `resource_quota_exceeded`, and `node_pressure` with the §16.1 labels, once per
+    failing pod (2026-10-30, `cfc1a57c2`).
+  - [ ] **F-16.1.9** (Low, filed from F-16.1.8): the gateway's `setup_command_failed` emission lacks `pool`
+    and `runtime_class`. Thread both through `SetupCommandFailure` and the gateway hook, after 0109 lands.
+  - [x] **F-15.2.29** (Low): per-session MCP tool schemas are hand-written against §15.2.1 item 4.
+    `mcpschemagen` gained a parameter rename and optional-query option, and the nine per-session tools now
+    advertise generated schemas (2026-10-30, `91254f71b`).
+  - [ ] **F-15.2.31** (Low, filed from F-15.2.29): `create_and_start_session`, `list_sessions`,
+    `download_artifact`, and `upload_files` keep hand-written schemas. Generate the first two kinds directly;
+    the argument mappings of `list_sessions` and `upload_files` need a decision first.
+  - [x] **F-12.6.27** and **F-12.6.28** (Low, behavior-free refactors): remove `ClaimOpts.RequiresDemotion`
     and `PodSpec.WorkspacePlan` with the Sandbox `spec.workspacePlan` field, after 0086's S2 removes both
-    from the specification.
+    from the specification. Removed, with the CRD regenerated (2026-10-30, `a6b951256`, `1b04ad9e2`).
 - Proposal routing.
   - [x] Its own proposal, after 0086's implementation: **F-7.1.33** (Medium, the specification does not state
     how a derived or replayed session's copied snapshot composes with the plan it binds at finalize). The

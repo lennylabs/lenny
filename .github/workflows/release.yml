@@ -32,10 +32,10 @@
 
 name: release
 
+# CI is paused (owner decision 2026-10-30): this workflow runs only when triggered
+# by hand. Restore its original triggers when CI resumes.
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}

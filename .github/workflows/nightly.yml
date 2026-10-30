@@ -6,10 +6,10 @@
 
 name: nightly
 
+# CI is paused (owner decision 2026-10-30): this workflow runs only when triggered
+# by hand. Restore its original triggers when CI resumes.
 on:
-  schedule:
-    - cron: '0 5 * * *'    # 05:00 UTC daily
-  workflow_dispatch:        # manual trigger
+  workflow_dispatch:
 
 concurrency:
   group: nightly
