@@ -393,8 +393,8 @@ func (s *Server) prepareAndLaunch(ctx context.Context, row sessionstore.Session,
 // setup, nor re-assigns the credential lease; it only starts the runtime
 // (StartSession for a pod-warm or demoted pod, ConfigureWorkspace for a
 // still-SDK-warm pod). The §6.1 SDK-warm demotion decision the prepare phase
-// made is a pure function of the persisted plan and the runtime's
-// sdkWarmBlockingPaths, so launchPrepared recomputes it through
+// made is a pure function of the persisted plan, whether the session starts
+// from a restored snapshot, and the runtime's sdkWarmBlockingPaths, so launchPrepared recomputes it through
 // podsession.RequiresDemotion rather than re-running the prepare phase to
 // learn it. A launch failure is surfaced for writePodClaimError; the binder
 // already reclaimed the bound pod (and the lease assigned at finalize) on the

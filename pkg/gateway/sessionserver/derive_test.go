@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path"
 	"strings"
 	"testing"
 	"time"
@@ -16,8 +15,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -48,7 +50,7 @@ func newSourceSession(t *testing.T, store sessionstore.Store, mods ...func(*sess
 		PoolRef:          "default-pool",
 		IsolationProfile: isolation.ProfileSandboxed,
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{
-			Ref:         "/acme/workspace/sess_source/snap.tar.zst",
+			Ref:         sourceCheckpointRef("sess_source"),
 			Source:      sessionstore.WorkspaceSnapshotSealed,
 			Timestamp:   time.Date(2026, 1, 1, 0, 5, 0, 0, time.UTC),
 			ContentHash: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
@@ -63,27 +65,106 @@ func newSourceSession(t *testing.T, store sessionstore.Store, mods ...func(*sess
 	return row
 }
 
-// snapshotBlobs returns a blob store holding a workspace object for the
-// acme session sessionID under partID, which the path-form snapshot ref
-// /acme/workspace/{sessionID}/{partID} names. Derive and replay copy that
-// object and fail closed when it is absent.
-func snapshotBlobs(t *testing.T, sessionID, partID string) *blobstore.MemoryStore {
-	t.Helper()
-	blobs := blobstore.NewMemoryStore(nil)
-	uri := blobstore.URI{
-		TenantID: "acme", ObjectType: blobstore.ObjectTypeWorkspace,
-		SessionID: sessionID, PartID: partID, TTL: time.Hour,
-	}
-	if _, err := blobs.Put(uri, "application/x-tar", strings.NewReader("workspace-bytes")); err != nil {
-		t.Fatalf("seed source snapshot object: %v", err)
-	}
-	return blobs
+// sourceCheckpointID is the checkpoint id of every source session's
+// chunked workspace snapshot the derive and replay tests seed.
+const sourceCheckpointID = "ckpt_source"
+
+// sourceCheckpointRef is the four-segment snapshot ref naming sessionID's
+// seeded chunked checkpoint in the acme tenant.
+func sourceCheckpointRef(sessionID string) string {
+	return "/acme/checkpoints/" + sessionID + "/" + sourceCheckpointID
 }
 
-// sourceSnapshotBlobs is snapshotBlobs for the ref newSourceSession seeds.
-func sourceSnapshotBlobs(t *testing.T) *blobstore.MemoryStore {
+// sourceChunkBytes is the content of the single chunk a seeded checkpoint
+// holds.
+const sourceChunkBytes = "workspace-bytes"
+
+// seedChunkedSnapshot writes sessionID's one-chunk §10.1 checkpoint
+// sourceCheckpointID holding sourceChunkBytes, which is what derive and
+// replay copy.
+func seedChunkedSnapshot(t *testing.T, blobs *blobstore.MemoryStore, manifests *partialmanifeststore.MemoryStore, sessionID string) {
 	t.Helper()
-	return snapshotBlobs(t, "sess_source", "snap.tar.zst")
+	seedChunkedCheckpoint(t, blobs, manifests, sessionID, sourceCheckpointID, sourceChunkBytes)
+}
+
+// seedChunkedCheckpoint writes sessionID's one-chunk §10.1 checkpoint
+// checkpointID: the chunk object holding content in blobs and a complete
+// manifest row in manifests.
+func seedChunkedCheckpoint(t *testing.T, blobs *blobstore.MemoryStore, manifests *partialmanifeststore.MemoryStore, sessionID, checkpointID, content string) {
+	t.Helper()
+	enc := partialmanifeststore.ChunkEncodingTar
+	u := resumechunks.ChunkObjectURI("acme", sessionID, checkpointID, 0, enc)
+	u.TTL = time.Hour
+	if _, err := blobs.Put(u, "application/x-tar", strings.NewReader(content)); err != nil {
+		t.Fatalf("seed chunk of %s: %v", checkpointID, err)
+	}
+	ctx := context.Background()
+	rec := partialmanifeststore.Record{
+		TenantID: "acme", CheckpointID: checkpointID, SessionID: sessionID,
+		ManifestReason: partialmanifeststore.ReasonInProgress, ChunkEncoding: enc,
+		ChunkObjectKeyPrefix: "/acme/checkpoints/" + sessionID + "/" + checkpointID + "/",
+	}
+	if err := manifests.Put(ctx, rec); err != nil {
+		t.Fatalf("seed manifest of %s: %v", checkpointID, err)
+	}
+	if err := manifests.ConfirmChunk(ctx, "acme", checkpointID, 0, int64(len(content))); err != nil {
+		t.Fatalf("confirm chunk of %s: %v", checkpointID, err)
+	}
+	if err := manifests.Finalise(ctx, "acme", checkpointID, false, partialmanifeststore.ReasonComplete); err != nil {
+		t.Fatalf("finalise manifest of %s: %v", checkpointID, err)
+	}
+}
+
+// derivedChunk is the URI of chunk 0 of the copy derive or replay writes
+// for newID under the derived checkpoint id checkpointID.
+func derivedChunk(newID, checkpointID string) blobstore.URI {
+	return resumechunks.ChunkObjectURI("acme", newID, checkpointID, 0, partialmanifeststore.ChunkEncodingTar)
+}
+
+// stubChunkResolver stands in for the chunk resolver a derived or replayed
+// session's first-bind restore reads. Derive and replay refuse to copy
+// without one; these tests never bind the new session, so it is never
+// called.
+type stubChunkResolver struct{}
+
+func (stubChunkResolver) Resolve(context.Context, string, string, string) (resumechunks.ResolveResult, error) {
+	return resumechunks.ResolveResult{Grants: []adapterclient.ChunkGrant{{URL: "https://objects.example/chunk-0"}}}, nil
+}
+
+// chunkedSnapshot is a seeded source checkpoint together with the stores
+// a server needs to copy it.
+type chunkedSnapshot struct {
+	blobs     *blobstore.MemoryStore
+	manifests *partialmanifeststore.MemoryStore
+}
+
+// snapshotFor seeds sessionID's chunked checkpoint in fresh stores.
+func snapshotFor(t *testing.T, sessionID string) chunkedSnapshot {
+	t.Helper()
+	c := chunkedSnapshot{blobs: blobstore.NewMemoryStore(nil), manifests: partialmanifeststore.NewMemoryStore(nil)}
+	seedChunkedSnapshot(t, c.blobs, c.manifests, sessionID)
+	return c
+}
+
+// sourceSnapshot is snapshotFor the session newSourceSession seeds.
+func sourceSnapshot(t *testing.T) chunkedSnapshot {
+	t.Helper()
+	return snapshotFor(t, "sess_source")
+}
+
+// apply wires the blob store, the manifest reader and writer, and a chunk
+// resolver into o.
+func (c chunkedSnapshot) apply(o *sessionserver.Options) {
+	o.Blobs = c.blobs
+	o.CheckpointManifestReader = c.manifests
+	o.CheckpointManifestWriter = c.manifests
+	o.ResumeChunkResolver = stubChunkResolver{}
+}
+
+// wire returns o with the snapshot's stores applied.
+func (c chunkedSnapshot) wire(o sessionserver.Options) sessionserver.Options {
+	c.apply(&o)
+	return o
 }
 
 func deriveRequest(t *testing.T, h http.Handler, body sessionserver.DeriveRequest, mods ...func(*http.Request)) *httptest.ResponseRecorder {
@@ -118,12 +199,11 @@ func decodeError(t *testing.T, rr *httptest.ResponseRecorder) (code, msg string,
 func TestDeriveHappyPathFromTerminal(t *testing.T) {
 	store := memstore.New()
 	newSourceSession(t, store)
-	srv := sessionserver.New(store, sessionserver.Options{
+	srv := sessionserver.New(store, sourceSnapshot(t).wire(sessionserver.Options{
 		DevTenantHeader: true,
-		Blobs:           sourceSnapshotBlobs(t),
 		IDFunc:          func() string { return "sess_derived" },
 		Clock:           func() time.Time { return time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC) },
-	})
+	}))
 
 	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{})
 	if rr.Code != http.StatusCreated {
@@ -187,11 +267,10 @@ func TestDeriveNonTerminalWithAllowStaleSucceeds(t *testing.T) {
 		s.State = session.StateRunning
 		s.WorkspaceSnapshot.Source = sessionstore.WorkspaceSnapshotCheckpoint
 	})
-	srv := sessionserver.New(store, sessionserver.Options{
+	srv := sessionserver.New(store, sourceSnapshot(t).wire(sessionserver.Options{
 		DevTenantHeader: true,
-		Blobs:           sourceSnapshotBlobs(t),
 		IDFunc:          func() string { return "sess_d2" },
-	})
+	}))
 
 	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{AllowStale: true})
 	if rr.Code != http.StatusCreated {
@@ -328,12 +407,11 @@ func TestDeriveIsolationDowngradeWithAdminEmitsAuditAndSucceeds(t *testing.T) {
 		s.IsolationProfile = isolation.ProfileMicrovm
 	})
 	sink := &recordingSink{}
-	srv := sessionserver.New(store, sessionserver.Options{
+	srv := sessionserver.New(store, sourceSnapshot(t).wire(sessionserver.Options{
 		DevTenantHeader: true,
-		Blobs:           sourceSnapshotBlobs(t),
 		IDFunc:          func() string { return "sess_downgrade" },
 		DeriveAuditSink: sink,
-	})
+	}))
 
 	rr := deriveRequest(
 		t, srv.Handler(),
@@ -412,11 +490,10 @@ func TestDeriveCrossTenantReturns404(t *testing.T) {
 func TestDeriveInheritsRuntimeAndUserAndPool(t *testing.T) {
 	store := memstore.New()
 	newSourceSession(t, store)
-	srv := sessionserver.New(store, sessionserver.Options{
+	srv := sessionserver.New(store, sourceSnapshot(t).wire(sessionserver.Options{
 		DevTenantHeader: true,
-		Blobs:           sourceSnapshotBlobs(t),
 		IDFunc:          func() string { return "sess_inherit" },
-	})
+	}))
 
 	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{})
 	if rr.Code != http.StatusCreated {
@@ -441,24 +518,24 @@ func TestDeriveInheritsRuntimeAndUserAndPool(t *testing.T) {
 	if derived.ParentSessionID != "" {
 		t.Errorf("ParentSessionID: got %q, want empty (a derived session is a root)", derived.ParentSessionID)
 	}
-	if derived.ParentWorkspaceRef != "/acme/workspace/sess_source/snap.tar.zst" {
+	if derived.ParentWorkspaceRef != sourceCheckpointRef("sess_source") {
 		t.Errorf("ParentWorkspaceRef: got %q", derived.ParentWorkspaceRef)
 	}
-	// The derived snapshot is rewritten to the derived session's own path.
+	// The derived snapshot names the derived checkpoint under the derived
+	// session's own prefix.
 	if derived.WorkspaceSnapshot == nil ||
-		derived.WorkspaceSnapshot.Ref == "/acme/workspace/sess_source/snap.tar.zst" {
-		t.Errorf("derived snapshot ref must differ from source's; got %+v", derived.WorkspaceSnapshot)
+		derived.WorkspaceSnapshot.Ref != "/acme/checkpoints/sess_inherit/sess_inherit" {
+		t.Errorf("derived snapshot ref must name the derived checkpoint; got %+v", derived.WorkspaceSnapshot)
 	}
 }
 
 func TestDeriveOverrideRuntime(t *testing.T) {
 	store := memstore.New()
 	newSourceSession(t, store)
-	srv := sessionserver.New(store, sessionserver.Options{
+	srv := sessionserver.New(store, sourceSnapshot(t).wire(sessionserver.Options{
 		DevTenantHeader: true,
-		Blobs:           sourceSnapshotBlobs(t),
 		IDFunc:          func() string { return "sess_override" },
-	})
+	}))
 	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{
 		RuntimeRef: "gemini-cli",
 	})
@@ -477,11 +554,10 @@ func TestDeriveEqualIsolationSucceedsWithoutOverride(t *testing.T) {
 	newSourceSession(t, store, func(s *sessionstore.Session) {
 		s.IsolationProfile = isolation.ProfileSandboxed
 	})
-	srv := sessionserver.New(store, sessionserver.Options{
+	srv := sessionserver.New(store, sourceSnapshot(t).wire(sessionserver.Options{
 		DevTenantHeader: true,
-		Blobs:           sourceSnapshotBlobs(t),
 		IDFunc:          func() string { return "sess_eq" },
-	})
+	}))
 	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{
 		TargetIsolationProfile: isolation.ProfileSandboxed,
 	})
@@ -495,82 +571,15 @@ func TestDeriveStrictlyStricterIsolationSucceeds(t *testing.T) {
 	newSourceSession(t, store, func(s *sessionstore.Session) {
 		s.IsolationProfile = isolation.ProfileSandboxed
 	})
-	srv := sessionserver.New(store, sessionserver.Options{
+	srv := sessionserver.New(store, sourceSnapshot(t).wire(sessionserver.Options{
 		DevTenantHeader: true,
-		Blobs:           sourceSnapshotBlobs(t),
 		IDFunc:          func() string { return "sess_stricter" },
-	})
+	}))
 	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{
 		TargetIsolationProfile: isolation.ProfileMicrovm,
 	})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
-	}
-}
-
-// TestDeriveCopiesParentBytesIntoDerivedURI asserts the §4.5 ll. 311
-// byte-copy semantics: when the gateway's blob store implements
-// blobstore.Copier (production MinIO/S3/GCS), derive uses Copy to
-// duplicate the parent's workspace snapshot into a new object
-// scoped to the derived session's prefix, and then the derived
-// session's blob survives the parent's session-scoped erasure.
-//
-// spec: §4.5 — "the gateway copies the parent's workspace
-// snapshot bytes into a new MinIO object scoped to the derived
-// session's own path. The derived session owns its artifact
-// independently; GC on the parent's artifacts has no effect on the
-// derived session's workspace".
-func TestDeriveCopiesParentBytesIntoDerivedURI(t *testing.T) {
-	store := memstore.New()
-	blobs := blobstore.NewMemoryStore(nil)
-	// Seed a parent session + a parent workspace blob.
-	const (
-		parentTenant  = "acme"
-		parentSession = "sess_source"
-	)
-	parentURI := blobstore.URI{
-		TenantID:   parentTenant,
-		ObjectType: blobstore.ObjectTypeWorkspace,
-		SessionID:  parentSession,
-		PartID:     "snap",
-		TTL:        time.Hour,
-	}
-	if _, err := blobs.Put(parentURI, "application/x-tar", strings.NewReader("workspace-bytes")); err != nil {
-		t.Fatalf("seed parent blob: %v", err)
-	}
-	newSourceSession(t, store, func(s *sessionstore.Session) {
-		s.WorkspaceSnapshot.Ref = parentURI.String()
-	})
-	srv := sessionserver.New(store, sessionserver.Options{
-		DevTenantHeader: true,
-		IDFunc:          func() string { return "sess_derived" },
-		Blobs:           blobs,
-	})
-	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{})
-	if rr.Code != http.StatusCreated {
-		t.Fatalf("derive: %d; body=%s", rr.Code, rr.Body.String())
-	}
-	// The derived session's bytes must exist independent of the
-	// parent: erase the parent and read the derived URI.
-	if _, err := blobs.DeleteBySession(context.Background(), parentTenant, parentSession); err != nil {
-		t.Fatalf("erase parent: %v", err)
-	}
-	derived, err := store.Get(context.Background(), parentTenant, "sess_derived")
-	if err != nil {
-		t.Fatalf("fetch derived: %v", err)
-	}
-	if derived.WorkspaceSnapshot == nil {
-		t.Fatal("derived has no workspace snapshot")
-	}
-	derivedURI := blobstore.URI{
-		TenantID:   parentTenant,
-		ObjectType: blobstore.ObjectTypeWorkspace,
-		SessionID:  "sess_derived",
-		PartID:     "derived-from-" + parentSession,
-		TTL:        time.Hour,
-	}
-	if _, _, err := blobs.Get(derivedURI); err != nil {
-		t.Errorf("derived blob missing after parent erasure: %v (spec §4.5 ll. 311)", err)
 	}
 }
 
@@ -612,11 +621,10 @@ func TestDeriveTerminalSourceReportsRecordedSnapshotSource_spec_7_1(t *testing.T
 					s.State = state
 					s.WorkspaceSnapshot.Source = src
 				})
-				srv := sessionserver.New(store, sessionserver.Options{
+				srv := sessionserver.New(store, sourceSnapshot(t).wire(sessionserver.Options{
 					DevTenantHeader: true,
-					Blobs:           sourceSnapshotBlobs(t),
 					IDFunc:          func() string { return "sess_derived" },
-				})
+				}))
 				if got := deriveSnapshotSource(t, srv, "sess_derived"); got != string(src) {
 					t.Errorf("workspaceSnapshotSource for %s source: got %q, want %q", state, got, src)
 				}
@@ -636,29 +644,22 @@ func TestDeriveCompletedSourceDuringSealWindow_spec_7_1(t *testing.T) {
 	store := memstore.New()
 	newSourceSession(t, store, func(s *sessionstore.Session) {
 		s.WorkspaceSnapshot.Source = sessionstore.WorkspaceSnapshotCheckpoint
-		s.WorkspaceSnapshot.Ref = "/acme/workspace/sess_source/ckpt.tar.zst"
+		s.WorkspaceSnapshot.Ref = "/acme/checkpoints/sess_source/ckpt_latest"
 	})
-	ids := []string{"sess_derived_1", "sess_derived_2"}
+	ids := []string{"sess_derived_1", "ckpt_derived_1", "sess_derived_2", "ckpt_derived_2"}
 	next := 0
-	// Both the checkpoint and the sealed snapshot exist, so each derive
-	// copies the object its row names at the time.
-	blobs := sourceSnapshotBlobs(t)
-	ckpt := blobstore.URI{
-		TenantID: "acme", ObjectType: blobstore.ObjectTypeWorkspace,
-		SessionID: "sess_source", PartID: "ckpt.tar.zst", TTL: time.Hour,
-	}
-	if _, err := blobs.Put(ckpt, "application/x-tar", strings.NewReader("checkpoint-bytes")); err != nil {
-		t.Fatalf("seed checkpoint object: %v", err)
-	}
-	srv := sessionserver.New(store, sessionserver.Options{
+	// Both the latest checkpoint and the sealed snapshot exist, so each
+	// derive copies the checkpoint its row names at the time.
+	snap := sourceSnapshot(t)
+	seedChunkedCheckpoint(t, snap.blobs, snap.manifests, "sess_source", "ckpt_latest", "checkpoint-bytes")
+	srv := sessionserver.New(store, snap.wire(sessionserver.Options{
 		DevTenantHeader: true,
-		Blobs:           blobs,
 		IDFunc: func() string {
 			id := ids[next]
 			next++
 			return id
 		},
-	})
+	}))
 
 	if got := deriveSnapshotSource(t, srv, ids[0]); got != string(sessionstore.WorkspaceSnapshotCheckpoint) {
 		t.Fatalf("derive before the seal: workspaceSnapshotSource %q, want checkpoint", got)
@@ -667,7 +668,7 @@ func TestDeriveCompletedSourceDuringSealWindow_spec_7_1(t *testing.T) {
 	ctx := context.Background()
 	if _, err := store.Update(ctx, "acme", "sess_source", func(s *sessionstore.Session) error {
 		s.WorkspaceSnapshot = &sessionstore.WorkspaceSnapshot{
-			Ref:         "/acme/workspace/sess_source/snap.tar.zst",
+			Ref:         sourceCheckpointRef("sess_source"),
 			Source:      sessionstore.WorkspaceSnapshotSealed,
 			Timestamp:   time.Date(2026, 1, 1, 0, 6, 0, 0, time.UTC),
 			ContentHash: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
@@ -677,7 +678,7 @@ func TestDeriveCompletedSourceDuringSealWindow_spec_7_1(t *testing.T) {
 		t.Fatalf("record sealed snapshot: %v", err)
 	}
 
-	if got := deriveSnapshotSource(t, srv, ids[1]); got != string(sessionstore.WorkspaceSnapshotSealed) {
+	if got := deriveSnapshotSource(t, srv, ids[2]); got != string(sessionstore.WorkspaceSnapshotSealed) {
 		t.Errorf("derive after the seal: workspaceSnapshotSource %q, want sealed", got)
 	}
 }
@@ -696,8 +697,8 @@ type rootPathCase struct {
 }
 
 func rootPathCases() []rootPathCase {
-	deriveRef := "/acme/workspace/sess_source/snap.tar.zst"
-	replayRef := "/acme/workspace/sess_src/snap"
+	deriveRef := sourceCheckpointRef("sess_source")
+	replayRef := sourceCheckpointRef("sess_src")
 	replay := func(mode sessionserver.ReplayMode) func(t *testing.T, h http.Handler) *httptest.ResponseRecorder {
 		return func(t *testing.T, h http.Handler) *httptest.ResponseRecorder {
 			return replayReq(t, h, sessionserver.ReplayRequest{ReplayMode: mode, TargetRuntime: "gemini-cli"})
@@ -752,16 +753,15 @@ func (c rootPathCase) newStore() (*memstore.Store, *transcriptstore.Memory) {
 	return memstore.New(memstore.WithTranscriptCopier(transcripts.CopySession)), transcripts
 }
 
-// newRootPathServer wires a blob store that holds the case's source
-// snapshot object, because derive and replay copy it and fail closed when
-// the copy cannot run.
+// newRootPathServer wires the case's source checkpoint and the stores the
+// chunked copy needs, because derive and replay copy it and fail closed
+// when the copy cannot run.
 func newRootPathServer(t *testing.T, c rootPathCase, store sessionstore.Store, transcripts *transcriptstore.Memory) http.Handler {
 	t.Helper()
-	opts := sessionserver.Options{
+	opts := snapshotFor(t, c.sourceID).wire(sessionserver.Options{
 		DevTenantHeader: true,
-		Blobs:           snapshotBlobs(t, c.sourceID, path.Base(c.snapRef)),
 		IDFunc:          func() string { return "sess_new" },
-	}
+	})
 	if transcripts != nil {
 		opts.Transcripts = transcripts
 	}

@@ -2,15 +2,15 @@
 proposal: 0109_fix_a-derived-or-replayed-session-starts-without-its-source
 title: A derived or replayed session starts without its source workspace
 kind: fix
-status: Approved
+status: Implemented
 drafted-date: 2026-10-29
 drafted-by: change-proposal
 reviewed-date: 2026-10-29
 reviewed-by: change-proposal
 approved-date: 2026-10-29
 approved-by: jaf
-implemented-date: 
-implemented-by: 
+implemented-date: 2026-10-30
+implemented-by: jaf
 ---
 
 ## Review history

@@ -309,7 +309,7 @@ func TestClientFinalizeWorkspace(t *testing.T) {
 		Sources: []*adapterv1.WorkspaceSource{
 			{Type: "inlineFile", Path: "CLAUDE.md", Content: "notes", Mode: "644"},
 		},
-	}, nil, testBindAttempt, false); err != nil {
+	}, nil, nil, testBindAttempt, false); err != nil {
 		t.Fatalf("FinalizeWorkspace: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "CLAUDE.md")); err != nil {
@@ -327,7 +327,7 @@ func TestClientFinalizeWorkspaceRejectsBadPlan(t *testing.T) {
 		Sources: []*adapterv1.WorkspaceSource{
 			{Type: "inlineFile", Path: "../escape", Content: "x", Mode: "644"},
 		},
-	}, nil, testBindAttempt, false)
+	}, nil, nil, testBindAttempt, false)
 	if status.Code(err) != codes.InvalidArgument {
 		t.Errorf("FinalizeWorkspace with an escaping path = %v, want InvalidArgument", err)
 	}
@@ -1683,7 +1683,7 @@ var bindSequenceCalls = []struct {
 		return err
 	}},
 	{"FinalizeWorkspace", func(ctx context.Context, cl *adapterclient.Client) error {
-		_, err := cl.FinalizeWorkspace(ctx, "sess-1", &adapterv1.WorkspacePlan{}, nil, testBindAttempt, false)
+		_, err := cl.FinalizeWorkspace(ctx, "sess-1", &adapterv1.WorkspacePlan{}, nil, nil, testBindAttempt, false)
 		return err
 	}},
 	{"RunSetup", func(ctx context.Context, cl *adapterclient.Client) error {
@@ -2030,7 +2030,7 @@ func TestBindMethodsCarryTheGivenBindAttemptAndMidSession_spec_4_7_1(t *testing.
 			if _, err := cl.PrepareWorkspace(ctx, "sess-1", uploads, f.bindAttempt, f.midSession); err != nil {
 				t.Fatalf("PrepareWorkspace: %v", err)
 			}
-			if _, err := cl.FinalizeWorkspace(ctx, "sess-1", &adapterv1.WorkspacePlan{}, nil, f.bindAttempt, f.midSession); err != nil {
+			if _, err := cl.FinalizeWorkspace(ctx, "sess-1", &adapterv1.WorkspacePlan{}, nil, nil, f.bindAttempt, f.midSession); err != nil {
 				t.Fatalf("FinalizeWorkspace: %v", err)
 			}
 			a.mu.Lock()
@@ -2048,6 +2048,66 @@ func TestBindMethodsCarryTheGivenBindAttemptAndMidSession_spec_4_7_1(t *testing.
 			if fin.GetBindAttempt() != f.bindAttempt || fin.GetMidSession() != f.midSession {
 				t.Fatalf("FinalizeWorkspace carries (%q, %t), want (%q, %t)",
 					fin.GetBindAttempt(), fin.GetMidSession(), f.bindAttempt, f.midSession)
+			}
+		})
+	}
+}
+
+// FinalizeWorkspace carries a non-empty restore onto restore_chunks one
+// wire grant per caller grant, in the caller's ascending index order, with
+// each grant's URL, length, headers, and expiry intact. A nil restore puts
+// no grant on the wire, which is the request every caller other than a
+// derived or replayed session's first bind sends.
+//
+// spec: §7.1 (Derive restore semantics); §4.7.1 (role and gateway RPC contract)
+func TestFinalizeWorkspaceCarriesRestoreChunksInIndexOrder_spec_7_1(t *testing.T) {
+	expires := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	restore := []adapterclient.ChunkGrant{
+		{Index: 0, URL: "https://objects.acme.com/c0?sig=a", Length: 10, ExpiresAt: expires},
+		{Index: 1, URL: "https://objects.acme.com/c1?sig=b", Length: 20, Headers: map[string]string{"x-amz-checksum-mode": "ENABLED"}},
+		{Index: 2, URL: "https://objects.acme.com/c2?sig=c", Length: 5},
+	}
+	cases := []struct {
+		name    string
+		restore []adapterclient.ChunkGrant
+	}{
+		{"restore", restore},
+		{"nil_restore", nil},
+		{"empty_restore", []adapterclient.ChunkGrant{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &carriageAdapter{}
+			cl := dialCarriageAdapter(t, a)
+			if _, err := cl.FinalizeWorkspace(context.Background(), "sess-1", &adapterv1.WorkspacePlan{},
+				nil, tc.restore, "attempt-a", false); err != nil {
+				t.Fatalf("FinalizeWorkspace: %v", err)
+			}
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			got := a.finalize[0].GetRestoreChunks()
+			if len(got) != len(tc.restore) {
+				t.Fatalf("restore_chunks has %d grants, want %d", len(got), len(tc.restore))
+			}
+			for i, want := range tc.restore {
+				g := got[i]
+				if g.GetIndex() != want.Index || g.GetUrl() != want.URL || g.GetLength() != want.Length {
+					t.Errorf("restore_chunks[%d] = (index %d, url %q, length %d), want (%d, %q, %d)",
+						i, g.GetIndex(), g.GetUrl(), g.GetLength(), want.Index, want.URL, want.Length)
+				}
+				if len(g.GetHeaders()) != len(want.Headers) {
+					t.Errorf("restore_chunks[%d] headers = %v, want %v", i, g.GetHeaders(), want.Headers)
+				}
+				for k, v := range want.Headers {
+					if g.GetHeaders()[k] != v {
+						t.Errorf("restore_chunks[%d] header %q = %q, want %q", i, k, g.GetHeaders()[k], v)
+					}
+				}
+				if want.ExpiresAt.IsZero() != (g.GetExpiresAt() == nil) {
+					t.Errorf("restore_chunks[%d] expires_at = %v, want %v", i, g.GetExpiresAt(), want.ExpiresAt)
+				} else if g.GetExpiresAt() != nil && !g.GetExpiresAt().AsTime().Equal(want.ExpiresAt) {
+					t.Errorf("restore_chunks[%d] expires_at = %v, want %v", i, g.GetExpiresAt().AsTime(), want.ExpiresAt)
+				}
 			}
 		})
 	}

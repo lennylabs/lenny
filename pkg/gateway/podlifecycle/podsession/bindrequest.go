@@ -135,6 +135,13 @@ type BindRequest struct {
 	// no-op, which is the create and start paths. spec: §7.3 (Retry and
 	// Resume).
 	OnClaimed func(context.Context) error
+	// RestoreChunks mints the presigned GET capabilities for the session's
+	// starting snapshot. nil means no restore. The Binder calls it at most once
+	// per bind attempt, after stageWorkspace and immediately before
+	// FinalizeWorkspace, because the capabilities expire after
+	// checkpointCapabilityTTLSeconds. The result is never logged or persisted.
+	// spec: §7.1 (Derive restore semantics).
+	RestoreChunks func(context.Context) ([]adapterclient.ChunkGrant, error)
 	// attemptScoped marks a request Bind built for one whole-sequence bind
 	// attempt. On it a Prepare or Launch failure releases only the §4.9
 	// leases the attempt minted (mintedLeaseIDs) and deletes the claim,
@@ -424,4 +431,16 @@ type BindTimings struct {
 	// AgentSessionStart is the StartSession RPC phase, after which the
 	// session is ready.
 	AgentSessionStart time.Duration
+}
+
+// mintRestoreChunks invokes a bind request's restore closure, returning no
+// grants when the request carries none. It runs once per bind attempt,
+// immediately before FinalizeWorkspace, so the capabilities are fresh when
+// the adapter fetches them. The grants are bearer URLs and are never logged.
+// spec: §7.1 (Derive restore semantics).
+func mintRestoreChunks(ctx context.Context, restore func(context.Context) ([]adapterclient.ChunkGrant, error)) ([]adapterclient.ChunkGrant, error) {
+	if restore == nil {
+		return nil, nil
+	}
+	return restore(ctx)
 }

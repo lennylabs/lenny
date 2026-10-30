@@ -684,7 +684,7 @@ message WorkspaceSource {
   // link_target is the symlink target for a gateway-produced `symlink`
   // source. The gateway extracts §14 uploadArchive sources in its own
   // §4.1 Upload Handler subsystem (§7.4; §13.4 — the
-  // pod never decompresses), validates each symlink target with
+  // pod never extracts a client-uploaded archive), validates each symlink target with
   // pkg/upload.ValidateSymlinkTarget against the workspace root, and
   // rewrites a symlink-bearing archive entry into a `symlink` source so
   // the adapter recreates the link without canonicalizing untrusted
@@ -779,6 +779,13 @@ message FinalizeWorkspaceRequest {
   // bind_attempt is the bind attempt token; spec: §4.7.1 (bind attempt
   // token), its carriage table and rules 1, 4 and 5.
   string bind_attempt = 6;
+  // restore_chunks carries one presigned single-key GET capability per
+  // chunk of a derived or replayed session's starting snapshot, in
+  // ascending index order, minted immediately before this call. Empty on
+  // every other request. A request marked mid_session that carries it is
+  // answered INVALID_ARGUMENT.
+  // spec: §4.7.1 (pairing rule); §7.1 (Derive restore semantics).
+  repeated ChunkGrant restore_chunks = 7;
 }
 
 // ArchivePolicy carries the §13.4 per-Runtime archive-extraction opts.

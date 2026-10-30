@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/adapter/slotlayout"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/sdkwarm"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/upload"
 )
@@ -106,31 +105,30 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 	}
 
 	// spec: §6.1 — on an SDK-warm (preConnect) pod, decide
-	// whether the workspace plan forces a demotion before the workspace is
-	// materialized. A blocking-path match tears down the pre-connected SDK
-	// (DemoteSDK) and the pod proceeds via the normal pod-warm StartSession
-	// path; no match keeps the pod SDK-warm and the launch points the SDK at
-	// the finalized workspace (ConfigureWorkspace) instead. The decision lives
-	// in Prepare because it depends on the materialized plan (§4.3).
+	// whether the workspace forces a demotion before it is materialized. A
+	// demotion tears down the pre-connected SDK (DemoteSDK) and the pod
+	// proceeds via the normal pod-warm StartSession path; otherwise the pod
+	// stays SDK-warm and the launch points the SDK at the finalized workspace
+	// (ConfigureWorkspace) instead. The decision lives in Prepare because it
+	// depends on the materialized plan (§4.3), and it comes from the same
+	// demotionReason the launch-only recomputation reads.
 	demoted := false
-	if req.PreConnect {
-		if mp, pat, requires := sdkwarm.RequiresDemotion(workspacePlanPaths(req.Plan), req.SDKWarmBlockingPaths); requires {
-			demoteStart := time.Now()
-			if err := cl.DemoteSDK(ctx, fmt.Sprintf("workspace path %q matches sdkWarmBlockingPaths %q", mp, pat)); err != nil {
-				reclaim(err)
-				if isUnimplemented(err) {
-					// spec: §6.1 — the runtime declared preConnect
-					// but its adapter cannot tear down the SDK; fail the
-					// session rather than serve it with stale SDK state.
-					return nil, &SDKDemotionNotSupported{Pod: sandboxName}
-				}
-				return nil, fmt.Errorf("podsession: demote SDK on pod %s: %w", sandboxName, err)
+	if reason, requires := demotionReason(req); requires {
+		demoteStart := time.Now()
+		if err := cl.DemoteSDK(ctx, reason); err != nil {
+			reclaim(err)
+			if isUnimplemented(err) {
+				// spec: §6.1 — the runtime declared preConnect
+				// but its adapter cannot tear down the SDK; fail the
+				// session rather than serve it with stale SDK state.
+				return nil, &SDKDemotionNotSupported{Pod: sandboxName}
 			}
-			demoted = true
-			if b.SDKDemotion != nil {
-				// spec: §6.3 — record the SDK teardown penalty.
-				b.SDKDemotion(req.Pool, time.Since(demoteStart).Seconds())
-			}
+			return nil, fmt.Errorf("podsession: demote SDK on pod %s: %w", sandboxName, err)
+		}
+		demoted = true
+		if b.SDKDemotion != nil {
+			// spec: §6.3 — record the SDK teardown penalty.
+			b.SDKDemotion(req.Pool, time.Since(demoteStart).Seconds())
 		}
 	}
 
@@ -155,7 +153,15 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 		reclaim(err)
 		return nil, fmt.Errorf("podsession: stage workspace on pod %s: %w", sandboxName, err)
 	}
-	finalizeWarnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, bindAttempt, false)
+	// spec: §7.1 (Derive restore semantics) — the restore capabilities are
+	// minted at the moment of use, so they are still valid when the adapter
+	// fetches them, and a failure to mint them fails the bind with no fallback.
+	restore, err := mintRestoreChunks(ctx, req.RestoreChunks)
+	if err != nil {
+		reclaim(err)
+		return nil, fmt.Errorf("podsession: resolve workspace restore on pod %s: %w", sandboxName, err)
+	}
+	finalizeWarnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, restore, bindAttempt, false)
 	if err != nil {
 		reclaim(err)
 		return nil, fmt.Errorf("podsession: finalize workspace on pod %s: %w", sandboxName, err)

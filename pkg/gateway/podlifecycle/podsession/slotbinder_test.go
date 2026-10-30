@@ -88,6 +88,10 @@ type concurrentAdapter struct {
 	// finalizeErr, when non-nil, makes FinalizeWorkspace fail so a test can
 	// drive the finalize-stage slot failure (§5.2, §16.1).
 	finalizeErr error
+	// restoreURLs records, per session, the restore_chunks capability URLs
+	// each FinalizeWorkspace carried, so a test can assert the §7.1 restore
+	// grants reach the adapter on the slot path.
+	restoreURLs map[string][]string
 	// startErr, when non-nil, makes StartSession fail so a test can drive
 	// the §5.2 slot-failure path.
 	startErr error
@@ -128,6 +132,7 @@ func newConcurrentAdapter() *concurrentAdapter {
 	return &concurrentAdapter{
 		started:               map[string]bool{},
 		finalized:             map[string]bool{},
+		restoreURLs:           map[string][]string{},
 		shutdownExitedCleanly: true,
 	}
 }
@@ -167,6 +172,10 @@ func (a *concurrentAdapter) FinalizeWorkspace(_ context.Context, req *adapterv1.
 	a.rec.record(req)
 	a.mu.Lock()
 	finalizeErr := a.finalizeErr
+	for _, g := range req.GetRestoreChunks() {
+		sid := req.GetSessionId().GetValue()
+		a.restoreURLs[sid] = append(a.restoreURLs[sid], g.GetUrl())
+	}
 	if finalizeErr == nil {
 		a.finalized[req.GetSessionId().GetValue()] = true
 	}

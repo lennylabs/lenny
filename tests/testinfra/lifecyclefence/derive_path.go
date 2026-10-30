@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -26,6 +27,10 @@ import (
 // row are all production code; pathStore observes them. A failing derive
 // fails its manifest Finalise after the chunk copy and the manifest write,
 // so the handler undoes both and writes its terminal derive-failure row.
+// The server also wires a stub chunk resolver, because derive refuses to
+// copy without the resolver the derived session's first-bind restore reads;
+// the World's memory store cannot presign and the World never binds the
+// derived session, so the stub is never called.
 //
 // spec: §12.8 (Compliance Interfaces: Lifecycle fence and drain), §15.1 (REST API)
 func (w *World) runDerive(ctx context.Context, o *CreateOutcome, failing, crash bool) {
@@ -50,6 +55,7 @@ func (w *World) runDerive(ctx context.Context, o *CreateOutcome, failing, crash 
 		Tenants:                  w.S.Tenants,
 		CheckpointManifestReader: w.Manifests,
 		CheckpointManifestWriter: writer,
+		ResumeChunkResolver:      unboundRestore{},
 		PersistDeriveFailureRows: true,
 	}).Handler()
 	rr, crashed := serveUntilCrash(h, w.deriveRequest(ctx, src, o.Owner))
@@ -57,6 +63,17 @@ func (w *World) runDerive(ctx context.Context, o *CreateOutcome, failing, crash 
 		return
 	}
 	w.deriveOutcome(ctx, o, p, rr, src)
+}
+
+// unboundRestore is the chunk resolver runDerive wires. The derived
+// session is never bound, so Resolve is never reached; it fails closed if
+// it is.
+//
+// spec: §7.1 (Derive restore semantics)
+type unboundRestore struct{}
+
+func (unboundRestore) Resolve(context.Context, string, string, string) (resumechunks.ResolveResult, error) {
+	return resumechunks.ResolveResult{}, errors.New("lifecyclefence: the derived session is never bound")
 }
 
 // deriveRequest builds a derive request of the source, authenticated as

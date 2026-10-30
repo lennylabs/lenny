@@ -62,73 +62,11 @@ func copyServer(f *fenceFixture, blobs blobstore.Store, ids []string, opts ...fu
 		},
 		Blobs: blobs, Users: f.users, Tenants: f.tenants,
 	}
+	f.wireSnapshot(&o)
 	for _, m := range opts {
 		m(&o)
 	}
 	return sessionserver.New(f.store, o).Handler()
-}
-
-// readWorkspace downloads id's workspace through GET /v1/sessions/{id}/workspace.
-func readWorkspace(t *testing.T, h http.Handler, id string) (int, string) {
-	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/"+id+"/workspace", nil)
-	req.Header.Set("X-Lenny-Tenant-ID", "acme")
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
-	body, _ := io.ReadAll(rr.Body)
-	return rr.Code, string(body)
-}
-
-// TestSnapshotCopyStoresRefOfCopiedObject_spec_7_1 pins the legacy
-// single-object copy on derive and on both replay modes: the new row's
-// WorkspaceSnapshot.Ref names an object under the new session's own ID that
-// holds the source's bytes, the ref differs from the source's, the source
-// object is untouched, and the workspace download of the new session
-// serves the copied bytes.
-// spec: 7.1 (Normal Flow: Derive copy semantics), 15.1 (REST API: Session Replay Semantics), 4.5 (Artifact Store)
-func TestSnapshotCopyStoresRefOfCopiedObject_spec_7_1(t *testing.T) {
-	for _, ep := range copyEndpoints {
-		t.Run(ep.name, func(t *testing.T) {
-			f, _, _ := replayFixture(t)
-			h := copyServer(f, f.blobs, []string{ep.newID})
-			if rr := ep.call(t, h); rr.Code != http.StatusCreated {
-				t.Fatalf("status = %d, want 201; body %s", rr.Code, rr.Body.String())
-			}
-			row, err := f.mem.Get(context.Background(), "acme", ep.newID)
-			if err != nil {
-				t.Fatalf("new row: %v", err)
-			}
-			src, _ := f.mem.Get(context.Background(), "acme", "sess_source")
-			if row.WorkspaceSnapshot == nil || row.WorkspaceSnapshot.Ref == src.WorkspaceSnapshot.Ref {
-				t.Fatalf("new row snapshot = %+v, want a ref distinct from the source's", row.WorkspaceSnapshot)
-			}
-			if row.ParentWorkspaceRef != src.WorkspaceSnapshot.Ref {
-				t.Errorf("ParentWorkspaceRef = %q, want the source ref", row.ParentWorkspaceRef)
-			}
-			uri, err := blobstore.ParseURI(row.WorkspaceSnapshot.Ref)
-			if err != nil {
-				t.Fatalf("stored ref %q is not an object URI: %v", row.WorkspaceSnapshot.Ref, err)
-			}
-			if uri.SessionID != ep.newID {
-				t.Errorf("copied object session = %q, want %q", uri.SessionID, ep.newID)
-			}
-			_, body, err := f.blobs.Get(uri)
-			if err != nil {
-				t.Fatalf("no object behind the stored ref %q: %v", row.WorkspaceSnapshot.Ref, err)
-			}
-			got, _ := io.ReadAll(body)
-			_ = body.Close()
-			if string(got) != "workspace-bytes" {
-				t.Errorf("copied bytes = %q, want the source's", got)
-			}
-			if code, dl := readWorkspace(t, h, ep.newID); code != http.StatusOK || dl != "workspace-bytes" {
-				t.Errorf("workspace download = %d %q, want 200 with the source's bytes", code, dl)
-			}
-			if ids := f.reserved(t, "alice@acme.com"); len(ids) != 0 {
-				t.Errorf("the insert left the reservation: %v", ids)
-			}
-		})
-	}
 }
 
 // chunkCopyStore is a blob store that copies and erases by session: the
@@ -250,62 +188,109 @@ func TestSnapshotCopyChunkedCheckpoint_spec_10_1(t *testing.T) {
 	}
 }
 
+// unavailableManifests is a manifest reader whose every read fails with a
+// store error other than not found, as a transient database error does.
+type unavailableManifests struct{}
+
+var errManifestUnavailable = errors.New("checkpoint_manifest read failed")
+
+func (unavailableManifests) Get(context.Context, string, string) (partialmanifeststore.Record, error) {
+	return partialmanifeststore.Record{}, errManifestUnavailable
+}
+
+func (unavailableManifests) LatestActiveAny(context.Context, string, string) (partialmanifeststore.Record, error) {
+	return partialmanifeststore.Record{}, errManifestUnavailable
+}
+
+func (unavailableManifests) LatestFull(context.Context, string, string) (partialmanifeststore.Record, error) {
+	return partialmanifeststore.Record{}, errManifestUnavailable
+}
+
 // TestSnapshotCopyFailsClosed_spec_7_1 pins the failure paths of the
-// snapshot copy on derive and on both replay modes. A source object that is
-// absent, a source chunk that is absent, and a source ref that names no
-// object answer 503 DERIVE_SNAPSHOT_UNAVAILABLE; a blob store without
-// Copier and a store copy error answer 500 INTERNAL_ERROR. In every case
-// no row is inserted, nothing is left under the new ID, and the
-// reservation is released.
-// spec: 7.1 (Normal Flow: Derive copy semantics, Derive session semantics), 15.1 (REST API: Session Replay Semantics), 12.8 (Compliance Interfaces: Lifecycle fence and drain)
+// chunked snapshot copy on derive and on both replay modes. A source ref
+// that names no manifest row, a manifest row with no chunk, and a source
+// chunk that is absent answer 503 DERIVE_SNAPSHOT_UNAVAILABLE. A transient
+// manifest read error and a store copy error answer 500 INTERNAL_ERROR, and
+// so does each unwired dependency (the manifest reader, the manifest writer,
+// the blob store's Copier, and the chunk resolver the new session's
+// first-bind restore reads), each with every other dependency wired. In
+// every case no row is inserted, nothing is left under the new ID, and the
+// reservation is released. Before the copy was chunked-only, a transient
+// manifest read error fell through to a single-object copy and answered
+// 503, and a server without a chunk resolver copied and answered 201.
+// spec: §7.1 (Normal Flow: Derive copy semantics, Derive restore semantics, Derive session semantics), §15.1 (REST API: Session Replay Semantics, Error code catalog), 12.8 (Compliance Interfaces: Lifecycle fence and drain)
 func TestSnapshotCopyFailsClosed_spec_7_1(t *testing.T) {
+	type setupFn func(t *testing.T, f *fenceFixture) (blobstore.Store, []func(*sessionserver.Options))
+	unwire := func(m func(*sessionserver.Options)) setupFn {
+		return func(_ *testing.T, f *fenceFixture) (blobstore.Store, []func(*sessionserver.Options)) {
+			return f.blobs, []func(*sessionserver.Options){m}
+		}
+	}
 	cases := []struct {
 		name   string
-		setup  func(t *testing.T, f *fenceFixture) (blobstore.Store, []func(*sessionserver.Options))
+		setup  setupFn
 		status int
 		code   string
 	}{
 		{
-			name: "source object absent",
+			name: "source ref names no manifest row",
 			setup: func(t *testing.T, f *fenceFixture) (blobstore.Store, []func(*sessionserver.Options)) {
-				if _, err := f.blobs.DeleteBySession(context.Background(), "acme", "sess_source"); err != nil {
-					t.Fatalf("delete source object: %v", err)
-				}
+				setSourceRef(t, f, "/acme/checkpoints/sess_source/ckpt_missing")
 				return f.blobs, nil
+			},
+			status: http.StatusServiceUnavailable, code: "DERIVE_SNAPSHOT_UNAVAILABLE",
+		},
+		{
+			name: "manifest row has no chunk",
+			setup: func(_ *testing.T, f *fenceFixture) (blobstore.Store, []func(*sessionserver.Options)) {
+				return f.blobs, []func(*sessionserver.Options){func(o *sessionserver.Options) {
+					o.CheckpointManifestReader = parentManifest{partialmanifeststore.Record{
+						TenantID: "acme", CheckpointID: sourceCheckpointID, SessionID: "sess_source", ChunkCount: 0,
+					}}
+				}}
 			},
 			status: http.StatusServiceUnavailable, code: "DERIVE_SNAPSHOT_UNAVAILABLE",
 		},
 		{
 			name: "source chunk absent",
 			setup: func(t *testing.T, f *fenceFixture) (blobstore.Store, []func(*sessionserver.Options)) {
-				setSourceRef(t, f, "/acme/checkpoints/sess_source/ckpt_parent")
-				return f.blobs, []func(*sessionserver.Options){func(o *sessionserver.Options) {
-					o.CheckpointManifestReader = parentManifest{partialmanifeststore.Record{
-						TenantID: "acme", CheckpointID: "ckpt_parent", SessionID: "sess_source", ChunkCount: 1,
-					}}
-					o.CheckpointManifestWriter = partialmanifeststore.NewMemoryStore(nil)
-				}}
-			},
-			status: http.StatusServiceUnavailable, code: "DERIVE_SNAPSHOT_UNAVAILABLE",
-		},
-		{
-			name: "source ref names no object",
-			setup: func(t *testing.T, f *fenceFixture) (blobstore.Store, []func(*sessionserver.Options)) {
-				setSourceRef(t, f, "snap-without-a-path")
+				if _, err := f.blobs.DeleteBySession(context.Background(), "acme", "sess_source"); err != nil {
+					t.Fatalf("delete source chunk: %v", err)
+				}
 				return f.blobs, nil
 			},
 			status: http.StatusServiceUnavailable, code: "DERIVE_SNAPSHOT_UNAVAILABLE",
 		},
 		{
+			name:   "transient manifest read error",
+			setup:  unwire(func(o *sessionserver.Options) { o.CheckpointManifestReader = unavailableManifests{} }),
+			status: http.StatusInternalServerError, code: "INTERNAL_ERROR",
+		},
+		{
+			name:   "manifest reader unwired",
+			setup:  unwire(func(o *sessionserver.Options) { o.CheckpointManifestReader = nil }),
+			status: http.StatusInternalServerError, code: "INTERNAL_ERROR",
+		},
+		{
+			name:   "manifest writer unwired",
+			setup:  unwire(func(o *sessionserver.Options) { o.CheckpointManifestWriter = nil }),
+			status: http.StatusInternalServerError, code: "INTERNAL_ERROR",
+		},
+		{
 			name: "blob store without Copier",
-			setup: func(t *testing.T, f *fenceFixture) (blobstore.Store, []func(*sessionserver.Options)) {
+			setup: func(_ *testing.T, f *fenceFixture) (blobstore.Store, []func(*sessionserver.Options)) {
 				return noCopyBlobs{f.blobs}, nil
 			},
 			status: http.StatusInternalServerError, code: "INTERNAL_ERROR",
 		},
 		{
+			name:   "chunk resolver unwired",
+			setup:  unwire(func(o *sessionserver.Options) { o.ResumeChunkResolver = nil }),
+			status: http.StatusInternalServerError, code: "INTERNAL_ERROR",
+		},
+		{
 			name: "store copy error",
-			setup: func(t *testing.T, f *fenceFixture) (blobstore.Store, []func(*sessionserver.Options)) {
+			setup: func(_ *testing.T, f *fenceFixture) (blobstore.Store, []func(*sessionserver.Options)) {
 				return failingCopyBlobs{f.blobs}, nil
 			},
 			status: http.StatusInternalServerError, code: "INTERNAL_ERROR",

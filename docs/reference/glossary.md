@@ -446,4 +446,4 @@ The pod-local filesystem (`/workspace/slots/{sessionId}/current`) containing the
 ### Workspace Plan
 {: #workspace-plan }
 
-A structured schema defining how a session's workspace should be materialized. Includes file sources (client uploads, derived session snapshots, runtime defaults), directory structure, and environment variable configuration. Defined in Section 14 of the spec with a versioned `schemaVersion` field.
+A structured schema defining how a session's workspace should be materialized. It holds a `sources` array of inline files, uploaded files and archives, directories, and Git clones to materialize, and a `setupCommands` array. Defined in Section 14 of the spec with a versioned `schemaVersion` field.

@@ -188,8 +188,10 @@ func chunkResolver(store *miniostore.Store, mstore *partialmanifeststore.MemoryS
 }
 
 // newChunkGateway builds a sessionserver.Handler wired with the live MinIO
-// blob store and the memory manifest store, seeded with rows. idFn stamps
-// the derived session id on the derive path. It returns the handler and the
+// blob store, the memory manifest store, and the chunk resolver over both,
+// seeded with rows. The resolver is the one a derived or replayed session's
+// first-bind restore reads, and derive and replay refuse to copy without it.
+// idFn stamps the derived session id on the derive path. It returns the handler and the
 // session store so a test can inspect a derived row.
 func newChunkGateway(t *testing.T, store *miniostore.Store, mstore *partialmanifeststore.MemoryStore, idFn func() string, rows ...sessionstore.Session) (http.Handler, sessionstore.Store) {
 	t.Helper()
@@ -204,6 +206,7 @@ func newChunkGateway(t *testing.T, store *miniostore.Store, mstore *partialmanif
 		Blobs:                    store,
 		CheckpointManifestReader: mstore,
 		CheckpointManifestWriter: mstore,
+		ResumeChunkResolver:      chunkResolver(store, mstore),
 		IDFunc:                   idFn,
 		Clock:                    func() time.Time { return time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC) },
 	})

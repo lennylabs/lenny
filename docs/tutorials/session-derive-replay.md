@@ -85,7 +85,7 @@ Expected response:
 }
 ```
 
-The derived session starts in `created` state with the source's workspace already staged. You can upload additional files, finalize, and start it:
+The derived session starts in `created` state and holds a copy of the source's workspace. Files you upload are applied over that copy, so an uploaded file replaces the copied file at the same path. You can upload additional files, finalize, and start it:
 
 ```bash
 DERIVED_ID=$(echo $DERIVED | jq -r '.session_id')

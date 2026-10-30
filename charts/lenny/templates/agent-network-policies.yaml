@@ -305,8 +305,9 @@ spec:
 {{- end }}
 {{- /*
 allow-pod-egress-objectstore (§13.2 NET-071) re-admits agent-pod egress to
-object storage so the pod can PUT checkpoint chunks and GET them back on
-resume against gateway-minted presigned capabilities. It renders from the
+object storage so the pod can PUT checkpoint chunks and, on resume and at a
+derived or replayed session's first bind, GET them against gateway-minted
+presigned capabilities. It renders from the
 resolved object store, in one of three mutually exclusive arms:
 
   - in-cluster: the chart deploys MinIO (minio.deploy). The peer selects

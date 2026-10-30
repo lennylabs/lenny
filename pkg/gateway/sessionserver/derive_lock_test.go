@@ -35,6 +35,8 @@ func (f *fakeLock) Acquire(_ context.Context, _ string) (derivelock.Releaser, er
 func TestDerive_ContendedLockReturns429_spec_7_1_92(t *testing.T) {
 	store := memstore.New()
 	newSourceSession(t, store)
+	// The contended lock answers before the snapshot is read, so the
+	// server needs no snapshot stores.
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader: true,
 		IDFunc:          func() string { return "sess_d" },
@@ -60,12 +62,11 @@ func TestDerive_ContendedLockReturns429_spec_7_1_92(t *testing.T) {
 func TestDerive_LockHeldThenReleased_spec_7_1_92(t *testing.T) {
 	store := memstore.New()
 	newSourceSession(t, store)
-	srv := sessionserver.New(store, sessionserver.Options{
+	srv := sessionserver.New(store, sourceSnapshot(t).wire(sessionserver.Options{
 		DevTenantHeader: true,
-		Blobs:           sourceSnapshotBlobs(t),
 		IDFunc:          func() string { return "sess_d" },
 		DeriveLock:      derivelock.NewMemory(time.Second),
-	})
+	}))
 
 	// First derive succeeds; sess_source is one-shot, so the second
 	// derive's source is the same row and the lock is reusable.
@@ -76,12 +77,11 @@ func TestDerive_LockHeldThenReleased_spec_7_1_92(t *testing.T) {
 
 	// A second derive against the same source must acquire (the lock
 	// was released after the first), not contend.
-	srv2 := sessionserver.New(store, sessionserver.Options{
+	srv2 := sessionserver.New(store, sourceSnapshot(t).wire(sessionserver.Options{
 		DevTenantHeader: true,
-		Blobs:           sourceSnapshotBlobs(t),
 		IDFunc:          func() string { return "sess_d2" },
 		DeriveLock:      derivelock.NewMemory(50 * time.Millisecond),
-	})
+	}))
 	rr2 := deriveRequest(t, srv2.Handler(), sessionserver.DeriveRequest{})
 	if rr2.Code != http.StatusCreated {
 		t.Fatalf("second derive status = %d, want 201; body=%s", rr2.Code, rr2.Body.String())
@@ -101,11 +101,13 @@ func TestDerive_MemoryLockSerializesConcurrentRequests_spec_7_1_92(t *testing.T)
 	lock := derivelock.NewMemory(2 * time.Second)
 	counter := &concurrentHoldCounter{inner: lock}
 
-	srv := sessionserver.New(store, sessionserver.Options{
+	// Each admitted derive reaches the chunked copy, so the server holds
+	// the source's checkpoint and every store the copy needs.
+	srv := sessionserver.New(store, sourceSnapshot(t).wire(sessionserver.Options{
 		DevTenantHeader: true,
 		IDFunc:          func() string { return "sess_d" },
 		DeriveLock:      counter,
-	})
+	}))
 
 	var wg sync.WaitGroup
 	for range 5 {

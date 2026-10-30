@@ -47,19 +47,41 @@ func isUnimplemented(err error) bool {
 	return status.Code(err) == codes.Unimplemented
 }
 
-// RequiresDemotion reports the §6.1 SDK-warm demotion decision for a bind
-// request: whether the request's workspace plan forces a still-SDK-warm
-// (preConnect) pod to be demoted to pod-warm before the workspace is
-// materialized. The decision is a pure function of the plan's placed paths and
-// the runtime's sdkWarmBlockingPaths glob list, so the finalize-time Prepare
-// (which makes the decision) and the launch-only /start path (which needs it
-// without re-running Prepare) compute the identical answer from the persisted
-// plan rather than the gateway persisting the boolean. A non-preConnect request
-// never demotes. spec: §6.1, §4.3, §4.4 (proposal).
-func RequiresDemotion(req BindRequest) bool {
+// restoreDemotionReason is the DemoteSDK reason for a preConnect session whose
+// workspace starts from a restored snapshot. spec: §6.1.
+const restoreDemotionReason = "workspace starts from a restored snapshot"
+
+// demotionReason makes the §6.1 SDK-warm demotion decision for a bind request
+// and returns the DemoteSDK reason with it. A non-preConnect request never
+// demotes. A session whose workspace starts from a restored snapshot matches
+// every non-empty sdkWarmBlockingPaths list, because the restored paths are not
+// known before materialization. Otherwise the plan's placed paths are matched
+// against the list. spec: §7.1 (Derive restore semantics); §6.1.
+func demotionReason(req BindRequest) (string, bool) {
 	if !req.PreConnect {
-		return false
+		return "", false
 	}
-	_, _, requires := sdkwarm.RequiresDemotion(workspacePlanPaths(req.Plan), req.SDKWarmBlockingPaths)
+	if req.RestoreChunks != nil && len(req.SDKWarmBlockingPaths) > 0 {
+		return restoreDemotionReason, true
+	}
+	mp, pat, requires := sdkwarm.RequiresDemotion(workspacePlanPaths(req.Plan), req.SDKWarmBlockingPaths)
+	if !requires {
+		return "", false
+	}
+	return fmt.Sprintf("workspace path %q matches sdkWarmBlockingPaths %q", mp, pat), true
+}
+
+// RequiresDemotion reports the §6.1 SDK-warm demotion decision for a bind
+// request: whether the request's workspace forces a still-SDK-warm
+// (preConnect) pod to be demoted to pod-warm before the workspace is
+// materialized. The decision is a pure function of the plan's placed paths,
+// whether the session starts from a restored snapshot, and the runtime's
+// sdkWarmBlockingPaths glob list, so the finalize-time Prepare (which makes
+// the decision) and the launch-only /start path (which needs it without
+// re-running Prepare) compute the identical answer from the same demotionReason
+// rather than the gateway persisting the boolean. spec: §6.1, §4.3, §4.4,
+// §7.1 (Derive restore semantics).
+func RequiresDemotion(req BindRequest) bool {
+	_, requires := demotionReason(req)
 	return requires
 }

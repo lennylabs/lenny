@@ -456,6 +456,35 @@ func TestServedDocumentFinalizeDeclaresOptionalPlanBody(t *testing.T) {
 	}
 }
 
+// spec: §7.1 (Normal Flow: Concurrent derive serialization, Derive restore semantics), §15.1 (REST API: Session Replay Semantics, Error code catalog)
+// diagnosis: a failure here means the served OpenAPI document no longer
+// declares the 503 DERIVE_SNAPSHOT_UNAVAILABLE Error response that derive
+// and replay return when the source's chunked snapshot is missing. A client
+// or SDK generated from the document would not model the retryable 503.
+// Restore the 503 response of paths./v1/sessions/{id}/derive.post and
+// paths./v1/sessions/{id}/replay.post in
+// pkg/gateway/externalapi/openapi/openapi.json.
+func TestServedDocumentDeriveAndReplayDeclareSnapshotUnavailable(t *testing.T) {
+	doc := decodeServedSessionDocument(t)
+	for _, path := range []string{"/v1/sessions/{id}/derive", "/v1/sessions/{id}/replay"} {
+		op := servedOperation(t, doc, path, "post")
+		resp, ok := op.Responses["503"]
+		if !ok {
+			t.Errorf("POST %s declares no 503 response", path)
+			continue
+		}
+		if resp.Description != "DERIVE_SNAPSHOT_UNAVAILABLE" {
+			t.Errorf("POST %s 503 description = %q, want DERIVE_SNAPSHOT_UNAVAILABLE", path, resp.Description)
+		}
+		if got := schemaRef(resp.Content); got != "#/components/schemas/Error" {
+			t.Errorf("POST %s 503 response schema $ref = %q, want the Error envelope", path, got)
+		}
+		if _, ok := op.Responses["201"]; !ok {
+			t.Errorf("POST %s lost its 201 response", path)
+		}
+	}
+}
+
 // spec: §14 (Workspace Plan Schema, uploadRef field note), §15.1 (REST
 // API: the /upload and /upload-archive rows).
 // diagnosis: a failure here means an upload route no longer returns

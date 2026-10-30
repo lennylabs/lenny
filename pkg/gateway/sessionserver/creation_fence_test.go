@@ -116,6 +116,9 @@ type fenceFixture struct {
 	mem     *memstore.Store
 	store   *refusalStore
 	blobs   *blobstore.MemoryStore
+	// manifests holds the checkpoint_manifest rows of the seeded source
+	// checkpoint and of every copy a derive or replay writes.
+	manifests *partialmanifeststore.MemoryStore
 }
 
 func newFenceFixture(t *testing.T, users ...userstore.User) *fenceFixture {
@@ -124,6 +127,8 @@ func newFenceFixture(t *testing.T, users ...userstore.User) *fenceFixture {
 		tenants: tenantstore.NewMemory(),
 		users:   userstore.NewMemory(),
 		blobs:   blobstore.NewMemoryStore(nil),
+
+		manifests: partialmanifeststore.NewMemoryStore(nil),
 	}
 	if err := f.tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"}); err != nil {
 		t.Fatalf("seed tenant: %v", err)
@@ -390,25 +395,27 @@ func deriveFixture(t *testing.T, users ...userstore.User) *fenceFixture {
 }
 
 // seedSourceWithSnapshot seeds the terminal source session over f.mem with
-// its legacy snapshot object in f.blobs, so a derive or a replay copies an
-// object under the new session's ID.
+// its chunked checkpoint in f.blobs and f.manifests, so a derive or a replay
+// copies a chunk under the new session's ID.
 func (f *fenceFixture) seedSourceWithSnapshot(t *testing.T) {
 	t.Helper()
-	src := blobstore.URI{
-		TenantID: "acme", ObjectType: blobstore.ObjectTypeWorkspace,
-		SessionID: "sess_source", PartID: "snap", TTL: time.Hour,
-	}
-	if _, err := f.blobs.Put(src, "application/x-tar", strings.NewReader("workspace-bytes")); err != nil {
-		t.Fatalf("seed parent blob: %v", err)
-	}
-	newSourceSession(t, f.mem, func(s *sessionstore.Session) { s.WorkspaceSnapshot.Ref = src.String() })
+	seedChunkedSnapshot(t, f.blobs, f.manifests, "sess_source")
+	newSourceSession(t, f.mem)
 }
 
+// derivedObject is the chunk a derive through deriveServer copies: its
+// IDFunc names both the derived session and the derived checkpoint
+// sess_derived.
 func derivedObject() blobstore.URI {
-	return blobstore.URI{
-		TenantID: "acme", ObjectType: blobstore.ObjectTypeWorkspace,
-		SessionID: "sess_derived", PartID: "derived-from-sess_source", TTL: time.Hour,
-	}
+	return derivedChunk("sess_derived", "sess_derived")
+}
+
+// wireSnapshot wires the fixture's manifest store as the reader and the
+// writer and a chunk resolver into o, which the chunked copy requires.
+func (f *fenceFixture) wireSnapshot(o *sessionserver.Options) {
+	o.CheckpointManifestReader = f.manifests
+	o.CheckpointManifestWriter = f.manifests
+	o.ResumeChunkResolver = stubChunkResolver{}
 }
 
 func (f *fenceFixture) deriveServer(blobs blobstore.Store, opts ...func(*sessionserver.Options)) http.Handler {
@@ -417,6 +424,7 @@ func (f *fenceFixture) deriveServer(blobs blobstore.Store, opts ...func(*session
 		IDFunc:          func() string { return "sess_derived" },
 		Blobs:           blobs, Users: f.users, Tenants: f.tenants,
 	}
+	f.wireSnapshot(&o)
 	for _, m := range opts {
 		m(&o)
 	}
@@ -561,15 +569,40 @@ func TestDeriveReserveRefusalCopiesNothing_spec_12_8(t *testing.T) {
 	}
 }
 
-// chunkedDerive wires a parent chunked checkpoint whose single chunk
-// exists, and a manifest writer whose Finalise fails, so the derive copies
-// the chunk and writes the derived manifest row before it fails.
-type failingFinalise struct {
+// failingManifestStep is a manifest writer whose step call fails (Put,
+// ConfirmChunk, or Finalise), so the derive copies the chunk and stops at
+// that point of recording the derived manifest row.
+type failingManifestStep struct {
 	*partialmanifeststore.MemoryStore
+	step string
 }
 
-func (failingFinalise) Finalise(context.Context, string, string, bool, string) error {
-	return errors.New("manifest finalise failed")
+func (f failingManifestStep) fail(step string) error {
+	if f.step == step {
+		return errors.New("manifest " + step + " failed")
+	}
+	return nil
+}
+
+func (f failingManifestStep) Put(ctx context.Context, r partialmanifeststore.Record) error {
+	if err := f.fail("Put"); err != nil {
+		return err
+	}
+	return f.MemoryStore.Put(ctx, r)
+}
+
+func (f failingManifestStep) ConfirmChunk(ctx context.Context, tenantID, checkpointID string, n int, uploaded int64) error {
+	if err := f.fail("ConfirmChunk"); err != nil {
+		return err
+	}
+	return f.MemoryStore.ConfirmChunk(ctx, tenantID, checkpointID, n, uploaded)
+}
+
+func (f failingManifestStep) Finalise(ctx context.Context, tenantID, checkpointID string, partial bool, reason string) error {
+	if err := f.fail("Finalise"); err != nil {
+		return err
+	}
+	return f.MemoryStore.Finalise(ctx, tenantID, checkpointID, partial, reason)
 }
 
 type parentManifest struct{ rec partialmanifeststore.Record }
@@ -589,15 +622,21 @@ func (p parentManifest) LatestFull(context.Context, string, string) (partialmani
 // TestDeriveCopyFailureUndoesChunksAndManifest_spec_12_8 pins the undo in
 // the derive's copy-failure branch: the chunk copied under the derived ID
 // and the derived manifest row are deleted and the reservation released
-// before the failure answers, including when the request context is
-// cancelled, and the derive-failure audit row is then written under the
-// fence.
-// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 16.1 (Metrics)
+// before the failure answers, whichever manifest-writer call fails and
+// including when the request context is cancelled, and the derive-failure
+// audit row is then written under the fence.
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 16.1 (Metrics), 7.1 (Derive restore semantics)
 func TestDeriveCopyFailureUndoesChunksAndManifest_spec_12_8(t *testing.T) {
-	for _, cancelled := range []bool{false, true} {
-		name := "live context"
+	for _, tc := range []struct {
+		step      string
+		cancelled bool
+	}{
+		{"Finalise", false}, {"Finalise", true}, {"Put", false}, {"ConfirmChunk", false},
+	} {
+		step, cancelled := tc.step, tc.cancelled
+		name := step + "/live context"
 		if cancelled {
-			name = "cancelled context"
+			name = step + "/cancelled context"
 		}
 		t.Run(name, func(t *testing.T) {
 			f := newFenceFixture(t)
@@ -621,7 +660,7 @@ func TestDeriveCopyFailureUndoesChunksAndManifest_spec_12_8(t *testing.T) {
 				CheckpointManifestReader: parentManifest{partialmanifeststore.Record{
 					TenantID: "acme", CheckpointID: "ckpt_parent", SessionID: "sess_source", ChunkCount: 1, ChunkEncoding: enc,
 				}},
-				CheckpointManifestWriter: failingFinalise{manifests},
+				CheckpointManifestWriter: failingManifestStep{manifests, step},
 				PersistDeriveFailureRows: true,
 				IncDeriveFailureAudit:    func(o string) { outcomes = append(outcomes, o) },
 			}).Handler()
@@ -659,10 +698,7 @@ func TestDeriveCopyFailureUndoesChunksAndManifest_spec_12_8(t *testing.T) {
 func TestDeriveFailureRowRefusedRecordsError_spec_12_8(t *testing.T) {
 	f := newFenceFixture(t, userstore.User{Subject: "alice@acme.com", TenantID: "acme"})
 	newSourceSession(t, f.mem, func(s *sessionstore.Session) {
-		s.WorkspaceSnapshot.Ref = (blobstore.URI{
-			TenantID: "acme", ObjectType: blobstore.ObjectTypeWorkspace,
-			SessionID: "sess_source", PartID: "missing", TTL: time.Hour,
-		}).String()
+		s.WorkspaceSnapshot.Ref = "/acme/checkpoints/sess_source/ckpt_missing"
 	})
 	// The flag commits after the reservation admitted the derive and
 	// before the failure row's insert.
@@ -854,11 +890,13 @@ func replayFixture(t *testing.T) (*fenceFixture, *transcriptstore.Memory, http.H
 		transcriptstore.Entry{Role: "user", Content: "original prompt"}); err != nil {
 		t.Fatalf("seed transcript: %v", err)
 	}
-	h := sessionserver.New(f.store, sessionserver.Options{
+	o := sessionserver.Options{
 		DevTenantHeader: true,
 		IDFunc:          func() string { return "sess_replay" },
 		Transcripts:     transcripts, Users: f.users, Tenants: f.tenants, Blobs: f.blobs,
-	}).Handler()
+	}
+	f.wireSnapshot(&o)
+	h := sessionserver.New(f.store, o).Handler()
 	return f, transcripts, h
 }
 

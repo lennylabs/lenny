@@ -162,6 +162,10 @@ func (s *Server) exclusiveBindRequest(ctx context.Context, row sessionstore.Sess
 		MinPlatformVersion:            minPlatformVersion,
 		PreConnect:                    preConnect,
 		SDKWarmBlockingPaths:          sdkWarmBlockingPaths,
+		// spec: §7.1 (Derive restore semantics) — a derived or replayed
+		// row carries its starting snapshot; the Binder invokes the closure
+		// immediately before FinalizeWorkspace. Nil for every other row.
+		RestoreChunks: s.workspaceRestore(row),
 		// carry the pool's recycle.enabled flag so Release applies
 		// the recycle disposition (patch claim bound → recycling, signal
 		// the whole-pod scrub) on a clean release rather than draining the pod.
@@ -203,6 +207,10 @@ func (s *Server) slotBindRequest(ctx context.Context, row sessionstore.Session, 
 		UserCredentialProviders: userCredProviders,
 		AgentInterface:          agentInterface,
 		MinPlatformVersion:      minPlatformVersion,
+		// spec: §7.1 (Derive restore semantics) — the slot materialization
+		// invokes the closure immediately before FinalizeWorkspace. Nil for a
+		// row without a starting snapshot.
+		RestoreChunks: s.workspaceRestore(row),
 		// spec: §5.2 — carry the pool's recycle.enabled flag so the
 		// last-slot-drain edge of a recycling concurrent pool patches the
 		// claim bound → recycling and signals the whole-pod scrub (the

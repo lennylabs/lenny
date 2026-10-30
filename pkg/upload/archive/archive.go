@@ -3,9 +3,10 @@
 // Package archive decompresses and validates an uploaded workspace
 // archive entirely inside the gateway's §4.1 Upload Handler subsystem.
 //
-// spec: §7.4 — "All archive extraction runs inside the
-// gateway's Upload Handler subsystem; it is never delegated to agent
-// pods." spec: §13.4 — "pod binaries neither decompress
+// spec: §7.4 — "All extraction of client-uploaded archives and
+// delegation file exports runs inside the gateway's Upload Handler
+// subsystem (§4.1) — it is never delegated to agent pods"
+// spec: §13.4 — "pod binaries neither decompress
 // archives nor canonicalize paths on untrusted input." The gateway
 // reads the archive bytes, streams them through the tar/zip parser,
 // feeds every entry through pkg/upload.ValidateEntry / ValidateArchive,

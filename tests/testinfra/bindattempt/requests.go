@@ -75,6 +75,15 @@ func finalizeReq(id, token string, midSession bool) *adapterv1.FinalizeWorkspace
 	}
 }
 
+// restoreFinalizeReq is a mid-session FinalizeWorkspace with no token that
+// carries one restore grant. The grant is never fetched: the pairing rule
+// refuses the request before any slot is resolved.
+func restoreFinalizeReq(id string) *adapterv1.FinalizeWorkspaceRequest {
+	req := finalizeReq(id, "", true)
+	req.RestoreChunks = []*adapterv1.ChunkGrant{{Index: 0, Url: "https://objectstore.example/chunk-0", Length: 1}}
+	return req
+}
+
 func fencedReq(id, token string) *adapterv1.ShutdownRequest {
 	return &adapterv1.ShutdownRequest{SessionId: sid(id), BindAttempt: token}
 }
