@@ -199,6 +199,7 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:         now,
 		RuntimeRef:        req.TargetRuntime,
 		PoolRef:           req.TargetPool,
+		Pool:              req.TargetPool,
 		IsolationProfile:  target,
 		WorkspaceSnapshot: copySnapshotRef(source.WorkspaceSnapshot, replayedRef),
 		// spec: §15.1 (Session Replay Semantics), §12.8 step 16, §4.5
@@ -207,7 +208,21 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 		// parent_workspace_ref.
 		ParentWorkspaceRef: source.WorkspaceSnapshot.Ref,
 	}
+	// spec: §15.1 (Session Replay Semantics), §7.1 (Atomicity of session
+	// creation (steps 2–8)) — the replayed session proceeds through the
+	// standard lifecycle, so it claims its warm pod (or reserves its slot)
+	// before the insert, as POST /v1/sessions and derive do. A claim failure
+	// undoes the copy and the reservation and answers the create path's
+	// claim-failure envelope with no session_id.
+	createClaim, ok := s.claimDerivedRow(w, r, &replayed)
+	if !ok {
+		s.undoDerivedWrites(r.Context(), tenantID, replayedID)
+		return
+	}
 	if err := s.insertReplayed(r.Context(), replayed, source.ID, req.ReplayMode); err != nil {
+		// spec: §7.1 (Atomicity of session creation (steps 2–8)) — every
+		// insert failure releases the create-time claim.
+		s.rollbackClaim(r.Context(), createClaim, replayedID)
 		// spec: §12.8 (Lifecycle fence and drain) — the fence over the
 		// tenant and the new owner, or a reservation the owner's erasure
 		// ended, undoes the snapshot copy, releases the reservation, and

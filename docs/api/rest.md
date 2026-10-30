@@ -245,7 +245,7 @@ Create a new session pre-populated with this session's workspace snapshot.
 
 **Valid precondition states:** terminal states by default; non-terminal with `allowStale: true`.
 
-**Key error codes:** `DERIVE_ON_LIVE_SESSION` (409), `DERIVE_SNAPSHOT_UNAVAILABLE` (503), `DERIVE_LOCK_CONTENTION` (429).
+**Key error codes:** `DERIVE_ON_LIVE_SESSION` (409), `DERIVE_SNAPSHOT_UNAVAILABLE` (503), and `DERIVE_LOCK_CONTENTION` (429). The derived session claims a warm pod at creation as `POST /v1/sessions` does, so a claim failure answers the same codes session creation does: `SESSION_CREATION_FAILED` (503), `CREDENTIAL_POOL_EXHAUSTED` (503), `USER_CREDENTIAL_NOT_FOUND` (404), and `RUNTIME_UNAVAILABLE` (503) while the pool is warming up.
 
 ### POST /v1/sessions/{id}/replay
 
@@ -262,7 +262,7 @@ Re-run a session against a different runtime version using the same workspace an
 
 **Valid precondition states:** terminal states only.
 
-**Key error codes:** `REPLAY_ON_LIVE_SESSION` (409), `INCOMPATIBLE_RUNTIME` (400), and `DERIVE_SNAPSHOT_UNAVAILABLE` (503).
+**Key error codes:** `REPLAY_ON_LIVE_SESSION` (409), `INCOMPATIBLE_RUNTIME` (400), and `DERIVE_SNAPSHOT_UNAVAILABLE` (503). The replayed session claims a warm pod at creation, so a claim failure answers the session-creation codes listed for `POST /v1/sessions/{id}/derive`.
 
 ---
 

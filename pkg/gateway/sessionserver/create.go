@@ -332,49 +332,9 @@ func (s *Server) validateAndBuildCreateRow(w http.ResponseWriter, r *http.Reques
 // uploadToken the response echoes.
 // spec: §7.1, §8.6, §14.
 func (s *Server) claimMintPersist(w http.ResponseWriter, r *http.Request, row *sessionstore.Session, build createBuild, span trace.Span) (SessionIsolationLevel, string, bool) {
-	level := build.level
-
-	// spec: §7.1 steps 3-5 — when the gateway is wired with a pod binder,
-	// the create atomic unit runs the credential availability pre-check
-	// (step 3) and claims an idle warm pod (step 4) synchronously, before
-	// the row persist (step 5). The claim surfaces pool exhaustion
-	// immediately so the client learns of it before uploading, and the
-	// claimed pod's binding (PodAssignment + PoolRef) is persisted on the
-	// row so a later /finalize and /start reconnect to it (§4.6). A claim
-	// failure leaves no row behind per the §7.1 atomicity contract.
-	// A service-mode pool is claimless (a nil claim); a concurrent-workspace
-	// pool claims a per-session slot at create like every non-service-mode
-	// pool (claimAtCreate returns the reserved slot's binding), so the §15.1
-	// created-state pod-claim invariant holds uniformly.
-	var createClaim *podsession.ClaimResult
-	if s.podBinder != nil {
-		outcome, err := s.claimAtCreate(r.Context(), *row, build.parsedPlan, claimRouteCreate)
-		if err != nil {
-			// spec: §7.1 — the pre-check or claim failed before any
-			// row was persisted; surface SESSION_CREATION_FAILED (or the
-			// credential / pool-warming envelope) with no session_id. No pod
-			// is held: the pre-check is claimless, and the exclusive Claim and
-			// the concurrent ClaimSlot reclaim their own pod/slot on failure.
-			tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryTransient))
-			s.writePodClaimError(w, err, "SESSION_CREATION_FAILED",
-				"could not place the session on a warm pod")
-			return level, "", false
-		}
-		// spec: §7.1 — the returned level reflects the actual resolved
-		// pool's profile, tightening the create-response accuracy guarantee.
-		level = outcome.Level
-		row.ExecutionMode = level.ExecutionMode
-		row.ScrubPolicy = level.ScrubPolicy
-		row.ConversationContinuity = level.ConversationContinuity
-		if outcome.Claim != nil {
-			createClaim = outcome.Claim
-			// spec: §4.6 (proposal) — persist the durable binding so the claim
-			// survives a coordinator handoff during the create → finalize →
-			// start window; PodAssignment + PoolRef plus the session id
-			// reconstruct the deterministic claim and lease key.
-			row.PodAssignment = createClaim.SandboxName
-			row.PoolRef = createClaim.Pool
-		}
+	level, createClaim, ok := s.claimForNewRow(w, r, row, build.parsedPlan, build.level, span)
+	if !ok {
+		return level, "", false
 	}
 
 	// spec: §7.1 — atomicity. Mint the §7.1 step 8 uploadToken
@@ -438,6 +398,63 @@ func (s *Server) claimMintPersist(w http.ResponseWriter, r *http.Request, row *s
 	// envelope validation raised rides the same plane. F-14.1.15.
 	s.publishParsePlanWarnings(row.TenantID, row.ID, build.allWarnings)
 	return level, tok, true
+}
+
+// claimForNewRow runs the §7.1 step-3 credential availability pre-check and
+// the step-4 warm-pod claim for a top-level session row that is not yet
+// persisted, and stamps the claimed binding (PodAssignment and PoolRef) and
+// the resolved pool's isolation level on the row. Every handler that inserts
+// a top-level session in `created` calls it before the insert:
+// `POST /v1/sessions`, `POST /v1/sessions/{id}/derive`, and
+// `POST /v1/sessions/{id}/replay`. §7.1 derive rule 2 inserts the derived row
+// "in the same initial state as a fresh `CreateSession`", and the §15.1
+// `created` state row states that a top-level session in `created` holds a
+// claimed warm pod. Without the claim, an exclusive pool prepares nothing at
+// finalize and the launch-only `/start` reconnects to an empty binding.
+//
+// The claim surfaces pool exhaustion before the client uploads, and the
+// persisted binding lets a later /finalize and /start reconnect to the pod
+// across a coordinator handoff (§4.6). A service-mode pool is claimless and
+// returns a nil claim. A concurrent-workspace pool reserves a per-session
+// slot. A gateway with no pod binder (the Postgres-only posture) claims
+// nothing and returns level unchanged.
+//
+// It returns the level the response reports and the claim the caller
+// releases through rollbackClaim when a later step of its atomic unit fails.
+// On a pre-check or claim failure it writes the claim-failure envelope
+// (SESSION_CREATION_FAILED, CREDENTIAL_POOL_EXHAUSTED,
+// USER_CREDENTIAL_NOT_FOUND, or the pool-warming RUNTIME_UNAVAILABLE) and
+// returns ok=false. A failed claim holds no pod: the pre-check is claimless,
+// and the exclusive Claim and the concurrent ClaimSlot reclaim their own pod
+// or slot on failure.
+//
+// spec: §7.1 (Atomicity of session creation (steps 2–8)); §7.1 (Derive
+// session semantics) derive rule 2; §15.1 (REST API) the `created` state
+// row; §4.6.
+func (s *Server) claimForNewRow(w http.ResponseWriter, r *http.Request, row *sessionstore.Session, plan workspaceplan.Plan, level SessionIsolationLevel, span trace.Span) (SessionIsolationLevel, *podsession.ClaimResult, bool) {
+	if s.podBinder == nil {
+		return level, nil, true
+	}
+	outcome, err := s.claimAtCreate(r.Context(), *row, plan, claimRouteCreate)
+	if err != nil {
+		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryTransient))
+		s.writePodClaimError(w, err, "SESSION_CREATION_FAILED",
+			"could not place the session on a warm pod")
+		return level, nil, false
+	}
+	// spec: §7.1 — the returned level reflects the actual resolved pool's
+	// profile, tightening the create-response accuracy guarantee.
+	level = outcome.Level
+	row.ExecutionMode = level.ExecutionMode
+	row.ScrubPolicy = level.ScrubPolicy
+	row.ConversationContinuity = level.ConversationContinuity
+	if outcome.Claim != nil {
+		// spec: §4.6 — PodAssignment + PoolRef plus the session id
+		// reconstruct the deterministic claim and lease key.
+		row.PodAssignment = outcome.Claim.SandboxName
+		row.PoolRef = outcome.Claim.Pool
+	}
+	return level, outcome.Claim, true
 }
 
 // writeCreateSessionResponse renders the §15.1 201 CreateSessionResponse:

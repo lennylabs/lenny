@@ -10,15 +10,19 @@ import (
 	"net/http"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/derivelock"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 
 // DeriveRequest is the §7.1 / §15.1 POST /v1/sessions/{id}/derive body.
@@ -363,6 +367,7 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:              now,
 		RuntimeRef:             runtimeRef,
 		PoolRef:                pool,
+		Pool:                   req.TargetPool,
 		IsolationProfile:       target,
 		ExecutionMode:          derivedLevel.ExecutionMode,
 		ScrubPolicy:            derivedLevel.ScrubPolicy,
@@ -375,7 +380,23 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		// parent_workspace_ref below.
 		ParentWorkspaceRef: source.WorkspaceSnapshot.Ref,
 	}
+	// spec: §7.1 (Derive session semantics) derive rule 2, §7.1 (Atomicity
+	// of session creation (steps 2–8)) — the derived row is inserted in the
+	// same initial state as a fresh CreateSession, so it claims its warm pod
+	// (or reserves its slot) before the insert, as POST /v1/sessions does. A
+	// claim failure undoes the copy and the reservation and answers the
+	// create path's claim-failure envelope with no session_id. The claim
+	// runs after the copy so a failed copy holds no pod.
+	createClaim, ok := s.claimDerivedRow(w, r, &derived)
+	if !ok {
+		s.undoDerivedWrites(r.Context(), tenantID, derivedID)
+		return
+	}
 	if err := s.store.CreateReserved(r.Context(), derived); err != nil {
+		// spec: §7.1 (Atomicity of session creation (steps 2–8)) — every
+		// insert failure releases the create-time claim, as the create path
+		// does, so no pod leaks past a response that carries no session_id.
+		s.rollbackClaim(r.Context(), createClaim, derivedID)
 		// spec: §12.8 (Lifecycle fence and drain) — a fence refusal, or a
 		// reservation the owner's erasure ended, undoes the copy, releases
 		// the reservation, and answers 403. Any other insert error keeps
@@ -401,6 +422,20 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// claimDerivedRow runs the create-time claim of claimForNewRow for a row
+// that derive or replay is about to insert. A derived or replayed row binds
+// no workspace plan at create (its plan binds at finalize, and its workspace
+// comes from the copied snapshot at the first bind), so the claim carries an
+// empty plan. The response renders the level from the row, on which the
+// claim stamps the resolved pool's level, so the returned level is unused.
+// On failure it has written the claim-failure envelope and returns ok=false.
+// spec: §7.1 (Derive session semantics) derive rule 2; §7.1 (Derive restore
+// semantics); §15.1 (Session Replay Semantics).
+func (s *Server) claimDerivedRow(w http.ResponseWriter, r *http.Request, row *sessionstore.Session) (*podsession.ClaimResult, bool) {
+	_, claim, ok := s.claimForNewRow(w, r, row, workspaceplan.Plan{}, SessionIsolationLevel{}, trace.SpanFromContext(r.Context()))
+	return claim, ok
 }
 
 // deriveChunkedCheckpoint copies every chunk of the parent's §10.1

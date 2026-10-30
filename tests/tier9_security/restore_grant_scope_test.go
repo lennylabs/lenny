@@ -129,7 +129,26 @@ func (b *lockedBuffer) String() string {
 	return b.buf.String()
 }
 
+// restoreScopeConcurrent is the per-pod session bound of the fixture's
+// concurrent-workspace pool.
+const restoreScopeConcurrent = 16
+
+// newRestoreScopeFixture builds the fixture on a concurrent-workspace pool.
 func newRestoreScopeFixture(t *testing.T) *restoreScopeFixture {
+	t.Helper()
+	return newRestoreScopeFixtureOn(t, 1, restoreScopeConcurrent)
+}
+
+// newRestoreScopeFixtureOn builds the fixture with pods idle pods on a pool
+// of maxConcurrent sessions per pod: a concurrent-workspace pool above 1, an
+// exclusive pool otherwise. An exclusive pool restores at /finalize, where
+// its bind-time FinalizeWorkspace runs, and a concurrent-workspace pool at
+// /start. A scenario with several failed binds needs one pod per failure:
+// derive reserves the slot at create, and the failed bind's release deletes
+// the per-pod claim of a pod it was the only slot on, so the §4.6.1
+// occupancy projection moves that pod to draining and the next derive claims
+// another pod.
+func newRestoreScopeFixtureOn(t *testing.T, pods int, maxConcurrent int32) *restoreScopeFixture {
 	t.Helper()
 	mio := containers.StartMinIO(t, containers.MinIOOptions{})
 	store, err := miniostore.New(miniostore.Config{
@@ -152,11 +171,11 @@ func newRestoreScopeFixture(t *testing.T) *restoreScopeFixture {
 	prevTP := otel.GetTracerProvider()
 	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans)))
 	t.Cleanup(func() { otel.SetTracerProvider(prevTP) })
-	// Every failed bind costs the pod two slot failures (the first attempt
-	// and the §5.2 retry); the slot bound keeps the whole-pod replacement
-	// threshold above the failures the cases cause.
+	// On a concurrent-workspace pool every failed bind costs the pod a slot
+	// failure; the slot bound keeps the whole-pod replacement threshold above
+	// the failures the cases cause.
 	h := lifecycleharness.New(t, lifecycleharness.Options{
-		Replicas: 1, Pods: 1, MaxConcurrentSessions: 16,
+		Replicas: 1, Pods: pods, MaxConcurrentSessions: maxConcurrent,
 		ObjectStore: &lifecycleharness.ObjectStore{
 			Blobs: store, Manifests: mstore, Transport: transport,
 			Resolver: &resumechunks.Resolver{
@@ -258,14 +277,16 @@ func (f *restoreScopeFixture) copyFrom(t *testing.T, source, route string, body 
 }
 
 // finalizeAndStart binds an empty plan and starts the session, returning the
-// /start status.
+// /start status. On an exclusive pool the bind-time restore runs at
+// /finalize, so a failed /finalize returns its status and /start is not
+// called.
 func (f *restoreScopeFixture) finalizeAndStart(t *testing.T, id string) int {
 	t.Helper()
-	code, resp := f.do(t, http.MethodPost, "/v1/sessions/"+id+"/finalize", map[string]any{
+	code, _ := f.do(t, http.MethodPost, "/v1/sessions/"+id+"/finalize", map[string]any{
 		"workspacePlan": map[string]any{"schemaVersion": 1, "sources": []any{}},
 	})
 	if code != http.StatusOK {
-		t.Fatalf("finalize %s: status %d body %v", id, code, resp)
+		return code
 	}
 	code, _ = f.do(t, http.MethodPost, "/v1/sessions/"+id+"/start", nil)
 	return code
@@ -415,7 +436,8 @@ func TestRestoreGrantsNameOnlyTheSessionsOwnPrefix_spec_7_1(t *testing.T) {
 // resume)
 // diagnosis: a forged or cross-tenant snapshot ref minted capabilities for another session's or another tenant's chunks, a chunk set with a missing index was restored partially, or a failed restore leaked a presigned URL. Check workspaceRestore in pkg/gateway/sessionserver and the contiguity check in pkg/gateway/checkpoint/resumechunks.
 func TestForgedOrMisorderedRestoreFailsClosed_spec_7_1(t *testing.T) {
-	f := newRestoreScopeFixture(t)
+	// One pod per case: each case's failed bind drains the pod it ran on.
+	f := newRestoreScopeFixtureOn(t, 3, restoreScopeConcurrent)
 	f.seedSource(t, "sess_forge_source", "ck_forge_source")
 	f.seedCheckpoint(t, lifecycleharness.Tenant, "sess_forge_cotenant", "ck_forge_cotenant", "co-tenant")
 	f.seedCheckpoint(t, "globex", "sess_forge_globex", "ck_forge_globex", "second tenant")
@@ -475,38 +497,50 @@ func (r *recordingObjectTransport) setFault(fault func(string) string) {
 // gateway answer, log line, or span carries a capability URL, its signature,
 // or a presigned query parameter, although the adapter's fetch error travels
 // into the session.finalize_workspace span and the FinalizeWorkspace status. Each
-// fault runs on its own fixture, because a failed bind spends the pod's slot
-// failure budget.
+// fault runs on a concurrent-workspace pool, where the restore runs at
+// /start, and on an exclusive pool, where it runs at /finalize. Each case
+// runs on its own fixture, because a failed bind spends the pod's failure
+// budget. The exclusive case reaches the restore only because derive claims
+// a warm pod at create (F-7.1.36).
 //
-// spec: §7.1 (Derive restore semantics); §13.2.3 (Checkpoint Capability Model); §13.2.2
-// diagnosis: a restore chunk fetch that failed at the object store copied the presigned GET URL into its error, which reached a span, a gateway answer, or a log line. Check withoutCapability in pkg/adapter/checkpointtransport.go and the fetch error in chunkStream in pkg/adapter/resume.go.
+// spec: §7.1 (Derive restore semantics); §7.1 (Derive session semantics) derive rule 2; §13.2.3 (Checkpoint Capability Model); §13.2.2
+// diagnosis: a restore chunk fetch that failed at the object store copied the presigned GET URL into its error, which reached a span, a gateway answer, or a log line. Check withoutCapability in pkg/adapter/checkpointtransport.go and the fetch error in chunkStream in pkg/adapter/resume.go. An exclusive case that fetched no capability means derive inserted its row without the create-time claim (claimForNewRow in pkg/gateway/sessionserver).
 func TestFailedRestoreFetchLeaksNoCapability_spec_7_1(t *testing.T) {
 	unreachable := closedListenerHost(t)
-	for _, tc := range []struct {
-		name  string
-		fault func(string) string
+	pools := []struct {
+		name          string
+		maxConcurrent int32
 	}{
-		{name: "store denies a spoiled signature", fault: func(raw string) string {
-			return strings.Replace(raw, "X-Amz-Signature=", "X-Amz-Signature=00", 1)
-		}},
-		{name: "store unreachable", fault: func(raw string) string {
-			u, _ := url.Parse(raw)
-			u.Host = unreachable
-			return u.String()
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newRestoreScopeFixture(t)
-			f.seedSource(t, "sess_leak_source", "ck_leak_source")
-			id := f.copyFrom(t, "sess_leak_source", "derive", map[string]any{})
-			f.transport.setFault(tc.fault)
-			code := f.finalizeAndStart(t, id)
-			f.requireNotStarted(t, id, code)
-			if len(f.transport.fetched()) == 0 {
-				t.Fatalf("adapter fetched no capability, so the case never reached the object store; start %d, answer %s", code, f.bodies[len(f.bodies)-1])
-			}
-			f.requireNoBearerLeak(t)
-		})
+		{name: "concurrent-workspace pool", maxConcurrent: restoreScopeConcurrent},
+		{name: "exclusive pool", maxConcurrent: 0},
+	}
+	for _, pool := range pools {
+		for _, tc := range []struct {
+			name  string
+			fault func(string) string
+		}{
+			{name: "store denies a spoiled signature", fault: func(raw string) string {
+				return strings.Replace(raw, "X-Amz-Signature=", "X-Amz-Signature=00", 1)
+			}},
+			{name: "store unreachable", fault: func(raw string) string {
+				u, _ := url.Parse(raw)
+				u.Host = unreachable
+				return u.String()
+			}},
+		} {
+			t.Run(pool.name+"/"+tc.name, func(t *testing.T) {
+				f := newRestoreScopeFixtureOn(t, 1, pool.maxConcurrent)
+				f.seedSource(t, "sess_leak_source", "ck_leak_source")
+				id := f.copyFrom(t, "sess_leak_source", "derive", map[string]any{})
+				f.transport.setFault(tc.fault)
+				code := f.finalizeAndStart(t, id)
+				f.requireNotStarted(t, id, code)
+				if len(f.transport.fetched()) == 0 {
+					t.Fatalf("adapter fetched no capability, so the case never reached the object store; status %d, answer %s", code, f.bodies[len(f.bodies)-1])
+				}
+				f.requireNoBearerLeak(t)
+			})
+		}
 	}
 }
 

@@ -4321,10 +4321,21 @@ than filing a duplicate. F-10.1.45 was already closed and needed no record.
 - Direct-fix queue, after 0109's implementation, whose CODE-4 and CODE-5 edit `bind_request.go` and
   `derive.go`, and after 0107's, which edits `derive.go` and `replay.go`. Both prerequisites are met once
   `impl/0109-snapshot-restore` merges (status 2026-10-30), so these entries are next in the queue.
-  - [ ] **F-7.1.36** (High): derive and replay persist a `created` row with no pod claimed, so on an exclusive
-    pool `prepareAtFinalize` prepares nothing and the launch-only `/start` reconnects to an empty binding. The
-    fix claims at create as `POST /v1/sessions` does, which adds claim-failure codes to the derive and replay
-    responses; if the §15.1 rows need those codes stated, it moves to the proposal pipeline.
+  - [x] **F-7.1.36** (High): derive and replay persist a `created` row with no pod claimed, so on an exclusive
+    pool `prepareAtFinalize` prepares nothing and the launch-only `/start` reconnects to an empty binding.
+    Closed 2026-10-30 by direct fix on `fix/derive-claim-and-setup-labels`: derive and replay claim through
+    the create path's `claimForNewRow` before the insert, answer its claim-failure codes (no §15.1 row needed
+    new codes), and release the claim on any insert failure. A derived and a replayed session on an exclusive
+    pool reach `running` with the restored workspace at tier 4. Filed from the fix: F-5.2.64 (a slot reserved
+    at create runs no §5.2 slot retry at `/start`), F-15.1.65 (derive and replay do not validate
+    `targetPool`), and F-15.1.66 (replay never answers `INCOMPATIBLE_RUNTIME`), each in the direct-fix queue.
+  - [ ] **F-5.2.64** (Medium, filed from F-7.1.36): a slot reserved at create is bound once at `/start`, so a
+    transient slot failure runs no §5.2 slot retry. Confirm the §5.2 reading first; a spec exception goes to
+    the proposal pipeline with F-5.2.62.
+  - [ ] **F-15.1.65** (Low, filed from F-7.1.36): derive and replay skip `requirePoolSelectable` on
+    `targetPool`, so a wrong pool answers a retryable 503 and the pool grant is not checked.
+  - [ ] **F-15.1.66** (Medium, filed from F-7.1.36): replay compares no `executionMode` and never answers
+    `400 INCOMPATIBLE_RUNTIME`.
   - [ ] **F-15.1.63** (Medium): derive and replay mint no `uploadToken`, although the §15.1 replay response is
     identical to `POST /v1/sessions`. It rides with F-7.1.36, which edits the same create path.
 - Direct-fix queue, independent of 0109's implementation and preferably ahead of it.
