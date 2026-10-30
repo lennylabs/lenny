@@ -79,7 +79,7 @@ func (b *blockingReader) Read(p []byte) (int, error) {
 func TestUploadPerSessionConcurrencyLimit(t *testing.T) {
 	srv, issuer, _ := newUploadLimitServer(t, 1, 0, 0)
 	tok, _ := issuer.Issue("sess_upload", 0)
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	br := &blockingReader{started: make(chan struct{}), release: make(chan struct{}), data: []byte("hello")}
 	req1 := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_upload/upload", br)
@@ -121,7 +121,7 @@ func TestUploadPerSessionConcurrencyLimit(t *testing.T) {
 func TestUploadNoLimitsConfigured(t *testing.T) {
 	srv, issuer, _ := newUploadLimitServer(t, 0, 0, 0)
 	tok, _ := issuer.Issue("sess_upload", 0)
-	rr := uploadRequest(t, srv.Handler(), "sess_upload", "acme", tok, bytes.Repeat([]byte("x"), 4096), "text/plain")
+	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, bytes.Repeat([]byte("x"), 4096), "text/plain")
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("unlimited upload: status %d, want 201; body %s", rr.Code, rr.Body.String())
 	}
@@ -133,7 +133,7 @@ func TestUploadNoLimitsConfigured(t *testing.T) {
 func TestUploadPerSessionSizeCapEarlyReject(t *testing.T) {
 	srv, issuer, _ := newUploadLimitServer(t, 0, 0, 20)
 	tok, _ := issuer.Issue("sess_upload", 0)
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	if rr := uploadRequest(t, h, "sess_upload", "acme", tok, []byte("hello world"), "text/plain"); rr.Code != http.StatusCreated {
 		t.Fatalf("first 11-byte upload: status %d, want 201; body %s", rr.Code, rr.Body.String())
@@ -153,7 +153,7 @@ func TestUploadPerSessionSizeCapEarlyReject(t *testing.T) {
 func TestUploadPerSessionSizeCapBoundary(t *testing.T) {
 	srv, issuer, _ := newUploadLimitServer(t, 0, 0, 22)
 	tok, _ := issuer.Issue("sess_upload", 0)
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	for i := 0; i < 2; i++ {
 		if rr := uploadRequest(t, h, "sess_upload", "acme", tok, []byte("hello world"), "text/plain"); rr.Code != http.StatusCreated {
@@ -173,7 +173,7 @@ func TestUploadPerSessionSizeCapBoundary(t *testing.T) {
 func TestUploadPerSessionSizeCapPostHocOnActualBytes(t *testing.T) {
 	srv, issuer, _ := newUploadLimitServer(t, 0, 0, 20)
 	tok, _ := issuer.Issue("sess_upload", 0)
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	// Declare 5 bytes (passes the early check) but stream 30.
 	big := bytes.Repeat([]byte("x"), 30)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -59,7 +60,10 @@ func TestSessionSingleShotBinderMapsServiceError(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	binder := sessionSingleShotBinder{srv: srv, runtimes: runtimestore.NewMemory(), capOverrides: runtimecapoverride.NewMemory()}
 
-	binding, err := binder.BindSingleShot(context.Background(), translator.SingleShotSpec{TenantID: "acme"})
+	// The call carries an owner principal (§10.2 Session ownership), so the
+	// rejection is the create-and-start validation of the empty RuntimeRef.
+	ownerCtx := authmw.WithPrincipal(context.Background(), authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
+	binding, err := binder.BindSingleShot(ownerCtx, translator.SingleShotSpec{TenantID: "acme"})
 	if err == nil {
 		t.Fatal("BindSingleShot with an empty RuntimeRef returned no error; want a validation rejection")
 	}
@@ -189,7 +193,10 @@ func TestSessionSingleShotBinderReturnsTheCreatedSession_spec_15(t *testing.T) {
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	binder := sessionSingleShotBinder{srv: srv, runtimes: runtimestore.NewMemory(), capOverrides: runtimecapoverride.NewMemory()}
 
-	binding, err := binder.BindSingleShot(context.Background(), translator.SingleShotSpec{TenantID: "acme", RuntimeRef: "chat", UserID: "alice@acme.com"})
+	// spec: §10.2 (Session ownership) — the create-and-start service binds
+	// the owner from the principal the context carries.
+	ownerCtx := authmw.WithPrincipal(context.Background(), authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
+	binding, err := binder.BindSingleShot(ownerCtx, translator.SingleShotSpec{TenantID: "acme", RuntimeRef: "chat", UserID: "alice@acme.com"})
 	if err != nil {
 		t.Fatalf("BindSingleShot = %v, want the created session", err)
 	}
@@ -199,6 +206,9 @@ func TestSessionSingleShotBinderReturnsTheCreatedSession_spec_15(t *testing.T) {
 	}
 	if binding.RecoveryGeneration != row.RecoveryGeneration {
 		t.Errorf("binding recovery generation = %d, want the row's %d", binding.RecoveryGeneration, row.RecoveryGeneration)
+	}
+	if row.UserID != "alice@acme.com" {
+		t.Errorf("bound session owner = %q, want the principal alice@acme.com", row.UserID)
 	}
 	if binding.Hold {
 		t.Error("binding holds a session whose runtime the registry does not hold, want released")

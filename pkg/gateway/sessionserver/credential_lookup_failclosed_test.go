@@ -219,8 +219,8 @@ func (f *credOutageFixture) sandboxClaimed(t *testing.T) bool {
 func TestCreateAndStartFailsClosedOnCredentialLookupOutage_spec_4_9(t *testing.T) {
 	t.Parallel()
 	f := newCredOutageFixture(t, "sess-cred-outage")
-	h := f.srv.Handler()
-	body, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	h := asOwner(f.srv.Handler())
+	body, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo"})
 
 	f.runtimes.set(true)
 	rr := postSessionStep(t, h, "/v1/sessions/start", body)
@@ -331,7 +331,7 @@ func TestResumeFailsClosedOnCredentialLookupOutage_spec_7_3(t *testing.T) {
 	seedAwaitingSession(t, f.store, sessionstore.Session{
 		ID: "sess-resume-outage", UserID: "alice@acme.com", WorkspaceSnapshot: checkpointed(),
 	})
-	rr := postSessionStep(t, f.srv.Handler(), "/v1/sessions/sess-resume-outage/resume", nil)
+	rr := postSessionStep(t, asOwner(f.srv.Handler()), "/v1/sessions/sess-resume-outage/resume", nil)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d; body=%s", rr.Code, rr.Body.String())
 	}

@@ -236,7 +236,7 @@ func newStartFixture(t *testing.T, id string) *startFixture {
 		Executor:                executor.NewPodExecutor(f.registry, f.binder),
 	}
 	f.srv = sessionserver.New(f.store, f.opts)
-	createAndFinalize(t, f.srv.Handler(), id)
+	createAndFinalize(t, asOwner(f.srv.Handler()), id)
 	f.base = len(f.bus.History(id, 0))
 	if got := f.row(t); got.State != session.StateReady || got.PodAssignment == "" {
 		t.Fatalf("seed row = %q on %q, want ready on a pod", got.State, got.PodAssignment)
@@ -269,7 +269,7 @@ func (f *startFixture) start(ctx context.Context, srv *sessionserver.Server) *ht
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+f.id+"/start", nil).WithContext(ctx)
 	req.Header.Set("X-Lenny-Tenant-ID", startTestTenant)
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	return rr
 }
 

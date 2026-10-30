@@ -180,7 +180,7 @@ func (f *wdFixture) post(t *testing.T, path, id, runtime, plan string) *httptest
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("X-Lenny-Tenant-ID", wdTenant)
 	rr := httptest.NewRecorder()
-	f.srv.Handler().ServeHTTP(rr, r)
+	asOwner(f.srv.Handler()).ServeHTTP(rr, r)
 	return rr
 }
 
@@ -216,7 +216,7 @@ func (f *wdFixture) getPlan(t *testing.T, id string) workspaceplan.Plan {
 	r := httptest.NewRequest(http.MethodGet, "/v1/sessions/"+id, nil)
 	r.Header.Set("X-Lenny-Tenant-ID", wdTenant)
 	rr := httptest.NewRecorder()
-	f.srv.Handler().ServeHTTP(rr, r)
+	asOwner(f.srv.Handler()).ServeHTTP(rr, r)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("GET %s: status %d, body=%s", id, rr.Code, rr.Body.String())
 	}
@@ -356,7 +356,7 @@ func TestCreateAndStartComposesDefaults_spec_14_1(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", nil)
 	rec := httptest.NewRecorder()
 	f.nextID = "sess_direct_start"
-	row, build, ok := f.srv.buildCreateAndStartRow(rec, req, wdTenant, CreateAndStartRequest{RuntimeRef: wdRuntime})
+	row, build, ok := f.srv.buildCreateAndStartRow(rec, req, wdTenant, "alice", CreateAndStartRequest{RuntimeRef: wdRuntime})
 	if !ok {
 		t.Fatalf("buildCreateAndStartRow rejected: %s", rec.Body.String())
 	}
@@ -368,7 +368,7 @@ func TestCreateAndStartComposesDefaults_spec_14_1(t *testing.T) {
 	f.nextID = "sess_direct_create"
 	row, cbuild, ok := f.srv.validateAndBuildCreateRow(rec, req, CreateSessionRequest{
 		RuntimeRef: wdRuntime, WorkspacePlan: json.RawMessage(wdClientPlan),
-	}, wdTenant, trace.SpanFromContext(req.Context()))
+	}, wdTenant, "alice", trace.SpanFromContext(req.Context()))
 	if !ok {
 		t.Fatalf("validateAndBuildCreateRow rejected: %s", rec.Body.String())
 	}
@@ -671,7 +671,7 @@ func TestRoutedRuntimeDefaultsAreComposed_spec_14_1(t *testing.T) {
 		assertVariant(t, f, "sess_exp_s")
 	})
 	t.Run("preroute-modify/create-and-start", func(t *testing.T) {
-		modified, _ := json.Marshal(routeTaskSpec{TenantID: wdTenant, UserID: "alice", RequestedRuntime: "wd-variant"})
+		modified, _ := json.Marshal(routeTaskSpec{TenantID: wdTenant, UserID: testOwner, RequestedRuntime: "wd-variant"})
 		chain := interceptor.NewChain()
 		if err := chain.Register(interceptor.PhasePreRoute, routeModifyInterceptor{priority: 350, out: modified}); err != nil {
 			t.Fatalf("register: %v", err)

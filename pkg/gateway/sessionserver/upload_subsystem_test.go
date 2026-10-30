@@ -97,7 +97,7 @@ func TestHandleUploadReturns503WhenBreakerOpen(t *testing.T) {
 	srv, issuer, _, store, _ := newUploadServerWithSubsystem(t, sub)
 	tok := seedAndMintUploadSubsystem(t, store, issuer, "sess_subsystem", "default")
 
-	rr := doUpload(t, srv.Handler(), "sess_subsystem", "default", tok, "payload")
+	rr := doUpload(t, asOwner(srv.Handler()), "sess_subsystem", "default", tok, "payload")
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d", rr.Code, http.StatusServiceUnavailable)
 	}
@@ -136,7 +136,7 @@ func TestHandleUploadReturns503WhenLimiterSaturated(t *testing.T) {
 	}
 	defer r()
 
-	rr := doUpload(t, srv.Handler(), "sess_subsystem", "default", tok, "payload")
+	rr := doUpload(t, asOwner(srv.Handler()), "sess_subsystem", "default", tok, "payload")
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d", rr.Code, http.StatusServiceUnavailable)
 	}
@@ -156,7 +156,7 @@ func TestHandleUploadPassesThroughHealthySubsystem(t *testing.T) {
 	srv, issuer, _, store, _ := newUploadServerWithSubsystem(t, sub)
 	tok := seedAndMintUploadSubsystem(t, store, issuer, "sess_subsystem", "default")
 
-	rr := doUpload(t, srv.Handler(), "sess_subsystem", "default", tok, "payload")
+	rr := doUpload(t, asOwner(srv.Handler()), "sess_subsystem", "default", tok, "payload")
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want %d (body=%s)", rr.Code, http.StatusCreated, rr.Body.String())
 	}

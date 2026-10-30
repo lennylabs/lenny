@@ -89,7 +89,7 @@ func TestCreateSessionToolUsesGeneratedSchema_spec_15_2_1_1386(t *testing.T) {
 		t.Fatal("create_session tool or its inputSchema not found")
 	}
 	props, _ := schema["properties"].(map[string]any)
-	for _, field := range []string{"runtimeRef", "userId", "environment", "workspacePlan", "isolationProfile", "metadata", "retryPolicy", "idempotencyKey"} {
+	for _, field := range []string{"runtimeRef", "environment", "workspacePlan", "isolationProfile", "metadata", "retryPolicy", "idempotencyKey"} {
 		if _, ok := props[field]; !ok {
 			t.Errorf("create_session inputSchema missing OpenAPI-derived field %q", field)
 		}
@@ -107,7 +107,7 @@ func TestCreateSessionForwardsFullRequest_spec_15_2_1_1386(t *testing.T) {
 	creator.resp.State = "created"
 
 	srv := newMCPWithCreator(t, creator)
-	args := `{"runtimeRef":"echo","userId":"alice@acme.com","workspacePlan":{"sources":[]},"isolationProfile":"sandboxed","metadata":{"team":"x"}}`
+	args := `{"runtimeRef":"echo","workspacePlan":{"sources":[]},"isolationProfile":"sandboxed","metadata":{"team":"x"}}`
 	call(t, srv.Handler(), "lenny/create_session", args)
 
 	if string(creator.gotReq.WorkspacePlan) == "" {

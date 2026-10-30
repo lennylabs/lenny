@@ -83,12 +83,12 @@ func TestCreateBodyPoolHonorsBackedAuthorizedPin_spec_7_1(t *testing.T) {
 	})
 
 	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{
-		RuntimeRef: "echo", UserID: "alice@acme.com", Pool: "echo-pool-b",
+		RuntimeRef: "echo", Pool: "echo-pool-b",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201 for a backed+authorized pin; body=%s", rr.Code, rr.Body.String())
@@ -145,12 +145,12 @@ func TestCreateBodyPoolHonorsPinnedProfileWhenIsolationOmitted_spec_7_1(t *testi
 
 	// No IsolationProfile in the body: the client defers to the pinned pool.
 	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{
-		RuntimeRef: "echo", UserID: "alice@acme.com", Pool: "microvm-pool",
+		RuntimeRef: "echo", Pool: "microvm-pool",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201 when a pinned pool's profile differs from the default and isolationProfile is omitted; body=%s", rr.Code, rr.Body.String())
@@ -211,13 +211,13 @@ func TestCreateBodyPoolRejectsUnsatisfiablePin_spec_14_1(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			body, _ := json.Marshal(sessionserver.CreateAndStartRequest{
-				RuntimeRef: tc.runtimeRef, UserID: "alice@acme.com",
+				RuntimeRef:       tc.runtimeRef,
 				IsolationProfile: tc.isolationProfile, Pool: tc.pool,
 			})
 			req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 			req.Header.Set("X-Lenny-Tenant-ID", "acme")
 			rr := httptest.NewRecorder()
-			srv.Handler().ServeHTTP(rr, req)
+			asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 			if rr.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400 for an unsatisfiable pin; body=%s", rr.Code, rr.Body.String())
@@ -272,12 +272,12 @@ func TestCreateBodyPoolRejectsUnauthorizedPin_spec_7_1(t *testing.T) {
 	})
 
 	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{
-		RuntimeRef: "echo", UserID: "alice@acme.com", Pool: "echo-pool",
+		RuntimeRef: "echo", Pool: "echo-pool",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403 for an unauthorized pin; body=%s", rr.Code, rr.Body.String())

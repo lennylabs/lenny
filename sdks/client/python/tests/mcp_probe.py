@@ -62,7 +62,7 @@ def main() -> None:
             return
 
     # Drive a session over MCP: create, send a message, read the reply.
-    created = mcp.create_session("claude-code", "alice@acme.com")
+    created = mcp.create_session("claude-code")
     if not created.session_id:
         fail("create_session returned an empty session id")
         return

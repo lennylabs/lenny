@@ -39,7 +39,7 @@ func TestDeleteFromResumingBumpsCoordinationGeneration_spec_7_2_F_7_1_14(t *test
 	if err := store.Create(context.Background(), row); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 	rr := sessionRequest(t, h, http.MethodDelete, "/v1/sessions/sess-del-resuming")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("delete: status %d body %s", rr.Code, rr.Body.String())
@@ -72,7 +72,7 @@ func TestDeleteFromRunningDoesNotBumpCoordinationGeneration_spec_7_2_F_7_1_14(t 
 	if err := store.Create(context.Background(), row); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 	rr := sessionRequest(t, h, http.MethodDelete, "/v1/sessions/sess-del-running")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("delete: status %d body %s", rr.Code, rr.Body.String())

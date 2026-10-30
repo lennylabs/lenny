@@ -49,7 +49,7 @@ func quotaServer(t *testing.T, limit int, seed []session.State) *sessionserver.S
 
 func TestCreateAllowedUnderConcurrentSessionQuota(t *testing.T) {
 	srv := quotaServer(t, 3, []session.State{session.StateRunning})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("under quota: status %d, want 201; body %s", rr.Code, rr.Body.String())
 	}
@@ -57,7 +57,7 @@ func TestCreateAllowedUnderConcurrentSessionQuota(t *testing.T) {
 
 func TestCreateRejectedAtConcurrentSessionQuota(t *testing.T) {
 	srv := quotaServer(t, 2, []session.State{session.StateRunning, session.StateCreated})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
 	if rr.Code != http.StatusTooManyRequests {
 		t.Fatalf("at quota: status %d, want 429; body %s", rr.Code, rr.Body.String())
 	}
@@ -70,7 +70,7 @@ func TestCreateConcurrentSessionQuotaZeroIsUnlimited(t *testing.T) {
 	srv := quotaServer(t, 0, []session.State{
 		session.StateRunning, session.StateRunning, session.StateRunning,
 	})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("zero limit (unlimited): status %d, want 201; body %s", rr.Code, rr.Body.String())
 	}
@@ -80,7 +80,7 @@ func TestCreateConcurrentSessionQuotaIgnoresTerminalSessions(t *testing.T) {
 	// Two terminal sessions, limit of 1: a terminal session holds no
 	// quota, so the create is admitted.
 	srv := quotaServer(t, 1, []session.State{session.StateCompleted, session.StateFailed})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("terminal sessions must not count: status %d, want 201; body %s", rr.Code, rr.Body.String())
 	}
@@ -90,7 +90,7 @@ func TestCreateConcurrentSessionQuotaUnknownTenantSkipped(t *testing.T) {
 	// The tenant registry has no acme row, so no limit applies.
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Tenants: tenantstore.NewMemory()})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("unknown tenant: status %d, want 201; body %s", rr.Code, rr.Body.String())
 	}
@@ -120,7 +120,7 @@ func quotaRefusalBody(t *testing.T, body []byte) (string, string, map[string]any
 // spec: §11.1 (Concurrent-session count)
 func TestCreateAdmittedWhileCapIsFullOfSuspendedSessions_spec_11_1(t *testing.T) {
 	srv := quotaServer(t, 2, []session.State{session.StateSuspended, session.StateSuspended})
-	if rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"}); rr.Code != http.StatusCreated {
+	if rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"}); rr.Code != http.StatusCreated {
 		t.Fatalf("tenant quota full of suspended sessions: status %d, want 201; body %s", rr.Code, rr.Body.String())
 	}
 	seed := runningRows("acme", "alice", "claude-code", 2)
@@ -130,7 +130,7 @@ func TestCreateAdmittedWhileCapIsFullOfSuspendedSessions_spec_11_1(t *testing.T)
 		DevTenantHeader:              true,
 		MaxConcurrentSessionsPerUser: 2, MaxConcurrentSessionsPerRuntime: 2, MaxConcurrentSessionsGlobal: 2,
 	}, seed)
-	rr := createRequestAs(t, scoped.Handler(), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"},
+	rr := createRequestAs(t, asOwner(scoped.Handler()), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"},
 		authmw.Principal{Subject: "alice", TenantID: "acme"})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("scoped limits full of suspended sessions: status %d, want 201; body %s", rr.Code, rr.Body.String())
@@ -168,7 +168,7 @@ func TestCreateRefusalBodyIsTheSharedCapRefusal_spec_11_1(t *testing.T) {
 	}
 	t.Run("tenant", func(t *testing.T) {
 		srv := quotaServer(t, 1, []session.State{session.StateRunning})
-		check(t, createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"}),
+		check(t, createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"}),
 			&sessionserver.CapRefusal{Scope: sessionserver.CapScopeTenant, Limit: 1, Active: 1})
 	})
 	for _, tc := range []struct {
@@ -181,7 +181,7 @@ func TestCreateRefusalBodyIsTheSharedCapRefusal_spec_11_1(t *testing.T) {
 	} {
 		t.Run(tc.scope, func(t *testing.T) {
 			srv := concurrencyServer(t, tc.opts, runningRows("acme", "alice", "claude-code", 1))
-			rr := createRequestAs(t, srv.Handler(), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"},
+			rr := createRequestAs(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"},
 				authmw.Principal{Subject: "alice", TenantID: "acme"})
 			check(t, rr, &sessionserver.CapRefusal{Scope: tc.scope, Limit: 1, Active: 1})
 		})

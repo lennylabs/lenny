@@ -59,6 +59,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // The provider/pool identifiers the fixture spans. shared-tool supports both
@@ -183,7 +184,7 @@ func TestDenyDelegationDeliversNoLeaseToken(t *testing.T) {
 		CredentialRouter:        credrouter.NewDefault(),
 		Blobs:                   blobs,
 	})
-	h := srv.Handler()
+	h := ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)
 
 	// The same sessionserver.Server is the §8.3 delegation-time
 	// credential-availability checker for the MCP delegate_task handler, so the
@@ -230,7 +231,7 @@ func TestDenyDelegationDeliversNoLeaseToken(t *testing.T) {
 	// pod, finalize returns before any assignment and the delivery boundary
 	// would be untested.
 	createLeaf := func() string {
-		body, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "shared-tool", UserID: "alice@acme.com"})
+		body, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "shared-tool"})
 		rr := post("/v1/sessions", body)
 		if rr.Code != http.StatusCreated {
 			t.Fatalf("create leaf: status %d, body=%s", rr.Code, rr.Body.String())
@@ -350,7 +351,7 @@ func denyLeakageDelegate(t *testing.T, srv *mcp.Server, parentID, target, propag
 	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(body)))
 	req = req.WithContext(authmw.WithPrincipal(req.Context(), denyLeakageCaller))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice).ServeHTTP(rr, req)
 	var resp map[string]any
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode delegate_task response: %v; body=%s", err, rr.Body.String())

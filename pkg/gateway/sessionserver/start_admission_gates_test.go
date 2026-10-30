@@ -64,7 +64,7 @@ func TestSessionStartRejectedAtPerRuntimeConcurrencyLimit_spec_11_1(t *testing.T
 	srv := concurrencyServer(t,
 		sessionserver.Options{DevTenantHeader: true, MaxConcurrentSessionsPerRuntime: 2},
 		runningRows("acme", "alice", "claude-code", 2))
-	rr := createAndStartRequest(t, srv.Handler(),
+	rr := createAndStartRequest(t, asOwner(srv.Handler()),
 		sessionserver.CreateAndStartRequest{RuntimeRef: "claude-code"})
 	if rr.Code != http.StatusTooManyRequests {
 		t.Fatalf("at per-runtime limit: status %d, want 429; body %s", rr.Code, rr.Body.String())
@@ -81,8 +81,8 @@ func TestSessionStartRejectedAtPerUserConcurrencyLimit_spec_11_1(t *testing.T) {
 	srv := concurrencyServer(t,
 		sessionserver.Options{DevTenantHeader: true, MaxConcurrentSessionsPerUser: 2},
 		runningRows("acme", "alice@acme.com", "claude-code", 2))
-	rr := createAndStartRequestAs(t, srv.Handler(),
-		sessionserver.CreateAndStartRequest{RuntimeRef: "claude-code", UserID: "alice@acme.com"},
+	rr := createAndStartRequestAs(t, asOwner(srv.Handler()),
+		sessionserver.CreateAndStartRequest{RuntimeRef: "claude-code"},
 		authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
 	if rr.Code != http.StatusTooManyRequests {
 		t.Fatalf("at per-user limit: status %d, want 429; body %s", rr.Code, rr.Body.String())
@@ -102,7 +102,7 @@ func TestSessionStartRejectedAtAdmissionRateLimit_spec_11_1(t *testing.T) {
 		AdmissionRateLimitCounter: rlcounter.NewMemory(),
 		PerRuntimePerMinute:       2,
 	})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 	for i := 1; i <= 2; i++ {
 		rr := createAndStartRequest(t, h, sessionserver.CreateAndStartRequest{RuntimeRef: "claude-code"})
 		if rr.Code != http.StatusCreated {
@@ -130,7 +130,7 @@ func TestSessionStartRejectedAtAdmissionRateLimit_spec_11_1(t *testing.T) {
 func TestSessionStartRejectedByEnvironmentAdmission_spec_10_6(t *testing.T) {
 	srv, _ := seedNoEnvServer(t, "sess_start_deny",
 		tenantstore.NoEnvPolicyDenyAll, tenantstore.NoEnvPolicyDenyAll)
-	rr := createAndStartRequestAs(t, srv.Handler(),
+	rr := createAndStartRequestAs(t, asOwner(srv.Handler()),
 		sessionserver.CreateAndStartRequest{RuntimeRef: "claude-code"},
 		authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
 	if rr.Code != http.StatusForbidden {
@@ -177,7 +177,7 @@ func TestSessionStartConcurrencyGateRunsBeforeRateGate_spec_11_1(t *testing.T) {
 		AdmissionRateLimitCounter:       spy,
 		PerRuntimePerMinute:             5,
 	})
-	rr := createAndStartRequest(t, srv.Handler(),
+	rr := createAndStartRequest(t, asOwner(srv.Handler()),
 		sessionserver.CreateAndStartRequest{RuntimeRef: "claude-code"})
 	if rr.Code != http.StatusTooManyRequests {
 		t.Fatalf("at concurrency cap: status %d, want 429; body %s", rr.Code, rr.Body.String())

@@ -41,6 +41,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/matrix"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 const journeyTenant = "acme"
@@ -81,7 +82,7 @@ func newJourneyGateway(t *testing.T, clock func() time.Time, idSeed string) *jou
 		Clock:           clock,
 		IDFunc:          func() string { return idSeed },
 	})
-	tsREST := httptest.NewServer(restHandler.Handler())
+	tsREST := httptest.NewServer(ownerprincipal.Wrap(restHandler.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsREST.Close)
 
 	mcpSrv := mcp.NewServer()
@@ -112,7 +113,7 @@ func newJourneyGateway(t *testing.T, clock func() time.Time, idSeed string) *jou
 		IDFunc:            func() string { return idSeed },
 		TenantID:          journeyTenant,
 	})
-	tsMCP := httptest.NewServer(mcpSrv.Handler())
+	tsMCP := httptest.NewServer(ownerprincipal.Wrap(mcpSrv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsMCP.Close)
 
 	chatHandler := translator.NewOpenAIChatHandler(store, exec, translator.OpenAIChatOptions{
@@ -120,7 +121,7 @@ func newJourneyGateway(t *testing.T, clock func() time.Time, idSeed string) *jou
 		Clock:           clock,
 		IDFunc:          func() string { return idSeed },
 	})
-	tsChat := httptest.NewServer(chatHandler.Handler())
+	tsChat := httptest.NewServer(ownerprincipal.Wrap(chatHandler.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsChat.Close)
 
 	respHandler := translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
@@ -130,7 +131,7 @@ func newJourneyGateway(t *testing.T, clock func() time.Time, idSeed string) *jou
 		Clock:           clock,
 		IDFunc:          func() string { return idSeed },
 	})
-	tsResponses := httptest.NewServer(respHandler.Handler())
+	tsResponses := httptest.NewServer(ownerprincipal.Wrap(respHandler.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsResponses.Close)
 
 	return &journeyGateway{
@@ -188,7 +189,7 @@ func TestMultiProtocolSessionJourney(t *testing.T) {
 func runRESTJourney(t *testing.T, gw *journeyGateway, sessionID, prompt string) {
 	t.Helper()
 
-	createBody := []byte(`{"runtimeRef":"claude-code","userId":"alice@acme.com"}`)
+	createBody := []byte(`{"runtimeRef":"claude-code"}`)
 	resp, raw := restPostJSON(t, gw.rest.URL+"/v1/sessions/start", createBody)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("REST create+start status: %d, body=%s", resp.StatusCode, raw)
@@ -319,7 +320,6 @@ func runMCPJourney(t *testing.T, gw *journeyGateway, sessionID, prompt string) {
 
 	createRes := mcpCall(t, gw.mcpSrv.URL+"/mcp", "lenny/create_and_start_session", map[string]any{
 		"runtimeRef": "claude-code",
-		"userId":     "alice@acme.com",
 	})
 	created := mcpToolPayload(t, createRes)
 	if got, _ := created["id"].(string); got != sessionID {

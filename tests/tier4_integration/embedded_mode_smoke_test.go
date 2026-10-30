@@ -303,7 +303,7 @@ func newSessionToleratingWarmup(t *testing.T, bin, home, rt string) string {
 	var last embedded.Result
 	for {
 		last = embedded.Run(t, bin, home, 2*time.Minute,
-			"session", "new", "--runtime", rt, "--user", "alice@acme.com")
+			"session", "new", "--runtime", rt)
 		if last.ExitCode == 0 {
 			sid := strings.TrimSpace(last.Stdout)
 			if sid == "" {

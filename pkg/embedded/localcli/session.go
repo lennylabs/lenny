@@ -81,7 +81,6 @@ func cmdSession(args []string, stdout, stderr io.Writer) int {
 type sessionFlags struct {
 	apiURL    string
 	token     string
-	user      string
 	runtime   string
 	status    string
 	reason    string
@@ -120,12 +119,6 @@ func parseSessionFlags(args []string) (sessionFlags, error) {
 				return f, fmt.Errorf("%s requires a value", a)
 			}
 			f.token = v
-		case "--user":
-			v, ok := next()
-			if !ok {
-				return f, fmt.Errorf("%s requires a value", a)
-			}
-			f.user = v
 		case "--runtime":
 			v, ok := next()
 			if !ok {
@@ -294,7 +287,7 @@ func cmdSessionNew(ctx context.Context, args []string, stdout, stderr io.Writer)
 		}
 		sessionID = id
 	} else {
-		created, cerr := client.MCP().CreateSession(ctx, f.runtime, f.user)
+		created, cerr := client.MCP().CreateSession(ctx, f.runtime)
 		if cerr != nil {
 			fmt.Fprintf(stderr, "lenny session new: %v\n", cerr)
 			return 1
@@ -340,7 +333,6 @@ func cmdSessionNew(ctx context.Context, args []string, stdout, stderr io.Writer)
 func createSessionWithWorkspace(ctx context.Context, client *lenny.Client, f sessionFlags, stderr io.Writer) (string, error) {
 	created, err := client.CreateSession(ctx, lenny.CreateSessionRequest{
 		RuntimeRef: f.runtime,
-		UserID:     f.user,
 	})
 	if err != nil {
 		return "", err

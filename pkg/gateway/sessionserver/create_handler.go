@@ -17,7 +17,6 @@ import (
 // `credentialPolicy`, `delegationPolicy`, etc.
 type CreateSessionRequest struct {
 	RuntimeRef    string          `json:"runtimeRef"`
-	UserID        string          `json:"userId,omitempty"`
 	WorkspacePlan json.RawMessage `json:"workspacePlan,omitempty"`
 
 	// Environment is the optional §10.6 environment the session is

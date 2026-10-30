@@ -21,6 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -207,12 +208,11 @@ func TestDelegateTaskMapsFenceRefusal_spec_12_8(t *testing.T) {
 	}
 }
 
-// TestMinimalCreateSessionMapsFenceRefusal_spec_12_8 pins the fallback
-// create_session of a gateway that wires no session server: the fence's
-// refusal answers a tool error with its code and details rather than the
-// raw store error.
-// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain)
-func TestMinimalCreateSessionMapsFenceRefusal_spec_12_8(t *testing.T) {
+// TestCreateSessionMapsFenceRefusal_spec_12_8 pins that create_session
+// answers an erasure-pending caller's refusal as a tool error carrying the
+// §15.1 code and details, through the shared §15.1 service.
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 10.2 (Session ownership)
+func TestCreateSessionMapsFenceRefusal_spec_12_8(t *testing.T) {
 	tenants, users := seededRegistries(t)
 	_, _ = users.Update(context.Background(), "acme", "user_alice", func(u *userstore.User) error {
 		u.ProcessingRestricted, u.ErasureJobID = true, "job-6"
@@ -224,8 +224,12 @@ func TestMinimalCreateSessionMapsFenceRefusal_spec_12_8(t *testing.T) {
 		DevTenantFallback: true,
 		Store:             store, Executor: executor.NewEchoExecutor(), Runtimes: runtimestore.NewMemory(),
 		IDFunc: func() string { return "sess_new" }, TenantID: "acme",
+		SessionCreator: sessionserver.New(store, sessionserver.Options{
+			IDFunc: func() string { return "sess_new" }, Tenants: tenants, Users: users,
+		}),
 	})
-	resp := call(t, srv.Handler(), "lenny/create_session", `{"runtimeRef":"claude-code","userId":"user_alice"}`)
+	resp := callWithPrincipal(t, srv.Handler(), authmw.Principal{Subject: "user_alice", TenantID: "acme"},
+		"lenny/create_session", `{"runtimeRef":"claude-code"}`)
 	result, _ := resp["result"].(map[string]any)
 	env := readLennyErrorEnvelope(t, result)
 	if env["code"] != "ERASURE_IN_PROGRESS" {

@@ -432,7 +432,7 @@ func silentListener(t *testing.T) string {
 func coordinatorChain(t *testing.T, m *gatewaypki.Material, mcpSrv *mcp.Server, rest http.Handler, opts authmw.Options) string {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", mcpSrv.Handler())
+	mux.Handle("/mcp", asOwner(mcpSrv.Handler()))
 	if rest != nil {
 		mux.Handle("/v1/sessions/", rest)
 	}
@@ -1034,7 +1034,7 @@ func newServingSurface(s *Server, row sessionstore.Session) *servingSurface {
 		return res, err
 	})
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", mcpSrv.Handler())
+	mux.Handle("/mcp", asOwner(mcpSrv.Handler()))
 	mux.HandleFunc("/v1/sessions/{id}/resume", func(w http.ResponseWriter, r *http.Request) {
 		ss.calls.Add(1)
 		s.forwardToHolder(w, r, row, ForwardKindResume, r.Body)
@@ -1169,7 +1169,7 @@ func toolForwardingServer(s *Server, row sessionstore.Session, credential string
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := authmw.WithCredential(r.Context(), authmw.Credential{Authorization: "Bearer " + credential})
-		mcpSrv.Handler().ServeHTTP(w, r.WithContext(ctx))
+		asOwner(mcpSrv.Handler()).ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -1342,7 +1342,7 @@ func credentialServingSurface(s *Server, verifier jwt.Verifier) http.Handler {
 	})
 	mux := http.NewServeMux()
 	mux.Handle("/v1/sessions/", rest)
-	mux.Handle("POST /mcp", tools.Handler())
+	mux.Handle("POST /mcp", asOwner(tools.Handler()))
 	mux.Handle("GET /mcp/v1/ws", tools.WebSocketHandler())
 	return authmw.Wrap(mux, authmw.Options{Verifier: verifier})
 }

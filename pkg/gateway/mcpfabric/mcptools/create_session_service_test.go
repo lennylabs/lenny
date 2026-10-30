@@ -60,7 +60,7 @@ func newMCPWithCreator(t *testing.T, creator mcptools.SessionCreator) *mcp.Serve
 
 // TestCreateSessionRoutesThroughSharedService_spec_15_2_1_1380 verifies
 // the §15.2.1 rule-1 fix: when a SessionCreator is wired, the
-// lenny/create_session tool forwards the request (runtimeRef, userId,
+// lenny/create_session tool forwards the request (runtimeRef and
 // environment) under the caller-resolved tenant to the shared §15.1
 // service rather than writing the session row directly, and projects the
 // service response onto the {sessionId, state, uploadToken} envelope —
@@ -82,9 +82,6 @@ func TestCreateSessionRoutesThroughSharedService_spec_15_2_1_1380(t *testing.T) 
 	}
 	if creator.gotReq.RuntimeRef != "echo" {
 		t.Errorf("forwarded runtimeRef: got %q", creator.gotReq.RuntimeRef)
-	}
-	if creator.gotReq.UserID != "alice@acme.com" {
-		t.Errorf("forwarded userId: got %q", creator.gotReq.UserID)
 	}
 	if creator.gotReq.Environment != "team-x" {
 		t.Errorf("forwarded environment: got %q", creator.gotReq.Environment)
@@ -142,18 +139,29 @@ func TestCreateSessionSurfacesServiceError_spec_15_2_1_1384(t *testing.T) {
 	}
 }
 
-// TestCreateSessionLegacyPathWhenNoCreator_spec_15_2_4 confirms the
-// minimal in-process gateway (no SessionCreator wired) still creates a
-// session through the legacy direct-store path so the tool stays usable.
-// F-15.2.4.
-func TestCreateSessionLegacyPathWhenNoCreator_spec_15_2_4(t *testing.T) {
-	srv, store := newMCP(t)
-	resp := call(t, srv.Handler(), "lenny/create_session", `{"runtimeRef":"echo","userId":"alice"}`)
-	payload := parseToolJSON(t, resultText(t, resp))
-	if payload["sessionId"] != "sess_mcp" {
-		t.Fatalf("legacy create sessionId: got %v", payload["sessionId"])
+// TestCreateSessionWithoutCreatorFailsClosed_spec_10_2 pins that a
+// create_session registration with no SessionCreator answers an
+// INTERNAL_ERROR tool error and writes no row. The shared §15.1 service is
+// the only create path, because it binds the owner from the principal; no
+// direct-store write runs without its gates.
+//
+// spec: §10.2 (Session ownership) rule 1; §15.2.1 rule 1.
+func TestCreateSessionWithoutCreatorFailsClosed_spec_10_2(t *testing.T) {
+	store := memstore.New()
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		IDFunc:            func() string { return "sess_mcp" },
+		TenantID:          "acme",
+	})
+	resp := callAsOwner(t, srv.Handler(), "lenny/create_session", `{"runtimeRef":"echo","userId":"bob@acme.com"}`)
+	result, _ := resp["result"].(map[string]any)
+	if env := readLennyErrorEnvelope(t, result); env["code"] != "INTERNAL_ERROR" {
+		t.Fatalf("code = %v, want INTERNAL_ERROR", env["code"])
 	}
-	if _, err := store.Get(context.Background(), "acme", "sess_mcp"); err != nil {
-		t.Fatalf("legacy create did not persist row: %v", err)
+	if _, err := store.Get(context.Background(), "acme", "sess_mcp"); err == nil {
+		t.Fatal("create_session with no SessionCreator wrote a session row")
 	}
 }

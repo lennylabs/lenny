@@ -82,7 +82,7 @@ func TestInterruptRevalidatesOnTheLockedRow_spec_7_2(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/v1/sessions/s1/interrupt", nil)
 			req.Header.Set("X-Lenny-Tenant-ID", "acme")
 			rr := httptest.NewRecorder()
-			srv.Handler().ServeHTTP(rr, req)
+			asOwner(srv.Handler()).ServeHTTP(rr, req)
 			if rr.Code != tc.wantStatus {
 				t.Fatalf("status = %d, want %d; body=%s", rr.Code, tc.wantStatus, rr.Body.String())
 			}

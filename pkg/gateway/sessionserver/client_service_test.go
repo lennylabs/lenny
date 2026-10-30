@@ -109,7 +109,7 @@ func TestListArtifacts_spec_15_2_3(t *testing.T) {
 		{URI: "lenny-blob://acme/workspace/s1/gone", SessionID: "s1", State: artifactcatalog.StateSoftDeleted, ArtifactType: artifactcatalog.ArtifactTypeWorkspace},
 	}}
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Artifacts: cat})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	// Happy path: only the live row is surfaced.
 	rr := httptest.NewRecorder()
@@ -147,7 +147,7 @@ func TestListArtifacts_spec_15_2_3(t *testing.T) {
 	rr = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/v1/sessions/s1/artifacts", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
-	srvNoCat.Handler().ServeHTTP(rr, req)
+	asOwner(srvNoCat.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("no-catalog artifacts status = %d, want 200", rr.Code)
 	}
@@ -165,7 +165,7 @@ func TestSessionUsage_spec_15_2_3(t *testing.T) {
 	_, _ = billing.Append(ctx, billingstore.Event{TenantID: "acme", SessionID: "s1", EventType: billingstore.EventSessionCreated, TokensInput: 30, TokensOutput: 7})
 	_, _ = billing.Append(ctx, billingstore.Event{TenantID: "acme", SessionID: "s1", EventType: billingstore.EventSessionCompleted, TokensInput: 20, TokensOutput: 3})
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Billing: billing})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	// view_usage principal: totals returned.
 	rr := httptest.NewRecorder()
@@ -240,7 +240,7 @@ func TestSessionUsageTreeAggregated_spec_15_1_676(t *testing.T) {
 	}
 
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Billing: billing, TreeArchive: archive})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	type usageRep struct {
 		SessionID      string `json:"sessionId"`

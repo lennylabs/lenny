@@ -243,7 +243,6 @@ func (w *gatewayWiring) buildMCPSurface(
 		Executor:                   w.exec,
 		DeadlockTracker:            deadlockTracker,
 		Deadlocks:                  deadlockManager,
-		DevMode:                    *devMode,
 		Delegation:                 delegationSvc,
 		Users:                      w.users,
 		CallerCheck:                sessionCallerCheck(w.pgPool, w.auditValidator),

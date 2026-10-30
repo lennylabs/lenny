@@ -201,7 +201,7 @@ func TestToolUseApproveUnblocksGate_spec_7_2_18(t *testing.T) {
 
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/tool-use/tc-1/approve", nil))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("approve: %d, body=%s", rr.Code, rr.Body.String())
 	}

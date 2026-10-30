@@ -42,9 +42,8 @@ func TestCreateSessionRoundTripsClientMetadata_spec_7_1_F_7_3_20(t *testing.T) {
 		"workflow_run": "run/9183",
 	}
 
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
-		UserID:     "alice@acme.com",
 		Metadata:   meta,
 	})
 	if rr.Code != http.StatusCreated {
@@ -65,7 +64,7 @@ func TestCreateSessionRoundTripsClientMetadata_spec_7_1_F_7_3_20(t *testing.T) {
 	getReq := httptest.NewRequest(http.MethodGet, "/v1/sessions/"+resp.ID, nil)
 	getReq.Header.Set("X-Lenny-Tenant-ID", "acme")
 	getRR := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(getRR, getReq)
+	asOwner(srv.Handler()).ServeHTTP(getRR, getReq)
 	if getRR.Code != http.StatusOK {
 		t.Fatalf("F-7.3.20: GET status = %d, body=%s", getRR.Code, getRR.Body.String())
 	}
@@ -82,7 +81,7 @@ func TestCreateSessionRoundTripsClientMetadata_spec_7_1_F_7_3_20(t *testing.T) {
 // the wire envelope omits the field per the omitempty contract.
 func TestCreateSessionMetadataAbsentOmitsField_spec_F_7_3_20(t *testing.T) {
 	srv, _ := newCreateServerWithMetadata(t)
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 	})
 	if rr.Code != http.StatusCreated {
@@ -107,7 +106,7 @@ func TestCreateSessionMetadataAbsentOmitsField_spec_F_7_3_20(t *testing.T) {
 func TestCreateSessionMetadataNonStringRejects_spec_F_7_3_20(t *testing.T) {
 	srv, _ := newCreateServerWithMetadata(t)
 	body := []byte(`{"runtimeRef":"claude-code","metadata":{"k":42}}`)
-	rr := createRequestRaw(t, srv.Handler(), body)
+	rr := createRequestRaw(t, asOwner(srv.Handler()), body)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("F-7.3.20: non-string metadata value, status = %d, want 400; body=%s", rr.Code, rr.Body.String())
 	}

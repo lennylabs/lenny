@@ -149,11 +149,15 @@ func (s *Server) ServiceCall(ctx context.Context, tenantID, method, target strin
 // surfaces cannot drift in validation order, error codes, or response
 // shaping. The caller's authenticated principal and explicit-environment
 // binding ride on ctx exactly as they do on a real request; tenantID is
-// recorded on the synthetic request's context as its service tenant, so a
-// caller with no principal still scopes the row to the tenant it resolved
+// recorded on the synthetic request's context as its service tenant, which
+// resolves the tenant for a caller with no principal tenant
 // (resolveTenant prefers a principal when one is present, so the service
-// tenant is inert under an authenticated principal). A call with neither
-// is refused with UNAUTHORIZED. spec: §10.2. F-10.2.21.
+// tenant is inert under an authenticated principal). The service tenant
+// does not admit a create on its own: the session owner is the principal's
+// subject (ownerFromPrincipal), so a call whose ctx carries no principal,
+// or a principal with an empty Subject, is refused with 401 UNAUTHORIZED
+// and writes no row. spec: §10.2 (Session ownership) rules 1 and 3.
+// F-10.2.21.
 //
 // spec: §15.2.1 rule 1; §15.1 session-creation flow. F-15.2.4.
 func (s *Server) CreateSessionService(ctx context.Context, tenantID string, req CreateSessionRequest) (CreateSessionResponse, *ServiceError) {
@@ -226,9 +230,11 @@ func (s *Server) CreateSessionService(ctx context.Context, tenantID string, req 
 // §4.9 CREDENTIAL_POOL_EXHAUSTED pre-claim rejection sets no header). The
 // caller's authenticated principal rides on ctx as it does on a real
 // request; tenantID is recorded on the synthetic request's context as its
-// service tenant, so a principal-less caller still scopes the row to the
-// tenant it resolved, and a call with neither is refused with
-// UNAUTHORIZED. spec: §10.2. F-10.2.21.
+// service tenant, which resolves the tenant only. The session owner is the
+// principal's subject (ownerFromPrincipal), so a call whose ctx carries no
+// principal, or a principal with an empty Subject, is refused with 401
+// UNAUTHORIZED and claims no pod. spec: §10.2 (Session ownership) rules 1
+// and 3. F-10.2.21.
 //
 // spec: §15.2.1 rule 1; §7.1 create-and-start atomicity.
 func (s *Server) CreateAndStartService(ctx context.Context, tenantID string, req CreateSessionRequest) (CreateSessionResponse, *ServiceError) {

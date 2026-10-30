@@ -52,6 +52,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 	"github.com/lennylabs/lenny/tests/testinfra/tcpfault"
 )
@@ -143,7 +144,7 @@ func (e *wsdOutageEnv) sessionServer(t *testing.T, runtimes runtimestore.Store, 
 	}
 	srv := sessionserver.New(e.sessions, opts)
 	t.Cleanup(srv.Close)
-	return srv.Handler()
+	return ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)
 }
 
 // delegateServer registers lenny/delegate_task over a delegation service
@@ -175,7 +176,7 @@ func (e *wsdOutageEnv) delegateServer(t *testing.T, runtimes runtimestore.Store)
 		IDFunc:   func() string { return "sess-wsd-mcp" },
 		TenantID: wsdOutageTenant,
 	})
-	return srv.Handler()
+	return ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)
 }
 
 // wsdOutageCluster is a fake cluster holding a warm pool, a template, and
@@ -365,7 +366,7 @@ func (e *wsdOutageEnv) createWithPlan(t *testing.T, id string) *httptest.Respons
 	t.Helper()
 	e.expectID(id)
 	return e.post(t, "/v1/sessions", sessionserver.CreateSessionRequest{
-		RuntimeRef: wsdOutageRuntime, UserID: "alice@acme.com", WorkspacePlan: clientPlan(t),
+		RuntimeRef: wsdOutageRuntime, WorkspacePlan: clientPlan(t),
 	})
 }
 
@@ -375,7 +376,7 @@ func (e *wsdOutageEnv) createAndStartWithPlan(t *testing.T, h http.Handler, id s
 	t.Helper()
 	e.expectID(id)
 	return e.postTo(t, h, "/v1/sessions/start", sessionserver.CreateAndStartRequest{
-		RuntimeRef: wsdOutageRuntime, UserID: "alice@acme.com", WorkspacePlan: clientPlan(t),
+		RuntimeRef: wsdOutageRuntime, WorkspacePlan: clientPlan(t),
 	})
 }
 
@@ -491,7 +492,7 @@ func TestWorkspaceDefaultsPostgresOutageFailsClosed_spec_14_1(t *testing.T) {
 	// A session created without a plan binds its plan at finalize.
 	e.expectID("sess-wsd-finalize")
 	if rr := e.post(t, "/v1/sessions", sessionserver.CreateSessionRequest{
-		RuntimeRef: wsdOutageRuntime, UserID: "alice@acme.com",
+		RuntimeRef: wsdOutageRuntime,
 	}); rr.Code != http.StatusCreated {
 		t.Fatalf("create without a plan: status %d, body=%s", rr.Code, rr.Body.String())
 	}

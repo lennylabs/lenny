@@ -81,7 +81,7 @@ func uploadRequest(t *testing.T, issuer *uploadtoken.Issuer, srv *Server, id, bo
 		req.Header.Set(k, v)
 	}
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	return rr
 }
 

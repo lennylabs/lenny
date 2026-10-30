@@ -678,12 +678,6 @@ type Deps struct {
 	// spec: §10.2 (Authentication); §17.4 (dev mode).
 	DevTenantFallback bool
 
-	// DevMode is the platform global.devMode (LENNY_DEV_MODE=true). When
-	// true, a session created without an explicit isolation profile
-	// defaults to `standard` (runc) per §5.3 rather than the
-	// production `sandboxed`.
-	DevMode bool
-
 	// VCSCreds materializes the §26.2 in-pod VCS token. When set,
 	// lenny/vcs_token is registered: a pod's git-credential helper calls
 	// it over the §9.1 platform MCP socket to obtain a short-lived token

@@ -47,8 +47,6 @@ type smokeTarget struct {
 	// authentication and a fresh install may not yet expose an admin
 	// token (F-17.6.3).
 	token string
-	// userID is the subject the smoke session is created for.
-	userID string
 	// healthTimeout bounds the /healthz poll loop.
 	healthTimeout time.Duration
 	// pollInterval is the gap between /healthz attempts.
@@ -84,7 +82,6 @@ func smokeTargetFromAnswers(a installAnswers) smokeTarget {
 		gatewayURL:    url,
 		runtime:       defaultSmokeRuntime,
 		token:         os.Getenv("LENNY_API_TOKEN"),
-		userID:        "lenny-install-smoke",
 		healthTimeout: defaultSmokeHealthTimeout,
 		pollInterval:  defaultSmokePollInterval,
 	}
@@ -215,6 +212,6 @@ func sdkCreateSession(ctx context.Context, tgt smokeTarget) error {
 	if err != nil {
 		return err
 	}
-	_, err = client.MCP().CreateSession(ctx, tgt.runtime, tgt.userID)
+	_, err = client.MCP().CreateSession(ctx, tgt.runtime)
 	return err
 }

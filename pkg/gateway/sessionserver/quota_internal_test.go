@@ -222,7 +222,7 @@ func postJSON(t *testing.T, srv *Server, path, body string) *httptest.ResponseRe
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, req)
+	asOwner(srv.Handler()).ServeHTTP(rec, req)
 	return rec
 }
 

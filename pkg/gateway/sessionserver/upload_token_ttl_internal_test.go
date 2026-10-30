@@ -45,7 +45,7 @@ func TestCreateSessionUsesConfiguredUploadTokenTTL_spec_7_4_7(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
@@ -80,7 +80,7 @@ func TestCreateSessionDefaultUploadTokenTTL_spec_7_4_7(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
@@ -116,7 +116,7 @@ func TestUploadTokenExpiresPerConfiguredTTL_spec_7_4_7(t *testing.T) {
 
 	body := `{"runtimeRef":"claude-code"}`
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/sessions",
+	asOwner(srv.Handler()).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/sessions",
 		strings.NewReader(body)).WithContext(context.Background()))
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create status=%d body=%s", rr.Code, rr.Body.String())
@@ -135,7 +135,7 @@ func TestUploadTokenExpiresPerConfiguredTTL_spec_7_4_7(t *testing.T) {
 	uploadReq.Header.Set("X-Lenny-Upload-Token", w.UploadToken)
 	uploadReq.Header.Set("Content-Type", "text/plain")
 	rr2 := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr2, uploadReq)
+	asOwner(srv.Handler()).ServeHTTP(rr2, uploadReq)
 	if rr2.Code != http.StatusUnauthorized {
 		t.Fatalf("expired upload status=%d, want %d, body=%s", rr2.Code, http.StatusUnauthorized, rr2.Body.String())
 	}

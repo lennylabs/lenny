@@ -158,6 +158,7 @@ func testSourceModeOpenAIChatCompletions(t *testing.T, base string) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Lenny-Tenant-ID", mcpTenant)
+	req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("POST /v1/chat/completions: %v", err)

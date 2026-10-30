@@ -17,6 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
 // callWithPrincipal invokes an MCP tool with the request context
@@ -50,6 +51,7 @@ func TestCreateSessionStampsPrincipalTenant_spec_15_2_1335(t *testing.T) {
 		Executor:          executor.NewEchoExecutor(),
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:            func() string { return "sess_x" },
+		SessionCreator:    newSessionCreator(store, "sess_x"),
 		// Register-time fallback is "fallback" — the unique sentinel
 		// proves the production handler does NOT use it when an
 		// authenticated principal is on the request context.
@@ -75,12 +77,13 @@ func TestCreateSessionStampsPrincipalTenant_spec_15_2_1335(t *testing.T) {
 	}
 }
 
-// TestCreateSessionFallsBackWhenNoPrincipal_spec_15_2_1335 pins the
-// minimal-deployment behaviour: a request with no principal context
-// (tests, the dev-headers transport) still creates the session under
-// the Register-time fallback so the tool surface stays usable.
-// F-9.2.13 / F-15.2.15.
-func TestCreateSessionFallsBackWhenNoPrincipal_spec_15_2_1335(t *testing.T) {
+// TestCreateSessionFallsBackWhenPrincipalHasNoTenant_spec_15_2_1335 pins
+// the minimal-deployment behaviour: a principal that carries a subject and
+// no tenant creates the session under the Register-time fallback tenant,
+// owned by its subject. F-9.2.13 / F-15.2.15.
+//
+// spec: §15.2; §10.2 (Session ownership).
+func TestCreateSessionFallsBackWhenPrincipalHasNoTenant_spec_15_2_1335(t *testing.T) {
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
@@ -89,19 +92,18 @@ func TestCreateSessionFallsBackWhenNoPrincipal_spec_15_2_1335(t *testing.T) {
 		Executor:          executor.NewEchoExecutor(),
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:            func() string { return "sess_x" },
+		SessionCreator:    newSessionCreator(store, "sess_x"),
 		TenantID:          "fallback",
 	})
 
-	// No principal context — same path tests and the dev-headers
-	// transport take.
-	call(t, srv.Handler(), "lenny/create_session", `{"runtimeRef":"echo"}`)
+	callAsOwner(t, srv.Handler(), "lenny/create_session", `{"runtimeRef":"echo"}`)
 
 	row, err := store.Get(context.Background(), "fallback", "sess_x")
 	if err != nil {
-		t.Fatalf("unauthenticated path must fall back to Deps.TenantID: %v", err)
+		t.Fatalf("a principal with no tenant must fall back to Deps.TenantID: %v", err)
 	}
-	if row.TenantID != "fallback" {
-		t.Errorf("row.TenantID = %q, want fallback", row.TenantID)
+	if row.TenantID != "fallback" || row.UserID != toolOwner {
+		t.Errorf("row tenant/owner = %q/%q, want fallback/%s", row.TenantID, row.UserID, toolOwner)
 	}
 }
 
@@ -119,8 +121,9 @@ func TestTenantsAreIsolatedBetweenPrincipals_spec_15_2_1335(t *testing.T) {
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		// Unique ids per call so the two sessions do not collide on the
 		// store layer.
-		IDFunc:   newSequentialIDFunc("sess", 1),
-		TenantID: "default",
+		IDFunc:         newSequentialIDFunc("sess", 1),
+		SessionCreator: sessionserver.New(store, sessionserver.Options{IDFunc: newSequentialIDFunc("sess", 1)}),
+		TenantID:       "default",
 	})
 
 	callWithPrincipal(t, srv.Handler(),

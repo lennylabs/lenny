@@ -47,7 +47,7 @@ func seedMessagesServer(t *testing.T) (http.Handler, *transcriptstore.Memory, se
 	store := memstore.New()
 	transcripts := transcriptstore.NewMemory()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Transcripts: transcripts})
-	return srv.Handler(), transcripts, store
+	return asOwner(srv.Handler()), transcripts, store
 }
 
 func getMessages(t *testing.T, h http.Handler, path, tenant string) *httptest.ResponseRecorder {
@@ -201,7 +201,7 @@ func TestMessagesListNotFound_spec_15_1_661(t *testing.T) {
 
 	// No transcript store wired → 404.
 	noStore := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	if rr := getMessages(t, noStore.Handler(), "/v1/sessions/s1/messages", "acme"); rr.Code != http.StatusNotFound {
+	if rr := getMessages(t, asOwner(noStore.Handler()), "/v1/sessions/s1/messages", "acme"); rr.Code != http.StatusNotFound {
 		t.Errorf("no-transcript-store status = %d, want 404", rr.Code)
 	}
 }

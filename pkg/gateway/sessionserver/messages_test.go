@@ -73,7 +73,7 @@ func TestMessagesEchoExecutor(t *testing.T) {
 	srv, store := newMessagesServer(t)
 	seedRunningSession(t, store, "sess_m1")
 
-	rr := sendMessageRequest(t, srv.Handler(), "sess_m1", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_m1", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{
 			{Role: "user", Content: sessionrecord.MessageContentFromText("hello")},
 		},
@@ -111,7 +111,7 @@ func TestMessagesAcceptsContentUnion_spec_15_4(t *testing.T) {
 	t.Run("bare string", func(t *testing.T) {
 		srv, store := newMessagesServer(t)
 		seedRunningSession(t, store, "sess_u_bare")
-		rr := sendRawMessageRequest(t, srv.Handler(), "sess_u_bare",
+		rr := sendRawMessageRequest(t, asOwner(srv.Handler()), "sess_u_bare",
 			`{"messages":[{"role":"user","content":"hi-bare"}]}`)
 		if rr.Code != http.StatusOK {
 			t.Fatalf("bare string union: got %d, body=%s", rr.Code, rr.Body.String())
@@ -123,7 +123,7 @@ func TestMessagesAcceptsContentUnion_spec_15_4(t *testing.T) {
 	t.Run("MessagePart array", func(t *testing.T) {
 		srv, store := newMessagesServer(t)
 		seedRunningSession(t, store, "sess_u_parts")
-		rr := sendRawMessageRequest(t, srv.Handler(), "sess_u_parts",
+		rr := sendRawMessageRequest(t, asOwner(srv.Handler()), "sess_u_parts",
 			`{"messages":[{"role":"user","content":[{"type":"text","inline":"hi-parts"},{"type":"image","ref":"lenny-blob://acme/s/p","mimeType":"image/png"}]}]}`)
 		if rr.Code != http.StatusOK {
 			t.Fatalf("part-array union: got %d, body=%s", rr.Code, rr.Body.String())
@@ -139,7 +139,7 @@ func TestMessagesAcceptsContentUnion_spec_15_4(t *testing.T) {
 		// an object content shape is rejected with 400 rather than coerced.
 		srv, store := newMessagesServer(t)
 		seedRunningSession(t, store, "sess_u_bad")
-		rr := sendRawMessageRequest(t, srv.Handler(), "sess_u_bad",
+		rr := sendRawMessageRequest(t, asOwner(srv.Handler()), "sess_u_bad",
 			`{"messages":[{"role":"user","content":{"type":"text"}}]}`)
 		if rr.Code != http.StatusBadRequest {
 			t.Errorf("malformed content union: got %d, want 400; body=%s", rr.Code, rr.Body.String())
@@ -150,7 +150,7 @@ func TestMessagesAcceptsContentUnion_spec_15_4(t *testing.T) {
 func TestMessagesRejectsEmptyBatch(t *testing.T) {
 	srv, store := newMessagesServer(t)
 	seedRunningSession(t, store, "sess_m2")
-	rr := sendMessageRequest(t, srv.Handler(), "sess_m2", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_m2", sessionserver.MessageRequest{
 		Messages: nil,
 	})
 	if rr.Code != http.StatusBadRequest {
@@ -166,7 +166,7 @@ func TestMessagesRejectsTerminalSession(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	rr := sendMessageRequest(t, srv.Handler(), "sess_done", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_done", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("x")}},
 	})
 	if rr.Code != http.StatusConflict {
@@ -176,7 +176,7 @@ func TestMessagesRejectsTerminalSession(t *testing.T) {
 
 func TestMessagesRejectsMissingSession(t *testing.T) {
 	srv, _ := newMessagesServer(t)
-	rr := sendMessageRequest(t, srv.Handler(), "sess_missing", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_missing", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("x")}},
 	})
 	if rr.Code != http.StatusNotFound {
@@ -188,7 +188,7 @@ func TestMessagesRejectsWhenExecutorUnwired(t *testing.T) {
 	store := memstore.New()
 	seedRunningSession(t, store, "sess_no_exec")
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	rr := sendMessageRequest(t, srv.Handler(), "sess_no_exec", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_no_exec", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("x")}},
 	})
 	if rr.Code != http.StatusServiceUnavailable {
@@ -200,7 +200,7 @@ func TestMessagesRecordsTranscript(t *testing.T) {
 	srv, store := newMessagesServer(t)
 	seedRunningSession(t, store, "sess_tr")
 
-	rr := sendMessageRequest(t, srv.Handler(), "sess_tr", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_tr", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hello")}},
 	})
 	if rr.Code != http.StatusOK {
@@ -210,7 +210,7 @@ func TestMessagesRecordsTranscript(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_tr/transcript", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	tr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(tr, req)
+	asOwner(srv.Handler()).ServeHTTP(tr, req)
 	if tr.Code != http.StatusOK {
 		t.Fatalf("transcript: %d, body=%s", tr.Code, tr.Body.String())
 	}
@@ -262,7 +262,7 @@ func TestMessagesRejectsInjectionWhenRuntimeUnsupported(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	rr := sendMessageRequest(t, srv.Handler(), "s1", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "s1", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("hi")}},
 	})
 	if rr.Code != http.StatusForbidden {
@@ -311,14 +311,14 @@ func TestMessagesInjectionTenantOverride_spec_5_1_49(t *testing.T) {
 		RuntimeRef: "chatty", CreatedAt: now, UpdatedAt: now,
 	})
 
-	rrAcme := sendMessageRequest(t, srv.Handler(), "acme1", sessionserver.MessageRequest{
+	rrAcme := sendMessageRequest(t, asOwner(srv.Handler()), "acme1", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("hi")}},
 	})
 	if rrAcme.Code != http.StatusForbidden || !strings.Contains(rrAcme.Body.String(), "INJECTION_REJECTED") {
 		t.Errorf("acme (override off): status %d body=%s, want 403 INJECTION_REJECTED", rrAcme.Code, rrAcme.Body.String())
 	}
 
-	rrGlx := sendMessageRequest(t, srv.Handler(), "glx1", sessionserver.MessageRequest{
+	rrGlx := sendMessageRequest(t, asOwner(srv.Handler()), "glx1", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("hi")}},
 	})
 	if rrGlx.Code == http.StatusForbidden {
@@ -351,7 +351,7 @@ func TestMessagesAllowsInjectionWhenRuntimeSupports(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	rr := sendMessageRequest(t, srv.Handler(), "s1", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "s1", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("hi")}},
 	})
 	if rr.Code != http.StatusOK {
@@ -388,7 +388,7 @@ func TestMessagesInjectionResolvesDerivedRuntime(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	rr := sendMessageRequest(t, srv.Handler(), "s1", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "s1", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("hi")}},
 	})
 	if rr.Code != http.StatusOK {
@@ -516,7 +516,7 @@ func TestMessagesInjectionFailsClosedOnTransientRegistryError_spec_5_1(t *testin
 		IncInjectionGateFailClosed: rec.inc,
 	})
 	seedInjectionSession(t, store, "s1", "acme")
-	rr := sendMessageRequest(t, srv.Handler(), "s1", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "s1", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("hi")}},
 	})
 	assertInjectionFailsClosed(t, rr)
@@ -549,7 +549,7 @@ func TestMessagesInjectionFailsClosedOnTransientOverrideStoreError_spec_5_1_49(t
 		IncInjectionGateFailClosed: rec.inc,
 	})
 	seedInjectionSession(t, store, "acme1", "acme")
-	rr := sendMessageRequest(t, srv.Handler(), "acme1", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "acme1", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("hi")}},
 	})
 	assertInjectionFailsClosed(t, rr)
@@ -575,7 +575,7 @@ func TestMessagesInjectionNotFoundDegradesOpen_spec_5_1(t *testing.T) {
 		Runtimes:        runtimestore.NewMemory(),
 	})
 	seedInjectionSession(t, store, "s1", "acme")
-	rr := sendMessageRequest(t, srv.Handler(), "s1", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "s1", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("hi")}},
 	})
 	if rr.Code != http.StatusOK {
@@ -588,7 +588,7 @@ func TestTranscriptMissingSession(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_missing/transcript", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("missing session: got %d, want 404", rr.Code)
 	}
@@ -600,7 +600,7 @@ func TestTranscriptEmptyForFreshSession(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_fresh/transcript", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("fresh session transcript: %d", rr.Code)
 	}
@@ -641,7 +641,7 @@ func TestMessagesRejectsPreRunningStatesPerSpec71Line339(t *testing.T) {
 			}); err != nil {
 				t.Fatalf("seed: %v", err)
 			}
-			rr := sendMessageRequest(t, srv.Handler(), id, sessionserver.MessageRequest{
+			rr := sendMessageRequest(t, asOwner(srv.Handler()), id, sessionserver.MessageRequest{
 				Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("early")}},
 			})
 			if rr.Code != http.StatusConflict {
@@ -660,7 +660,7 @@ func TestMessagesRejectsPreRunningStatesPerSpec71Line339(t *testing.T) {
 func TestMessagesAcceptsRunningSession(t *testing.T) {
 	srv, store := newMessagesServer(t)
 	seedRunningSession(t, store, "sess_run")
-	rr := sendMessageRequest(t, srv.Handler(), "sess_run", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_run", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("live")}},
 	})
 	if rr.Code != http.StatusOK {
@@ -673,7 +673,7 @@ func TestMessagesAcceptsRunningSession(t *testing.T) {
 func TestMessagesRejectsInvalidDeliveryValue(t *testing.T) {
 	srv, store := newMessagesServer(t)
 	seedRunningSession(t, store, "sess_d")
-	rr := sendMessageRequest(t, srv.Handler(), "sess_d", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_d", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("x"), Delivery: "burst"}},
 	})
 	if rr.Code != http.StatusBadRequest {
@@ -692,7 +692,7 @@ func TestMessagesAcceptsCanonicalDeliveryValues(t *testing.T) {
 		t.Run("delivery="+v, func(t *testing.T) {
 			srv, store := newMessagesServer(t)
 			seedRunningSession(t, store, "sess_d_"+v)
-			rr := sendMessageRequest(t, srv.Handler(), "sess_d_"+v, sessionserver.MessageRequest{
+			rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_d_"+v, sessionserver.MessageRequest{
 				Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("x"), Delivery: v}},
 			})
 			if rr.Code != http.StatusOK {
@@ -721,7 +721,7 @@ func TestMessagesInReplyToResolvesPendingRequestInput(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	rr := sendMessageRequest(t, srv.Handler(), "sess_rr", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_rr", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("answer"), InReplyTo: "req_alpha"}},
 	})
 	if rr.Code != http.StatusOK {
@@ -763,7 +763,7 @@ func TestMessagesInReplyToFallsThroughOnNoMatch(t *testing.T) {
 	})
 	seedRunningSession(t, store, "sess_fall")
 
-	rr := sendMessageRequest(t, srv.Handler(), "sess_fall", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_fall", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("hi"), InReplyTo: "req_missing"}},
 	})
 	if rr.Code != http.StatusOK {
@@ -789,7 +789,7 @@ func TestMessagesClientSessionIDIsIgnored(t *testing.T) {
 	// A raw body that carries a stray client sessionId naming another
 	// session. The gateway must accept the message (the field is ignored
 	// rather than rejected) and deliver it against the path parameter.
-	rr := sendRawMessageRequest(t, srv.Handler(), "sess_slot",
+	rr := sendRawMessageRequest(t, asOwner(srv.Handler()), "sess_slot",
 		`{"messages":[{"content":"ok","sessionId":"sess_other"}]}`)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("client sessionId rejected: got %d, body=%s", rr.Code, rr.Body.String())
@@ -809,14 +809,14 @@ func TestMessagesClientSessionIDIsIgnored(t *testing.T) {
 func TestTranscriptEmitsCanonicalEnvelope_spec_15_1_1228(t *testing.T) {
 	srv, store := newMessagesServer(t)
 	seedRunningSession(t, store, "sess_env")
-	_ = sendMessageRequest(t, srv.Handler(), "sess_env", sessionserver.MessageRequest{
+	_ = sendMessageRequest(t, asOwner(srv.Handler()), "sess_env", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hi")}},
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_env/transcript", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("transcript: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -845,7 +845,7 @@ func TestTranscriptPaginatesWithCanonicalCursor_spec_15_1_1228(t *testing.T) {
 	seedRunningSession(t, store, "sess_p")
 	// Three user→assistant turns ⇒ 6 transcript entries.
 	for i := 0; i < 3; i++ {
-		_ = sendMessageRequest(t, srv.Handler(), "sess_p", sessionserver.MessageRequest{
+		_ = sendMessageRequest(t, asOwner(srv.Handler()), "sess_p", sessionserver.MessageRequest{
 			Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("ping")}},
 		})
 	}
@@ -856,7 +856,7 @@ func TestTranscriptPaginatesWithCanonicalCursor_spec_15_1_1228(t *testing.T) {
 			"/v1/sessions/sess_p/transcript"+query, nil)
 		req.Header.Set("X-Lenny-Tenant-ID", "acme")
 		rr := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rr, req)
+		asOwner(srv.Handler()).ServeHTTP(rr, req)
 		if rr.Code != http.StatusOK {
 			t.Fatalf("page %q: status %d, body=%s", query, rr.Code, rr.Body.String())
 		}
@@ -892,7 +892,7 @@ func TestTranscriptClampsLimitToSpecMax_spec_15_1_1236(t *testing.T) {
 	// 250 message turns ⇒ 500 transcript entries, more than the §15.1
 	// hard maximum, so a `?limit=500` request must clamp to 200.
 	for i := 0; i < 250; i++ {
-		_ = sendMessageRequest(t, srv.Handler(), "sess_clamp", sessionserver.MessageRequest{
+		_ = sendMessageRequest(t, asOwner(srv.Handler()), "sess_clamp", sessionserver.MessageRequest{
 			Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("x")}},
 		})
 	}
@@ -900,7 +900,7 @@ func TestTranscriptClampsLimitToSpecMax_spec_15_1_1236(t *testing.T) {
 		"/v1/sessions/sess_clamp/transcript?limit=500", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	var env transcriptEnvelopeJSON
 	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -930,7 +930,7 @@ func TestTranscriptRejectsExpiredCursor_spec_15_1_1253(t *testing.T) {
 		Clock:           clock,
 	})
 	seedRunningSession(t, store, "sess_expired")
-	_ = sendMessageRequest(t, srv.Handler(), "sess_expired", sessionserver.MessageRequest{
+	_ = sendMessageRequest(t, asOwner(srv.Handler()), "sess_expired", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("a")}},
 	})
 	// Mint a cursor at t0, then attempt to use it at t0+25h.
@@ -943,7 +943,7 @@ func TestTranscriptRejectsExpiredCursor_spec_15_1_1253(t *testing.T) {
 		"/v1/sessions/sess_expired/transcript?cursor="+enc, nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("expired cursor: status %d, want 400 (body=%s)", rr.Code, rr.Body.String())
 	}
@@ -969,7 +969,7 @@ func TestMessages_SuspendedTenantRejected_spec_15_1_818(t *testing.T) {
 		Tenants:         tenants,
 	})
 
-	rr := sendMessageRequest(t, srv.Handler(), "sess_susp", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_susp", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hi")}},
 	})
 	if rr.Code != http.StatusForbidden {
@@ -996,7 +996,7 @@ func TestMessages_ActiveTenantAdmitted_spec_15_1_818(t *testing.T) {
 		Tenants:         tenants,
 	})
 
-	rr := sendMessageRequest(t, srv.Handler(), "sess_ok", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_ok", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hi")}},
 	})
 	if rr.Code != http.StatusOK {

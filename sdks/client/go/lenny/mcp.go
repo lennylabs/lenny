@@ -315,12 +315,10 @@ type MCPCreateSessionResult struct {
 
 // CreateSession invokes the §15.2 lenny/create_session MCP tool and
 // returns the created session identifier and state. It is the MCP
-// counterpart of Client.CreateSession.
-func (m *MCPClient) CreateSession(ctx context.Context, runtimeRef, userID string) (*MCPCreateSessionResult, error) {
+// counterpart of Client.CreateSession. The gateway records the
+// authenticated caller as the session's owner, so no owner argument exists.
+func (m *MCPClient) CreateSession(ctx context.Context, runtimeRef string) (*MCPCreateSessionResult, error) {
 	args := map[string]any{"runtimeRef": runtimeRef}
-	if userID != "" {
-		args["userId"] = userID
-	}
 	res, err := m.CallTool(ctx, "lenny/create_session", args)
 	if err != nil {
 		return nil, err

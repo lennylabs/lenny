@@ -34,7 +34,7 @@ func TestCreateStampsDefaultRetention_spec_7_1_5(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", bytes.NewReader(buf))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}
@@ -62,7 +62,7 @@ func TestInterruptEmitsStatusChangeSuspended_spec_7_2_2(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_i/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("interrupt status: got %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}

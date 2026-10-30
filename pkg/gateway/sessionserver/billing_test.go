@@ -59,9 +59,8 @@ func TestCreateEmitsSessionCreatedBillingEvent(t *testing.T) {
 	billing := billingstore.NewMemory()
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Billing: billing})
 
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
-		UserID:     "alice@acme.com",
 	})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
@@ -93,7 +92,7 @@ func TestCreateAndStartEmitsSessionCreatedBillingEvent(t *testing.T) {
 	billing := billingstore.NewMemory()
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Billing: billing})
 
-	rr := postSession(t, srv.Handler(), "/v1/sessions/start", "bob@acme.com", "acme")
+	rr := postSession(t, asOwner(srv.Handler()), "/v1/sessions/start", "bob@acme.com", "acme")
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create-and-start: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -112,9 +111,8 @@ func TestCreateAndStartEmitsSessionCreatedBillingEvent(t *testing.T) {
 func TestCreateEmitsBillingEventEnvironmentID_spec_10_6_663(t *testing.T) {
 	billing := billingstore.NewMemory()
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Billing: billing})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef:  "claude-code",
-		UserID:      "alice@acme.com",
 		Environment: "research",
 	})
 	if rr.Code != http.StatusCreated {
@@ -134,9 +132,8 @@ func TestCreateEmitsBillingEventEnvironmentID_spec_10_6_663(t *testing.T) {
 func TestCreateEmitsBillingEventNoEnvironmentWhenUnscoped_spec_10_6_663(t *testing.T) {
 	billing := billingstore.NewMemory()
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Billing: billing})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
-		UserID:     "alice@acme.com",
 	})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
@@ -153,7 +150,7 @@ func TestCreateEmitsBillingEventNoEnvironmentWhenUnscoped_spec_10_6_663(t *testi
 func TestCreateWithoutBillingStoreDoesNotFail(t *testing.T) {
 	// Billing is nil: the create path must still succeed.
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 	})
 	if rr.Code != http.StatusCreated {
@@ -164,7 +161,7 @@ func TestCreateWithoutBillingStoreDoesNotFail(t *testing.T) {
 func TestTerminateEmitsSessionCompletedBillingEvent(t *testing.T) {
 	billing := billingstore.NewMemory()
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Billing: billing})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	id := createSessionID(t, h)
 	rr := sessionRequest(t, h, http.MethodPost, "/v1/sessions/"+id+"/terminate")
@@ -184,7 +181,7 @@ func TestTerminateEmitsSessionCompletedBillingEvent(t *testing.T) {
 func TestDeleteEmitsSessionCompletedBillingEvent(t *testing.T) {
 	billing := billingstore.NewMemory()
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Billing: billing})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	id := createSessionID(t, h)
 	rr := sessionRequest(t, h, http.MethodDelete, "/v1/sessions/"+id)
@@ -201,7 +198,7 @@ func TestDeleteEmitsSessionCompletedBillingEvent(t *testing.T) {
 func TestNonTerminalTransitionEmitsNoCompletedEvent(t *testing.T) {
 	billing := billingstore.NewMemory()
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Billing: billing})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	id := createSessionID(t, h)
 	// finalize moves the session to ready, a non-terminal state.

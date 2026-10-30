@@ -27,7 +27,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
@@ -54,9 +53,10 @@ func newMCPWithRuntimes(t *testing.T) (*mcp.Server, sessionstore.Store, runtimes
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
-		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:   func() string { return "sess_mcp" },
-		TenantID: "acme",
+		SessionCreator: newSessionCreator(store, "sess_mcp"),
+		Clock:          func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:         func() string { return "sess_mcp" },
+		TenantID:       "acme",
 	})
 	return srv, store, runtimes
 }
@@ -264,9 +264,14 @@ func resultText(t *testing.T, resp map[string]any) string {
 	return s
 }
 
+// TestCreateSessionTool verifies that lenny/create_session creates the
+// session through the shared §15.1 service, in the `created` state, owned by
+// the calling principal.
+//
+// spec: §15.2.1 rule 1; §10.2 (Session ownership).
 func TestCreateSessionTool(t *testing.T) {
 	srv, store := newMCP(t)
-	resp := call(t, srv.Handler(), "lenny/create_session", `{"runtimeRef":"echo","userId":"alice"}`)
+	resp := callAsOwner(t, srv.Handler(), "lenny/create_session", `{"runtimeRef":"echo"}`)
 	text := resultText(t, resp)
 	if !strings.Contains(text, "sess_mcp") {
 		t.Errorf("create_session result: %q", text)
@@ -275,59 +280,15 @@ func TestCreateSessionTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session not stored: %v", err)
 	}
-	if row.RuntimeRef != "echo" || row.State != session.StateRunning {
+	if row.RuntimeRef != "echo" || row.State != session.StateCreated || row.UserID != toolOwner {
 		t.Errorf("stored row: %+v", row)
-	}
-}
-
-// TestCreateSessionToolDevModeIsolation_spec_5_3 verifies the §5.3 dev-mode fallback in the lenny/create_session tool: the default
-// session profile is sandboxed normally and standard (runc) when the
-// adapter is wired with DevMode.
-//
-// spec: §5.3.
-func TestCreateSessionToolDevModeIsolation_spec_5_3(t *testing.T) {
-	// Default (production) mode: sandboxed.
-	_, store := newMCP(t)
-	{
-		srv, st := newMCP(t)
-		_ = call(t, srv.Handler(), "lenny/create_session", `{"runtimeRef":"echo","userId":"alice"}`)
-		row, err := st.Get(context.Background(), "acme", "sess_mcp")
-		if err != nil {
-			t.Fatalf("session not stored: %v", err)
-		}
-		if row.IsolationProfile != isolation.ProfileSandboxed {
-			t.Errorf("default-mode isolation = %q, want sandboxed", row.IsolationProfile)
-		}
-	}
-	_ = store
-
-	// Dev mode: standard (runc).
-	devStore := memstore.New()
-	srv := mcp.NewServer()
-	mcptools.Register(srv, mcptools.Deps{
-		DevTenantFallback: true,
-		Store:             devStore,
-		Executor:          executor.NewEchoExecutor(),
-		Runtimes:          runtimestore.NewMemory(),
-		DevMode:           true,
-		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:            func() string { return "sess_dev" },
-		TenantID:          "acme",
-	})
-	_ = call(t, srv.Handler(), "lenny/create_session", `{"runtimeRef":"echo","userId":"alice"}`)
-	row, err := devStore.Get(context.Background(), "acme", "sess_dev")
-	if err != nil {
-		t.Fatalf("dev session not stored: %v", err)
-	}
-	if row.IsolationProfile != isolation.ProfileStandard {
-		t.Errorf("dev-mode isolation = %q, want standard", row.IsolationProfile)
 	}
 }
 
 func TestCreateSessionToolRecordsEnvironment(t *testing.T) {
 	srv, store := newMCP(t)
-	resp := call(t, srv.Handler(), "lenny/create_session",
-		`{"runtimeRef":"echo","userId":"alice","environment":"security-team"}`)
+	resp := callAsOwner(t, srv.Handler(), "lenny/create_session",
+		`{"runtimeRef":"echo","environment":"security-team"}`)
 	if !strings.Contains(resultText(t, resp), "sess_mcp") {
 		t.Fatalf("create_session result: %+v", resp)
 	}

@@ -106,7 +106,7 @@ func (r *siteRig) do(method, path, body string) *httptest.ResponseRecorder {
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	r.srv.Handler().ServeHTTP(rec, req)
+	asOwner(r.srv.Handler()).ServeHTTP(rec, req)
 	return rec
 }
 
@@ -456,7 +456,7 @@ func TestUndeliveredMessageHoldAnswersEachDLQOutcome_spec_29_3(t *testing.T) {
 func idempotentSite(r *siteRig) (http.Handler, *idemmw.MemoryStore) {
 	store := idemmw.NewMemoryStore()
 	dev := authmw.Options{AllowDevHeaders: true, DevHeaderNamesTenant: true}
-	return authmw.Wrap(idemmw.Wrap(r.srv.Handler(), store, idemmw.Options{}), dev), store
+	return authmw.Wrap(idemmw.Wrap(asOwner(r.srv.Handler()), store, idemmw.Options{}), dev), store
 }
 
 // keyedResume posts a held-pod resume with an Idempotency-Key through h.
@@ -569,7 +569,7 @@ func TestForwardedCreateAndStartKeepsTheAdmissionRateLimit_spec_29_3(t *testing.
 				PerRuntimePerMinute:       1,
 				Clock:                     func() time.Time { return now },
 			})
-			_, svcErr := s.CreateAndStartService(c.ctx, "acme", CreateSessionRequest{RuntimeRef: "echo"})
+			_, svcErr := s.CreateAndStartService(ownerCtx(c.ctx), "acme", CreateSessionRequest{RuntimeRef: "echo"})
 			if svcErr == nil || svcErr.Code != "RATE_LIMITED" || svcErr.HTTPStatus != http.StatusTooManyRequests {
 				t.Fatalf("CreateAndStartService = %+v, want 429 RATE_LIMITED once the per-runtime limit is exhausted", svcErr)
 			}

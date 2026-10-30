@@ -36,9 +36,6 @@ class CreateSessionRequest:
     #: Identifies the runtime the session targets. Required.
     runtime_ref: str
 
-    #: The section 10.2 user the session is created for. Optional.
-    user_id: str = ""
-
     #: The section 14 workspace plan submitted at creation. Optional; an
     #: absent plan starts the session with an empty workspace.
     workspace_plan: Optional[dict[str, Any]] = None
@@ -57,8 +54,6 @@ class CreateSessionRequest:
         Go SDK's ``omitempty`` encoding.
         """
         body: dict[str, Any] = {"runtimeRef": self.runtime_ref}
-        if self.user_id:
-            body["userId"] = self.user_id
         if self.workspace_plan is not None:
             body["workspacePlan"] = self.workspace_plan
         if self.environment:

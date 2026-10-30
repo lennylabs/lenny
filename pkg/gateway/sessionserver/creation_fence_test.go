@@ -162,11 +162,11 @@ func (f *fenceFixture) reserved(t *testing.T, subject string) []string {
 	return ids
 }
 
-// postCreate posts a create to path as principal, naming owner as the
-// body's userId.
-func postCreate(t *testing.T, h http.Handler, path, principal, owner string) *httptest.ResponseRecorder {
+// postCreate posts a create to path as principal. The principal's subject
+// is the new session's owner (§10.2 Session ownership rule 1).
+func postCreate(t *testing.T, h http.Handler, path, principal string) *httptest.ResponseRecorder {
 	t.Helper()
-	body, _ := json.Marshal(map[string]string{"runtimeRef": "claude-code", "userId": owner})
+	body, _ := json.Marshal(map[string]string{"runtimeRef": "claude-code"})
 	req := asUser(httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body)), principal, "acme")
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -206,8 +206,8 @@ func TestCreateStoreRefusalAnswers403_spec_12_8(t *testing.T) {
 			f.store.createErr = &sessionstore.CreationRefusal{
 				Code: "TENANT_SUSPENDED", Message: "suspended", Details: map[string]any{"tenantId": "acme"},
 			}
-			h := sessionserver.New(f.store, sessionserver.Options{DevTenantHeader: true}).Handler()
-			rr := postCreate(t, h, path, "alice@acme.com", "alice@acme.com")
+			h := asOwner(sessionserver.New(f.store, sessionserver.Options{DevTenantHeader: true}).Handler())
+			rr := postCreate(t, h, path, "alice@acme.com")
 			if rr.Code != http.StatusForbidden {
 				t.Fatalf("status = %d, want 403; body %s", rr.Code, rr.Body.String())
 			}
@@ -228,8 +228,8 @@ func TestCreateStoreRefusalAnswers403_spec_12_8(t *testing.T) {
 func TestCreateStoreNonRefusalErrorStays5xx_spec_12_8(t *testing.T) {
 	f := newFenceFixture(t)
 	f.store.createErr = errors.New("connection reset")
-	h := sessionserver.New(f.store, sessionserver.Options{DevTenantHeader: true}).Handler()
-	rr := postCreate(t, h, "/v1/sessions", "alice@acme.com", "alice@acme.com")
+	h := asOwner(sessionserver.New(f.store, sessionserver.Options{DevTenantHeader: true}).Handler())
+	rr := postCreate(t, h, "/v1/sessions", "alice@acme.com")
 	if rr.Code < 500 {
 		t.Fatalf("status = %d, want 5xx", rr.Code)
 	}
@@ -293,12 +293,12 @@ func TestCreationGateMatchesFencePredicate_spec_12_8(t *testing.T) {
 					}
 					ref := want.Refusal("acme", "bob@acme.com")
 					rc := &countingRateCounter{}
-					h := sessionserver.New(f.store, sessionserver.Options{
+					h := asOwner(sessionserver.New(f.store, sessionserver.Options{
 						DevTenantHeader: true,
 						Tenants:         f.tenants, Users: f.users,
 						AdmissionRateLimitCounter: rc, PerRuntimePerMinute: 1000,
-					}).Handler()
-					rr := postCreate(t, h, path, "alice@acme.com", "bob@acme.com")
+					}).Handler())
+					rr := postCreate(t, h, path, "bob@acme.com")
 					if ref == nil {
 						if rr.Code >= 400 && rr.Code != http.StatusServiceUnavailable {
 							code, _, _ := decodeError(t, rr)
@@ -347,18 +347,14 @@ func TestCreationGateReadErrorAnswers500_spec_12_8(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFenceFixture(t)
 			rc := &countingRateCounter{}
-			h := sessionserver.New(f.store, sessionserver.Options{
+			h := asOwner(sessionserver.New(f.store, sessionserver.Options{
 				DevTenantHeader: true,
 				Tenants:         tc.tenants, Users: tc.users,
 				AdmissionRateLimitCounter: rc, PerRuntimePerMinute: 1000,
-			}).Handler()
-			// The principal has no subject, so the caller check reads
-			// nothing and the creation gate is the first reader.
-			body, _ := json.Marshal(map[string]string{"runtimeRef": "claude-code", "userId": "bob@acme.com"})
-			req := httptest.NewRequest(http.MethodPost, "/v1/sessions", bytes.NewReader(body))
-			req.Header.Set("X-Lenny-Tenant-ID", "acme")
-			rr := httptest.NewRecorder()
-			h.ServeHTTP(rr, req)
+			}).Handler())
+			// The marker read error answers 500 whichever reader meets it
+			// first: the caller check or the creation gate.
+			rr := postCreate(t, h, "/v1/sessions", "bob@acme.com")
 			if rr.Code != http.StatusInternalServerError {
 				t.Fatalf("status = %d, want 500; body %s", rr.Code, rr.Body.String())
 			}
@@ -428,7 +424,7 @@ func (f *fenceFixture) deriveServer(blobs blobstore.Store, opts ...func(*session
 	for _, m := range opts {
 		m(&o)
 	}
-	return sessionserver.New(f.store, o).Handler()
+	return asOwner(sessionserver.New(f.store, o).Handler())
 }
 
 func asPrincipal(subject string) func(*http.Request) {
@@ -653,7 +649,7 @@ func TestDeriveCopyFailureUndoesChunksAndManifest_spec_12_8(t *testing.T) {
 			manifests := partialmanifeststore.NewMemoryStore(nil)
 			ids := []string{"sess_derived", "ckpt_derived"}
 			var outcomes []string
-			h := sessionserver.New(f.store, sessionserver.Options{
+			h := asOwner(sessionserver.New(f.store, sessionserver.Options{
 				DevTenantHeader: true,
 				IDFunc:          func() string { id := ids[0]; ids = append(ids[1:], "x"); return id },
 				Blobs:           rec, Users: f.users, Tenants: f.tenants,
@@ -663,7 +659,7 @@ func TestDeriveCopyFailureUndoesChunksAndManifest_spec_12_8(t *testing.T) {
 				CheckpointManifestWriter: failingManifestStep{manifests, step},
 				PersistDeriveFailureRows: true,
 				IncDeriveFailureAudit:    func(o string) { outcomes = append(outcomes, o) },
-			}).Handler()
+			}).Handler())
 			rr := deriveRequest(t, h, sessionserver.DeriveRequest{}, func(r *http.Request) {
 				if cancelled {
 					ctx, cancel := context.WithCancel(r.Context())
@@ -720,57 +716,37 @@ func TestDeriveFailureRowRefusedRecordsError_spec_12_8(t *testing.T) {
 	}
 }
 
-// TestDeriveAndReplaySourceOwnerRestricted_spec_12_8 pins the source-owner
-// check of a derive and a replay: a source session whose owner has
-// processing_restricted set is refused with ERASURE_IN_PROGRESS naming the
-// source owner, whatever the new owner's and the tenant's markers, and
-// before the reservation, the copy, and the insert. A derive into an
-// active user's session is the case the fence alone would admit.
-// spec: 12.8 (Compliance Interfaces: Processing restriction during erasure (GDPR Article 18))
+// TestDeriveAndReplaySourceOwnerRestricted_spec_12_8 pins the refusal of a
+// derive and a replay of a session whose owner has processing_restricted
+// set: the request is refused with ERASURE_IN_PROGRESS naming that owner
+// and the erasure job, before the reservation, the copy, and the insert. A
+// derived or replayed session takes the source session's owner (§10.2
+// Session ownership rule 2), so the request comes from the restricted owner
+// herself and the caller check refuses it first.
+// spec: 12.8 (Compliance Interfaces: Processing restriction during erasure (GDPR Article 18)), 10.2 (Session ownership)
 func TestDeriveAndReplaySourceOwnerRestricted_spec_12_8(t *testing.T) {
-	cases := []struct {
-		name      string
-		replay    bool
-		newOwner  string
-		disableBo bool
-		suspend   bool
+	for _, tc := range []struct {
+		name   string
+		replay bool
 	}{
-		{name: "derive into an active user's session", newOwner: "bob@acme.com"},
-		{name: "derive with no userId"},
-		{name: "derive into a disabled owner's session", newOwner: "bob@acme.com", disableBo: true},
-		{name: "derive under a suspended tenant", newOwner: "bob@acme.com", suspend: true},
+		{name: "derive"},
 		{name: "replay", replay: true},
-	}
-	for _, tc := range cases {
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := deriveFixture(t,
-				userstore.User{Subject: "alice@acme.com", TenantID: "acme"},
-				userstore.User{Subject: "bob@acme.com", TenantID: "acme", Disabled: tc.disableBo},
-				userstore.User{Subject: "carol@acme.com", TenantID: "acme"})
+			f := deriveFixture(t, userstore.User{Subject: "alice@acme.com", TenantID: "acme"})
 			f.restrict(t, "alice@acme.com", "job-7")
-			if tc.suspend {
-				if _, err := f.tenants.Update(context.Background(), "acme", func(tn *tenantstore.Tenant) error {
-					tn.Suspended = true
-					return nil
-				}); err != nil {
-					t.Fatalf("suspend: %v", err)
-				}
-			}
 			var rr *httptest.ResponseRecorder
 			if tc.replay {
-				rr = replayAs(t, f.deriveServer(f.blobs), "carol@acme.com", sessionserver.ReplayRequest{TargetRuntime: "x"})
+				rr = replayAs(t, f.deriveServer(f.blobs), "alice@acme.com", sessionserver.ReplayRequest{TargetRuntime: "x"})
 			} else {
-				rr = deriveRequest(t, f.deriveServer(f.blobs), sessionserver.DeriveRequest{UserID: tc.newOwner}, asPrincipal("carol@acme.com"))
+				rr = deriveRequest(t, f.deriveServer(f.blobs), sessionserver.DeriveRequest{}, asPrincipal("alice@acme.com"))
 			}
 			if rr.Code != http.StatusForbidden {
 				t.Fatalf("status = %d, want 403; body %s", rr.Code, rr.Body.String())
 			}
-			code, msg, details := decodeError(t, rr)
+			code, _, details := decodeError(t, rr)
 			if code != "ERASURE_IN_PROGRESS" || details["userId"] != "alice@acme.com" || details["jobId"] != "job-7" {
 				t.Fatalf("code %s details %v, want ERASURE_IN_PROGRESS naming the source owner and job", code, details)
-			}
-			if !strings.Contains(msg, "source session") {
-				t.Errorf("message %q does not name the source session's owner", msg)
 			}
 			if n := len(f.store.calls); n != 0 {
 				t.Errorf("the refused request reached the store %d times: %v", n, f.store.calls)
@@ -781,8 +757,7 @@ func TestDeriveAndReplaySourceOwnerRestricted_spec_12_8(t *testing.T) {
 
 // TestSourceOwnerCheckAdmitsAndFailsClosed_spec_12_8 covers the remaining
 // inputs of the source-owner check: a source owner with no registry row
-// admits, a read error answers 500, and a restricted caller is refused by
-// the caller check, naming the caller.
+// admits, and a read error answers 500.
 // spec: 12.8 (Compliance Interfaces: Processing restriction during erasure (GDPR Article 18))
 func TestSourceOwnerCheckAdmitsAndFailsClosed_spec_12_8(t *testing.T) {
 	t.Run("no registry row admits", func(t *testing.T) {
@@ -794,7 +769,7 @@ func TestSourceOwnerCheckAdmitsAndFailsClosed_spec_12_8(t *testing.T) {
 	})
 	t.Run("read error answers 500", func(t *testing.T) {
 		f := deriveFixture(t)
-		h := sessionserver.New(f.store, sessionserver.Options{DevTenantHeader: true, Users: erroringUsers{f.users}, Blobs: f.blobs}).Handler()
+		h := asOwner(sessionserver.New(f.store, sessionserver.Options{DevTenantHeader: true, Users: erroringUsers{f.users}, Blobs: f.blobs}).Handler())
 		rr := deriveRequest(t, h, sessionserver.DeriveRequest{})
 		if rr.Code != http.StatusInternalServerError {
 			t.Fatalf("status = %d, want 500", rr.Code)
@@ -803,46 +778,27 @@ func TestSourceOwnerCheckAdmitsAndFailsClosed_spec_12_8(t *testing.T) {
 			t.Errorf("the read error did not stop the derive before its reservation")
 		}
 	})
-	t.Run("restricted caller replaying an active user's session", func(t *testing.T) {
-		f := deriveFixture(t,
-			userstore.User{Subject: "alice@acme.com", TenantID: "acme"},
-			userstore.User{Subject: "dave@acme.com", TenantID: "acme", ProcessingRestricted: true, ErasureJobID: "job-3"})
-		rr := replayAs(t, f.deriveServer(f.blobs), "dave@acme.com", sessionserver.ReplayRequest{TargetRuntime: "x"})
-		if rr.Code != http.StatusForbidden {
-			t.Fatalf("status = %d, want 403", rr.Code)
-		}
-		code, msg, details := decodeError(t, rr)
-		if code != "ERASURE_IN_PROGRESS" || details["userId"] != "dave@acme.com" {
-			t.Errorf("code %s details %v, want the caller refusal", code, details)
-		}
-		if !strings.Contains(msg, "cannot create sessions") {
-			t.Errorf("message %q does not name session creation", msg)
-		}
-	})
 }
 
 // TestDeriveSourceOwnerRestrictedAfterAdmission_spec_12_8 pins the
 // admission-time scope of the source-owner check: with the source owner's
 // flag committed after the check admitted the derive and before the
-// insert, a derive whose new owner is the source owner is refused at
-// CreateReserved and undone, while a derive into an active user's session
-// inserts.
+// insert, the derive, whose new owner is the source owner (§10.2 Session
+// ownership rule 2), is refused at CreateReserved and undone.
 // spec: 12.8 (Compliance Interfaces: Processing restriction during erasure (GDPR Article 18), Lifecycle fence and drain)
 func TestDeriveSourceOwnerRestrictedAfterAdmission_spec_12_8(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		newOwner string
-		status   int
+		name   string
+		status int
 	}{
-		{"new owner is the source owner", "", http.StatusForbidden},
-		{"new owner is an active user", "bob@acme.com", http.StatusCreated},
+		{"new owner is the source owner", http.StatusForbidden},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := deriveFixture(t,
 				userstore.User{Subject: "alice@acme.com", TenantID: "acme"},
 				userstore.User{Subject: "bob@acme.com", TenantID: "acme"})
 			f.store.beforeInsert = func() { f.restrict(t, "alice@acme.com", "job-5") }
-			rr := deriveRequest(t, f.deriveServer(f.blobs), sessionserver.DeriveRequest{UserID: tc.newOwner})
+			rr := deriveRequest(t, f.deriveServer(f.blobs), sessionserver.DeriveRequest{})
 			if rr.Code != tc.status {
 				t.Fatalf("status = %d, want %d; body %s", rr.Code, tc.status, rr.Body.String())
 			}
@@ -896,7 +852,7 @@ func replayFixture(t *testing.T) (*fenceFixture, *transcriptstore.Memory, http.H
 		Transcripts:     transcripts, Users: f.users, Tenants: f.tenants, Blobs: f.blobs,
 	}
 	f.wireSnapshot(&o)
-	h := sessionserver.New(f.store, o).Handler()
+	h := asOwner(sessionserver.New(f.store, o).Handler())
 	return f, transcripts, h
 }
 

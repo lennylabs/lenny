@@ -35,6 +35,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // seedReadySession creates a ready row for alice.
@@ -80,7 +81,7 @@ func TestStartLaunchFailureAnswersStartingFailedAndFailsTheSession_spec_15_1(t *
 	seedReadySession(t, store, id)
 	launchErr := fmt.Errorf("%w: %w", adapterclient.ErrSlotBindAlreadyStarted,
 		status.Error(codes.FailedPrecondition, "slot bind already started"))
-	ts := httptest.NewServer(slotFailServerWithErr(t, cluster, store, launchErr).Handler())
+	ts := httptest.NewServer(ownerprincipal.Wrap(slotFailServerWithErr(t, cluster, store, launchErr).Handler(), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 
 	resp, body := do(t, ts, http.MethodPost, "/v1/sessions/"+id+"/start", nil)
@@ -104,7 +105,7 @@ func TestSecondStartWhileTheFirstIsHeldAnswersStarting_spec_15_1(t *testing.T) {
 	store := &commitHoldStore{Store: memstore.New(), held: make(chan struct{}), release: make(chan struct{})}
 	const id = "sess_start_held"
 	seedReadySession(t, store.Store, id)
-	ts := httptest.NewServer(sessionserver.New(store, sessionserver.Options{DevTenantHeader: true}).Handler())
+	ts := httptest.NewServer(ownerprincipal.Wrap(sessionserver.New(store, sessionserver.Options{DevTenantHeader: true}).Handler(), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 
 	first := make(chan int, 1)
@@ -140,7 +141,7 @@ func TestStartStreamsStartingBeforeRunning_spec_7_2(t *testing.T) {
 	const id = "sess_start_stream"
 	seedReadySession(t, store, id)
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: sessionevents.NewBus(64)})
-	ts := httptest.NewServer(srv.Handler())
+	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 
 	if resp, body := do(t, ts, http.MethodPost, "/v1/sessions/"+id+"/start", nil); resp.StatusCode != http.StatusOK {

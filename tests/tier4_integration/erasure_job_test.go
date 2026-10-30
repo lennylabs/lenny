@@ -156,8 +156,8 @@ func TestErasureJobJourney(t *testing.T) {
 		// Seed a real session and a real transcript row (session_messages),
 		// each FK-linked to the session. Erasure must delete the child
 		// (transcript) before the parent (session) or Postgres rejects it.
-		code, created := do(t, http.MethodPost, "/v1/sessions/start", "", map[string]any{
-			"runtimeRef": "echo", "userId": user,
+		code, created := erasureDoAs(t, base, http.MethodPost, "/v1/sessions/start", user, "", map[string]any{
+			"runtimeRef": "echo",
 		})
 		if code != http.StatusCreated {
 			t.Fatalf("create session: %d (%v)", code, created)
@@ -166,7 +166,7 @@ func TestErasureJobJourney(t *testing.T) {
 		if sid == "" {
 			t.Fatal("session id missing")
 		}
-		code, msgResp := do(t, http.MethodPost, "/v1/sessions/"+sid+"/messages", "", map[string]any{
+		code, msgResp := erasureDoAs(t, base, http.MethodPost, "/v1/sessions/"+sid+"/messages", user, "", map[string]any{
 			"messages": []map[string]any{{"role": "user", "content": "hello erasure"}},
 		})
 		if code != http.StatusOK {
@@ -234,8 +234,8 @@ func TestErasureJobJourney(t *testing.T) {
 		if code != http.StatusOK {
 			t.Fatalf("bootstrap user: status %d", code)
 		}
-		code, created := do(t, http.MethodPost, "/v1/sessions/start", "", map[string]any{
-			"runtimeRef": "echo", "userId": user,
+		code, created := erasureDoAs(t, base, http.MethodPost, "/v1/sessions/start", user, "", map[string]any{
+			"runtimeRef": "echo",
 		})
 		if code != http.StatusCreated {
 			t.Fatalf("create session: %d (%v)", code, created)
@@ -334,6 +334,13 @@ func dbCountErasure(t *testing.T, pg *containers.Postgres, query string, args ..
 // t.Run subtest fails that subtest rather than its parent.
 func erasureAdminDo(t *testing.T, base, method, path, roles string, body any) (int, map[string]any) {
 	t.Helper()
+	return erasureDoAs(t, base, method, path, "ops@acme.com", roles, body)
+}
+
+// erasureDoAs is erasureAdminDo with the caller's subject named by user, so a
+// session it creates is owned by user (§10.2 Session ownership).
+func erasureDoAs(t *testing.T, base, method, path, user, roles string, body any) (int, map[string]any) {
+	t.Helper()
 	var reader io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -348,7 +355,7 @@ func erasureAdminDo(t *testing.T, base, method, path, roles string, body any) (i
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
-	req.Header.Set("X-Lenny-User-ID", "ops@acme.com")
+	req.Header.Set("X-Lenny-User-ID", user)
 	if roles != "" {
 		req.Header.Set("X-Lenny-Roles", roles)
 	}
@@ -399,8 +406,8 @@ func TestErasureDeletesTheErasedUsersSessionMessageQueues_spec_12_8(t *testing.T
 	}
 	start := func(user string) string {
 		t.Helper()
-		code, created := erasureAdminDo(t, base, http.MethodPost, "/v1/sessions/start", "", map[string]any{
-			"runtimeRef": "echo", "userId": user,
+		code, created := erasureDoAs(t, base, http.MethodPost, "/v1/sessions/start", user, "", map[string]any{
+			"runtimeRef": "echo",
 		})
 		sid, _ := created["id"].(string)
 		if code != http.StatusCreated || sid == "" {
@@ -698,8 +705,8 @@ func TestErasureDeletesTheUsersRowsInEveryWiredStore_spec_12_8(t *testing.T) {
 	}
 	start := func(user string) string {
 		t.Helper()
-		code, created := erasureAdminDo(t, base, http.MethodPost, "/v1/sessions/start", "", map[string]any{
-			"runtimeRef": "echo", "userId": user,
+		code, created := erasureDoAs(t, base, http.MethodPost, "/v1/sessions/start", user, "", map[string]any{
+			"runtimeRef": "echo",
 		})
 		sid, _ := created["id"].(string)
 		if code != http.StatusCreated || sid == "" {

@@ -130,7 +130,7 @@ func TestSessionEndpointAuthorizationMatrix(t *testing.T) {
 				{"cancel", http.MethodDelete, "/v1/sessions/sess_rbac", nil},
 			} {
 				srv, _ := newRBACSessionServer(t, nil)
-				rr := rbacRequest(t, srv.Handler(), sc, c.method, c.path, c.body)
+				rr := rbacRequest(t, asOwner(srv.Handler()), sc, c.method, c.path, c.body)
 				assertSessionAuth(t, sc.name, c.op, sc.wantManage, rr)
 			}
 			// read_own_sessions endpoints.
@@ -142,7 +142,7 @@ func TestSessionEndpointAuthorizationMatrix(t *testing.T) {
 				{"list", http.MethodGet, "/v1/sessions"},
 			} {
 				srv, _ := newRBACSessionServer(t, nil)
-				rr := rbacRequest(t, srv.Handler(), sc, c.method, c.path, nil)
+				rr := rbacRequest(t, asOwner(srv.Handler()), sc, c.method, c.path, nil)
 				assertSessionAuth(t, sc.name, c.op, sc.wantRead, rr)
 			}
 		})
@@ -233,7 +233,7 @@ func TestSessionEndpointCustomRoleGrant(t *testing.T) {
 				{"cancel", http.MethodDelete, "/v1/sessions/sess_rbac", nil},
 			} {
 				srv, _ := newRBACSessionServer(t, roles)
-				rr := rbacRequest(t, srv.Handler(), sc, c.method, c.path, c.body)
+				rr := rbacRequest(t, asOwner(srv.Handler()), sc, c.method, c.path, c.body)
 				assertSessionAuth(t, tc.customRole, c.op, tc.wantManage, rr)
 			}
 			// read endpoints.
@@ -245,7 +245,7 @@ func TestSessionEndpointCustomRoleGrant(t *testing.T) {
 				{"list", http.MethodGet, "/v1/sessions"},
 			} {
 				srv, _ := newRBACSessionServer(t, roles)
-				rr := rbacRequest(t, srv.Handler(), sc, c.method, c.path, nil)
+				rr := rbacRequest(t, asOwner(srv.Handler()), sc, c.method, c.path, nil)
 				assertSessionAuth(t, tc.customRole, c.op, tc.wantRead, rr)
 			}
 		})
@@ -259,7 +259,7 @@ func TestSessionEndpointCustomRoleGrant(t *testing.T) {
 func TestSessionEndpointCustomRoleFailsClosedWithoutRegistry(t *testing.T) {
 	srv, _ := newRBACSessionServer(t, nil) // no custom-role registry
 	sc := rbacSession{name: "unknown-custom", customRole: "mystery-role"}
-	rr := rbacRequest(t, srv.Handler(), sc, http.MethodPost, "/v1/sessions",
+	rr := rbacRequest(t, asOwner(srv.Handler()), sc, http.MethodPost, "/v1/sessions",
 		sessionserver.CreateSessionRequest{RuntimeRef: "echo"})
 	if rr.Code != http.StatusForbidden {
 		t.Errorf("unknown custom role with no registry: got %d, want 403", rr.Code)
@@ -317,7 +317,7 @@ func TestSessionEndpointCrossTenantRejection(t *testing.T) {
 		}
 		req := asAcmeUser(httptest.NewRequest(c.method, c.path, rdr))
 		rr := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rr, req)
+		asOwner(srv.Handler()).ServeHTTP(rr, req)
 		if rr.Code != http.StatusNotFound {
 			t.Errorf("acme user %s globex session: got %d, want 404 (cross-tenant isolation)", c.op, rr.Code)
 		}
@@ -338,7 +338,7 @@ func TestSessionEndpointAdmitsRolelessPrincipal(t *testing.T) {
 		bytes.NewReader(mustJSON(sessionserver.CreateSessionRequest{RuntimeRef: "echo"})))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code == http.StatusForbidden {
 		t.Errorf("roleless dev-header request: got 403, want admit (no-OIDC dev posture)")
 	}
@@ -350,7 +350,7 @@ func TestSessionEndpointAdmitsRolelessPrincipal(t *testing.T) {
 		Subject: "svc@acme.com", TenantID: "acme",
 	}))
 	rr = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code == http.StatusForbidden {
 		t.Errorf("roleless principal: got 403, want admit (no-OIDC dev posture)")
 	}
@@ -404,7 +404,7 @@ func TestSessionEndpointMultiTenantRejectsRolelessPrincipal(t *testing.T) {
 				Subject: "svc@acme.com", TenantID: "acme",
 			}))
 			rr := httptest.NewRecorder()
-			srv.Handler().ServeHTTP(rr, req)
+			asOwner(srv.Handler()).ServeHTTP(rr, req)
 			if rr.Code != http.StatusForbidden {
 				t.Errorf("multi-tenant + roleless %s: got %d, want 403 FORBIDDEN", c.op, rr.Code)
 				return

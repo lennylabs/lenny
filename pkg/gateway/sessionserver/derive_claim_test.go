@@ -111,7 +111,7 @@ func claimingServerWith(t *testing.T, store sessionstore.Store, rt newSessionRou
 		mod(&opts)
 	}
 	srv := sessionserver.New(store, snap.wire(opts))
-	return srv.Handler(), cluster, snap
+	return asOwner(srv.Handler()), cluster, snap
 }
 
 // TestDeriveAndReplayClaimAWarmPodAtCreate_spec_7_1 pins that derive and

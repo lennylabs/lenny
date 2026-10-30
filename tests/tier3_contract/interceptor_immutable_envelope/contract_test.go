@@ -30,6 +30,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // immutableCode is the §15.1 catalog code the route surface must surface for
@@ -85,10 +86,10 @@ func serveCreateStart(t *testing.T, ic interceptor.Interceptor) (int, map[string
 		t.Fatalf("register interceptor: %v", err)
 	}
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Interceptors: chain})
-	ts := httptest.NewServer(srv.Handler())
+	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 
-	body, err := json.Marshal(map[string]any{"runtimeRef": "claude-code", "userId": "alice@acme.com"})
+	body, err := json.Marshal(map[string]any{"runtimeRef": "claude-code"})
 	if err != nil {
 		t.Fatalf("marshal request: %v", err)
 	}

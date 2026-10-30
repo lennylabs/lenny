@@ -31,6 +31,7 @@ func gateServer(devFallback bool) (*mcp.Server, sessionstore.Store) {
 		Executor:          executor.NewEchoExecutor(),
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:            func() string { return "sess_gate" },
+		SessionCreator:    newSessionCreator(store, "sess_gate"),
 		TenantID:          "default",
 	})
 	return srv, store
@@ -90,14 +91,26 @@ func TestToolCallWithoutPrincipalRefusedOutsideDevMode(t *testing.T) {
 }
 
 // TestToolCallWithoutPrincipalAdmittedInDevMode asserts that under
-// DevTenantFallback a principal-less tool call runs as the Register-time
-// tenant, the dev-mode posture.
+// DevTenantFallback a principal-less tool call passes the pre-dispatch gate
+// and reaches the tool, the dev-mode posture. create_session then refuses
+// it with the session server's no-subject UNAUTHORIZED, because a session
+// owner is the creating principal's subject in every mode, and creates
+// nothing. A principal with a subject and no tenant creates the session
+// under the Register-time tenant.
 //
-// spec: §17.4 (dev mode).
+// spec: §17.4 (dev mode); §10.2 (Session ownership) rule 3.
 func TestToolCallWithoutPrincipalAdmittedInDevMode(t *testing.T) {
 	srv, store := gateServer(true)
-	if body := postToolCall(t, srv.Handler(), nil, "lenny/create_session", `{"runtimeRef":"echo"}`); strings.Contains(body, "UNAUTHORIZED") {
-		t.Fatalf("dev-mode tools/call without a principal was refused: %s", body)
+	body := postToolCall(t, srv.Handler(), nil, "lenny/create_session", `{"runtimeRef":"echo"}`)
+	if !strings.Contains(body, "principal_subject_required") {
+		t.Fatalf("dev-mode principal-less create_session: body %s, want the session server's no-subject refusal", body)
+	}
+	if _, err := store.Get(context.Background(), "default", "sess_gate"); err == nil {
+		t.Fatal("a principal-less create_session created a session")
+	}
+	p := &authmw.Principal{Subject: "alice@acme.com"}
+	if body := postToolCall(t, srv.Handler(), p, "lenny/create_session", `{"runtimeRef":"echo"}`); strings.Contains(body, "UNAUTHORIZED") {
+		t.Fatalf("dev-mode tools/call with a subject was refused: %s", body)
 	}
 	if _, err := store.Get(context.Background(), "default", "sess_gate"); err != nil {
 		t.Fatalf("dev-mode tools/call did not create the session under the fallback tenant: %v", err)

@@ -145,7 +145,7 @@ func TestInterruptChecksThePrimaryRowBeforeDrivingTheAdapter_spec_15_1(t *testin
 			req := httptest.NewRequest(http.MethodPost, "/v1/sessions/s1/interrupt", nil)
 			req.Header.Set("X-Lenny-Tenant-ID", "acme")
 			rr := httptest.NewRecorder()
-			srv.Handler().ServeHTTP(rr, req)
+			asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 			if rr.Code != tc.wantHTTP {
 				t.Fatalf("status = %d, want %d; body=%s", rr.Code, tc.wantHTTP, rr.Body.String())
@@ -208,7 +208,7 @@ func TestInterruptWithoutBindingSkipsThePrimaryRead_spec_15_1(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/v1/sessions/s1/interrupt", nil)
 			req.Header.Set("X-Lenny-Tenant-ID", "acme")
 			rr := httptest.NewRecorder()
-			srv.Handler().ServeHTTP(rr, req)
+			asOwner(srv.Handler()).ServeHTTP(rr, req)
 			if rr.Code != http.StatusConflict {
 				t.Fatalf("status = %d, want 409; body=%s", rr.Code, rr.Body.String())
 			}

@@ -859,7 +859,6 @@ func TestCreateOverrideRestrictCheckFailsClosed_spec_14(t *testing.T) {
 			}
 			req := CreateSessionRequest{
 				RuntimeRef:       "claude-code",
-				UserID:           "alice@acme.com",
 				CredentialPolicy: &sessionstore.CredentialPolicyOverride{PreferredSource: tc.override},
 			}
 			body, _ := json.Marshal(req)

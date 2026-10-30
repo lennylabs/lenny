@@ -285,7 +285,7 @@ func newRaceFixture(t *testing.T, opt raceOptions) *raceFixture {
 	}
 	srv := sessionserver.New(hooks, opts)
 	return &raceFixture{
-		h: srv.Handler(), inner: inner, hooks: hooks, cluster: cluster,
+		h: asOwner(srv.Handler()), inner: inner, hooks: hooks, cluster: cluster,
 		assigner: assigner, bus: bus, audit: audit,
 	}
 }
@@ -329,7 +329,7 @@ func raceCredentialStores(t *testing.T) (tenantstore.Store, runtimestore.Store, 
 func (f *raceFixture) create(t *testing.T, plan json.RawMessage) {
 	t.Helper()
 	body, _ := json.Marshal(sessionserver.CreateSessionRequest{
-		RuntimeRef: "echo", UserID: "alice@acme.com", WorkspacePlan: plan,
+		RuntimeRef: "echo", WorkspacePlan: plan,
 	})
 	if rr := postSessionStep(t, f.h, "/v1/sessions", body); rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())

@@ -246,11 +246,11 @@ func TestSessionStartPlacesSessionOnWarmPod(t *testing.T) {
 		AgentNamespace:          podTestNS,
 	})
 
-	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo"})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201; body=%s", rr.Code, rr.Body.String())
@@ -360,11 +360,11 @@ func TestCombinedStartRunsCredentialPreCheckOnce_spec_7_1(t *testing.T) {
 		CredentialRouter:        countingRouter{count: &resolveCount},
 	})
 
-	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo"})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}
@@ -425,11 +425,11 @@ func TestCombinedStartEndToEndIncludesPodClaim_spec_6_3_348(t *testing.T) {
 		},
 	})
 
-	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo"})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}
@@ -497,7 +497,7 @@ func TestSessionStartLeavesNoRowOnClaimFailure_spec_7_1_4(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503; body=%s", rr.Code, rr.Body.String())
@@ -570,11 +570,10 @@ func postSessionStep(t *testing.T, h http.Handler, path string, body []byte) *ht
 func TestTwoStepStartPlacesSessionOnWarmPod(t *testing.T) {
 	t.Parallel()
 	srv, registry, cluster, wsRoot := podBindServer(t, "sess-2step-1")
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo",
-		UserID:     "alice@acme.com",
 		WorkspacePlan: json.RawMessage(`{
 			"schemaVersion": 1,
 			"sources": [{"type":"inlineFile","path":"CLAUDE.md","content":"# stored plan","mode":"0644"}]
@@ -688,9 +687,9 @@ func TestTwoStepStartRunsNoCredentialWork_spec_15_1(t *testing.T) {
 		CredentialPools:         credPools,
 		CredentialRouter:        countingRouter{count: &resolveCount},
 	})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
-	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo"})
 	if rr := postSessionStep(t, h, "/v1/sessions", createBody); rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -730,11 +729,10 @@ func TestTwoStepStartRunsNoCredentialWork_spec_15_1(t *testing.T) {
 func TestFinalizeMaterializesWorkspaceBeforeStart_spec_7_1(t *testing.T) {
 	t.Parallel()
 	srv, _, _, wsRoot := podBindServer(t, "sess-fin-mat")
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo",
-		UserID:     "alice@acme.com",
 		WorkspacePlan: json.RawMessage(`{
 			"schemaVersion": 1,
 			"sources": [{"type":"inlineFile","path":"CLAUDE.md","content":"# finalized","mode":"0644"}]
@@ -825,13 +823,12 @@ func TestFinalizeFailsSessionAndReclaimsPodOnSetupError_spec_7_5(t *testing.T) {
 			warmupLabels = append(warmupLabels, [3]string{pool, runtimeClass, errorType})
 		},
 	})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	// A plan whose setup command exits non-zero makes the adapter's RunSetup
 	// abort with FailedPrecondition during the finalize prepare phase.
 	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo",
-		UserID:     "alice@acme.com",
 		WorkspacePlan: json.RawMessage(`{
 			"schemaVersion": 1,
 			"setupCommands": [{"cmd":"exit 3"}]
@@ -974,11 +971,10 @@ func TestFinalizeRejectsOverLimitArchiveAsNonRetryable_spec_13_4(t *testing.T) {
 		PodRegistry:             registry,
 		AgentNamespace:          podTestNS,
 	})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo",
-		UserID:     "alice@acme.com",
 	})
 	if rr := postSessionStep(t, h, "/v1/sessions", createBody); rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
@@ -1140,11 +1136,10 @@ func runFinalizeMaterializationFailureCase(t *testing.T, tc finalizeMaterializat
 		PodRegistry:             registry,
 		AgentNamespace:          podTestNS,
 	})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo",
-		UserID:     "alice@acme.com",
 	})
 	if rr := postSessionStep(t, h, "/v1/sessions", createBody); rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
@@ -1264,11 +1259,11 @@ func TestFinalizeCredentialMismatchReclaimsPod_spec_7_3(t *testing.T) {
 		CredentialPools:         credPools,
 		CredentialRouter:        credrouter.NewDefault(),
 	})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	// Create succeeds: the credential is active at the §7.1-step-3 pre-check, so
 	// the pod is claimed.
-	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo"})
 	if rr := postSessionStep(t, h, "/v1/sessions", createBody); rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -1445,9 +1440,9 @@ func TestFinalizePostCredentialWriteFailureRevokesLease_spec_7_1(t *testing.T) {
 		CredentialPools:         credPools,
 		CredentialRouter:        credrouter.NewDefault(),
 	})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
-	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo"})
 	if rr := postSessionStep(t, h, "/v1/sessions", createBody); rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -1486,7 +1481,7 @@ func TestFinalizePostCredentialWriteFailureRevokesLease_spec_7_1(t *testing.T) {
 func TestTwoStepStartRejectsNonReadySession(t *testing.T) {
 	t.Parallel()
 	srv, registry, _, _ := podBindServer(t, "sess-2step-early")
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo"})
 	if rr := postSessionStep(t, h, "/v1/sessions", createBody); rr.Code != http.StatusCreated {
@@ -1838,11 +1833,11 @@ func TestSessionStartPersistsPodAssignment(t *testing.T) {
 		AgentNamespace:          podTestNS,
 	})
 
-	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo"})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201; body=%s", rr.Code, rr.Body.String())
@@ -2099,11 +2094,11 @@ func TestSessionStartQueuesUntilPodFrees(t *testing.T) {
 		}
 	}()
 
-	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo"})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("queued start: status = %d, want 201 once a pod frees; body=%s", rr.Code, rr.Body.String())
@@ -2154,13 +2149,13 @@ func TestSessionStartQueueTimeoutReturnsExhausted(t *testing.T) {
 		IncPodClaimTimeout:      func(string) { atomic.AddInt32(&timeouts, 1) },
 	})
 
-	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo"})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
 
 	start := time.Now()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	elapsed := time.Since(start)
 
 	if rr.Code != http.StatusServiceUnavailable {
@@ -2220,12 +2215,12 @@ func TestSessionStartRejectFailsImmediately(t *testing.T) {
 		SetPodClaimQueueDepth:   func(string, int) { atomic.AddInt32(&enqueued, 1) },
 	})
 
-	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo"})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
 
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("reject pool: status = %d, want 503; body=%s", rr.Code, rr.Body.String())
@@ -2299,11 +2294,11 @@ func TestServiceModeStartIsClaimless_spec_5_2(t *testing.T) {
 		Pools:                   podBindServicePool(t, "svc-pool", "svc-runtime", 8),
 	})
 
-	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "svc-runtime", UserID: "alice@acme.com"})
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "svc-runtime"})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("service-mode start: status = %d, want 201; body=%s", rr.Code, rr.Body.String())

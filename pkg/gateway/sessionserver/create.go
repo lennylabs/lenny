@@ -36,12 +36,20 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	defer span.End()
 	r = r.WithContext(ctx)
 
+	// spec: §10.2 (Session ownership) rules 1 and 3 — the owner is the
+	// principal's subject, resolved before any gate, store write, or claim.
+	// It is the one value the §12.8 creation fence, the §11.1 per-user
+	// concurrency key, and the stored row use.
+	owner, ok := s.requireOwner(w, r)
+	if !ok {
+		return
+	}
 	tenantID := s.resolveTenant(r)
-	if !s.createAdmissionGates(w, r, req, tenantID) {
+	if !s.createAdmissionGates(w, r, req, tenantID, owner) {
 		return
 	}
 
-	row, build, ok := s.validateAndBuildCreateRow(w, r, req, tenantID, span)
+	row, build, ok := s.validateAndBuildCreateRow(w, r, req, tenantID, owner, span)
 	if !ok {
 		return
 	}
@@ -71,8 +79,9 @@ type createBuild struct {
 // required-field check, the §10.6 environment-admission gate, and the
 // §27.4 playground-runtime-visibility boundary. Each writes its own §15.1
 // error envelope and returns false; true means the request may proceed to
-// row validation. spec: §15.1, §11.1, §10.1, §10.6, §27.4.
-func (s *Server) createAdmissionGates(w http.ResponseWriter, r *http.Request, req CreateSessionRequest, tenantID string) bool {
+// row validation. owner is the session owner createSession resolved from
+// the principal. spec: §15.1, §11.1, §10.1, §10.6, §27.4, §10.2.
+func (s *Server) createAdmissionGates(w http.ResponseWriter, r *http.Request, req CreateSessionRequest, tenantID, owner string) bool {
 	// spec: §10.1 item 2 — while both Postgres and Redis are unreachable
 	// a new session.create cannot complete its Postgres INSERT, so reject
 	// it with 503 + Retry-After: 10 before consuming any quota, rate, or
@@ -89,10 +98,10 @@ func (s *Server) createAdmissionGates(w http.ResponseWriter, r *http.Request, re
 		return false
 	}
 	// spec: §12.8 (Lifecycle fence and drain) — the early creation gate
-	// over the tenant row and the new row's owner (the body's userId),
-	// before the quota, concurrency, rate-limit, and policy gates, so a
-	// fenced create consumes no rate budget and claims no pod.
-	if !s.requireCreationAllowed(w, r, tenantID, req.UserID) {
+	// over the tenant row and the new row's owner (the principal's
+	// subject), before the quota, concurrency, rate-limit, and policy
+	// gates, so a fenced create consumes no rate budget and claims no pod.
+	if !s.requireCreationAllowed(w, r, tenantID, owner) {
 		return false
 	}
 	if !s.requireSessionQuota(w, r, tenantID) {
@@ -101,14 +110,9 @@ func (s *Server) createAdmissionGates(w http.ResponseWriter, r *http.Request, re
 	// spec: §11.1 — global, per-user, and per-runtime
 	// concurrent-session admission caps. Enforced before the rate-limit
 	// and policy gates so an over-limit create consumes no rate budget
-	// and reserves no token budget. The caller's subject is the per-user
-	// scope key; an unauthenticated principal leaves the per-user scope
-	// inert. F-11.1.3.
-	concUser := ""
-	if p, ok := getPrincipal(r); ok {
-		concUser = p.Subject
-	}
-	if !s.requireConcurrencyLimits(w, r, tenantID, concUser, req.RuntimeRef) {
+	// and reserves no token budget. The owner is the per-user scope key.
+	// F-11.1.3.
+	if !s.requireConcurrencyLimits(w, r, tenantID, owner, req.RuntimeRef) {
 		return false
 	}
 	// spec: §11.1 — per-runtime and per-pool requests-per-minute
@@ -158,7 +162,7 @@ func (s *Server) createAdmissionGates(w http.ResponseWriter, r *http.Request, re
 // variant). It returns the built row and the createBuild the persist and
 // response stages consume, writing the §15.1 error envelope and returning
 // ok=false on any rejection. spec: §5.3, §15.1, §14, §7.5, §7.3, §7.1, §10.7.
-func (s *Server) validateAndBuildCreateRow(w http.ResponseWriter, r *http.Request, req CreateSessionRequest, tenantID string, span trace.Span) (sessionstore.Session, createBuild, bool) {
+func (s *Server) validateAndBuildCreateRow(w http.ResponseWriter, r *http.Request, req CreateSessionRequest, tenantID, owner string, span trace.Span) (sessionstore.Session, createBuild, bool) {
 	// §5.3 isolation profile: explicit override > §5.3 default. The
 	// minimal gateway does not yet resolve pools, so any explicit
 	// value is taken at face value (production validates against the
@@ -245,7 +249,7 @@ func (s *Server) validateAndBuildCreateRow(w http.ResponseWriter, r *http.Reques
 	row := sessionstore.Session{
 		ID:                     s.idFn(),
 		TenantID:               tenantID,
-		UserID:                 req.UserID,
+		UserID:                 owner, // spec: §10.2 (Session ownership) rule 1
 		RuntimeRef:             req.RuntimeRef,
 		Environment:            req.Environment,
 		State:                  session.StateCreated,

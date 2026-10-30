@@ -87,7 +87,7 @@ func launchServer(t *testing.T, store sessionstore.Store, id string, maxFinalizi
 func createAndFinalize(t *testing.T, h http.Handler, id string) {
 	t.Helper()
 	body, _ := json.Marshal(sessionserver.CreateSessionRequest{
-		RuntimeRef: "echo", UserID: "alice@acme.com",
+		RuntimeRef:    "echo",
 		WorkspacePlan: json.RawMessage(`{"schemaVersion": 1, "sources": []}`),
 	})
 	if rr := postSessionStep(t, h, "/v1/sessions", body); rr.Code != http.StatusCreated {
@@ -123,7 +123,7 @@ func TestStartLaunchRunsUnderTheFinalizingBound_spec_5_2(t *testing.T) {
 		t.Parallel()
 		probe := &startProbe{}
 		srv, _, _ := launchServer(t, memstore.New(), "sess-bound-default", 0, probe)
-		h := srv.Handler()
+		h := asOwner(srv.Handler())
 		createAndFinalize(t, h, "sess-bound-default")
 		readAt := time.Now()
 		if rr := postSessionStep(t, h, "/v1/sessions/sess-bound-default/start", nil); rr.Code != http.StatusOK {
@@ -138,7 +138,7 @@ func TestStartLaunchRunsUnderTheFinalizingBound_spec_5_2(t *testing.T) {
 		probe := &startProbe{block: true}
 		store := memstore.New()
 		srv, registry, cluster := launchServer(t, store, "sess-bound-expired", 500*time.Millisecond, probe)
-		h := srv.Handler()
+		h := asOwner(srv.Handler())
 		createAndFinalize(t, h, "sess-bound-expired")
 		rr := postSessionStep(t, h, "/v1/sessions/sess-bound-expired/start", nil)
 		if rr.Code == http.StatusOK {
@@ -276,7 +276,7 @@ func TestLaunchReadsTheRowFromThePrimary_spec_5_2(t *testing.T) {
 			PodRegistry:             podsession.NewRegistry(),
 			AgentNamespace:          podTestNS,
 		})
-		rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-lagging/start", nil)
+		rr := postSessionStep(t, asOwner(srv.Handler()), "/v1/sessions/sess-lagging/start", nil)
 		if rr.Code != http.StatusConflict {
 			t.Errorf("start of a terminal row = %d (%s), want the 409 precondition refusal", rr.Code, rr.Body.String())
 		}

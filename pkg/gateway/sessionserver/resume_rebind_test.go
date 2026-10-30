@@ -135,7 +135,7 @@ func checkpointed() *sessionstore.WorkspaceSnapshot {
 // the row in resume_pending.
 func resumeToPending(t *testing.T, f *rebindFixture, id string) sessionstore.Session {
 	t.Helper()
-	rr := postSessionStep(t, f.srv.Handler(), "/v1/sessions/"+id+"/resume", nil)
+	rr := postSessionStep(t, asOwner(f.srv.Handler()), "/v1/sessions/"+id+"/resume", nil)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
@@ -239,7 +239,7 @@ func TestResumeAgainstForeignLeaseHolderHoldsRow_spec_15_1(t *testing.T) {
 			seedAwaitingSession(t, f.store, row)
 			f.setHolder(id, "rep-2")
 
-			rr := postSessionStep(t, f.srv.Handler(), "/v1/sessions/"+id+"/resume", nil)
+			rr := postSessionStep(t, asOwner(f.srv.Handler()), "/v1/sessions/"+id+"/resume", nil)
 			if rr.Code != http.StatusOK {
 				t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 			}

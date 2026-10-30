@@ -69,7 +69,7 @@ func postFinalize(t *testing.T, srv *Server, id, body string) *httptest.Response
 	}
 	r.Header.Set("X-Lenny-Tenant-ID", "default")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, r)
+	asOwner(srv.Handler()).ServeHTTP(rr, r)
 	return rr
 }
 

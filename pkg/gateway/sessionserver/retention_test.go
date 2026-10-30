@@ -54,7 +54,7 @@ func TestExtendRetentionSetsDeadlineFromClock(t *testing.T) {
 		Clock:           func() time.Time { return fixedNow },
 	})
 
-	rr := extendRetentionRequest(t, srv.Handler(),
+	rr := extendRetentionRequest(t, asOwner(srv.Handler()),
 		sessionserver.ExtendRetentionRequest{TTLSeconds: 7 * 24 * 3600})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200; body=%s", rr.Code, rr.Body.String())
@@ -81,7 +81,7 @@ func TestExtendRetentionRejectsZeroAndNegative(t *testing.T) {
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
 	for _, ttl := range []int64{0, -5} {
-		rr := extendRetentionRequest(t, srv.Handler(),
+		rr := extendRetentionRequest(t, asOwner(srv.Handler()),
 			sessionserver.ExtendRetentionRequest{TTLSeconds: ttl})
 		if rr.Code != http.StatusBadRequest {
 			t.Errorf("ttl=%d: status got %d, want 400; body=%s", ttl, rr.Code, rr.Body.String())
@@ -98,7 +98,7 @@ func TestExtendRetentionRejectsMalformedJSON(t *testing.T) {
 		bytes.NewReader([]byte("not-json")))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("malformed JSON: got %d, want 400", rr.Code)
 	}
@@ -108,7 +108,7 @@ func TestExtendRetentionMissingSessionReturns404(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
-	rr := extendRetentionRequest(t, srv.Handler(),
+	rr := extendRetentionRequest(t, asOwner(srv.Handler()),
 		sessionserver.ExtendRetentionRequest{TTLSeconds: 3600})
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("missing session: got %d, want 404", rr.Code)
@@ -124,7 +124,7 @@ func TestExtendRetentionAcceptsTerminalSession(t *testing.T) {
 		t.Fatalf("seed should be completed, got %q", row.State)
 	}
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	rr := extendRetentionRequest(t, srv.Handler(),
+	rr := extendRetentionRequest(t, asOwner(srv.Handler()),
 		sessionserver.ExtendRetentionRequest{TTLSeconds: 60})
 	if rr.Code != http.StatusOK {
 		t.Errorf("terminal-session extend: got %d, want 200", rr.Code)

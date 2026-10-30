@@ -31,7 +31,7 @@ func gateWithUsers(t *testing.T, seed ...userstore.User) http.Handler {
 			t.Fatalf("seed user %q: %v", u.Subject, err)
 		}
 	}
-	return sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Users: us}).Handler()
+	return asOwner(sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Users: us}).Handler())
 }
 
 // asUser attaches an authenticated principal to a request.
@@ -74,7 +74,7 @@ func TestCreateDeniedForRevokedUser(t *testing.T) {
 	if err := us.SoftDelete(context.Background(), "acme", "bob@acme.com", time.Now()); err != nil {
 		t.Fatalf("soft-delete: %v", err)
 	}
-	h := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Users: us}).Handler()
+	h := asOwner(sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Users: us}).Handler())
 	rr := postSession(t, h, "/v1/sessions", "bob@acme.com", "acme")
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("revoked user: status %d, want 403; body %s", rr.Code, rr.Body.String())

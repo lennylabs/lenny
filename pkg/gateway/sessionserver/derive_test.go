@@ -205,7 +205,7 @@ func TestDeriveHappyPathFromTerminal(t *testing.T) {
 		Clock:           func() time.Time { return time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC) },
 	}))
 
-	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{})
+	rr := deriveRequest(t, asOwner(srv.Handler()), sessionserver.DeriveRequest{})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}
@@ -251,7 +251,7 @@ func TestDeriveNonTerminalWithoutAllowStaleRejects(t *testing.T) {
 	})
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
-	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{})
+	rr := deriveRequest(t, asOwner(srv.Handler()), sessionserver.DeriveRequest{})
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("status: got %d, want 409; body=%s", rr.Code, rr.Body.String())
 	}
@@ -272,7 +272,7 @@ func TestDeriveNonTerminalWithAllowStaleSucceeds(t *testing.T) {
 		IDFunc:          func() string { return "sess_d2" },
 	}))
 
-	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{AllowStale: true})
+	rr := deriveRequest(t, asOwner(srv.Handler()), sessionserver.DeriveRequest{AllowStale: true})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}
@@ -303,7 +303,7 @@ func TestDeriveEarlyStateWithAllowStaleRejected_spec_15_1(t *testing.T) {
 				s.State = st
 			})
 			srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-			rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{AllowStale: true})
+			rr := deriveRequest(t, asOwner(srv.Handler()), sessionserver.DeriveRequest{AllowStale: true})
 			if rr.Code != http.StatusConflict {
 				t.Fatalf("status: got %d, want 409; body=%s", rr.Code, rr.Body.String())
 			}
@@ -329,7 +329,7 @@ func TestDeriveNoSnapshotReturns400(t *testing.T) {
 	})
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
-	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{})
+	rr := deriveRequest(t, asOwner(srv.Handler()), sessionserver.DeriveRequest{})
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status: got %d, want 400; body=%s", rr.Code, rr.Body.String())
 	}
@@ -354,7 +354,7 @@ func TestDeriveIsolationDowngradeWithoutFlagReturns422(t *testing.T) {
 	})
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
-	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{
+	rr := deriveRequest(t, asOwner(srv.Handler()), sessionserver.DeriveRequest{
 		TargetIsolationProfile: isolation.ProfileSandboxed,
 	})
 	if rr.Code != http.StatusUnprocessableEntity {
@@ -378,7 +378,7 @@ func TestDeriveIsolationDowngradeWithoutAdminRoleReturns403(t *testing.T) {
 
 	// Attach a non-admin Principal via context.
 	rr := deriveRequest(
-		t, srv.Handler(),
+		t, asOwner(srv.Handler()),
 		sessionserver.DeriveRequest{
 			TargetIsolationProfile:  isolation.ProfileSandboxed,
 			AllowIsolationDowngrade: true,
@@ -414,7 +414,7 @@ func TestDeriveIsolationDowngradeWithAdminEmitsAuditAndSucceeds(t *testing.T) {
 	}))
 
 	rr := deriveRequest(
-		t, srv.Handler(),
+		t, asOwner(srv.Handler()),
 		sessionserver.DeriveRequest{
 			// No targetPool: this server runs without a pool resolver, which
 			// refuses any pin (TestDeriveAndReplayTargetPoolSelection_spec_15_1).
@@ -453,7 +453,7 @@ func TestDeriveInvalidTargetProfileReturns400(t *testing.T) {
 	newSourceSession(t, store)
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
-	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{
+	rr := deriveRequest(t, asOwner(srv.Handler()), sessionserver.DeriveRequest{
 		TargetIsolationProfile: isolation.Profile("ferrous"),
 	})
 	if rr.Code != http.StatusBadRequest {
@@ -469,7 +469,7 @@ func TestDeriveSourceNotFoundReturns404(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
-	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{})
+	rr := deriveRequest(t, asOwner(srv.Handler()), sessionserver.DeriveRequest{})
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status: got %d, want 404; body=%s", rr.Code, rr.Body.String())
 	}
@@ -482,7 +482,7 @@ func TestDeriveCrossTenantReturns404(t *testing.T) {
 	newSourceSession(t, store, func(s *sessionstore.Session) { s.TenantID = "globex" })
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
-	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{})
+	rr := deriveRequest(t, asOwner(srv.Handler()), sessionserver.DeriveRequest{})
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status: got %d, want 404; body=%s", rr.Code, rr.Body.String())
 	}
@@ -496,7 +496,7 @@ func TestDeriveInheritsRuntimeAndUserAndPool(t *testing.T) {
 		IDFunc:          func() string { return "sess_inherit" },
 	}))
 
-	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{})
+	rr := deriveRequest(t, asOwner(srv.Handler()), sessionserver.DeriveRequest{})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}
@@ -537,7 +537,7 @@ func TestDeriveOverrideRuntime(t *testing.T) {
 		DevTenantHeader: true,
 		IDFunc:          func() string { return "sess_override" },
 	}))
-	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{
+	rr := deriveRequest(t, asOwner(srv.Handler()), sessionserver.DeriveRequest{
 		RuntimeRef: "gemini-cli",
 	})
 	if rr.Code != http.StatusCreated {
@@ -559,7 +559,7 @@ func TestDeriveEqualIsolationSucceedsWithoutOverride(t *testing.T) {
 		DevTenantHeader: true,
 		IDFunc:          func() string { return "sess_eq" },
 	}))
-	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{
+	rr := deriveRequest(t, asOwner(srv.Handler()), sessionserver.DeriveRequest{
 		TargetIsolationProfile: isolation.ProfileSandboxed,
 	})
 	if rr.Code != http.StatusCreated {
@@ -576,7 +576,7 @@ func TestDeriveStrictlyStricterIsolationSucceeds(t *testing.T) {
 		DevTenantHeader: true,
 		IDFunc:          func() string { return "sess_stricter" },
 	}))
-	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{
+	rr := deriveRequest(t, asOwner(srv.Handler()), sessionserver.DeriveRequest{
 		TargetIsolationProfile: isolation.ProfileMicrovm,
 	})
 	if rr.Code != http.StatusCreated {
@@ -588,7 +588,7 @@ func TestDeriveStrictlyStricterIsolationSucceeds(t *testing.T) {
 // the workspaceSnapshotSource the 201 response reports.
 func deriveSnapshotSource(t *testing.T, srv *sessionserver.Server, newID string) string {
 	t.Helper()
-	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{})
+	rr := deriveRequest(t, asOwner(srv.Handler()), sessionserver.DeriveRequest{})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("derive %s: status %d, want 201; body=%s", newID, rr.Code, rr.Body.String())
 	}
@@ -766,7 +766,7 @@ func newRootPathServer(t *testing.T, c rootPathCase, store sessionstore.Store, t
 	if transcripts != nil {
 		opts.Transcripts = transcripts
 	}
-	return sessionserver.New(store, opts).Handler()
+	return asOwner(sessionserver.New(store, opts).Handler())
 }
 
 // TestDeriveAndReplayCreateRoots_spec_12_6 pins that derive and every

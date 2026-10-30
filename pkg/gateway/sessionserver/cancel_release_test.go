@@ -98,7 +98,7 @@ func TestCascadeCancelDrainsDescendantRuntimes_spec_11_3_9(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/p", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("DELETE status = %d, want 200", rr.Code)
 	}
@@ -190,7 +190,7 @@ func TestTerminalTransitionStampsTerminatedConditionOnRow_spec_7_2(t *testing.T)
 		req := httptest.NewRequest(tc.method, tc.path, nil)
 		req.Header.Set("X-Lenny-Tenant-ID", "acme")
 		rr := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rr, req)
+		asOwner(srv.Handler()).ServeHTTP(rr, req)
 		if rr.Code != http.StatusOK {
 			t.Fatalf("%s %s = %d, want 200; body %s", tc.method, tc.path, rr.Code, rr.Body.String())
 		}
@@ -217,7 +217,7 @@ func TestTerminalConditionStampIsIdempotent_spec_7_2(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/idem", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
-	srv.Handler().ServeHTTP(httptest.NewRecorder(), req)
+	asOwner(srv.Handler()).ServeHTTP(httptest.NewRecorder(), req)
 	first, err := store.Get(ctx, "acme", "idem")
 	if err != nil {
 		t.Fatalf("get after first: %v", err)
@@ -264,7 +264,7 @@ func TestCascadeCancelDetachLeavesGrandchildRuntimeRunning_spec_11_3_9(t *testin
 	req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/p", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("DELETE status = %d, want 200", rr.Code)
 	}

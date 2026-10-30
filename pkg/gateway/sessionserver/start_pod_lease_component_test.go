@@ -133,7 +133,6 @@ func createFinalizeBody(t *testing.T) []byte {
 	t.Helper()
 	body, err := json.Marshal(sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo",
-		UserID:     "alice@acme.com",
 		WorkspacePlan: json.RawMessage(`{
 			"schemaVersion": 1,
 			"sources": [{"type":"inlineFile","path":"CLAUDE.md","content":"# stored plan","mode":"0644"}]
@@ -158,7 +157,7 @@ func TestTwoStepStartAcquiresCoordinationLeaseAtBind(t *testing.T) {
 	t.Parallel()
 	leases := newComponentLeaseStore()
 	srv, registry := podBindServerWithLease(t, "sess-lease-ok", "replica-a", leases)
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	if rr := postSessionStep(t, h, "/v1/sessions", createFinalizeBody(t)); rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
@@ -207,7 +206,7 @@ func TestTwoStepStartFailsClosedOnForeignLeaseHolder(t *testing.T) {
 		t.Fatalf("preset foreign holder: %v", err)
 	}
 	srv, registry := podBindServerWithLease(t, "sess-lease-held", "replica-a", leases)
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	if rr := postSessionStep(t, h, "/v1/sessions", createFinalizeBody(t)); rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
@@ -255,11 +254,11 @@ func TestSingleCallStartPublishesBindingDespiteSelfRenewFault(t *testing.T) {
 	leases.failAcquireAfter = 1
 	srv, registry := podBindServerWithLease(t, "sess-renew-blip", "replica-a", leases)
 
-	body, err := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	body, err := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo"})
 	if err != nil {
 		t.Fatalf("marshal create-and-start body: %v", err)
 	}
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/start", body)
+	rr := postSessionStep(t, asOwner(srv.Handler()), "/v1/sessions/start", body)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("single-call start: status %d, body=%s", rr.Code, rr.Body.String())
 	}

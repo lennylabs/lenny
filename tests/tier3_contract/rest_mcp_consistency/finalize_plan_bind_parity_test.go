@@ -70,12 +70,12 @@ func TestFinalizePlanBindRejectionParity(t *testing.T) {
 	}{
 		{
 			name:       "upload_ref_foreign_session",
-			createBody: `{"runtimeRef":"claude-code","userId":"alice@acme.com"}`,
+			createBody: `{"runtimeRef":"claude-code"}`,
 			wantReason: "upload_ref_foreign_session",
 		},
 		{
 			name: "plan_already_set",
-			createBody: `{"runtimeRef":"claude-code","userId":"alice@acme.com",` +
+			createBody: `{"runtimeRef":"claude-code",` +
 				`"workspacePlan":{"schemaVersion":1,"sources":[{"type":"inlineFile","path":"seed.txt","content":"seed"}]}}`,
 			wantReason: "plan_already_set",
 		},

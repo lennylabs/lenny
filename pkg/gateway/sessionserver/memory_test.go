@@ -30,7 +30,7 @@ func memoryServer(t *testing.T, seed ...sessionstore.Session) (http.Handler, mem
 	}
 	mem := memorystore.NewInMemory(0, nil)
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Memory: mem})
-	return srv.Handler(), mem
+	return asOwner(srv.Handler()), mem
 }
 
 func memorySession(id, user string) sessionstore.Session {
@@ -205,7 +205,7 @@ func TestMemoryEndpointsUnavailableWhenStoreNil(t *testing.T) {
 	store := memstore.New()
 	_ = store.Create(context.Background(), memorySession("sess_x", "alice"))
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true}) // no Memory wired
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	cases := []struct {
 		method, path string

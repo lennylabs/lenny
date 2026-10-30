@@ -100,7 +100,7 @@ func TestTerminateArchivesChildToTreeArchive(t *testing.T) {
 	seedTreeSession(t, store, "sess_parent", "")
 	seedTreeSession(t, store, "sess_child", "sess_parent")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_child/terminate")
+	rr := sessionRequest(t, asOwner(srv.Handler()), http.MethodPost, "/v1/sessions/sess_child/terminate")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("terminate: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -121,7 +121,7 @@ func TestCancelArchivesChildToTreeArchive(t *testing.T) {
 	seedTreeSession(t, store, "sess_parent", "")
 	seedTreeSession(t, store, "sess_child", "sess_parent")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodDelete, "/v1/sessions/sess_child")
+	rr := sessionRequest(t, asOwner(srv.Handler()), http.MethodDelete, "/v1/sessions/sess_child")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("delete: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -141,7 +141,7 @@ func TestTerminateDoesNotArchiveRootSession(t *testing.T) {
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, TreeArchive: archive})
 	seedTreeSession(t, store, "sess_root", "")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_root/terminate")
+	rr := sessionRequest(t, asOwner(srv.Handler()), http.MethodPost, "/v1/sessions/sess_root/terminate")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("terminate: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -168,7 +168,7 @@ func TestTerminateCascadeCancelsChildren(t *testing.T) {
 	seedTreeSession(t, store, "sess_c1", "sess_parent")
 	seedTreeSession(t, store, "sess_c2", "sess_parent")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/terminate")
+	rr := sessionRequest(t, asOwner(srv.Handler()), http.MethodPost, "/v1/sessions/sess_parent/terminate")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("terminate: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -189,7 +189,7 @@ func TestTerminateDetachLeavesChildrenRunning(t *testing.T) {
 	seedCascadeSession(t, store, "sess_parent", "", session.CascadeDetach)
 	seedTreeSession(t, store, "sess_child", "sess_parent")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/terminate")
+	rr := sessionRequest(t, asOwner(srv.Handler()), http.MethodPost, "/v1/sessions/sess_parent/terminate")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("terminate: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -212,7 +212,7 @@ func TestCascadeRespectsPerNodePolicy(t *testing.T) {
 	seedTreeSession(t, store, "sess_mid_cancel", "sess_root")
 	seedTreeSession(t, store, "sess_leaf_b", "sess_mid_cancel")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_root/terminate")
+	rr := sessionRequest(t, asOwner(srv.Handler()), http.MethodPost, "/v1/sessions/sess_root/terminate")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("terminate: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -250,7 +250,7 @@ func TestDetachFallsBackToCancelAllOverOrphanCap(t *testing.T) {
 	seedCascadeSession(t, store, "sess_parent", "", session.CascadeDetach)
 	seedDelegatedSession(t, store, "sess_child", "sess_parent")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/terminate")
+	rr := sessionRequest(t, asOwner(srv.Handler()), http.MethodPost, "/v1/sessions/sess_parent/terminate")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("terminate: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -289,7 +289,7 @@ func TestOrphanCapCountsChildrenOfTerminalMidTreeSession_spec_8_10(t *testing.T)
 	seedCascadeSession(t, store, "sess_parent", "", session.CascadeDetach)
 	seedDelegatedSession(t, store, "sess_child", "sess_parent")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/terminate")
+	rr := sessionRequest(t, asOwner(srv.Handler()), http.MethodPost, "/v1/sessions/sess_parent/terminate")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("terminate: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -342,7 +342,7 @@ func TestDetachFallbackEmitsCascadeAppliedAudit_spec_8_10_1103(t *testing.T) {
 	seedCascadeSession(t, store, "sess_parent", "", session.CascadeDetach)
 	seedDelegatedSession(t, store, "sess_child", "sess_parent")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/terminate")
+	rr := sessionRequest(t, asOwner(srv.Handler()), http.MethodPost, "/v1/sessions/sess_parent/terminate")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("terminate: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -392,7 +392,7 @@ func TestDetachUnderCapDoesNotEmitFallbackAudit_spec_8_10_1103(t *testing.T) {
 	seedCascadeSession(t, store, "sess_parent", "", session.CascadeDetach)
 	seedTreeSession(t, store, "sess_child", "sess_parent")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/terminate")
+	rr := sessionRequest(t, asOwner(srv.Handler()), http.MethodPost, "/v1/sessions/sess_parent/terminate")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("terminate: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -417,7 +417,7 @@ func TestDetachProceedsUnderOrphanCap(t *testing.T) {
 	seedCascadeSession(t, store, "sess_parent", "", session.CascadeDetach)
 	seedTreeSession(t, store, "sess_child", "sess_parent")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/terminate")
+	rr := sessionRequest(t, asOwner(srv.Handler()), http.MethodPost, "/v1/sessions/sess_parent/terminate")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("terminate: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -438,7 +438,7 @@ func TestCascadeArchivesCancelledChildren(t *testing.T) {
 	seedTreeSession(t, store, "sess_parent", "")
 	seedTreeSession(t, store, "sess_child", "sess_parent")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/terminate")
+	rr := sessionRequest(t, asOwner(srv.Handler()), http.MethodPost, "/v1/sessions/sess_parent/terminate")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("terminate: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -690,7 +690,7 @@ func TestTreeArchiveResolvesTheTreeRoot(t *testing.T) {
 	seedTreeSession(t, store, "sess_mid", "sess_root")
 	seedTreeSession(t, store, "sess_leaf", "sess_mid")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_leaf/terminate")
+	rr := sessionRequest(t, asOwner(srv.Handler()), http.MethodPost, "/v1/sessions/sess_leaf/terminate")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("terminate: status %d, body %s", rr.Code, rr.Body.String())
 	}

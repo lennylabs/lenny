@@ -163,7 +163,7 @@ func capNode(t *testing.T, store sessionstore.Store, id, parent string, depth ui
 // terminal claim, so the cascade and each cascaded descendant's hook have run.
 func terminateAndSettle(t *testing.T, srv *sessionserver.Server, id string) {
 	t.Helper()
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/"+id+"/terminate")
+	rr := sessionRequest(t, asOwner(srv.Handler()), http.MethodPost, "/v1/sessions/"+id+"/terminate")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("terminate %s: status %d, body %s", id, rr.Code, rr.Body.String())
 	}

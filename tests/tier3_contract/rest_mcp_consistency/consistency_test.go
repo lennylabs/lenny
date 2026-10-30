@@ -29,6 +29,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // newConsistencyServers stands up REST and MCP servers that share a
@@ -42,7 +43,7 @@ func newConsistencyServers(t *testing.T, tenant string) (*httptest.Server, *http
 	mem := memorystore.NewInMemory(0, nil)
 
 	rest := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Memory: mem})
-	tsREST := httptest.NewServer(rest.Handler())
+	tsREST := httptest.NewServer(ownerprincipal.Wrap(rest.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsREST.Close)
 
 	mcpSrv := mcp.NewServer()
@@ -66,7 +67,7 @@ func newConsistencyServers(t *testing.T, tenant string) (*httptest.Server, *http
 		IDFunc:         func() string { return "sess_mcp_consistency" },
 		TenantID:       tenant,
 	})
-	tsMCP := httptest.NewServer(mcpSrv.Handler())
+	tsMCP := httptest.NewServer(ownerprincipal.Wrap(mcpSrv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsMCP.Close)
 
 	return tsREST, tsMCP, store
@@ -202,7 +203,7 @@ func TestRESTMCPSessionLifecycle(t *testing.T) {
 
 	// Create through REST. The CreateSessionRequest is the same body
 	// shape the gateway documents at §15.1.
-	restBody := []byte(`{"runtimeRef":"claude-code","userId":"alice@acme.com"}`)
+	restBody := []byte(`{"runtimeRef":"claude-code"}`)
 	restResp, restRaw := postJSON(t, tsREST.URL+"/v1/sessions", "acme", restBody)
 	if restResp.StatusCode != http.StatusCreated {
 		t.Fatalf("REST create status: %d, body=%s", restResp.StatusCode, restRaw)
@@ -223,7 +224,6 @@ func TestRESTMCPSessionLifecycle(t *testing.T) {
 	// Create through MCP.
 	mcpRes := mcpCall(t, tsMCP.URL+"/mcp", "lenny/create_session", map[string]any{
 		"runtimeRef": "claude-code",
-		"userId":     "alice@acme.com",
 	})
 	mcpPayload := mcpToolPayload(t, mcpRes)
 	mcpID, _ := mcpPayload["sessionId"].(string)

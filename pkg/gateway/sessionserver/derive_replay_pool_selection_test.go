@@ -160,7 +160,7 @@ func TestDeriveAndReplayTargetPoolSelection_spec_15_1(t *testing.T) {
 					opts.PodRegistry = podsession.NewRegistry()
 				}
 				srv := sessionserver.New(store, snapshotFor(t, rt.sourceID).wire(opts))
-				rr := rt.call(t, srv.Handler(), tc.pool, tc.profile, asPlatformAdmin)
+				rr := rt.call(t, asOwner(srv.Handler()), tc.pool, tc.profile, asPlatformAdmin)
 				if rr.Code != tc.status {
 					t.Fatalf("status = %d, want %d; body=%s", rr.Code, tc.status, rr.Body.String())
 				}

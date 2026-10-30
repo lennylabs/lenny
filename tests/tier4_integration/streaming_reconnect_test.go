@@ -95,6 +95,7 @@ func openStreamingReconnectEvents(t *testing.T, base, id string, lastEventID uin
 		t.Fatalf("build events request: %v", err)
 	}
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 	req.Header.Set("Accept", "text/event-stream")
 	if lastEventID > 0 {
 		req.Header.Set("Last-Event-ID", strconv.FormatUint(lastEventID, 10))
@@ -163,6 +164,7 @@ func TestStreamingReconnectResumesExactlyFromCursor(t *testing.T) {
 		t.Helper()
 		req, _ := http.NewRequest(http.MethodPost, base+path, nil)
 		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("POST %s: %v", path, err)
@@ -185,6 +187,7 @@ func TestStreamingReconnectResumesExactlyFromCursor(t *testing.T) {
 	createReq, _ := http.NewRequest(http.MethodPost, base+"/v1/sessions",
 		strings.NewReader(`{"runtimeRef":"claude-code","userId":"alice@acme.com"}`))
 	createReq.Header.Set("X-Lenny-Tenant-ID", "acme")
+	createReq.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 	createReq.Header.Set("Content-Type", "application/json")
 	createResp, err := http.DefaultClient.Do(createReq)
 	if err != nil {

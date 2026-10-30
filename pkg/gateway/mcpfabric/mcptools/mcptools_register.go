@@ -36,7 +36,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	obstracing "github.com/lennylabs/lenny/pkg/observability/tracing"
-	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
@@ -115,7 +114,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		// schema for this overlapping operation) by the build-pipeline code
 		// generation step in pkg/gateway/mcptools/internal/genmcpschemas,
 		// so the MCP create_session surface advertises the same fields the
-		// REST POST /v1/sessions validates (runtimeRef, userId, environment,
+		// REST POST /v1/sessions validates (runtimeRef, environment,
 		// workspacePlan, isolationProfile, metadata, retryPolicy) plus the
 		// MCP-only §11.5 `idempotencyKey` extension.
 		// TestGeneratedSchemasMatchOpenAPI guards against drift. F-15.2.7.
@@ -165,59 +164,37 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		// MCP-created session therefore consumes tenant quota and is
 		// subject to policy interception exactly like a REST-created one.
 		// F-15.2.4.
-		if deps.SessionCreator != nil {
-			resp, svcErr := deps.SessionCreator.CreateSessionService(ctx, tenant, in)
-			if svcErr != nil {
-				// The §15.2.1 rule-3 envelope: surface the REST code +
-				// details so the shared errorclassify table assigns the
-				// same (category, retryable) pair on both surfaces.
-				return mcp.ToolResult{}, mcp.NewToolError(svcErr.Code, svcErr.Message, svcErr.Details)
-			}
-			// Project the shared response onto the MCP create_session
-			// envelope: the `sessionId`/`state` fields the MCP clients and
-			// SDKs already read, plus the §7.1 `uploadToken` the REST
-			// surface returns (previously absent on the MCP path, so a
-			// subsequent upload over REST failed differently — impact (e)).
-			// F-15.2.4.
-			out := map[string]any{
-				"sessionId":   resp.ID,
-				"state":       resp.State,
-				"uploadToken": resp.UploadToken,
-			}
-			payload, err := json.Marshal(out)
-			if err != nil {
-				return mcp.ToolResult{}, mcp.NewToolError("INTERNAL_ERROR",
-					"create response encode: "+err.Error(), nil)
-			}
-			return textResult(string(payload)), nil
+		//
+		// spec: §10.2 (Session ownership) rule 1 — the service layer is the
+		// only create path, because it binds the owner from the principal.
+		// A registration with no SessionCreator fails closed and writes no
+		// row rather than writing one through the store with no gates.
+		if deps.SessionCreator == nil {
+			return mcp.ToolResult{}, mcp.NewToolError("INTERNAL_ERROR",
+				"session creation is not configured on this server", nil)
 		}
-		// Legacy direct-store fallback for the minimal in-process gateway
-		// that wires no session server. It runs no gates and mints no
-		// uploadToken; production always wires deps.SessionCreator. The
-		// runtimeRef-required check above already covers both paths.
+		resp, svcErr := deps.SessionCreator.CreateSessionService(ctx, tenant, in)
+		if svcErr != nil {
+			// The §15.2.1 rule-3 envelope: surface the REST code +
+			// details so the shared errorclassify table assigns the
+			// same (category, retryable) pair on both surfaces.
+			return mcp.ToolResult{}, mcp.NewToolError(svcErr.Code, svcErr.Message, svcErr.Details)
+		}
+		// Project the shared response onto the MCP create_session
+		// envelope: the `sessionId`/`state` fields the MCP clients and
+		// SDKs read, plus the §7.1 `uploadToken` the REST surface returns.
 		// F-15.2.4.
-		now := clock()
-		row := sessionstore.Session{
-			ID:               idFn(),
-			TenantID:         tenant,
-			UserID:           in.UserID,
-			RuntimeRef:       in.RuntimeRef,
-			Environment:      in.Environment,
-			State:            session.StateRunning,
-			IsolationProfile: isolation.DefaultForMode(deps.DevMode),
-			CreatedAt:        now,
-			UpdatedAt:        now,
+		out := map[string]any{
+			"sessionId":   resp.ID,
+			"state":       resp.State,
+			"uploadToken": resp.UploadToken,
 		}
-		if err := deps.Store.Create(ctx, row); err != nil {
-			// spec: §12.8 (Lifecycle fence and drain) — the fence in the
-			// store refuses with its code and details.
-			var ref *sessionstore.CreationRefusal
-			if errors.As(err, &ref) {
-				return mcp.ToolResult{}, mcp.NewToolError(ref.Code, ref.Message, ref.Details)
-			}
-			return mcp.ToolResult{}, err
+		payload, err := json.Marshal(out)
+		if err != nil {
+			return mcp.ToolResult{}, mcp.NewToolError("INTERNAL_ERROR",
+				"create response encode: "+err.Error(), nil)
 		}
-		return textResult(fmt.Sprintf(`{"sessionId":%q,"state":%q}`, row.ID, row.State)), nil
+		return textResult(string(payload)), nil
 	})
 
 	srv.RegisterTool(mcp.Tool{

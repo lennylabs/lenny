@@ -44,7 +44,7 @@ func TestResolveTenantPrefersAuthenticatedPrincipal(t *testing.T) {
 	ctx := authmw.WithPrincipal(req.Context(), authmw.Principal{TenantID: "acme"})
 	req = req.WithContext(ctx)
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("Principal should win: status=%d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -68,7 +68,7 @@ func TestResolveTenantRejectsMalformedHeader(t *testing.T) {
 			req.Header.Set("X-Lenny-Tenant-ID", hijacked)
 		}
 		rr := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rr, req)
+		asOwner(srv.Handler()).ServeHTTP(rr, req)
 		// The list endpoint always returns 200 for an empty result —
 		// the key assertion is that it doesn't 500 or echo the
 		// hijacked tenant id back to the caller.
@@ -101,7 +101,7 @@ func TestFinalizeConsumesUploadToken(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", bytes.NewReader(createBody))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -117,7 +117,7 @@ func TestFinalizeConsumesUploadToken(t *testing.T) {
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("X-Lenny-Upload-Token", tok)
 	rr = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("upload 1: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -126,7 +126,7 @@ func TestFinalizeConsumesUploadToken(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_X/finalize", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("finalize: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -137,7 +137,7 @@ func TestFinalizeConsumesUploadToken(t *testing.T) {
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("X-Lenny-Upload-Token", tok)
 	rr = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	// Note: the session is now `ready`, so the precondition table
 	// rejects with 409 INVALID_STATE_TRANSITION before reaching the
 	// token check. The §7.1 invariant is satisfied at either layer —
@@ -164,7 +164,7 @@ func TestExtendRetentionRejectsExcessiveTTL(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_R/extend-retention", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("over-cap retention: got %d, want 400", rr.Code)
 	}
@@ -186,7 +186,7 @@ func TestExtendRetentionAdmitsAtCap(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_R/extend-retention", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Errorf("at-cap retention: got %d, want 200", rr.Code)
 	}
@@ -202,7 +202,7 @@ func TestCreateRejectsOversizedJSONBody(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code == http.StatusCreated {
 		t.Errorf("oversized JSON should be rejected; got 201")
 	}
@@ -229,7 +229,7 @@ func TestResolveTenantAuthHeaderHijackBlocked(t *testing.T) {
 	})
 	req = req.WithContext(ctx)
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	// The handler resolves tenant=acme; sess_globex is foreign → 404.
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("hijack: got %d, want 404 (tenant from Principal wins over header)", rr.Code)

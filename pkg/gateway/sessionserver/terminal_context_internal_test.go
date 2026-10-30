@@ -221,7 +221,7 @@ func restDriver(method, path string) tcDriver {
 	return func(ctx context.Context, f *tcFixture) {
 		req := httptest.NewRequest(method, path, nil).WithContext(ctx)
 		req.Header.Set("X-Lenny-Tenant-ID", "acme")
-		f.srv.Handler().ServeHTTP(httptest.NewRecorder(), req)
+		asOwner(f.srv.Handler()).ServeHTTP(httptest.NewRecorder(), req)
 	}
 }
 

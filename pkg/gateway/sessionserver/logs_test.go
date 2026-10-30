@@ -53,7 +53,7 @@ func TestLogsJSONReturnsCanonicalEnvelope_spec_15_1_673(t *testing.T) {
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("Accept", "application/json")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d, body=%s", rr.Code, rr.Body.String())
@@ -83,7 +83,7 @@ func TestLogsJSONPaginates_spec_15_1_1228(t *testing.T) {
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("Accept", "application/json")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d, body=%s", rr.Code, rr.Body.String())
@@ -122,7 +122,7 @@ func TestLogsJSONSinceFilter_spec_24_17_220(t *testing.T) {
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("Accept", "application/json")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d, body=%s", rr.Code, rr.Body.String())
@@ -145,7 +145,7 @@ func TestLogsJSONRejectsBadSince_spec_24_17_220(t *testing.T) {
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("Accept", "application/json")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status %d, want 400 (body=%s)", rr.Code, rr.Body.String())
@@ -166,7 +166,7 @@ func TestLogsMissingSession404_spec_15_1_661(t *testing.T) {
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("Accept", "application/json")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status %d, want 404 (body=%s)", rr.Code, rr.Body.String())
@@ -188,7 +188,7 @@ func TestLogsTenantIsolation_spec_7_2(t *testing.T) {
 	req.Header.Set("X-Lenny-Tenant-ID", "globex")
 	req.Header.Set("Accept", "application/json")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("cross-tenant status %d, want 404 (body=%s)", rr.Code, rr.Body.String())
@@ -210,7 +210,7 @@ func TestLogsSSEStreamsBacklog_spec_15_1_673(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		srv.Handler().ServeHTTP(rr, req)
+		asOwner(srv.Handler()).ServeHTTP(rr, req)
 		close(done)
 	}()
 	// Give the handler time to flush the backlog, then disconnect.

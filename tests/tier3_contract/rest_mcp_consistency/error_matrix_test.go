@@ -29,6 +29,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // matrixErrorClasses is the §15.2.1 error-class list:
@@ -171,7 +172,7 @@ func TestRegisterAdapterUnderTestErrorMatrixEndToEnd(t *testing.T) {
 
 	// Seed a created session so the state-transition trigger has a target
 	// whose state (`created`) rejects /start (which requires `ready`).
-	restBody := []byte(`{"runtimeRef":"claude-code","userId":"alice@acme.com"}`)
+	restBody := []byte(`{"runtimeRef":"claude-code"}`)
 	resp, raw := postJSON(t, tsREST.URL+"/v1/sessions", "acme", restBody)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("seed create: status %d, body %s", resp.StatusCode, raw)
@@ -265,7 +266,7 @@ func newFencedConsistencyServers(t *testing.T, tenants tenantstore.Store, users 
 	t.Helper()
 	store := memstore.New(memstore.WithCreationMarkers(sessionstore.StoreMarkers(tenants, users)))
 	rest := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Tenants: tenants, Users: users})
-	tsREST := httptest.NewServer(rest.Handler())
+	tsREST := httptest.NewServer(ownerprincipal.Wrap(rest.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsREST.Close)
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
@@ -274,7 +275,7 @@ func newFencedConsistencyServers(t *testing.T, tenants tenantstore.Store, users 
 		Executor: executor.NewEchoExecutor(), Users: users, Tenants: tenants,
 		IDFunc: func() string { return "sess_mcp_fence" }, TenantID: "acme",
 	})
-	tsMCP := httptest.NewServer(mcpSrv.Handler())
+	tsMCP := httptest.NewServer(ownerprincipal.Wrap(mcpSrv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsMCP.Close)
 	return tsREST, tsMCP
 }
@@ -322,13 +323,13 @@ func TestErrorMatrixCreationFenceCodes(t *testing.T) {
 			tsREST, tsMCP := newFencedConsistencyServers(t, tenants, users)
 
 			resp, raw := postJSON(t, tsREST.URL+"/v1/sessions", "acme",
-				[]byte(`{"runtimeRef":"claude-code","userId":"alice@acme.com"}`))
+				[]byte(`{"runtimeRef":"claude-code"}`))
 			if resp.StatusCode != http.StatusForbidden {
 				t.Fatalf("REST status = %d, want 403; body %s", resp.StatusCode, raw)
 			}
 			rest := decodeRESTError(t, raw)
 			mcpRes := decodeMCPError(t, mcpCall(t, tsMCP.URL+"/mcp", "lenny/create_session", map[string]any{
-				"runtimeRef": "claude-code", "userId": "alice@acme.com",
+				"runtimeRef": "claude-code",
 			}))
 			if rest.Code != tc.code || mcpRes.Code != tc.code {
 				t.Fatalf("codes REST=%q MCP=%q, want %q", rest.Code, mcpRes.Code, tc.code)

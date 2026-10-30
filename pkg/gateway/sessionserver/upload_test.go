@@ -88,7 +88,7 @@ func TestUploadHappyPath(t *testing.T) {
 	seedCreatedSession(t, store, "sess_upload", "acme")
 	tok, _ := issuer.Issue("sess_upload", 0)
 
-	rr := uploadRequest(t, srv.Handler(), "sess_upload", "acme", tok, []byte("hello world"), "text/plain")
+	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("hello world"), "text/plain")
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}
@@ -130,7 +130,7 @@ func TestUploadHappyPath(t *testing.T) {
 func TestUploadRejectsMissingToken(t *testing.T) {
 	srv, _, _, _, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
-	rr := uploadRequest(t, srv.Handler(), "sess_upload", "acme", "", []byte("data"), "text/plain")
+	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", "", []byte("data"), "text/plain")
 	if rr.Code != http.StatusUnauthorized {
 		t.Errorf("status: got %d, want 401", rr.Code)
 	}
@@ -139,7 +139,7 @@ func TestUploadRejectsMissingToken(t *testing.T) {
 func TestUploadRejectsInvalidToken(t *testing.T) {
 	srv, _, _, _, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
-	rr := uploadRequest(t, srv.Handler(), "sess_upload", "acme", "not-a-token", []byte("data"), "text/plain")
+	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", "not-a-token", []byte("data"), "text/plain")
 	if rr.Code != http.StatusUnauthorized {
 		t.Errorf("status: got %d, want 401", rr.Code)
 	}
@@ -159,7 +159,7 @@ func TestUploadResponseNeverEchoesToken_spec_7_1_15(t *testing.T) {
 	// supplied token bytes anywhere, this exact string will surface in
 	// the response body.
 	sentinel := "SECRET-uploadToken-DO-NOT-LEAK-9c0ffee"
-	rr := uploadRequest(t, srv.Handler(), "sess_upload", "acme", sentinel, []byte("data"), "text/plain")
+	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", sentinel, []byte("data"), "text/plain")
 	body := rr.Body.String()
 	if strings.Contains(body, sentinel) {
 		t.Errorf("response body echoed the supplied uploadToken; §7.1 redaction violated. body=%s", body)
@@ -178,7 +178,7 @@ func TestUploadRejectsSessionMismatch(t *testing.T) {
 	seedCreatedSession(t, store, "sess_upload", "acme")
 	// Token issued for a different session id.
 	tok, _ := issuer.Issue("sess_other", 0)
-	rr := uploadRequest(t, srv.Handler(), "sess_upload", "acme", tok, []byte("data"), "text/plain")
+	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("data"), "text/plain")
 	if rr.Code != http.StatusForbidden {
 		t.Errorf("status: got %d, want 403", rr.Code)
 	}
@@ -195,7 +195,7 @@ func TestUploadRejectsWrongState(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	tok, _ := issuer.Issue("sess_upload", 0)
-	rr := uploadRequest(t, srv.Handler(), "sess_upload", "acme", tok, []byte("data"), "text/plain")
+	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("data"), "text/plain")
 	if rr.Code != http.StatusConflict {
 		t.Errorf("status: got %d, want 409 (INVALID_STATE_TRANSITION); body=%s", rr.Code, rr.Body.String())
 	}
@@ -204,7 +204,7 @@ func TestUploadRejectsWrongState(t *testing.T) {
 func TestUploadRejectsMissingSession(t *testing.T) {
 	srv, issuer, _, _, _, _ := newUploadServer(t)
 	tok, _ := issuer.Issue("sess_upload", 0)
-	rr := uploadRequest(t, srv.Handler(), "sess_upload", "acme", tok, []byte("data"), "text/plain")
+	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("data"), "text/plain")
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("status: got %d, want 404", rr.Code)
 	}
@@ -214,7 +214,7 @@ func TestUploadDefaultsMimeTypeWhenAbsent(t *testing.T) {
 	srv, issuer, _, _, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
 	tok, _ := issuer.Issue("sess_upload", 0)
-	rr := uploadRequest(t, srv.Handler(), "sess_upload", "acme", tok, []byte("data"), "")
+	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("data"), "")
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201", rr.Code)
 	}
@@ -232,7 +232,7 @@ func TestUploadDisabledWhenBlobsUnavailable(t *testing.T) {
 		DevTenantHeader: true,
 		IDFunc:          func() string { return "sess_upload" },
 	})
-	rr := uploadRequest(t, srv.Handler(), "sess_upload", "acme", "ignored", []byte("data"), "text/plain")
+	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", "ignored", []byte("data"), "text/plain")
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Errorf("status: got %d, want 503 (BLOBSTORE_UNAVAILABLE)", rr.Code)
 	}
@@ -248,7 +248,7 @@ func TestBlobGetHappyPath(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, blobURL(u.String()), nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
@@ -271,7 +271,7 @@ func TestBlobGetRejectsCrossTenant(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, blobURL(u.String()), nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusForbidden {
 		t.Errorf("status: got %d, want 403", rr.Code)
 	}
@@ -284,7 +284,7 @@ func TestBlobGetReturns404ForUnknown(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, blobURL(u.String()), nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("status: got %d, want 404", rr.Code)
 	}
@@ -295,7 +295,7 @@ func TestBlobGetReturns400ForMalformedURI(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/blobs/not-a-blob-uri", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status: got %d, want 400", rr.Code)
 	}
@@ -308,7 +308,7 @@ func TestUploadRejectsOversizedBody(t *testing.T) {
 
 	// One byte past the platform cap.
 	body := bytes.Repeat([]byte("x"), int(sessionserver.UploadMaxBodyBytes)+1)
-	rr := uploadRequest(t, srv.Handler(), "sess_upload", "acme", tok, body, "application/octet-stream")
+	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, body, "application/octet-stream")
 	if rr.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status: got %d, want 413; body=%s", rr.Code, rr.Body.String())
 	}
@@ -329,7 +329,7 @@ func TestUploadAdmitsBodyAtCap(t *testing.T) {
 	tok, _ := issuer.Issue("sess_upload", 0)
 
 	body := bytes.Repeat([]byte("x"), int(sessionserver.UploadMaxBodyBytes))
-	rr := uploadRequest(t, srv.Handler(), "sess_upload", "acme", tok, body, "application/octet-stream")
+	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, body, "application/octet-stream")
 	if rr.Code != http.StatusCreated {
 		t.Errorf("at-cap upload should be admitted: status=%d", rr.Code)
 	}
@@ -341,7 +341,7 @@ func TestUploadRoundTripsThroughBlobGet(t *testing.T) {
 	seedCreatedSession(t, store, "sess_upload", "acme")
 	tok, _ := issuer.Issue("sess_upload", 0)
 
-	rr := uploadRequest(t, srv.Handler(), "sess_upload", "acme", tok, []byte("round-trip"), "text/plain")
+	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("round-trip"), "text/plain")
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("upload: status %d", rr.Code)
 	}
@@ -351,7 +351,7 @@ func TestUploadRoundTripsThroughBlobGet(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, blobURL(up.UploadRef), nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr2 := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr2, req)
+	asOwner(srv.Handler()).ServeHTTP(rr2, req)
 	if rr2.Code != http.StatusOK {
 		t.Fatalf("blob get: status %d, body=%s", rr2.Code, rr2.Body.String())
 	}

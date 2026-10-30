@@ -135,10 +135,10 @@ func TestRootCreationRefusesImpersonationAndRevokedBearers_spec_10_2(t *testing.
 			t.Run(route.name+"/"+jti, func(t *testing.T) {
 				rec := &callerAudit{}
 				store := memstore.New()
-				h := sessionserver.New(store, sessionserver.Options{
+				h := asOwner(sessionserver.New(store, sessionserver.Options{
 					DevTenantHeader: true,
 					CallerCheck:     callercheck.Deps{IssuedTokens: callerCheckTokens(), Audit: rec},
-				}).Handler()
+				}).Handler())
 				rr := postAsBearer(t, h, route.path, jti)
 				if rr.Code != http.StatusForbidden || errorCode(t, rr) != "FORBIDDEN" {
 					t.Fatalf("status %d code %q, want 403 FORBIDDEN; body %s", rr.Code, errorCode(t, rr), rr.Body.String())
@@ -168,7 +168,7 @@ func TestRootCreationFailsClosedOnCallerCheckError_spec_10_2(t *testing.T) {
 		for name, deps := range failures {
 			t.Run(route.name+"/"+name, func(t *testing.T) {
 				store := memstore.New()
-				h := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, CallerCheck: deps}).Handler()
+				h := asOwner(sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, CallerCheck: deps}).Handler())
 				rr := postAsBearer(t, h, route.path, impersonationJTI)
 				if rr.Code != http.StatusInternalServerError || errorCode(t, rr) != "INTERNAL_ERROR" {
 					t.Fatalf("status %d code %q, want 500 INTERNAL_ERROR; body %s", rr.Code, errorCode(t, rr), rr.Body.String())
@@ -189,11 +189,11 @@ func TestCallerCheckPrecedesUserGate_spec_10_2(t *testing.T) {
 	if err := users.Create(context.Background(), userstore.User{Subject: "alice@acme.com", TenantID: "acme", Disabled: true}); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
-	h := sessionserver.New(memstore.New(), sessionserver.Options{
+	h := asOwner(sessionserver.New(memstore.New(), sessionserver.Options{
 		DevTenantHeader: true,
 		Users:           users,
 		CallerCheck:     callercheck.Deps{IssuedTokens: callerCheckTokens(), Audit: &callerAudit{}},
-	}).Handler()
+	}).Handler())
 	rr := postAsBearer(t, h, "/v1/sessions", impersonationJTI)
 	if code := errorCode(t, rr); rr.Code != http.StatusForbidden || code != "FORBIDDEN" {
 		t.Fatalf("status %d code %q, want 403 FORBIDDEN", rr.Code, code)
@@ -216,10 +216,10 @@ func TestRootCreationAdmitsLiveBearers_spec_10_2(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tokens := callerCheckTokens()
 			rec := &callerAudit{}
-			h := sessionserver.New(memstore.New(), sessionserver.Options{
+			h := asOwner(sessionserver.New(memstore.New(), sessionserver.Options{
 				DevTenantHeader: true,
 				CallerCheck:     callercheck.Deps{IssuedTokens: tokens, Audit: rec},
-			}).Handler()
+			}).Handler())
 			rr := postAsBearer(t, h, "/v1/sessions", tc.jti)
 			if rr.Code != http.StatusCreated {
 				t.Fatalf("status %d, want 201; body %s", rr.Code, rr.Body.String())

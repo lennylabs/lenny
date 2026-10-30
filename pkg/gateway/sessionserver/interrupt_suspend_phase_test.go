@@ -71,7 +71,7 @@ func TestInterruptRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_sus/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
@@ -129,7 +129,7 @@ func TestInterruptTimeoutRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_to/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
@@ -182,7 +182,7 @@ func TestInterruptBusyLeavesRowRunning_spec_7_2(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_busy/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409; body=%s", rr.Code, rr.Body.String())
@@ -219,7 +219,7 @@ func TestInterruptSuspendNoBindingStampsRow_spec_7_2(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_nb/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rr.Code)

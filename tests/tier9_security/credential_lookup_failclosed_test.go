@@ -56,6 +56,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 const (
@@ -214,12 +215,12 @@ func TestCredentialLookupOutageFailsClosed(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	t.Run("top-level start during a runtime-store outage", func(t *testing.T) {
-		body, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: lookupOutageAgentRuntime, UserID: "alice@acme.com"})
+		body, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: lookupOutageAgentRuntime})
 		post := func() *httptest.ResponseRecorder {
 			req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 			req.Header.Set("X-Lenny-Tenant-ID", "acme")
 			rr := httptest.NewRecorder()
-			srv.Handler().ServeHTTP(rr, req)
+			ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice).ServeHTTP(rr, req)
 			return rr
 		}
 		before := ledger.count()

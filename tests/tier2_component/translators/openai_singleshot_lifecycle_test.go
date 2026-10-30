@@ -79,6 +79,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 const ssNS = "lenny-agents"
@@ -353,7 +354,6 @@ type ssSingleShotBinder struct {
 func (b ssSingleShotBinder) BindSingleShot(ctx context.Context, spec translator.SingleShotSpec) (translator.SingleShotBinding, error) {
 	resp, serr := b.srv.CreateAndStartService(ctx, spec.TenantID, sessionserver.CreateSessionRequest{
 		RuntimeRef:  spec.RuntimeRef,
-		UserID:      spec.UserID,
 		Environment: spec.Environment,
 	})
 	if serr != nil {
@@ -442,7 +442,10 @@ func ssChatHandler(store sessionstore.Store, srv *sessionserver.Server, spy *ssS
 
 // ssDriveChat issues one POST /v1/chat/completions and returns the recorder.
 // The optional mutate hook stamps a principal or a bounded context onto the
-// request before dispatch.
+// request before dispatch. A request that reaches the handler with no
+// principal carries ownerprincipal.Alice, because the session server's
+// create-and-start service binds the owner from the principal and refuses a
+// call with no principal subject (§10.2 Session ownership).
 func ssDriveChat(t *testing.T, h http.Handler, model string, mutate func(*http.Request) *http.Request) *httptest.ResponseRecorder {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{
@@ -455,7 +458,7 @@ func ssDriveChat(t *testing.T, h http.Handler, model string, mutate func(*http.R
 		req = mutate(req)
 	}
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
+	ownerprincipal.Wrap(h, ownerprincipal.Alice).ServeHTTP(rr, req)
 	return rr
 }
 
@@ -1157,7 +1160,7 @@ func TestHeldResponsesSessionFailedWarmTurnDrainsTheInbox_spec_15(t *testing.T) 
 		req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(buf))
 		req.Header.Set("X-Lenny-Tenant-ID", "acme")
 		rr := httptest.NewRecorder()
-		h.Handler().ServeHTTP(rr, req)
+		ownerprincipal.Wrap(h.Handler(), ownerprincipal.Alice).ServeHTTP(rr, req)
 		return rr
 	}
 

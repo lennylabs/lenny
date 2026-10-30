@@ -85,6 +85,7 @@ func TestUploadHandlerSaturationDoesNotStarveOtherSubsystems(t *testing.T) {
 		req, _ := http.NewRequestWithContext(holdCtx, http.MethodPost,
 			base+"/v1/sessions/"+holderID+"/upload", pr)
 		req.Header.Set("X-Lenny-Tenant-ID", isolationTenant)
+		req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 		req.Header.Set("X-Lenny-Upload-Token", holderToken)
 		req.Header.Set("Content-Type", "application/octet-stream")
 		resp, err := http.DefaultClient.Do(req)
@@ -158,6 +159,7 @@ func createIsolationSession(t *testing.T, base string) (id, uploadToken string) 
 	req, _ := http.NewRequest(http.MethodPost, base+"/v1/sessions",
 		strings.NewReader(`{"runtimeRef":"claude-code","userId":"alice@acme.com"}`))
 	req.Header.Set("X-Lenny-Tenant-ID", isolationTenant)
+	req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -188,6 +190,7 @@ func doIsolationUpload(t *testing.T, base, id, token, content string) (status in
 	req, _ := http.NewRequest(http.MethodPost, base+"/v1/sessions/"+id+"/upload",
 		strings.NewReader(content))
 	req.Header.Set("X-Lenny-Tenant-ID", isolationTenant)
+	req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 	req.Header.Set("X-Lenny-Upload-Token", token)
 	req.Header.Set("Content-Type", "text/plain")
 	resp, err := http.DefaultClient.Do(req)
@@ -218,6 +221,7 @@ func assertStreamProxyHealthy(t *testing.T, base, id string) {
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/sessions/"+id+"/events", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", isolationTenant)
+	req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 	req.Header.Set("Accept", "text/event-stream")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -239,6 +243,7 @@ func isolationSessionGet(t *testing.T, base, id string) int {
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/sessions/"+id, nil)
 	req.Header.Set("X-Lenny-Tenant-ID", isolationTenant)
+	req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET session starved while Upload Handler saturated: %v", err)

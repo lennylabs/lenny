@@ -218,7 +218,7 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 	replayed := sessionstore.Session{
 		ID:                replayedID,
 		TenantID:          tenantID,
-		UserID:            source.UserID,
+		UserID:            source.UserID, // spec: §10.2 (Session ownership) rule 2
 		State:             session.StateCreated,
 		CreatedAt:         now,
 		UpdatedAt:         now,

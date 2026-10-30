@@ -76,7 +76,7 @@ func callbackServer(t *testing.T, store sessionstore.Store, opts sessionserver.O
 func TestCreateAcceptsCallback_spec_14_108(t *testing.T) {
 	store := memstore.New()
 	srv := callbackServer(t, store, sessionserver.Options{DevTenantHeader: true})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef:     "claude-code",
 		CallbackURL:    "https://hooks.example.com/lenny",
 		CallbackSecret: "whsec_supersecret",
@@ -104,7 +104,7 @@ func TestCreateAcceptsCallback_spec_14_108(t *testing.T) {
 
 func TestCreateRejectsNonHTTPSCallback_spec_14_109(t *testing.T) {
 	srv := callbackServer(t, memstore.New(), sessionserver.Options{DevTenantHeader: true})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef:  "claude-code",
 		CallbackURL: "http://hooks.example.com/lenny",
 	})
@@ -122,7 +122,7 @@ func TestCreateRejectsNonHTTPSCallback_spec_14_109(t *testing.T) {
 
 func TestCreateRejectsPrivateCallback_spec_14_110(t *testing.T) {
 	srv := callbackServer(t, memstore.New(), sessionserver.Options{DevTenantHeader: true})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef:  "claude-code",
 		CallbackURL: "https://internal.example.com/lenny",
 	})
@@ -137,7 +137,7 @@ func TestCreateRejectsPrivateCallback_spec_14_110(t *testing.T) {
 
 func TestCreateRejectsSecretWithoutURL_spec_14_139(t *testing.T) {
 	srv := callbackServer(t, memstore.New(), sessionserver.Options{DevTenantHeader: true})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef:     "claude-code",
 		CallbackSecret: "whsec_x",
 	})
@@ -162,7 +162,7 @@ func TestCreateAndStartAcceptsCallback_spec_15_690(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}
@@ -185,7 +185,7 @@ func TestCreateAndStartRejectsBadCallback_spec_15_690(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status: got %d, want 400; body=%s", rr.Code, rr.Body.String())
 	}
@@ -208,7 +208,7 @@ func TestWebhookEventsEndpoint_spec_15_678(t *testing.T) {
 	}
 
 	// Empty before any exhaustion.
-	got := getWebhookEvents(t, srv.Handler(), "sess_wh")
+	got := getWebhookEvents(t, asOwner(srv.Handler()), "sess_wh")
 	if len(got.Items) != 0 {
 		t.Fatalf("expected no events, got %d", len(got.Items))
 	}
@@ -224,7 +224,7 @@ func TestWebhookEventsEndpoint_spec_15_678(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	got = getWebhookEvents(t, srv.Handler(), "sess_wh")
+	got = getWebhookEvents(t, asOwner(srv.Handler()), "sess_wh")
 	if len(got.Items) != 1 || got.Items[0].EventID != "evt_1" {
 		t.Fatalf("expected the recorded event, got %+v", got.Items)
 	}
@@ -236,7 +236,7 @@ func TestWebhookEventsEndpoint_spec_15_678(t *testing.T) {
 	rr := httptest.NewRequest(http.MethodGet, "/v1/sessions/nope/webhook-events", nil)
 	rr.Header.Set("X-Lenny-Tenant-ID", "acme")
 	w := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(w, rr)
+	asOwner(srv.Handler()).ServeHTTP(w, rr)
 	if w.Code != http.StatusNotFound {
 		t.Errorf("missing session status: got %d, want 404", w.Code)
 	}

@@ -232,7 +232,7 @@ func TestMCPCallToolDrivesSession(t *testing.T) {
 	m := mcpTestClient(t, ts.URL)
 	ctx := context.Background()
 
-	created, err := m.CreateSession(ctx, "claude-code", "alice@acme.com")
+	created, err := m.CreateSession(ctx, "claude-code")
 	if err != nil {
 		t.Fatalf("CreateSession over MCP: %v", err)
 	}

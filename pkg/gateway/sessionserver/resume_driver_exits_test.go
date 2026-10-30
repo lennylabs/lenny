@@ -354,7 +354,7 @@ func TestResumeDriverExits_spec_7_3(t *testing.T) {
 			go func() {
 				req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/s", nil)
 				req.Header.Set("X-Lenny-Tenant-ID", "acme")
-				f.srv.Handler().ServeHTTP(httptest.NewRecorder(), req)
+				asOwner(f.srv.Handler()).ServeHTTP(httptest.NewRecorder(), req)
 			}()
 			time.Sleep(50 * time.Millisecond)
 		}

@@ -22,7 +22,6 @@ func TestStartCombinedReturnsRunningSession(t *testing.T) {
 	ts := newTestServer(t)
 	resp, body := do(t, ts, "POST", "/v1/sessions/start", map[string]any{
 		"runtimeRef": "echo",
-		"userId":     "alice@acme.com",
 	})
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("status: want 201, got %d (body %v)", resp.StatusCode, body)
@@ -37,7 +36,7 @@ func TestStartCombinedReturnsRunningSession(t *testing.T) {
 // diagnosis: §15.1 REST contract — pins the §15.1 error envelope on the wire for the previously-unexercised /v1/sessions/* endpoints.
 func TestStartCombinedRejectsMissingRuntimeRef(t *testing.T) {
 	ts := newTestServer(t)
-	resp, body := do(t, ts, "POST", "/v1/sessions/start", map[string]any{"userId": "alice"})
+	resp, body := do(t, ts, "POST", "/v1/sessions/start", map[string]any{})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status: want 400, got %d (body %v)", resp.StatusCode, body)
 	}
@@ -131,7 +130,7 @@ func TestMeteringEventsRequiresViewUsagePermission(t *testing.T) {
 func TestEnvironmentSessionsRejectsMissingRuntime(t *testing.T) {
 	ts := newTestServer(t)
 	resp, body := do(t, ts, "POST", "/v1/environments/security-team/sessions",
-		map[string]any{"userId": "alice"})
+		map[string]any{})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status: want 400, got %d (body %v)", resp.StatusCode, body)
 	}
@@ -319,7 +318,7 @@ func TestEventsUnknownSession(t *testing.T) {
 // the simple error paths above and pin the shape.
 func TestErrorEnvelopeShape(t *testing.T) {
 	ts := newTestServer(t)
-	resp, body := do(t, ts, "POST", "/v1/sessions", map[string]any{"userId": "alice"})
+	resp, body := do(t, ts, "POST", "/v1/sessions", map[string]any{})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("expected a 400 to test the envelope, got %d", resp.StatusCode)
 	}

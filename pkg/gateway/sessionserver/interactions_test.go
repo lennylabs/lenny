@@ -43,7 +43,7 @@ func TestToolUseApprove(t *testing.T) {
 	})
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/tool-use/tc_1/approve", nil))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("approve: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -63,7 +63,7 @@ func TestToolUseDenyWithReason(t *testing.T) {
 		strings.NewReader(`{"reason":"unsafe"}`)))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("deny: %d", rr.Code)
 	}
@@ -83,7 +83,7 @@ func TestElicitationRespond(t *testing.T) {
 		strings.NewReader(`{"response":"yes"}`)))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("respond: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -101,7 +101,7 @@ func TestElicitationDismiss(t *testing.T) {
 	})
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/elicitations/el_1/dismiss", nil))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("dismiss: %d", rr.Code)
 	}
@@ -115,7 +115,7 @@ func TestToolUseApproveUnknownReturns404(t *testing.T) {
 	srv, _ := newInteractionServer(t)
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/tool-use/tc_missing/approve", nil))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("unknown tool call: %d, want 404", rr.Code)
 	}
@@ -135,7 +135,7 @@ func TestElicitationRespondWrongUserReturns404(t *testing.T) {
 	ctx := authmw.WithPrincipal(req.Context(), authmw.Principal{Subject: "bob", TenantID: "acme"})
 	req = req.WithContext(ctx)
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("wrong-user respond: %d, want 404", rr.Code)
 	}
@@ -159,7 +159,7 @@ func TestDoubleResolveReturns409(t *testing.T) {
 	for i, want := range []int{http.StatusOK, http.StatusConflict} {
 		req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/tool-use/tc_1/approve", nil))
 		rr := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rr, req)
+		asOwner(srv.Handler()).ServeHTTP(rr, req)
 		if rr.Code != want {
 			t.Errorf("resolve #%d: got %d, want %d", i, rr.Code, want)
 		}
@@ -175,7 +175,7 @@ func TestKindMismatchReturns404(t *testing.T) {
 	})
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/tool-use/el_1/approve", nil))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("kind mismatch: %d, want 404", rr.Code)
 	}
@@ -185,7 +185,7 @@ func TestInteractionsUnavailableWhenUnwired(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/tool-use/tc_1/approve", nil))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Errorf("unwired: %d, want 503", rr.Code)
 	}
@@ -281,7 +281,7 @@ func TestInteractionResolutionAudit_spec_7_2_8(t *testing.T) {
 			req := asAlice(httptest.NewRequest(http.MethodPost, c.path, body))
 			req.Header.Set("Content-Type", "application/json")
 			rr := httptest.NewRecorder()
-			srv.Handler().ServeHTTP(rr, req)
+			asOwner(srv.Handler()).ServeHTTP(rr, req)
 			if rr.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
 			}
@@ -335,7 +335,7 @@ func TestInteractionResolutionAuditNotEmittedOnFailure(t *testing.T) {
 	// No interaction seeded.
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_a/tool-use/tc_x/approve", nil))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rr.Code)
 	}
@@ -358,7 +358,7 @@ func TestInteractionResolutionAuditNilSinkIsSafe(t *testing.T) {
 	}
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_a/tool-use/tc_1/approve", nil))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Errorf("nil sink: status = %d, want 200", rr.Code)
 	}

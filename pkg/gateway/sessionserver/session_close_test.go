@@ -71,7 +71,7 @@ func TestTerminalTransitionReleasesWithDisposition_spec_6_2(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/sess-disp", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("DELETE status = %d, want 200", rr.Code)
 	}
@@ -117,7 +117,7 @@ func TestTerminalTransitionClosesTheExecutor(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/sess-term", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("DELETE status = %d, want 200", rr.Code)
 	}
@@ -137,7 +137,7 @@ func TestNonTerminalTransitionLeavesTheExecutorOpen(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess-int/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("interrupt status = %d, want 200", rr.Code)
 	}
@@ -163,7 +163,7 @@ func TestTerminalTransitionSealsTheWorkspaceBeforeClosing(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/sess-seal", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("DELETE status = %d, want 200", rr.Code)
 	}
@@ -186,7 +186,7 @@ func TestNonTerminalTransitionDoesNotSeal(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess-keep/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("interrupt status = %d, want 200", rr.Code)
 	}

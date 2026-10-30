@@ -61,11 +61,11 @@ func TestPublishedBindingCarriesRowGeneration_spec_10_1_1(t *testing.T) {
 	t.Run("single-call create", func(t *testing.T) {
 		t.Parallel()
 		srv, registry, store := podBindServerWithStore(t, "sess-gen-create")
-		body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+		body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo"})
 		req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 		req.Header.Set("X-Lenny-Tenant-ID", "acme")
 		rr := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rr, req)
+		asOwner(srv.Handler()).ServeHTTP(rr, req)
 		if rr.Code != http.StatusCreated {
 			t.Fatalf("create-and-start: status %d, body=%s", rr.Code, rr.Body.String())
 		}
@@ -75,9 +75,9 @@ func TestPublishedBindingCarriesRowGeneration_spec_10_1_1(t *testing.T) {
 	t.Run("start", func(t *testing.T) {
 		t.Parallel()
 		srv, registry, store := podBindServerWithStore(t, "sess-gen-start")
-		h := srv.Handler()
+		h := asOwner(srv.Handler())
 		createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{
-			RuntimeRef: "echo", UserID: "alice@acme.com",
+			RuntimeRef:    "echo",
 			WorkspacePlan: json.RawMessage(`{"schemaVersion": 1, "sources": []}`),
 		})
 		if rr := postSessionStep(t, h, "/v1/sessions", createBody); rr.Code != http.StatusCreated {

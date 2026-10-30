@@ -56,7 +56,7 @@ type responsesBinder struct {
 // refusal into the translator's binder error.
 func (b responsesBinder) BindSingleShot(ctx context.Context, spec translator.SingleShotSpec) (translator.SingleShotBinding, error) {
 	resp, serr := b.srv.CreateAndStartService(ctx, spec.TenantID, sessionserver.CreateSessionRequest{
-		RuntimeRef: spec.RuntimeRef, UserID: spec.UserID, Environment: spec.Environment,
+		RuntimeRef: spec.RuntimeRef, Environment: spec.Environment,
 	})
 	if serr != nil {
 		return translator.SingleShotBinding{}, &translator.SingleShotError{

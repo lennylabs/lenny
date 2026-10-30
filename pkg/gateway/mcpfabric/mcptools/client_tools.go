@@ -94,7 +94,7 @@ func registerClientFacingTools(srv *mcp.Server, deps Deps, tenant string) {
 	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/create_and_start_session",
 		Description: "Create a session, upload inline files, and start the runtime in one call.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"runtimeRef":{"type":"string"},"userId":{"type":"string"},"environment":{"type":"string"}},"additionalProperties":true}`),
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"runtimeRef":{"type":"string"},"environment":{"type":"string"}},"additionalProperties":true}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		body := normalizeBody(args)
 		return dispatch(ctx, "POST", "/v1/sessions/start", body, jsonBody, nil)

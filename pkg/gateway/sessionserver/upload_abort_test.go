@@ -65,7 +65,7 @@ func TestOverStreamRemovesStagedBlob_spec_7_4_14(t *testing.T) {
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.ContentLength = 10
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusTooManyRequests {
 		t.Fatalf("over-stream status: got %d, want 429; body=%s", rr.Code, rr.Body.String())
 	}
@@ -111,7 +111,7 @@ func TestUploadAfterFinalizeReturnsChannelClosed_spec_7_4_16(t *testing.T) {
 	// That is the simpler half of F-7.4.16: post-finalize calls to
 	// /upload are rejected. We test that here.
 	tok, _ := issuer.Issue("sess_upload", 0)
-	rr := uploadRequest(t, srv.Handler(), "sess_upload", "acme", tok, []byte("hi"), "text/plain")
+	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("hi"), "text/plain")
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("/upload after finalize: status %d, want 409; body=%s", rr.Code, rr.Body.String())
 	}
@@ -146,7 +146,7 @@ func TestInFlightUploadAbortedByFinalize_spec_7_4_16(t *testing.T) {
 
 	uploadDone := make(chan struct{})
 	go func() {
-		srv.Handler().ServeHTTP(rr, req)
+		asOwner(srv.Handler()).ServeHTTP(rr, req)
 		close(uploadDone)
 	}()
 
@@ -157,7 +157,7 @@ func TestInFlightUploadAbortedByFinalize_spec_7_4_16(t *testing.T) {
 	finReq := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_upload/finalize", nil)
 	finReq.Header.Set("X-Lenny-Tenant-ID", "acme")
 	finRR := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(finRR, finReq)
+	asOwner(srv.Handler()).ServeHTTP(finRR, finReq)
 	if finRR.Code != http.StatusOK {
 		t.Fatalf("finalize: status %d, want 200; body=%s", finRR.Code, finRR.Body.String())
 	}
@@ -210,7 +210,7 @@ func TestUploadRegisteredAfterFinalizeImmediatelyAborts_spec_7_4_16(t *testing.T
 	finReq := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_upload/finalize", nil)
 	finReq.Header.Set("X-Lenny-Tenant-ID", "acme")
 	finRR := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(finRR, finReq)
+	asOwner(srv.Handler()).ServeHTTP(finRR, finReq)
 	if finRR.Code != http.StatusOK {
 		t.Fatalf("finalize: status %d, want 200; body=%s", finRR.Code, finRR.Body.String())
 	}
@@ -218,7 +218,7 @@ func TestUploadRegisteredAfterFinalizeImmediatelyAborts_spec_7_4_16(t *testing.T
 	// Now attempt /upload — the pre-Put precondition check fires
 	// before the abort registry; the spec-mandated channel-closure
 	// surfaces as the precondition error.
-	rr := uploadRequest(t, srv.Handler(), "sess_upload", "acme", tok, []byte("hi"), "text/plain")
+	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("hi"), "text/plain")
 	if rr.Code != http.StatusConflict {
 		t.Errorf("post-finalize /upload: status %d, want 409; body=%s", rr.Code, rr.Body.String())
 	}
@@ -276,7 +276,7 @@ func TestUploadOptionalContentHashMatch_spec_7_4_10(t *testing.T) {
 	req.Header.Set("Content-Type", "text/plain")
 	req.Header.Set(sessionserver.UploadContentHashHeader, matching)
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("matching hash: status %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}
@@ -298,7 +298,7 @@ func TestUploadOptionalContentHashMismatch_spec_7_4_10(t *testing.T) {
 	req.Header.Set(sessionserver.UploadContentHashHeader,
 		"0000000000000000000000000000000000000000000000000000000000000000")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("mismatched hash: status %d, want 422; body=%s", rr.Code, rr.Body.String())
 	}
@@ -328,7 +328,7 @@ func TestUploadOptionalContentHashCaseInsensitive_spec_7_4_10(t *testing.T) {
 	req.Header.Set("X-Lenny-Upload-Token", tok)
 	req.Header.Set(sessionserver.UploadContentHashHeader, upper)
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Errorf("uppercase hex hash: status %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}

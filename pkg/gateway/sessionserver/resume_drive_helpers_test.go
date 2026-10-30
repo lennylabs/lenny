@@ -24,7 +24,7 @@ import (
 // spec: §7.3 (Resume driver; Retry and Resume)
 func resumeAndDrive(t *testing.T, srv *sessionserver.Server, id string) *httptest.ResponseRecorder {
 	t.Helper()
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/"+id+"/resume", nil)
+	rr := postSessionStep(t, asOwner(srv.Handler()), "/v1/sessions/"+id+"/resume", nil)
 	if rr.Code != http.StatusOK {
 		return rr
 	}

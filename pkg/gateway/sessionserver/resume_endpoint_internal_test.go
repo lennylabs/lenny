@@ -57,7 +57,7 @@ func postPath(t *testing.T, srv *Server, path string) (int, resumeAnswer) {
 	req := httptest.NewRequest(http.MethodPost, path, nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	var ans resumeAnswer
 	_ = json.Unmarshal(rr.Body.Bytes(), &ans)
 	return rr.Code, ans

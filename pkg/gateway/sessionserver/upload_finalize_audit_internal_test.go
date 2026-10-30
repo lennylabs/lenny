@@ -55,7 +55,7 @@ func TestRunUploadEmitsAuditEvent_spec_7_4_17(t *testing.T) {
 	req.Header.Set("X-Lenny-Upload-Token", tok)
 	req.Header.Set("Content-Type", "text/plain")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -114,7 +114,7 @@ func TestHandleFinalizeEmitsAuditEvent_spec_7_4_17(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_fin/finalize", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "default")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -164,7 +164,7 @@ func TestRunUploadAuditNilSinkSafe_spec_7_4_17(t *testing.T) {
 	req.Header.Set("X-Lenny-Tenant-ID", "default")
 	req.Header.Set("X-Lenny-Upload-Token", tok)
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
 	}

@@ -29,12 +29,11 @@ func TestSessionStartCreatesRunningSession(t *testing.T) {
 
 	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{
 		RuntimeRef: "echo",
-		UserID:     "alice@acme.com",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -72,7 +71,7 @@ func TestSessionStartRecordsEnvironment(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -113,7 +112,7 @@ func TestTwoStepStartLaunchesReadySession(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_ready_1/start", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("start: status %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -149,7 +148,7 @@ func TestTwoStepStartRejectsNonReadyState(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_created_1/start", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusConflict {
 		t.Errorf("start on a created session: status %d, want 409 (precondition)", rr.Code)
 	}
@@ -162,7 +161,7 @@ func TestSessionStartRejectsMissingRuntime(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("missing runtime: got %d, want 400", rr.Code)
 	}
@@ -184,7 +183,7 @@ func TestSessionStartValidatesWorkspacePlan(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	// Setuid mode → WORKSPACE_PLAN_INVALID
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("setuid mode: got %d, want 400", rr.Code)

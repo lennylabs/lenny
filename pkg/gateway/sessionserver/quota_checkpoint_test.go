@@ -7,7 +7,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
@@ -25,10 +28,10 @@ func (r *recCheckpointer) CheckpointSubject(_ context.Context, tenantID, userID 
 func TestSessionCompletionWritesFinalQuotaCheckpoint_spec_11_2(t *testing.T) {
 	cp := &recCheckpointer{}
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, QuotaCheckpointer: cp})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	rr := createRequest(t, h,
-		sessionserver.CreateSessionRequest{RuntimeRef: "claude-code", UserID: "alice@acme.com"})
+		sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -47,15 +50,24 @@ func TestSessionCompletionWritesFinalQuotaCheckpoint_spec_11_2(t *testing.T) {
 	}
 }
 
-// A session with no user id writes no per-user final checkpoint (the
-// guard short-circuits), and the absence of a checkpointer never breaks a
-// terminal transition.
+// A session row with no user id writes no per-user final checkpoint (the
+// guard short-circuits). No create path writes such a row, because the
+// owner is the creating principal's subject (§10.2 Session ownership), so
+// the test seeds it in the store.
 func TestSessionCompletionNoCheckpointWithoutUser_spec_11_2(t *testing.T) {
 	cp := &recCheckpointer{}
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, QuotaCheckpointer: cp})
-	h := srv.Handler()
+	store := memstore.New()
+	now := time.Now().UTC()
+	const id = "sess_userless"
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: id, TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCreated,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, QuotaCheckpointer: cp})
+	h := asOwner(srv.Handler())
 
-	id := createSessionID(t, h) // no principal → empty user id
 	term := sessionRequest(t, h, http.MethodPost, "/v1/sessions/"+id+"/terminate")
 	if term.Code != http.StatusOK {
 		t.Fatalf("terminate: status %d, body %s", term.Code, term.Body.String())

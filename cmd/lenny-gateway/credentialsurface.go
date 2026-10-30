@@ -279,13 +279,16 @@ type sessionSingleShotBinder struct {
 // its native error envelope. The Retry-After seconds are zero for the
 // CREDENTIAL_POOL_EXHAUSTED case, which sets no header.
 //
-// spec: §15 built-in adapter single-shot compute model; §7.1 create-and-start
+// The session owner is not taken from the spec: CreateAndStartService binds
+// it from the principal ctx carries and refuses a ctx with no principal
+// subject with 401.
+//
+// spec: §10.2 (Session ownership) rule 1; §15 built-in adapter single-shot compute model; §7.1 create-and-start
 // atomicity; §4.9 CREDENTIAL_POOL_EXHAUSTED; §15 (Open Responses conversation
 // sessions).
 func (b sessionSingleShotBinder) BindSingleShot(ctx context.Context, spec translator.SingleShotSpec) (translator.SingleShotBinding, error) {
 	resp, serr := b.srv.CreateAndStartService(ctx, spec.TenantID, sessionserver.CreateSessionRequest{
 		RuntimeRef:  spec.RuntimeRef,
-		UserID:      spec.UserID,
 		Environment: spec.Environment,
 	})
 	if serr != nil {

@@ -63,7 +63,7 @@ func terminalRequest(t *testing.T, srv *Server, method, path string) *httptest.R
 	req := httptest.NewRequest(method, path, nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	return rr
 }
 
@@ -185,7 +185,7 @@ func TestFunnelAndHookWritersEmitTheTerminalEventsOnce_spec_7_2(t *testing.T) {
 		{"DELETE", func(ctx context.Context, srv *Server) {
 			req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/s", nil).WithContext(ctx)
 			req.Header.Set("X-Lenny-Tenant-ID", "acme")
-			srv.Handler().ServeHTTP(httptest.NewRecorder(), req)
+			asOwner(srv.Handler()).ServeHTTP(httptest.NewRecorder(), req)
 		}, session.StateCancelled, ""},
 		{"failure funnel", func(ctx context.Context, srv *Server) {
 			_, _ = srv.ReportSessionFailure(ctx, FailureReport{
@@ -445,7 +445,7 @@ func TestRESTMessageToAClosingBindingTakesTheTerminalReroute_spec_7_1(t *testing
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if strings.Contains(rr.Body.String(), "EXECUTOR_FAILURE") {
 		t.Fatalf("POST messages to a closing binding answered EXECUTOR_FAILURE: %d %s", rr.Code, rr.Body.String())

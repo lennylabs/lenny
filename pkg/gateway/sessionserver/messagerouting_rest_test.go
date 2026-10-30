@@ -75,7 +75,7 @@ func TestMessageRouting_InputRequiredBuffersInbox_spec_7_2_319(t *testing.T) {
 	srv, store, inbox, _ := newRoutingServer(t)
 	seedSessionState(t, store, "sess_ir", session.StateInputRequired)
 
-	rr := sendMessageRequest(t, srv.Handler(), "sess_ir", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_ir", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("while-blocked")}},
 	})
 	if rr.Code != http.StatusOK {
@@ -106,7 +106,7 @@ func TestMessageRouting_SuspendedResumesAndDelivers_spec_7_2_path6(t *testing.T)
 	srv, store, inbox, _ := newRoutingServer(t)
 	seedSessionState(t, store, "sess_sus", session.StateSuspended)
 
-	rr := sendMessageRequest(t, srv.Handler(), "sess_sus", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_sus", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("for-later")}},
 	})
 	if rr.Code != http.StatusOK {
@@ -144,7 +144,7 @@ func TestMessageRouting_SuspendedWithPendingInputWaitResumes_spec_7_2_path6(t *t
 		t.Fatalf("Register: %v", err)
 	}
 
-	rr := sendMessageRequest(t, srv.Handler(), "sess_sus", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_sus", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("after-interrupt")}},
 	})
 	if rr.Code != http.StatusOK {
@@ -165,7 +165,7 @@ func TestMessageRouting_RecoveringBuffersDLQ_spec_7_2_331(t *testing.T) {
 	srv, store, _, dlq := newRoutingServer(t)
 	seedSessionState(t, store, "sess_rp", session.StateResumePending)
 
-	rr := sendMessageRequest(t, srv.Handler(), "sess_rp", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_rp", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("dead-letter")}},
 	})
 	if rr.Code != http.StatusOK {
@@ -188,7 +188,7 @@ func TestMessageRouting_RunningDelivers_spec_7_2_path2(t *testing.T) {
 	srv, store, inbox, _ := newRoutingServer(t)
 	seedSessionState(t, store, "sess_run", session.StateRunning)
 
-	rr := sendMessageRequest(t, srv.Handler(), "sess_run", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_run", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hello")}},
 	})
 	if rr.Code != http.StatusOK {
@@ -223,7 +223,7 @@ func TestMessageRouting_InboxUnavailableWhenUnwired_spec_15_4(t *testing.T) {
 	})
 	seedSessionState(t, store, "sess_nb", session.StateResumePending)
 
-	rr := sendMessageRequest(t, srv.Handler(), "sess_nb", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_nb", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("x")}},
 	})
 	if rr.Code != http.StatusOK {

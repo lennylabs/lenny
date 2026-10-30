@@ -64,9 +64,8 @@ func TestCreateStartsSessionCreateSpan_spec_16_3(t *testing.T) {
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
 	})
 
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
-		UserID:     "alice@acme.com",
 	})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
@@ -94,7 +93,7 @@ func TestCreateSpanRecordsPersistError_spec_16_3(t *testing.T) {
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
 	})
 
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 	})
 	if rr.Code != http.StatusServiceUnavailable {
@@ -117,7 +116,7 @@ func TestMessagesStartsSessionPromptSpan_spec_16_3(t *testing.T) {
 	srv, store := newMessagesServer(t)
 	seedRunningSession(t, store, "sess_prompt_ok")
 
-	rr := sendMessageRequest(t, srv.Handler(), "sess_prompt_ok", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_prompt_ok", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hello")}},
 	})
 	if rr.Code != http.StatusOK {
@@ -155,7 +154,7 @@ func TestMessagesSpanRecordsExecutorError_spec_16_3(t *testing.T) {
 	})
 	seedRunningSession(t, store, "sess_prompt_fail")
 
-	rr := sendMessageRequest(t, srv.Handler(), "sess_prompt_fail", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_prompt_fail", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hello")}},
 	})
 	if rr.Code != http.StatusInternalServerError {
@@ -179,7 +178,7 @@ func TestUploadStartsSessionUploadSpan_spec_16_3(t *testing.T) {
 	seedCreatedSession(t, store, "sess_upload", "acme")
 	tok, _ := issuer.Issue("sess_upload", 0)
 
-	rr := uploadRequest(t, srv.Handler(), "sess_upload", "acme", tok, []byte("hello world"), "text/plain")
+	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("hello world"), "text/plain")
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}
@@ -202,7 +201,7 @@ func TestUploadSpanRecordsMissingSessionError_spec_16_3(t *testing.T) {
 	// §16.3 RESOURCE_NOT_FOUND error branch on the upload span.
 	tok, _ := issuer.Issue("sess_missing_upload", 0)
 
-	rr := uploadRequest(t, srv.Handler(), "sess_missing_upload", "acme", tok, []byte("x"), "text/plain")
+	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_missing_upload", "acme", tok, []byte("x"), "text/plain")
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status: got %d, want 404; body=%s", rr.Code, rr.Body.String())
 	}

@@ -75,7 +75,7 @@ func TestGetSessionProjectsTaskRecord_spec_8_8_806(t *testing.T) {
 		t.Fatalf("transcript: %v", err)
 	}
 
-	rr := getSession(t, srv.Handler(), "sess_tr1")
+	rr := getSession(t, asOwner(srv.Handler()), "sess_tr1")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
 	}
@@ -126,7 +126,7 @@ func TestGetSessionOmitsTaskRecordWithoutTranscripts_spec_8_8_806(t *testing.T) 
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	rr := getSession(t, srv.Handler(), "sess_no_tr")
+	rr := getSession(t, asOwner(srv.Handler()), "sess_no_tr")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
 	}

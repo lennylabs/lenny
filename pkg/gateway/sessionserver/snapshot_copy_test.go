@@ -66,7 +66,7 @@ func copyServer(f *fenceFixture, blobs blobstore.Store, ids []string, opts ...fu
 	for _, m := range opts {
 		m(&o)
 	}
-	return sessionserver.New(f.store, o).Handler()
+	return asOwner(sessionserver.New(f.store, o).Handler())
 }
 
 // chunkCopyStore is a blob store that copies and erases by session: the

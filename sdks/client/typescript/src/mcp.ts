@@ -225,13 +225,12 @@ export class MCPClient {
   /**
    * createSession invokes the §15.2 lenny/create_session MCP tool and
    * returns the created session identifier and state. It is the MCP
-   * counterpart of {@link Client.createSession}.
+   * counterpart of {@link Client.createSession}. The gateway records the
+   * authenticated caller as the session's owner, so it takes no owner
+   * argument.
    */
-  async createSession(runtimeRef: string, userId?: string): Promise<MCPCreateSessionResult> {
+  async createSession(runtimeRef: string): Promise<MCPCreateSessionResult> {
     const args: Record<string, unknown> = { runtimeRef };
-    if (userId) {
-      args.userId = userId;
-    }
     const res = await this.callTool('lenny/create_session', args);
     if (res.isError) {
       throw new Error(`lenny: lenny/create_session reported a failure: ${textOf(res)}`);
