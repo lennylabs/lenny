@@ -16,7 +16,7 @@
       Tiers 0, 11. Depends on: —
 - [ ] **S7 · spec** — SPEC-7. The §16.1 metric rows.
       Tiers 0, 11. Depends on: —
-- [ ] **S8 · spec** — SPEC-8. The §4.9 provider rows, VCS binding paragraphs, and **Token Service secret resolution.** edits, the §13.2.4 Token Service row, and the §14, §15.1, §26.2, and §26.3 pointers.
+- [ ] **S8 · spec** — SPEC-8. The §4.9 provider rows, VCS binding paragraphs, and **Token Service secret resolution.** edits, the §13.2.4 Token Service row, the §4.3 outage bullets and their §16.5 and §17.7 pointers, and the §14, §15.1, §26.2, and §26.3 pointers.
       Tiers 0, 11. Depends on: —
 - [ ] **S9 · spec** — SPEC-9. The §4.2 table row and the §5.2 pool-dimensions bullet.
       Tiers 0, 11. Depends on: S2
@@ -28,7 +28,7 @@
       Tiers 0, 5. Depends on: S4, S5
 - [ ] **S13 · code** — CODE-2. The `gitRepository` entry through the CRD, `runtimestore`, the flag, and the decoder.
       Tiers 0, 1, 2, 3. Depends on: S1, S2
-- [ ] **S14 · code** — CODE-7. The `git-https` provider, host binding, `lenny/vcs_token`, the Token Service `ReadCredentialSecret` RPC, and its chart Role and egress.
+- [ ] **S14 · code** — CODE-7. The `git-https` provider, host binding, `lenny/vcs_token`, the Token Service `ReadCredentialSecret` RPC, its chart Role and egress, and the `TokenServiceUnavailable` description.
       Tiers 0, 1, 3, 4, 5, 9. Depends on: S8, S10
 - [ ] **S15 · code** — CODE-8. The pool owner record, its admission, resolution, and the tenant-delete dependent.
       Tiers 0, 1, 2, 4, 9. Depends on: S2, S9, S13
@@ -36,7 +36,7 @@
       Tiers 0, 1, 4. Depends on: S3, S10, S15
 - [ ] **S17 · code** — CODE-3. The proto, the mirror, the handler, the stream interceptors, the metrics, and the chart.
       Tiers 0, 1, 3, 4, 7a, 9. Depends on: S2, S3, S4, S5, S6, S7, S8, S10, S11, S12, S13, S14, S15, S16
-- [ ] **S18 · code** — CODE-4. The adapter warm fill.
+- [ ] **S18 · code** — CODE-4. The adapter warm fill and its controller-rendered deadline.
       Tiers 0, 1, 3, 5. Depends on: S2, S5, S13, S17
 - [ ] **S19 · code** — CODE-5. Binder routing and slot-repository construction.
       Tiers 0, 1, 3, 4. Depends on: S2, S3, S4, S5, S6, S7, S15, S17, S18

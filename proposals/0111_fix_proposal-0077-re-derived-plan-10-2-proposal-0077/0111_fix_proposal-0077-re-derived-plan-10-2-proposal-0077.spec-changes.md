@@ -9,7 +9,7 @@ The specification states the mechanism in the homes below, and every other site 
 - **§4.7.1 `FetchGitPack`** (SPEC-5) owns the RPC contract: authorization, ref resolution, the pack the gateway returns for a ref, for a commit with usable haves, and for a commit without them, and the bound that decides between a delta pack and a shallow pack.
 - **§14 Cache-served `gitClone` sources.** (SPEC-3) owns the session half as numbered rules: eligibility (rule 1), tree validation and the materialization bound (rule 2), slot-repository construction (rule 3), the worktree prohibition (rule 4), the capture copy (rule 5), restore completion (rule 6), and the restore lineage (rule 7).
 - **§13.4** (SPEC-4) owns the scoped exception that lets the adapter run local git on a gateway-produced pack and on an agent-written slot repository, with pointers in §7.4 and §2.
-- **§4.9 Credential Pool** (SPEC-8) owns VCS credential binding: the **`hostPatterns`** rules and the **`git-https` credentials.** paragraph. §14 `gitClone.auth`, §15.1, §26.2, and §26.3 cite it. §4.9 **Token Service secret resolution.** (SPEC-8 Edit (h)) owns how the Token Service reads a credential Secret and which Secrets it returns to the gateway, and the §13.2.4 Token Service row (SPEC-8 Edit (i)) carries its kube-apiserver egress.
+- **§4.9 Credential Pool** (SPEC-8) owns VCS credential binding: the **`hostPatterns`** rules and the **`git-https` credentials.** paragraph. §14 `gitClone.auth`, §15.1, §26.2, and §26.3 cite it. §4.9 **Token Service secret resolution.** (SPEC-8 Edit (h)) owns how the Token Service reads a credential Secret and which Secrets it returns to the gateway, and the §13.2.4 Token Service row (SPEC-8 Edit (i)) carries its kube-apiserver egress. §4.3 **High availability and failure handling:** (SPEC-8 Edit (j)) owns the effect of a Token Service outage on VCS credential use, and §16.5 and §17.7 cite it.
 
 SPEC-1 adds the entry type to the §5.1 Runtime example and merge table. SPEC-6 adds the `workspace_size_limit` reason to `UPLOAD_ARCHIVE_LIMIT_EXCEEDED`. SPEC-7 adds two gateway-emitted metrics. SPEC-9 adds the pool owning tenant to the §4.2 scoping table and the §5.2 pool dimensions. SPEC-10 adds the restore lineage key to §12.4 and the `REG-GITLINEAGE` row to §28.3, and adds the VCS credential Secret read to the §28.7 Token Service artifact row.
 
@@ -247,7 +247,7 @@ Insert two rows directly after the row that begins "| Upload extraction aborted 
 | Cache-served Git sources (`lenny_workspace_git_cache_sources_total`, counter labeled by `pool` — each `gitClone` source the gateway routes to a repository store ([Section 14](14_workspace-plan-schema.md#14-workspace-plan-schema) **Cache-served `gitClone` sources.**).) | Counter         |
 ```
 
-### SPEC-8 · spec/04_system-components.md § 4.9, spec/13_security-model.md § 13.2.4, spec/14_workspace-plan-schema.md § 14, spec/15_external-api-surface.md § 15.1, spec/26_reference-runtime-catalog.md § 26.2 and § 26.3
+### SPEC-8 · spec/04_system-components.md § 4.3 and § 4.9, spec/13_security-model.md § 13.2.4, spec/14_workspace-plan-schema.md § 14, spec/15_external-api-surface.md § 15.1, spec/16_observability.md § 16.5, spec/17_deployment-topology.md § 17.7, spec/26_reference-runtime-catalog.md § 26.2 and § 26.3
 
 **Edit (a), §4.9 Credential Provider table.** Insert after the row that begins "| `github`           | GitHub App credentials |":
 
@@ -337,6 +337,18 @@ and in the same paragraph replace "within its informer resync interval" with "wi
 
 **Edit (i), §13.2.4 component table, Token Service row.** In the row whose first cell is "**Token Service** (`lenny.dev/component: token-service`)", replace "`kube-system` CoreDNS (UDP/TCP 53)." in the Egress Allowed cell with "kube-apiserver (TCP 443, CIDR `{{ .Values.kubeApiServerCIDR }}`); `kube-system` CoreDNS (UDP/TCP 53)." The row stays one physical line.
 
+**Edit (j), §4.3, §16.5, and §17.7 Token Service outage.** Make the changes below.
+
+In §4.3 **High availability and failure handling:**, in the bullet "Sessions that already hold credential leases **continue operating** ...", replace "until renewal." with "until renewal; their VCS credential operations fail as the VCS bullet below states." In the bullet "Sessions that do not need LLM credentials (e.g., file-processing-only runtimes) are **unaffected**.", replace "do not need LLM credentials" with "need neither LLM nor VCS credentials". Insert directly after that bullet:
+
+```markdown
+- VCS credentials have no lease and no grace period, because the gateway obtains them from the Token Service at each git operation ([Section 4.9](#49-credential-leasing-service) **`git-https` credentials.** and **Token Service secret resolution.**). Authenticated `gitClone` sources fail at session creation, git operations through the in-pod credential helper fail in running sessions, and every warm fill, materialization, and restore fetch on a private repository store fails ([Section 6.4](06_warm-pod-model.md#64-pod-filesystem-layout) **Private repository stores.** rule 4).
+```
+
+In the §16.5 `TokenServiceUnavailable` row, replace "(existing sessions unaffected until lease expiry)" with "(the effect on running sessions is in [§4.3](04_system-components.md#43-token-service) **High availability and failure handling:**)". The row stays one physical line.
+
+In the §17.7 **Token Service outage** bullet, in *Trigger*, replace "existing sessions are unaffected until credential lease expiry" with "[Section 4.3](04_system-components.md#43-token-service) **High availability and failure handling:** states the effect on running sessions". In *Remediation*, replace "(1) **Existing sessions continue** — sessions holding active leases are unaffected until lease expiry" with "(1) **Leased sessions continue** — active credential leases keep working until lease expiry, while VCS credential operations fail at once ([Section 4.3](04_system-components.md#43-token-service) **High availability and failure handling:**)". Leave the rest of the item unchanged.
+
 ### SPEC-9 · spec/04_system-components.md § 4.2 and spec/05_runtime-registry-and-pool-model.md § 5.2
 
 **Edit (a), §4.2 multi-tenancy table.** In the row whose first cell is "Runtimes, pools", append to the last cell: "A pool record's `ownerTenantId` is not a `tenant_id` column and is not an RLS key; [Section 6.4](06_warm-pod-model.md#64-pod-filesystem-layout) **Private repository stores.** states its rules." The row stays one physical line.
@@ -374,6 +386,7 @@ and in the same paragraph replace "within its informer resync interval" with "wi
 - `spec/13_security-model.md` (SPEC-4, SPEC-8)
 - `spec/14_workspace-plan-schema.md` (SPEC-3, SPEC-8)
 - `spec/15_external-api-surface.md` (SPEC-6, SPEC-8)
-- `spec/16_observability.md` (SPEC-7)
+- `spec/16_observability.md` (SPEC-7, SPEC-8)
+- `spec/17_deployment-topology.md` (SPEC-8)
 - `spec/26_reference-runtime-catalog.md` (SPEC-3, SPEC-8)
 - `spec/28_communication-channels.md` (SPEC-10)
