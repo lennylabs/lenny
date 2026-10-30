@@ -30544,7 +30544,7 @@ in the MCP Management Server inventory.
 **Suggested resolution:** Direct fix: set the enum to the §15.1 categories and pin it to the `errorclassify` constants in the openapi test. Owner: the direct-fix queue (plan §10.2).
 **Resolution:** Fixed by direct fix on `fix/derive-replay-validation` (2026-10-30, the commit "openapi: close the Error category over the §15.1 categories"). The `Error` schema's `category` enum is `TRANSIENT`, `PERMANENT`, `POLICY`, and `UPSTREAM`. `TestErrorEnvelopeRequiresCategoryAndRetryable_spec_15_1_972` (`pkg/gateway/externalapi/openapi/openapi_test.go`) now requires exactly the four `errorclassify` categories and fails on any other value. The tier-3 contracts `TestDeriveAndReplayTargetPoolSelectionContract_spec_15_1` and `TestReplayIncompatibleRuntimeContract_spec_15_1` validate `400` and `403` bodies against the served schema.
 
-### - [ ] F-15.1.68 — `tests/tier5_e2e_kind/gateway_probe_headers_test.go` is absent from `tests/spec-map.json`, so the static tier's validate-maps check fails on every run [Low] — OPEN
+### - [x] F-15.1.68 — `tests/tier5_e2e_kind/gateway_probe_headers_test.go` is absent from `tests/spec-map.json`, so the static tier's validate-maps check fails on every run [Low] — OPEN — CLOSED
 
 **Spec:** §15.1 REST API (the test's `// spec:` annotation names the ETag a GET returns for the next conditional write).
 **Evidence:** `go run ./cmd/lenny-test --tier static --since 6a39dfb0f` on `fix/f-17-5-11` fails in validate-maps with "[FAIL] test files mapped: 1 test file(s) absent from spec-map: tests/tier5_e2e_kind/gateway_probe_headers_test.go". The file reached `main` in 6213bf5d1 ("test(tier5): find the curl status line past leading kubectl output in the gateway probe") without a spec-map entry. The failure predates and is independent of the F-17.5.11 fix, which touches neither the file nor the map. Found during the F-17.5.11 direct fix, 2026-10-30.
@@ -30558,6 +30558,8 @@ Trees audited: `pkg/gateway/mcp/`, `pkg/gateway/mcptools/`, `pkg/gateway/session
 Severity legend: **High** MUST/correctness/security regression; **Medium** SHOULD or capability unimplemented; **Low** minor/cosmetic; **Info** noteworthy but not a gap.
 
 ---
+
+**Resolution (2026-10-30):** `tests/tier5_e2e_kind/gateway_probe_headers_test.go` is listed under §15.1 in `tests/spec-map.json`; `lenny-test validate-maps` passes.
 
 ### - [x] F-15.2.1 — MCP protocol version negotiation absent; gateway hard-codes the wrong version [High] — CLOSED
 
