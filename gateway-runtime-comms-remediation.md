@@ -4212,7 +4212,7 @@ D2), which stays with the upload route proposal.
     `runtimeClasses.profiles.*.name` is the only key, `lenny.runtimeClassNameArgs` renders the controller and
     gateway flags from it, and a render guard refuses a set `isolation` key and names the replacement.
     Filed from the fix: F-15.1.68.
-  - [ ] **F-15.1.68** (Low, filed from F-17.5.11): `tests/tier5_e2e_kind/gateway_probe_headers_test.go` has no
+  - [x] **F-15.1.68** (Low, filed from F-17.5.11): `tests/tier5_e2e_kind/gateway_probe_headers_test.go` has no
     `tests/spec-map.json` entry, so the static tier's validate-maps check fails on every branch cut from `main`.
     Map it under §15.1.
   - [x] **F-15.2.29** (Low): per-session MCP tool schemas are hand-written against §15.2.1 item 4.

@@ -5717,6 +5717,7 @@
         "pkg/gateway/sessionserver/messages_test.go",
         "pkg/gateway/sessionserver/slotretry_test.go",
         "tests/testinfra/sessiondriver/sessiondriver_test.go",
+        "tests/tier5_e2e_kind/gateway_probe_headers_test.go",
         "tests/tier5_e2e_kind/gateway_probe_test.go",
         "tests/tier9_security/audit_integrity_test.go",
         "pkg/gateway/sessionserver/podclaimerror_internal_test.go::TestWritePodClaimErrorSetupCommandFailed_spec_7_3",
