@@ -159,6 +159,7 @@
       "type": "string"
     },
     "isolation": {
+      "description": "Removed. Set the RuntimeClass name of a profile with runtimeClasses.profiles.\u003cprofile\u003e.name; the chart refuses to render when any isolation key is set. §17.5.",
       "type": "object"
     },
     "isolationProfile": {

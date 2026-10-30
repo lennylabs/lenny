@@ -879,7 +879,7 @@ func (f *gatewayFlags) registerPolicyFlags() {
 	f.defaultIsolationProfile = flag.String("default-isolation-profile", os.Getenv("LENNY_DEFAULT_ISOLATION_PROFILE"),
 		"§5.3 isolation profile applied to a session that omits isolationProfile on the create body. Defaults to the chart's compiled-in fallback (`sandboxed`); the e2e overlay sets `standard` so every k6 scenario lands on the warm pool the agent-workload defines.")
 	// spec: §17.5, §16.1 — the per-profile RuntimeClass name overrides. The
-	// chart renders these from the same `isolation.runtimeClassNames` values,
+	// chart renders these from the same `runtimeClasses.profiles.<profile>.name` values,
 	// with the same flag names, that it renders for the controller, so the
 	// gateway's runtime_class labels name the RuntimeClass the controller
 	// stamps on each pod (F-16.1.10).

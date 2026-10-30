@@ -118,7 +118,7 @@ type Reconciler struct {
 	StatusDedup *statusdedup.Gate
 	// RuntimeClassNameOverrides remaps the §5.3 isolation profile to a
 	// cluster-specific RuntimeClass name (spec: §17.5). Set from
-	// the chart's `isolation.runtimeClassNames` Helm values so a cluster
+	// the chart's `runtimeClasses.profiles.<profile>.name` Helm values so a cluster
 	// running gVisor as `runsc` or Kata as `kata-qemu` does not require
 	// renaming in-cluster RuntimeClass objects to Lenny's literal
 	// defaults. A nil or empty map preserves the §5.3 defaults
@@ -524,7 +524,7 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		IsolationProfile: profile,
 		// spec: §17.5 — apply operator RuntimeClass-name
 		// overrides (e.g. gvisor→runsc, kata→kata-qemu) so the chart's
-		// `isolation.runtimeClassNames` Helm values reach the pod spec
+		// `runtimeClasses.profiles.<profile>.name` Helm values reach the pod spec
 		// without requiring rename of in-cluster RuntimeClass objects.
 		RuntimeClassNameOverrides: r.RuntimeClassNameOverrides,
 		DeploymentModel:           rt.Spec.DeploymentModel,

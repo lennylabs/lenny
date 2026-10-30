@@ -592,25 +592,29 @@ rotation", §17.4.
 
 {{/*
 lenny.runtimeClassNameArgs renders the §17.5 per-profile RuntimeClass name
-override flags from isolation.runtimeClassNames, one flag per profile with a
-non-empty value. The controller and the gateway both include it, so the
-controller stamps each pod's runtimeClassName and the gateway labels
-runtime_class from one set of values, and the two processes name one
-RuntimeClass per §5.3 profile (F-16.1.10). Include it with nindent at the args
-list indentation.
-spec: §17.5, §5.3, §16.1.
+flags from runtimeClasses.profiles.<profile>.name, one flag per profile with a
+non-empty name. runtimeClasses.profiles is the single values source for the
+RuntimeClass name of a profile: the same key names the RuntimeClass objects
+runtimeclasses.yaml renders, the lenny-pod-security webhook's
+--gvisor-runtime-class and --kata-runtime-class flags, the Kyverno
+RuntimeClass policy, and the preflight's --required-runtime-classes. The
+controller and the gateway both include this helper, so the controller stamps
+each pod's runtimeClassName, the gateway labels runtime_class, and the
+admission layer recognizes the class from one set of values (F-16.1.10,
+F-17.5.11). The name renders whether or not the profile is enabled, because
+enabled only selects which RuntimeClass objects the chart renders. Include it
+with nindent at the args list indentation.
+spec: §17.5, §5.3, §16.1, §17.2.
 */}}
 {{- define "lenny.runtimeClassNameArgs" -}}
-{{- $rcNames := (.Values.isolation | default dict).runtimeClassNames | default dict -}}
-{{- with $rcNames.standard }}
-- --standard-runtime-class={{ . }}
-{{- end }}
-{{- with $rcNames.sandboxed }}
-- --sandboxed-runtime-class={{ . }}
-{{- end }}
-{{- with $rcNames.microvm }}
-- --microvm-runtime-class={{ . }}
-{{- end }}
+{{- $profiles := (.Values.runtimeClasses | default dict).profiles | default dict -}}
+{{- $args := list -}}
+{{- range $profile := list "standard" "sandboxed" "microvm" -}}
+{{-   with (get $profiles $profile | default dict).name -}}
+{{-     $args = append $args (printf "- --%s-runtime-class=%s" $profile .) -}}
+{{-   end -}}
+{{- end -}}
+{{- join "\n" $args -}}
 {{- end -}}
 
 {{/*

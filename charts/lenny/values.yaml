@@ -2186,8 +2186,16 @@ sandbox:
 runtimeClasses:
   create: false
   # profiles maps each §5.3 isolation profile to its RuntimeClass. name
-  # is the RuntimeClass object name (matching the profile->RuntimeClass
-  # mapping the controller validates), handler is the CRI runtime
+  # is the RuntimeClass name of the profile, and it is the only values key
+  # that sets it: the controller stamps it on each agent pod's
+  # runtimeClassName, the gateway labels runtime_class with it, the
+  # lenny-pod-security webhook and the Kyverno policy recognize it for the
+  # RuntimeClass-aware relaxations, the preflight checks that it exists,
+  # and the chart names the rendered RuntimeClass object with it when create
+  # is true. spec: §17.5 — clusters whose gVisor RuntimeClass is published as
+  # `runsc` (the upstream-default name) or whose Kata install names objects
+  # `kata-qemu` / `kata-fc` set name to the cluster's class. name applies
+  # whether or not the profile is enabled. handler is the CRI runtime
   # handler, and overhead is the §5.3 reference Pod Overhead. The cpu and
   # memory overhead values are reference points; tune them per
   # deployment. Set enabled per profile to render only the ones the
@@ -2223,20 +2231,6 @@ runtimeClasses:
       # standard (runc) is the native container runtime and adds no
       # isolation overhead per §5.3.
       overhead: {}
-
-# isolation configures cluster-specific seams the §5.3 isolation
-# profiles depend on. runtimeClassNames overrides Lenny's chart-default
-# RuntimeClass literal per profile (standard→runc, sandboxed→gvisor,
-# microvm→kata). spec: §17.5 — clusters whose gVisor RuntimeClass
-# is published as `runsc` (the upstream-default name) or whose Kata
-# install names objects `kata-qemu` / `kata-fc` set the per-profile
-# override so the sandbox controller maps each profile to the cluster's
-# actual RuntimeClass name. An empty value preserves the chart default.
-isolation:
-  runtimeClassNames:
-    standard: ""
-    sandboxed: ""
-    microvm: ""
 
 # gateway configures the §4.1 edge gateway. The lenny-gateway
 # Deployment runs the gateway binary; it is stateless and horizontally

@@ -13,7 +13,7 @@ import (
 // TestRuntimeClassOverrideFlagsReachTheGatewayMap_spec_17_5 pins that the
 // gateway binds the controller's --standard-runtime-class,
 // --sandboxed-runtime-class, and --microvm-runtime-class flags, which the
-// chart renders for both binaries from isolation.runtimeClassNames, and that
+// chart renders for both binaries from runtimeClasses.profiles.<profile>.name, and that
 // runtimeClassOverrides turns them into the map the binder, the session
 // server, and the recycle seams label runtime_class through. With no flag set
 // every profile keeps its default name.

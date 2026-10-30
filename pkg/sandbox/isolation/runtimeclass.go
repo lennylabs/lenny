@@ -14,7 +14,7 @@ func RuntimeClassName(p Profile) (string, bool) {
 // the isolation profile, applying the per-profile operator override
 // when present. spec: §17.5 — operators running gVisor as `runsc` or Kata
 // as `kata-qemu` / `kata-fc` override the chart-default literal via
-// `isolation.runtimeClassNames` Helm values. An override mapped to an
+// `runtimeClasses.profiles.<profile>.name` Helm values. An override mapped to an
 // empty string falls back to the default; a missing key falls back to
 // the default. The boolean is false for an unrecognized profile.
 func ResolveRuntimeClassName(p Profile, overrides map[Profile]string) (string, bool) {
@@ -39,7 +39,7 @@ func ResolveRuntimeClassName(p Profile, overrides map[Profile]string) (string, b
 // profile keeps its default name.
 //
 // The controller and the gateway both build their map here from the chart's
-// `isolation.runtimeClassNames` values, which reach each binary as the same
+// `runtimeClasses.profiles.<profile>.name` values, which reach each binary as the same
 // `--standard-runtime-class`, `--sandboxed-runtime-class`, and
 // `--microvm-runtime-class` flags. The controller stamps the result on the
 // pod's `runtimeClassName` and labels its warm-pool series from it, and the

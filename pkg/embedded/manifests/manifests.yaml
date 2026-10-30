@@ -3950,6 +3950,9 @@ spec:
             - --gateway-grpc-addr=lenny-gateway.default.svc:50051
             - --agent-namespaces=lenny-agents
             - --dev-mode
+            - --standard-runtime-class=runc
+            - --sandboxed-runtime-class=gvisor
+            - --microvm-runtime-class=kata
             - --adapter-uid=65532
             - --agent-uid=65533
             - --cred-readers-gid=65534
@@ -4196,6 +4199,9 @@ spec:
             # namespace defaults to the gateway pod's own namespace via
             # POD_NAMESPACE (env var below). F-10.4.4.
             - --gateway-pdb-name=lenny-gateway
+            - --standard-runtime-class=runc
+            - --sandboxed-runtime-class=gvisor
+            - --microvm-runtime-class=kata
             - --dev-mode
             # §12.4 requires Redis AUTH; a dev install backed by a plaintext
             # no-password Redis would otherwise fail the gateway startup

@@ -4206,9 +4206,11 @@ D2), which stays with the upload route proposal.
     `fix/derive-replay-validation`: the gateway takes the controller's override flags from the same chart
     helper, builds its map with the shared `isolation.RuntimeClassOverrides`, and labels every
     `runtime_class` series through it. Filed from the fix: F-17.5.11.
-  - [ ] **F-17.5.11** (Low, filed from F-16.1.10): the chart names a profile's RuntimeClass in two values keys,
+  - [x] **F-17.5.11** (Low, filed from F-16.1.10): the chart names a profile's RuntimeClass in two values keys,
     `isolation.runtimeClassNames` (controller, gateway) and `runtimeClasses.profiles.*.name` (webhook, Kyverno,
-    preflight), so a partial override splits them. Needs the owner's choice of the surviving key.
+    preflight), so a partial override splits them. Closed 2026-10-30 by direct fix on `fix/f-17-5-11`:
+    `runtimeClasses.profiles.*.name` is the only key, `lenny.runtimeClassNameArgs` renders the controller and
+    gateway flags from it, and a render guard refuses a set `isolation` key and names the replacement.
   - [x] **F-15.2.29** (Low): per-session MCP tool schemas are hand-written against §15.2.1 item 4.
     `mcpschemagen` gained a parameter rename and optional-query option, and the nine per-session tools now
     advertise generated schemas (2026-10-30, `91254f71b`).

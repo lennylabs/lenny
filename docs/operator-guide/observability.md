@@ -29,7 +29,7 @@ Metric labels and trace attributes follow the [OpenTelemetry semantic convention
 
 Lenny-specific labels that have no OTel convention retain their domain-specific names: `tenant_id`, `pool`, `runtime_class`, `provider`. A `reason` label is used only for lifecycle/operational classifications (e.g., pod retirement triggers); error classifications use `error_type`.
 
-The `runtime_class` label carries the Kubernetes RuntimeClass name that the pod's isolation profile maps to. When the chart value `isolation.runtimeClassNames` renames the RuntimeClass of a profile, for example `sandboxed: runsc` on a cluster that publishes gVisor as `runsc`, the gateway and the controller both label their series with the renamed value, so a query grouped by `runtime_class` sees one series per class.
+The `runtime_class` label carries the Kubernetes RuntimeClass name that the pod's isolation profile maps to. When the chart value `runtimeClasses.profiles.<profile>.name` renames the RuntimeClass of a profile, for example `runtimeClasses.profiles.sandboxed.name: runsc` on a cluster that publishes gVisor as `runsc`, the gateway and the controller both label their series with the renamed value, so a query grouped by `runtime_class` sees one series per class. The [RuntimeClass names](namespace-and-isolation#runtimeclass-names) section lists every component that reads the value.
 
 See the full attribute table in [SPEC §16.1.1](../../spec/16_observability.md#1611-attribute-naming).
 

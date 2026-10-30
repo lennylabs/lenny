@@ -1406,7 +1406,7 @@ type Options struct {
 
 	// RuntimeClassNameOverrides is the §17.5 per-profile RuntimeClass name
 	// override map, built by isolation.RuntimeClassOverrides from the chart's
-	// `isolation.runtimeClassNames` values the controller also reads. The
+	// `runtimeClasses.profiles.<profile>.name` values the controller also reads. The
 	// runtime_class label of the §6.3 startup histograms and of
 	// lenny_session_time_to_first_token_seconds resolves through it, so the
 	// gateway names the RuntimeClass the controller stamped on the pod.
