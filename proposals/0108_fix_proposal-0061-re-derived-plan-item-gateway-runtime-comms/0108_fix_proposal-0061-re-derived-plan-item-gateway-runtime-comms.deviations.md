@@ -4,7 +4,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: S6 tests registered without a §29.3 map key
 
-**Status:** proposed
+**Status:** accepted: `tests/spec-map.json` carries no section key under §29, because §29 Communication Scenarios has no leaf entry in the map, so `validate-maps` cannot resolve one. The S6 tests (`TestForwardedResponsesTurnAtANonHolderIsNotDeliveredInAnyState_spec_29_3`, `TestForwardedResponsesTurnAtTheHolderRunsLocally_spec_29_3`, `TestUnforwardedResponsesTurn_spec_29_3`, `TestOtherKindsKeepTheStateGateAheadOfTheForwardedCheck_spec_29_3`, and `TestResponsesTurnForwardStatesAreRunningOnly_spec_29_3` in `pkg/gateway/sessionserver/holder_forward_test.go`, `TestHolderForwardInnerRoutesOnlyTheResponsesCreate_spec_29_3` in `cmd/lenny-gateway/holder_forward_wiring_test.go`, and the two tier-4 cases in `tests/tier4_integration/holder_forward_responses_test.go`) are registered under 28.5.4 and 15, with the non-storage cases also under 11.5 and the rate-limit case also under 11.1, which is how the existing §29.3 forward tests are registered. Each test name keeps the `_spec_29_3` suffix and a `// spec:` annotation naming §29.3, so the coverage stays traceable (2026-10-30, orchestrator under the owner's delegation)
 
 **Reported by:** step S6 (CODE-3: ForwardKindResponsesTurn, forwardTarget order, ForwardResponsesTurn, and the listener route).
 
@@ -18,7 +18,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: Tier-4 forward test uses a stand-in Responses handler through a harness hook
 
-**Status:** resolved in step S12
+**Status:** resolved in step S12: `Harness.WireOpenResponses` in `tests/testinfra/lifecycleharness/responses.go` installs the production Open Responses handler through `Replica.SetResponsesHandler` (`tests/testinfra/lifecycleharness/harness.go`), and both `tests/tier4_integration/holder_forward_responses_test.go` and `tests/tier4_integration/open_responses_held_session_test.go` call it, with no stand-in handler left in the tree (2026-10-30, orchestrator under the owner's delegation)
 
 **Reported by:** step S6 (CODE-3: ForwardKindResponsesTurn, forwardTarget order, ForwardResponsesTurn, and the listener route).
 
@@ -34,7 +34,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: Resolve step stays an unexported method
 
-**Status:** proposed
+**Status:** accepted: `continuity.resolve` in `pkg/gateway/environment/translator/continuity.go` returns `(sessionstore.Session, int, error)` and is the first hop of `rehydrate`, and its only other callers are `handleCreate`'s resolve step and `handleGet` in `open_responses.go`, both in the `translator` package. No caller outside the package needs it, so exporting it would widen the package API with no reader (2026-10-30, orchestrator under the owner's delegation)
 
 **Reported by:** step S7 (CODE-4: response-id codec, Seq-bounded rehydrate, required record, GET, and the interim ordinal-1 commit in single-shot handleCreate).
 
@@ -48,7 +48,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: Tier-9 cross-tenant tests do not assert zero binds
 
-**Status:** proposed
+**Status:** resolved in step S10: `TestRejectedHeldResponseIDMakesNoBindAndNoForward_spec_15` in `tests/tier9_security/open_responses_held_resolution_test.go` (`3688f2c71`) sends a cross-tenant and an erased-session `previous_response_id`, asserts the byte-identical native 404 an unknown id gets and a 404 on GET, and asserts zero binder binds, zero executor sends, zero `ForwardResponsesTurn` calls, and zero `Forwarded` checks, which is the no-bind and no-forward half of TEST-1 tier 9 (2026-10-30, orchestrator under the owner's delegation)
 
 **Reported by:** step S7 (CODE-4: response-id codec, Seq-bounded rehydrate, required record, GET, and the interim ordinal-1 commit in single-shot handleCreate).
 
@@ -62,7 +62,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: Tier-4 multi-protocol test rewritten in S7
 
-**Status:** proposed
+**Status:** accepted: `openResponsesCreatePrompt` in `tests/tier4_integration/multi_protocol_same_deployment_test.go` (`05b8052d3`) returns the session-id prefix of the `<session>.<n>` id and asserts ordinal 1, as TEST-1 tier 4 states, and the file is registered in `tests/spec-map.json` under 15 and 15.2.1. Landing it with the step that changed the id kept tier 4 green at every commit (2026-10-30, orchestrator under the owner's delegation)
 
 **Reported by:** step S7 (CODE-4: response-id codec, Seq-bounded rehydrate, required record, GET, and the interim ordinal-1 commit in single-shot handleCreate).
 
