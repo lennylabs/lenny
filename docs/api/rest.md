@@ -262,7 +262,7 @@ Re-run a session against a different runtime version using the same workspace an
 
 **Valid precondition states:** terminal states only.
 
-**Key error codes:** `REPLAY_ON_LIVE_SESSION` (409), `INCOMPATIBLE_RUNTIME` (400).
+**Key error codes:** `REPLAY_ON_LIVE_SESSION` (409), `INCOMPATIBLE_RUNTIME` (400), and `DERIVE_SNAPSHOT_UNAVAILABLE` (503).
 
 ---
 

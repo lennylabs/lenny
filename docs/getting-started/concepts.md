@@ -431,7 +431,7 @@ setupPolicy:
 
 ### Gateway-mediated file delivery
 
-All session inputs and outputs enter and exit pods through the gateway. There are no shared volume mounts and no git-based workspace population. Checkpoint chunk objects are the one exception: the agent pod `PUT`s them to, and on resume `GET`s them from, object storage against a gateway-minted presigned capability (single key, single method, short expiry). The gateway remains the sole authority that resolves the key, validates the tenant prefix, and signs; the pod holds no object-store credential. This design enforces:
+All session inputs and outputs enter and exit pods through the gateway. There are no shared volume mounts and no git-based workspace population. Checkpoint chunk objects are the one exception: the agent pod `PUT`s them to, and on resume and at a derived or replayed session's first bind `GET`s them from, object storage against a gateway-minted presigned capability (single key, single method, short expiry). The gateway remains the sole authority that resolves the key, validates the tenant prefix, and signs; the pod holds no object-store credential. This design enforces:
 
 - **Least privilege:** Pods have no credentials to access the artifact store directly.
 - **Tenant isolation:** The gateway validates tenant ownership on every file operation, including when it signs a checkpoint-chunk presigned capability against the session's `checkpoint_id` prefix.
