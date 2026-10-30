@@ -22,6 +22,20 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
+// ConversationResponse is one Open Responses turn on a session. EndSeq is
+// the last transcript Seq the turn appended, which bounds a cold
+// continuation's rehydrated prefix. RecoveryGeneration is the session's
+// recovery_generation when the turn was reserved; a warm continuation
+// requires it unchanged. Completed is set once the turn's output is
+// recorded.
+// spec: §15 (Open Responses conversation sessions).
+type ConversationResponse struct {
+	CreatedAt          time.Time `json:"createdAt"`
+	EndSeq             uint64    `json:"endSeq"`
+	RecoveryGeneration int64     `json:"recoveryGeneration"`
+	Completed          bool      `json:"completed"`
+}
+
 // Session is the per-row payload the store persists. Mirrors the
 // subset of the §15.1 GET /v1/sessions/{id} envelope the minimal
 // gateway populates.
@@ -164,16 +178,32 @@ type Session struct {
 	// ParentWorkspaceRef (§4.5 Workspace lineage).
 	ParentSessionID string
 
-	// ContinuationParentID is the OpenResponsesAdapter previous_response_id of
-	// the prior response this single-shot continuation chains from. It is
-	// distinct from ParentSessionID, which the §8.2/§8.6 delegation machinery
-	// and the delegation-tree orphan-cleanup sweep own: a single-shot
-	// continuation must not set ParentSessionID or it would be misclassified as
-	// a delegated child and swept. The pointer rides the §14.1 request-envelope
-	// bundle rather than a dedicated column; GET /v1/responses/{id} echoes it as
-	// previous_response_id.
-	// spec: §15 built-in adapter single-shot compute model.
+	// ContinuationParentID is the Open Responses response id
+	// (`<sessionId>.<n>`) that this session's first turn continued from. It
+	// is empty for a conversation's first session. It is distinct from
+	// ParentSessionID, which belongs to §8.2 delegation and the
+	// delegation-tree orphan-cleanup sweep: a continuation must not set
+	// ParentSessionID or it would be misclassified as a delegated child and
+	// swept. The pointer rides the §14.1 request-envelope bundle rather than
+	// a dedicated column.
+	// spec: §15 (Open Responses conversation sessions).
 	ContinuationParentID string
+
+	// Responses holds one record per Open Responses turn run on this
+	// session, in turn order. The ordinal of Responses[i] is i+1, so its
+	// response id is `<sessionId>.<i+1>`. Nil for a session no Open
+	// Responses turn ran on. The records ride the §14.1 request-envelope
+	// bundle rather than a dedicated table.
+	// spec: §15 (Open Responses conversation sessions).
+	Responses []ConversationResponse
+
+	// RequestedRuntimeRef is the runtime ref that the Open Responses request
+	// which created this session asked for. RuntimeRef is the value after
+	// §4.8 PreRoute and §10.7 experiment routing rewrite it, so a
+	// continuation compares its own requested runtime against this field.
+	// Empty for a session no Open Responses request created.
+	// spec: §15 (Open Responses conversation sessions).
+	RequestedRuntimeRef string
 
 	// RootSessionID is the §8.9 / §12.5 delegation-tree root: every
 	// session in a delegation tree carries the same RootSessionID,

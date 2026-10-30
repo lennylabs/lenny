@@ -797,6 +797,7 @@
     },
     "pkg/gateway/session/sessionstore": {
       "unit": ["pkg/gateway/session/sessionstore/..."],
+      "component": ["tests/tier2_component/stores/sessionstore_conversation_responses_test.go"],
       "contract": ["tests/tier3_contract/rest_sessions/..."],
       "integration": ["tests/tier4_integration/absent_sessions_pgstore_test.go"]
     },
