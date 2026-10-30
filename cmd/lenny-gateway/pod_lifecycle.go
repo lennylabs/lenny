@@ -295,13 +295,16 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			log.Fatalf("lenny-gateway: recycle-boundary coordinator: %v", err)
 		}
 		podBinder = &podsession.Binder{
-			Client:           k8sClient,
-			Namespace:        *agentNamespace,
-			AdapterPort:      adapterGRPCPort,
-			AcceptedVersions: []string{adapter.ProtocolVersionV1},
-			HoldCanceller:    holdCoordinator,
-			RecycleBoundary:  recycleBoundary,
-			Now:              clockinject.Now,
+			// §17.5 / §16.1: label runtime_class with the controller's
+			// RuntimeClass names (F-16.1.10).
+			RuntimeClassNameOverrides: w.runtimeClassOverrides(),
+			Client:                    k8sClient,
+			Namespace:                 *agentNamespace,
+			AdapterPort:               adapterGRPCPort,
+			AcceptedVersions:          []string{adapter.ProtocolVersionV1},
+			HoldCanceller:             holdCoordinator,
+			RecycleBoundary:           recycleBoundary,
+			Now:                       clockinject.Now,
 			DialAdapter: func(addr string) (*adapterclient.Client, error) {
 				return adapterclient.Dial(addr, dialOpt, keepaliveOpt)
 			},

@@ -29,7 +29,7 @@
             "required": ["code", "category", "message", "retryable"],
             "properties": {
               "code":      { "type": "string", "description": "§15.1 canonical error code (e.g. VALIDATION_ERROR, UNAUTHORIZED, MCP_PROTOCOL_VERSION_RETIRED)." },
-              "category":  { "type": "string", "enum": ["VALIDATION", "AUTH", "AUTHZ", "NOT_FOUND", "CONFLICT", "TRANSIENT", "RATE_LIMIT", "INTERNAL", "UNAVAILABLE", "TIMEOUT"], "description": "coarse classification used by SDK retry logic." },
+              "category":  { "type": "string", "enum": ["TRANSIENT", "PERMANENT", "POLICY", "UPSTREAM"], "description": "§15.1 error category (the §16.3 taxonomy) used by SDK retry logic." },
               "message":   { "type": "string", "description": "Human-readable failure summary." },
               "retryable": { "type": "boolean", "description": "true when the client should retry, with backoff bounded by suggestedRetryAfter when present." },
               "details":   { "type": "object", "additionalProperties": true, "description": "Optional structured per-error context (fields, runbook, suggestedRetryAfter, …)." }
@@ -816,9 +816,11 @@
         },
         "responses": {
           "201": { "description": "Created" },
+          "400": { "description": "VALIDATION_ERROR, including a targetPool that does not exist, is not backed by the runtime, or does not satisfy the target isolation profile", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "FORBIDDEN, including a targetPool the tenant holds no pool_tenant_access grant on", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "409": { "description": "DERIVE_ON_LIVE_SESSION" },
           "422": { "description": "ISOLATION_MONOTONICITY_VIOLATED" },
-          "503": { "description": "DERIVE_SNAPSHOT_UNAVAILABLE, or a create-time claim failure: SESSION_CREATION_FAILED, CREDENTIAL_POOL_EXHAUSTED, or RUNTIME_UNAVAILABLE (pool warming)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+          "503": { "description": "DERIVE_SNAPSHOT_UNAVAILABLE, SERVICE_UNAVAILABLE (a transient targetPool lookup failure), or a create-time claim failure: SESSION_CREATION_FAILED, CREDENTIAL_POOL_EXHAUSTED, or RUNTIME_UNAVAILABLE (pool warming)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
       }
     },
@@ -1048,10 +1050,11 @@
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": {
           "201": { "description": "Created" },
-          "400": { "description": "INCOMPATIBLE_RUNTIME", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "400": { "description": "INCOMPATIBLE_RUNTIME (targetRuntime has a different executionMode than the source session), or VALIDATION_ERROR, including an unregistered targetRuntime and a targetPool that does not exist, is not backed by targetRuntime, or does not satisfy the target isolation profile", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "FORBIDDEN, including a targetPool the tenant holds no pool_tenant_access grant on", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "409": { "description": "REPLAY_ON_LIVE_SESSION", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "422": { "description": "ISOLATION_MONOTONICITY_VIOLATED", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
-          "503": { "description": "DERIVE_SNAPSHOT_UNAVAILABLE, or a create-time claim failure: SESSION_CREATION_FAILED, CREDENTIAL_POOL_EXHAUSTED, or RUNTIME_UNAVAILABLE (pool warming)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+          "503": { "description": "DERIVE_SNAPSHOT_UNAVAILABLE, SERVICE_UNAVAILABLE (a transient targetRuntime or targetPool lookup failure), or a create-time claim failure: SESSION_CREATION_FAILED, CREDENTIAL_POOL_EXHAUSTED, or RUNTIME_UNAVAILABLE (pool warming)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
       }
     },

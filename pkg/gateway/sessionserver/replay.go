@@ -134,6 +134,13 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 			map[string]any{"fields": []map[string]string{{"field": "sourceSessionId"}}})
 		return
 	}
+	// spec: §15.1 (Session Replay Semantics) — targetRuntime must be a
+	// registered runtime with the source session's executionMode; a
+	// different mode answers 400 INCOMPATIBLE_RUNTIME. It runs before the
+	// targetPool check, whose pool must be backed by this runtime.
+	if !s.requireReplayRuntimeCompatible(w, r, source, req.TargetRuntime) {
+		return
+	}
 
 	// §15.1 SEC-001 monotonicity — same rule as derive.
 	target := req.TargetIsolationProfile
@@ -144,6 +151,17 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			fmt.Sprintf("targetIsolationProfile %q is not a recognised §5.3 profile", target),
 			map[string]any{"fields": []map[string]string{{"field": "targetIsolationProfile"}}})
+		return
+	}
+	// spec: §15.1 (Session Replay Semantics) — targetPool "Must be a pool
+	// backed by targetRuntime", and the replayed session claims a pod pinned
+	// to it, so a named targetPool passes the same selection check as a
+	// create-body pool (§14.1 CreateSessionRequest.pool, §4
+	// pool_tenant_access): 400 VALIDATION_ERROR for a pool that does not
+	// exist, is not backed by targetRuntime, or does not satisfy the target
+	// profile, and 403 FORBIDDEN for a pool the tenant holds no grant on. It
+	// runs before the downgrade audit event, the reservation, and the copy.
+	if !s.requirePoolSelectable(w, r, tenantID, req.TargetRuntime, string(target), req.TargetPool, "targetPool") {
 		return
 	}
 	principal, _ := getPrincipal(r)

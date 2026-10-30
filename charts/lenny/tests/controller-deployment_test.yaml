@@ -666,3 +666,51 @@ tests:
               secretKeyRef:
                 name: lenny-datastore-conn
                 key: postgres-dsn
+
+  # spec: §17.5, §16.1 / F-16.1.10 — the per-profile RuntimeClass name
+  # overrides render from isolation.runtimeClassNames through the shared
+  # lenny.runtimeClassNameArgs helper, which the gateway also includes, so
+  # both processes map each profile to one RuntimeClass name.
+  - it: renders no RuntimeClass name override flag by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].args[?(@ =~ /^--standard-runtime-class/)]
+      - notExists:
+          path: spec.template.spec.containers[0].args[?(@ =~ /^--sandboxed-runtime-class/)]
+      - notExists:
+          path: spec.template.spec.containers[0].args[?(@ =~ /^--microvm-runtime-class/)]
+  - it: renders the RuntimeClass name overrides from isolation.runtimeClassNames
+    set:
+      isolation.runtimeClassNames.standard: crun
+      isolation.runtimeClassNames.sandboxed: runsc
+      isolation.runtimeClassNames.microvm: kata-qemu
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --standard-runtime-class=crun
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --sandboxed-runtime-class=runsc
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --microvm-runtime-class=kata-qemu
+  - it: renders only the RuntimeClass name overrides that are set
+    set:
+      isolation.runtimeClassNames.sandboxed: runsc
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --sandboxed-runtime-class=runsc
+      - notExists:
+          path: spec.template.spec.containers[0].args[?(@ =~ /^--standard-runtime-class/)]
+      - notExists:
+          path: spec.template.spec.containers[0].args[?(@ =~ /^--microvm-runtime-class/)]

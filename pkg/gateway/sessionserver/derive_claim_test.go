@@ -87,19 +87,30 @@ func newSessionRoutes() []newSessionRoute {
 // snapshot seeded and a pod binder over a cluster holding objs.
 func claimingServer(t *testing.T, store sessionstore.Store, rt newSessionRoute, objs ...client.Object) (http.Handler, client.Client, chunkedSnapshot) {
 	t.Helper()
+	return claimingServerWith(t, store, rt, nil, objs...)
+}
+
+// claimingServerWith is claimingServer with mod applied to the options
+// before the server is built. A nil mod changes nothing.
+func claimingServerWith(t *testing.T, store sessionstore.Store, rt newSessionRoute, mod func(*sessionserver.Options), objs ...client.Object) (http.Handler, client.Client, chunkedSnapshot) {
+	t.Helper()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 	cluster := podBindClient(t, objs...)
 	snap := snapshotFor(t, rt.sourceID)
-	srv := sessionserver.New(store, snap.wire(sessionserver.Options{
+	opts := sessionserver.Options{
 		DevTenantHeader:         true,
 		IDFunc:                  func() string { return rt.newID },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
 		PodRegistry:             podsession.NewRegistry(),
 		AgentNamespace:          podTestNS,
-	}))
+	}
+	if mod != nil {
+		mod(&opts)
+	}
+	srv := sessionserver.New(store, snap.wire(opts))
 	return srv.Handler(), cluster, snap
 }
 

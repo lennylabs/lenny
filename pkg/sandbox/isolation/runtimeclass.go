@@ -33,6 +33,33 @@ func ResolveRuntimeClassName(p Profile, overrides map[Profile]string) (string, b
 	}
 }
 
+// RuntimeClassOverrides assembles the §17.5 per-profile RuntimeClass name
+// override map from the operator's three values, in the form
+// ResolveRuntimeClassName reads. An empty value leaves its profile out, so the
+// profile keeps its default name.
+//
+// The controller and the gateway both build their map here from the chart's
+// `isolation.runtimeClassNames` values, which reach each binary as the same
+// `--standard-runtime-class`, `--sandboxed-runtime-class`, and
+// `--microvm-runtime-class` flags. The controller stamps the result on the
+// pod's `runtimeClassName` and labels its warm-pool series from it, and the
+// gateway labels its own `runtime_class` series from it, so one profile maps
+// to one RuntimeClass name in both processes. spec: §17.5, §5.3 (Isolation
+// Profiles), §16.1 (Metrics).
+func RuntimeClassOverrides(standard, sandboxed, microvm string) map[Profile]string {
+	out := map[Profile]string{}
+	for p, name := range map[Profile]string{
+		ProfileStandard:  standard,
+		ProfileSandboxed: sandboxed,
+		ProfileMicrovm:   microvm,
+	} {
+		if name != "" {
+			out[p] = name
+		}
+	}
+	return out
+}
+
 // MustRuntimeClassName returns the §5.3 RuntimeClass name for p and
 // panics for an unrecognized profile. It is for call sites that pass a
 // compile-time profile constant (for example a flag default), where an

@@ -32,6 +32,46 @@ func TestRuntimeClassNameRejectsUnknownProfile(t *testing.T) {
 	}
 }
 
+// TestRuntimeClassOverridesKeepsOnlySetProfiles_spec_17_5 pins the shared
+// builder the controller and the gateway both use: a set value maps its
+// profile, an empty value leaves the profile on its default name, and the
+// result resolves through ResolveRuntimeClassName.
+//
+// spec: 17.5 (the per-profile RuntimeClass name override), 5.3 (Isolation
+// Profiles), 16.1 (Metrics) the runtime_class label both processes derive.
+func TestRuntimeClassOverridesKeepsOnlySetProfiles_spec_17_5(t *testing.T) {
+	cases := []struct {
+		name                         string
+		standard, sandboxed, microvm string
+		want                         map[isolation.Profile]string
+	}{
+		{name: "none set", want: map[isolation.Profile]string{
+			isolation.ProfileStandard: "runc", isolation.ProfileSandboxed: "gvisor", isolation.ProfileMicrovm: "kata",
+		}},
+		{name: "sandboxed and microvm set", sandboxed: "runsc", microvm: "kata-qemu", want: map[isolation.Profile]string{
+			isolation.ProfileStandard: "runc", isolation.ProfileSandboxed: "runsc", isolation.ProfileMicrovm: "kata-qemu",
+		}},
+		{name: "all set", standard: "crun", sandboxed: "runsc", microvm: "kata-fc", want: map[isolation.Profile]string{
+			isolation.ProfileStandard: "crun", isolation.ProfileSandboxed: "runsc", isolation.ProfileMicrovm: "kata-fc",
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			overrides := isolation.RuntimeClassOverrides(tc.standard, tc.sandboxed, tc.microvm)
+			for p, name := range overrides {
+				if name == "" {
+					t.Errorf("profile %q carries an empty override; an unset value must be left out", p)
+				}
+			}
+			for p, want := range tc.want {
+				if got, ok := isolation.ResolveRuntimeClassName(p, overrides); !ok || got != want {
+					t.Errorf("ResolveRuntimeClassName(%q) = %q, %v; want %q", p, got, ok, want)
+				}
+			}
+		})
+	}
+}
+
 // spec: §17.5 — operators whose cluster ships the gVisor or
 // Kata RuntimeClass under a non-default name (e.g. `runsc`, `kata-qemu`)
 // MUST be able to remap each profile via a chart-supplied override map

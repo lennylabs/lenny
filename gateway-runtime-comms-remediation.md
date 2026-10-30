@@ -4200,9 +4200,15 @@ D2), which stays with the upload route proposal.
     and `runtime_class`. Closed 2026-10-30 by direct fix on `fix/derive-claim-and-setup-labels`:
     `SetupCommandFailure` carries both from the exclusive and the slot bind, and the gateway counter and hook
     take `(pool, runtimeClass, errorType)`. Filed from the fix: F-16.1.10.
-  - [ ] **F-16.1.10** (Low, filed from F-16.1.9): the gateway maps `runtime_class` with the default profile
+  - [x] **F-16.1.10** (Low, filed from F-16.1.9): the gateway maps `runtime_class` with the default profile
     mapping, while the controller reads the pod's overridden `runtimeClassName`, so the two halves disagree
-    under an `isolation.runtimeClassNames` override.
+    under an `isolation.runtimeClassNames` override. Closed 2026-10-30 by direct fix on
+    `fix/derive-replay-validation`: the gateway takes the controller's override flags from the same chart
+    helper, builds its map with the shared `isolation.RuntimeClassOverrides`, and labels every
+    `runtime_class` series through it. Filed from the fix: F-17.5.11.
+  - [ ] **F-17.5.11** (Low, filed from F-16.1.10): the chart names a profile's RuntimeClass in two values keys,
+    `isolation.runtimeClassNames` (controller, gateway) and `runtimeClasses.profiles.*.name` (webhook, Kyverno,
+    preflight), so a partial override splits them. Needs the owner's choice of the surviving key.
   - [x] **F-15.2.29** (Low): per-session MCP tool schemas are hand-written against §15.2.1 item 4.
     `mcpschemagen` gained a parameter rename and optional-query option, and the nine per-session tools now
     advertise generated schemas (2026-10-30, `91254f71b`).
@@ -4337,10 +4343,18 @@ than filing a duplicate. F-10.1.45 was already closed and needed no record.
   - [ ] **F-5.2.64** (Medium, filed from F-7.1.36): a slot reserved at create is bound once at `/start`, so a
     transient slot failure runs no §5.2 slot retry. Confirm the §5.2 reading first; a spec exception goes to
     the proposal pipeline with F-5.2.62.
-  - [ ] **F-15.1.65** (Low, filed from F-7.1.36): derive and replay skip `requirePoolSelectable` on
-    `targetPool`, so a wrong pool answers a retryable 503 and the pool grant is not checked.
-  - [ ] **F-15.1.66** (Medium, filed from F-7.1.36): replay compares no `executionMode` and never answers
-    `400 INCOMPATIBLE_RUNTIME`.
+  - [x] **F-15.1.65** (Low, filed from F-7.1.36): derive and replay skip `requirePoolSelectable` on
+    `targetPool`, so a wrong pool answers a retryable 503 and the pool grant is not checked. Closed 2026-10-30
+    by direct fix on `fix/derive-replay-validation`: both handlers run the create path's selection check on
+    `targetPool` before the copy, answering `400 VALIDATION_ERROR` or `403 FORBIDDEN`. Filed from the fix:
+    F-15.1.67.
+  - [x] **F-15.1.66** (Medium, filed from F-7.1.36): replay compares no `executionMode` and never answers
+    `400 INCOMPATIBLE_RUNTIME`. Closed 2026-10-30 by direct fix on `fix/derive-replay-validation`: replay
+    resolves `targetRuntime` and answers `400 INCOMPATIBLE_RUNTIME` with both modes on a mismatch, and
+    `400 VALIDATION_ERROR` for an unregistered runtime.
+  - [x] **F-15.1.67** (Low, filed from F-15.1.65): the served `Error` schema closes `error.category` over a
+    vocabulary the gateway never writes, so no 4xx body validates. Closed 2026-10-30 by direct fix on
+    `fix/derive-replay-validation`: the enum is the §15.1 categories, pinned to `errorclassify`.
   - [x] **F-15.1.63** (Medium): derive and replay mint no `uploadToken`, although the §15.1 replay response is
     identical to `POST /v1/sessions`. Closed 2026-10-30 by direct fix on `fix/derive-claim-and-setup-labels`:
     both handlers mint through the create path's `mintUploadToken` before the insert, store the digest and

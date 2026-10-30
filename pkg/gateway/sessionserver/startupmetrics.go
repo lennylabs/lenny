@@ -25,7 +25,7 @@ import (
 // streaming feedback the start path does not see.
 // spec: §6.3.
 func (s *Server) recordStartupPhases(match podsession.PoolMatch, t podsession.BindTimings) {
-	runtimeClass, ok := isolation.RuntimeClassName(isolation.Profile(match.IsolationProfile))
+	runtimeClass, ok := s.runtimeClassOf(isolation.Profile(match.IsolationProfile))
 	if !ok {
 		// An unrecognized profile would mislabel the series; skip rather
 		// than emit an empty runtime_class.
@@ -71,7 +71,7 @@ func (s *Server) recordStartupPhases(match podsession.PoolMatch, t podsession.Bi
 // once rather than once at create and again at launch.
 // spec: §6.3.
 func (s *Server) recordStartupDuration(match podsession.PoolMatch, t podsession.BindTimings) {
-	runtimeClass, ok := isolation.RuntimeClassName(isolation.Profile(match.IsolationProfile))
+	runtimeClass, ok := s.runtimeClassOf(isolation.Profile(match.IsolationProfile))
 	if !ok {
 		return
 	}
@@ -80,4 +80,14 @@ func (s *Server) recordStartupDuration(match podsession.PoolMatch, t podsession.
 	}
 	total := t.PodClaim + t.CredentialAssignment + t.AgentSessionStart
 	s.observeStartupDuration(match.Pool, runtimeClass, match.IsolationProfile, total.Seconds())
+}
+
+// runtimeClassOf maps a §5.3 isolation profile to the RuntimeClass name its
+// pods run under, honoring the §17.5 operator override the controller applies
+// to the pod's runtimeClassName, and reports false for an unrecognized
+// profile. Every runtime_class label the server emits resolves through it, so
+// the gateway's series agree with the controller's under an override
+// (F-16.1.10). spec: §17.5, §5.3 (Isolation Profiles), §16.1 (Metrics).
+func (s *Server) runtimeClassOf(p isolation.Profile) (string, bool) {
+	return isolation.ResolveRuntimeClassName(p, s.runtimeClassOverrides)
 }

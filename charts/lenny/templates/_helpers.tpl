@@ -591,6 +591,29 @@ rotation", §17.4.
 {{- end -}}
 
 {{/*
+lenny.runtimeClassNameArgs renders the §17.5 per-profile RuntimeClass name
+override flags from isolation.runtimeClassNames, one flag per profile with a
+non-empty value. The controller and the gateway both include it, so the
+controller stamps each pod's runtimeClassName and the gateway labels
+runtime_class from one set of values, and the two processes name one
+RuntimeClass per §5.3 profile (F-16.1.10). Include it with nindent at the args
+list indentation.
+spec: §17.5, §5.3, §16.1.
+*/}}
+{{- define "lenny.runtimeClassNameArgs" -}}
+{{- $rcNames := (.Values.isolation | default dict).runtimeClassNames | default dict -}}
+{{- with $rcNames.standard }}
+- --standard-runtime-class={{ . }}
+{{- end }}
+{{- with $rcNames.sandboxed }}
+- --sandboxed-runtime-class={{ . }}
+{{- end }}
+{{- with $rcNames.microvm }}
+- --microvm-runtime-class={{ . }}
+{{- end }}
+{{- end -}}
+
+{{/*
 lenny.kmsEgressRule renders the KMS endpoint egress rule (TCP 443 to
 kms.endpointCIDR) that allow-gateway-egress and lenny-ops-egress carry
 whenever kms.provider is not local, and nothing under the local provider,
