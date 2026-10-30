@@ -39,7 +39,7 @@ Lenny implements the Open Responses specification. OpenAI Responses API clients 
 
 ### POST /v1/responses
 
-Create a response. The gateway creates a session, runs the specified runtime, and returns the result in Open Responses format.
+Create a response. A request without `previous_response_id` creates a conversation session, runs the specified runtime, and returns the result in Open Responses format. A request with `previous_response_id` continues the conversation, either on the session that produced that response or on a new session, as [Multi-turn via `previous_response_id`](#multi-turn-via-previous_response_id) describes.
 
 **Request format:**
 
@@ -196,10 +196,10 @@ Streaming events follow the Open Responses event type taxonomy:
 
 ## Session mapping
 
-Each Open Responses request maps to a Lenny session lifecycle, similar to the [OpenAI Completions adapter](openai-completions.html):
+Each Open Responses conversation maps to a Lenny session. The first request creates the session, and the session keeps its pod between turns, so the runtime keeps its memory of the conversation.
 
 ```
-POST /v1/responses
+POST /v1/responses (no previous_response_id)
   |
   v
 create_session(runtime=model)
@@ -214,32 +214,30 @@ start_session(message=input)
 [stream output or wait for completion]
   |
   v
-terminate_session()
-  |
-  v
 Return Open Responses format response
+(the session stays running and keeps its pod)
 ```
+
+The session follows the same idle, suspension, and maximum-age limits as any other Lenny session. A session that stays idle past the idle limit is suspended and releases its pod. A pool that runs in service mode keeps no conversation context between requests, and a runtime that is not `multi_turn` with injection enabled for the tenant accepts no second message, so in either case the session ends after every response.
 
 ### Response status mapping
 
-| Lenny session state | Response status |
-|:-------------------|:----------------|
-| `created`, `finalizing`, `ready`, `starting` | `in_progress` |
-| `running` | `in_progress` (streaming output) |
-| `completed` | `completed` |
-| `failed` | `failed` |
-| `cancelled` | `cancelled` |
-| `expired` | `failed` |
-| `suspended`, `resume_pending`, `awaiting_client_action` | `in_progress` (paused) |
+A response's status comes from its own turn. Later changes to the session, such as suspension or expiry, do not change the status of a response that was already returned.
+
+| Turn outcome | Response status |
+|:-------------|:----------------|
+| The turn is running | `in_progress` |
+| The turn's output was recorded | `completed` |
+
+`GET /v1/responses/{id}` returns completed responses. An id that names no completed response that the caller can read returns `404`.
 
 ### Multi-turn via `previous_response_id`
 
-When `previous_response_id` is provided:
-1. The gateway retrieves the previous response's session transcript.
-2. The full conversation history is prepended to the new input.
-3. A new session is created with the combined context.
+When `previous_response_id` names the newest response of a conversation session that is still running, the gateway sends the new input to the same session and pod, and the runtime continues from its own memory.
 
-This enables multi-turn conversations through the Responses API without maintaining persistent session state on the client side.
+In every other case the gateway starts a new session and seeds it with the stored conversation up to the named response. This covers a continuation of an earlier response (a fork), a second continuation sent while another continuation of the same response is in flight, and a continuation sent after the session was suspended, restored onto a new pod, or ended. The client sees the same result in both cases.
+
+Response ids are opaque strings. Clients store and send them back unchanged and do not parse them.
 
 ---
 
@@ -272,7 +270,7 @@ The Open Responses adapter participates in Lenny's full session lifecycle:
 
 - **Delegation:** If the runtime performs delegation (spawning sub-agents), the delegation tree is invisible to the Responses API client. The final output is the aggregated result.
 - **Elicitation:** If the runtime requests human input, the adapter surfaces it as a response event. However, the standard Responses API does not have a native elicitation mechanism -- clients using the Responses API for workflows that require elicitation should consider the [MCP API](mcp.html) instead.
-- **Checkpointing:** Sessions are checkpointed per normal Lenny policy. Pod failures are retried transparently.
+- **Checkpointing:** Sessions are checkpointed per normal Lenny policy. A turn that fails after its input reached the runtime returns a server error, and the gateway ends that session; a continuation of an earlier completed response then starts a new session.
 - **Token budgets:** The `max_output_tokens` parameter is mapped to the session's token budget.
 
 ---

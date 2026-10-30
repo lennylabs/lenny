@@ -442,7 +442,7 @@ func (d *restDelivery) notCoordinating(row sessionstore.Session, deliverIdx []in
 	s := d.s
 	kind := messageForwardKind(d.req)
 	if kind != ForwardKindMessageNoReplyTo {
-		s.refuseForward(d.w, d.r.Context(), row, kind, ForwardNotDelivered)
+		s.refuseForward(d.w, d.r.Context(), row, kind, ForwardNotDelivered, nil)
 		return deliveryOutcome{}, false
 	}
 	outcome, terminal := s.holdOutcomeWithTTL(d.r.Context(), row, d.req, deliverIdx, s.recoveringDLQTTL(row))
@@ -727,7 +727,7 @@ func (s *Server) recordDeliveredResponse(ctx context.Context, tenantID string, r
 				})
 			}
 		}
-		_ = s.transcripts.Append(ctx, tenantID, row.ID, entries...)
+		_, _ = s.transcripts.Append(ctx, tenantID, row.ID, entries...)
 	}
 
 	// Publish the §15.1 session events so SSE subscribers observe

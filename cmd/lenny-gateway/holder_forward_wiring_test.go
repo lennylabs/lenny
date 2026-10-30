@@ -13,6 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
+
+	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -131,17 +134,47 @@ func TestHolderForwardServerServesOnlyTheSessionAndMCPSurfaces_spec_29_3(t *test
 			w.Header().Set("X-Surface", name)
 		})
 	}
-	srv := newHolderForwardServer(":0", serverTLS, holderForwardInner(mark("sessions"), mark("mcp")), devAuthOptionsForTest(), memstore.New())
+	srv := newHolderForwardServer(":0", serverTLS, holderForwardInner(mark("sessions"), mark("mcp"), mark("responses")), devAuthOptionsForTest(), memstore.New())
 	if srv.TLSConfig != serverTLS || srv.ReadHeaderTimeout == 0 {
 		t.Fatalf("server TLS or header timeout not set: %+v", srv)
 	}
-	for path, want := range map[string]string{"/v1/sessions/s/messages": "sessions", "/mcp": "mcp", "/v1/admin/tenants": ""} {
+	for path, want := range map[string]string{"/v1/sessions/s/messages": "sessions", "/mcp": "mcp", "/v1/responses": "responses", "/v1/admin/tenants": ""} {
 		rr := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, path, nil)
 		req.Header.Set("X-Lenny-Tenant-ID", "acme")
 		srv.Handler.ServeHTTP(rr, req)
 		if got := rr.Header().Get("X-Surface"); got != want {
 			t.Errorf("%s served by %q, want %q", path, got, want)
+		}
+	}
+}
+
+// TestHolderForwardInnerRoutesOnlyTheResponsesCreate_spec_29_3 pins the
+// Open Responses route of the forward listener: POST /v1/responses reaches
+// the responses handler, and GET /v1/responses/{id}, which reads stores only
+// and is never forwarded, is not routed.
+//
+// spec: 29.3 (Interactive message send) Forwarding, 15 (Open Responses conversation sessions)
+func TestHolderForwardInnerRoutesOnlyTheResponsesCreate_spec_29_3(t *testing.T) {
+	var reached []string
+	responses := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		reached = append(reached, r.Method+" "+r.URL.Path)
+	})
+	inner := holderForwardInner(http.NotFoundHandler(), http.NotFoundHandler(), responses)
+	for _, c := range []struct {
+		method, path string
+		routed       bool
+	}{
+		{http.MethodPost, "/v1/responses", true},
+		{http.MethodGet, "/v1/responses/sess-1.1", false},
+		{http.MethodGet, "/v1/responses", false},
+		{http.MethodPost, "/v1/responses/sess-1.1", false},
+	} {
+		reached = nil
+		rr := httptest.NewRecorder()
+		inner.ServeHTTP(rr, httptest.NewRequest(c.method, c.path, nil))
+		if got := len(reached) == 1; got != c.routed {
+			t.Errorf("%s %s routed = %v (status %d), want %v", c.method, c.path, got, rr.Code, c.routed)
 		}
 	}
 }
@@ -167,9 +200,22 @@ func TestHolderForwardListenerBuildsStartsAndStopsWithTheRESTListener_spec_10_3(
 	if w.holderForwardClient == nil || w.holderForwardTLS == nil {
 		t.Fatal("the forward client or listener TLS was not built with the material present")
 	}
+	w.responsesHandler = translator.NewOpenResponsesHandler(memstore.New(), nil, translator.OpenResponsesOptions{
+		HolderForwarder: responsesstub.LocalForwarder{},
+		Terminal:        responsesstub.ReleasingTerminal{},
+	})
 	w.buildHolderForwardServer(sessionserver.New(memstore.New(), sessionserver.Options{}), mcp.NewServer())
 	if w.holderForwardSrv == nil || w.holderForwardSrv.Addr != listen {
 		t.Fatalf("forward server = %+v, want one bound to %s", w.holderForwardSrv, listen)
+	}
+	// The wired responses handler, which has no executor here, answers a
+	// forwarded Open Responses create with its own 503.
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("{}"))
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	w.holderForwardSrv.Handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusServiceUnavailable || !strings.Contains(rr.Body.String(), "no executor wired") {
+		t.Errorf("forwarded POST /v1/responses = %d %s, want the wired responses handler's answer", rr.Code, rr.Body.String())
 	}
 	w.startHolderForwardListener()
 	conn, err := tls.Dial("tcp", listen, &tls.Config{RootCAs: m.CAPool, ServerName: "lenny-gateway.lenny-system.svc", MinVersion: tls.VersionTLS13})

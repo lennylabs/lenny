@@ -299,11 +299,11 @@ func httpMethodFor(verb string) string {
 	}
 }
 
-// spec: §15.1 (REST API), §15 (Built-in adapter single-shot compute model).
+// spec: §15.1 (REST API), §15 (Open Responses conversation sessions).
 // diagnosis: a failure here means the served OpenAPI document advertises a
 // delete operation on /v1/responses/{id}. The Open Responses adapter serves
-// create and read only, because each response is backed by the implicit
-// per-request session record that audit and billing rely on; a client or SDK
+// create and read only, because each response is a record on its conversation
+// session's row, which audit and billing rely on; a client or SDK
 // generated from the document would offer a delete the gateway answers with
 // 405. Remove paths./v1/responses/{id}.delete from
 // pkg/gateway/externalapi/openapi/openapi.json. A failure on the get operation

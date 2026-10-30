@@ -1520,3 +1520,242 @@ func TestForwardedRESTRequestAndResponseCrossUnchanged_spec_28_5_4(t *testing.T)
 		})
 	}
 }
+
+// nativeRefusal records each call of the caller-supplied refusal renderer
+// and writes a native-envelope 409 carrying the state it was given.
+type nativeRefusal struct {
+	calls  atomic.Int64
+	states []string
+}
+
+func (n *nativeRefusal) refuse(w http.ResponseWriter, currentState string) {
+	n.calls.Add(1)
+	n.states = append(n.states, currentState)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusConflict)
+	_, _ = w.Write([]byte(`{"error":{"type":"invalid_request_error","code":"TARGET_NOT_READY","current_state":"` + currentState + `"}}`))
+}
+
+// responsesRequest builds an Open Responses create request with ctx.
+func responsesRequest(ctx context.Context, body string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	return r.WithContext(ctx)
+}
+
+// noDialClient is a forward client that counts dials and never connects.
+func noDialClient(dials *atomic.Int64) *http.Client {
+	return &http.Client{Transport: &http.Transport{DialContext: func(context.Context, string, string) (net.Conn, error) {
+		dials.Add(1)
+		return nil, errors.New("no dial expected")
+	}}}
+}
+
+// TestForwardedResponsesTurnAtANonHolderIsNotDeliveredInAnyState_spec_29_3
+// pins §29.3 Forwarding rule 5 for an Open Responses warm turn: a forwarded
+// turn reaching a replica that does not hold REG-COORDLEASE is not delivered
+// whatever the row's state, refused once through the caller's renderer in
+// the native envelope, and kept out of the §11.5 cache. The suspended row
+// discriminates: under the state gate every other kind applies first, that
+// row would run locally at a non-holder.
+//
+// spec: 29.3 (Interactive message send) Forwarding rules 4-7, 11.5 (Idempotency), 15 (Open Responses conversation sessions)
+func TestForwardedResponsesTurnAtANonHolderIsNotDeliveredInAnyState_spec_29_3(t *testing.T) {
+	for _, state := range []session.State{session.StateRunning, session.StateSuspended} {
+		t.Run(string(state), func(t *testing.T) {
+			var dials atomic.Int64
+			s := forwardServer(leasesHeldBy("gw-b.00@127.0.0.1:1"), "gw-a.00@10.0.0.1:1", noDialClient(&dials))
+			row := forwardRow()
+			row.State = state
+			ctx := idemmw.WithGate(WithForwarded(context.Background()))
+			rec := httptest.NewRecorder()
+			var n nativeRefusal
+			if got := s.ForwardResponsesTurn(rec, responsesRequest(ctx, "{}"), row, []byte("{}"), n.refuse); got != ForwardNotDelivered {
+				t.Fatalf("outcome = %v, want ForwardNotDelivered", got)
+			}
+			if n.calls.Load() != 1 || n.states[0] != string(state) {
+				t.Errorf("refuse calls = %d with %v, want one with %q", n.calls.Load(), n.states, state)
+			}
+			if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"current_state":"`+string(state)+`"`) {
+				t.Errorf("response = %d %s, want the renderer's native 409", rec.Code, rec.Body.String())
+			}
+			if !idemmw.NotStored(ctx) {
+				t.Error("the refusal was left storable (§11.5)")
+			}
+			if dials.Load() != 0 {
+				t.Errorf("dials = %d, want 0: a forwarded request is never forwarded again", dials.Load())
+			}
+		})
+	}
+}
+
+// spec: 29.3 (Interactive message send) Forwarding rule 5, 15 (Open Responses conversation sessions)
+func TestForwardedResponsesTurnAtTheHolderRunsLocally_spec_29_3(t *testing.T) {
+	for _, state := range []session.State{session.StateRunning, session.StateSuspended} {
+		t.Run(string(state), func(t *testing.T) {
+			var dials atomic.Int64
+			s := forwardServer(leasesHeldBy("gw-a.00@10.0.0.1:1"), "gw-a.00@10.0.0.1:1", noDialClient(&dials))
+			row := forwardRow()
+			row.State = state
+			rec := httptest.NewRecorder()
+			var n nativeRefusal
+			if got := s.ForwardResponsesTurn(rec, responsesRequest(WithForwarded(context.Background()), "{}"), row, []byte("{}"), n.refuse); got != ForwardLocal {
+				t.Fatalf("outcome = %v, want ForwardLocal", got)
+			}
+			if dials.Load() != 0 || n.calls.Load() != 0 || rec.Body.Len() != 0 {
+				t.Errorf("dials %d, refusals %d, body %q; want a local outcome with nothing written", dials.Load(), n.calls.Load(), rec.Body.String())
+			}
+		})
+	}
+}
+
+// spec: 29.3 (Interactive message send) Forwarding rules 1, 6, and 7, 11.5 (Idempotency), 15 (Open Responses conversation sessions)
+func TestUnforwardedResponsesTurn_spec_29_3(t *testing.T) {
+	m := gatewaypki.Mint(t)
+	t.Run("at the holder runs locally without a dial", func(t *testing.T) {
+		var dials atomic.Int64
+		s := forwardServer(leasesHeldBy("gw-a.00@10.0.0.1:1"), "gw-a.00@10.0.0.1:1", noDialClient(&dials))
+		var n nativeRefusal
+		if got := s.ForwardResponsesTurn(httptest.NewRecorder(), responsesRequest(context.Background(), "{}"), forwardRow(), []byte("{}"), n.refuse); got != ForwardLocal {
+			t.Fatalf("outcome = %v, want ForwardLocal", got)
+		}
+		if dials.Load() != 0 || n.calls.Load() != 0 {
+			t.Errorf("dials %d, refusals %d; want 0 and 0", dials.Load(), n.calls.Load())
+		}
+	})
+	t.Run("a row outside running runs locally without reading the lease", func(t *testing.T) {
+		leases := leasesHeldBy("gw-b.00@127.0.0.1:1")
+		s := forwardServer(leases, "gw-a.00@10.0.0.1:1", nil)
+		row := forwardRow()
+		row.State = session.StateSuspended
+		var n nativeRefusal
+		if got := s.ForwardResponsesTurn(httptest.NewRecorder(), responsesRequest(context.Background(), "{}"), row, []byte("{}"), n.refuse); got != ForwardLocal {
+			t.Fatalf("outcome = %v, want ForwardLocal", got)
+		}
+		if leases.gets.Load() != 0 {
+			t.Errorf("lease reads = %d, want 0", leases.gets.Load())
+		}
+	})
+	t.Run("an unreachable holder is refused through the renderer", func(t *testing.T) {
+		s := forwardServer(leasesHeldBy("gw-b.00@"+closedAddr(t)), "gw-a.00@10.0.0.1:1", testForwardClient(t, m, time.Second))
+		ctx := idemmw.WithGate(context.Background())
+		rec := httptest.NewRecorder()
+		var n nativeRefusal
+		if got := s.ForwardResponsesTurn(rec, responsesRequest(ctx, "{}"), forwardRow(), []byte("{}"), n.refuse); got != ForwardNotDelivered {
+			t.Fatalf("outcome = %v, want ForwardNotDelivered", got)
+		}
+		if n.calls.Load() != 1 || rec.Code != http.StatusConflict || strings.Contains(rec.Body.String(), `"details"`) {
+			t.Errorf("refusals %d, response %d %s; want one native refusal and no Lenny envelope", n.calls.Load(), rec.Code, rec.Body.String())
+		}
+		if !idemmw.NotStored(ctx) {
+			t.Error("the refusal was left storable (§11.5)")
+		}
+	})
+	t.Run("the coordinator receives the already-read body", func(t *testing.T) {
+		got := make(chan capturedRequest, 1)
+		addr := startTLSServer(t, serverTLSFor(t, m, gatewayLeaf(m)), recordingCoordinator(got))
+		s := forwardServer(leasesHeldBy("gw-b.00@"+addr), "gw-a.00@10.0.0.1:1", testForwardClient(t, m, time.Second))
+		body := `{"input":"hi","previous_response_id":"sess-1.1"}`
+		r := responsesRequest(context.Background(), "")
+		r.ContentLength = int64(len(body))
+		rec := httptest.NewRecorder()
+		var n nativeRefusal
+		if out := s.ForwardResponsesTurn(rec, r, forwardRow(), []byte(body), n.refuse); out != ForwardDelivered {
+			t.Fatalf("outcome = %v, want ForwardDelivered", out)
+		}
+		req := <-got
+		if req.method != http.MethodPost || req.uri != "/v1/responses" || req.body != body {
+			t.Errorf("coordinator received %s %s %q, want POST /v1/responses with the read body", req.method, req.uri, req.body)
+		}
+		if rec.Code != http.StatusCreated || n.calls.Load() != 0 {
+			t.Errorf("caller received %d with %d refusals, want the coordinator's response and no refusal", rec.Code, n.calls.Load())
+		}
+	})
+	t.Run("a coordinator that closes before answering is unknown and refused", func(t *testing.T) {
+		addr := startTLSServer(t, serverTLSFor(t, m, gatewayLeaf(m)), closingCoordinator())
+		s := forwardServer(leasesHeldBy("gw-b.00@"+addr), "gw-a.00@10.0.0.1:1", testForwardClient(t, m, time.Second))
+		ctx := idemmw.WithGate(context.Background())
+		rec := httptest.NewRecorder()
+		var n nativeRefusal
+		if got := s.ForwardResponsesTurn(rec, responsesRequest(ctx, "{}"), forwardRow(), []byte("{}"), n.refuse); got != ForwardUnknown {
+			t.Fatalf("outcome = %v, want ForwardUnknown", got)
+		}
+		if n.calls.Load() != 1 || rec.Code != http.StatusConflict {
+			t.Errorf("refusals %d, status %d; want one native 409", n.calls.Load(), rec.Code)
+		}
+		if !idemmw.NotStored(ctx) {
+			t.Error("an unknown outcome was left storable (§11.5)")
+		}
+	})
+	t.Run("a body failing after the relayed status is unknown with no refusal", func(t *testing.T) {
+		addr := startTLSServer(t, serverTLSFor(t, m, gatewayLeaf(m)), midBodyResetter())
+		s := forwardServer(leasesHeldBy("gw-b.00@"+addr), "gw-a.00@10.0.0.1:1", testForwardClient(t, m, time.Second))
+		ctx := idemmw.WithGate(context.Background())
+		rec := httptest.NewRecorder()
+		var n nativeRefusal
+		if got := s.ForwardResponsesTurn(rec, responsesRequest(ctx, "{}"), forwardRow(), []byte("{}"), n.refuse); got != ForwardUnknown {
+			t.Fatalf("outcome = %v, want ForwardUnknown", got)
+		}
+		if n.calls.Load() != 0 {
+			t.Errorf("refuse calls = %d after the status was relayed, want 0", n.calls.Load())
+		}
+		if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "TARGET_NOT_READY") {
+			t.Errorf("response = %d %q, want the relayed 200 left truncated with no second status", rec.Code, rec.Body.String())
+		}
+		if !idemmw.NotStored(ctx) {
+			t.Error("a truncated response was left storable (§11.5)")
+		}
+	})
+}
+
+// midBodyResetter answers 200 with a declared length it does not send, and
+// resets the connection part-way through the body.
+func midBodyResetter() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("0123456789"))
+		conn, _, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			return
+		}
+		if tc, ok := conn.(*tls.Conn); ok {
+			if raw, ok := tc.NetConn().(*net.TCPConn); ok {
+				_ = raw.SetLinger(0)
+			}
+		}
+		_ = conn.Close()
+	})
+}
+
+// TestOtherKindsKeepTheStateGateAheadOfTheForwardedCheck_spec_29_3 pins that
+// only the Open Responses kind moves the rule-5 check ahead of the state
+// gate: a forwarded interrupt on a suspended row at a non-holder still runs
+// locally.
+//
+// spec: 29.3 (Interactive message send) Forwarding rule 5
+func TestOtherKindsKeepTheStateGateAheadOfTheForwardedCheck_spec_29_3(t *testing.T) {
+	s := forwardServer(leasesHeldBy("gw-b.00@127.0.0.1:1"), "gw-a.00@10.0.0.1:1", nil)
+	row := forwardRow()
+	row.State = session.StateSuspended
+	if got := s.forwardToHolder(httptest.NewRecorder(), clientRequest(WithForwarded(context.Background()), "{}"), row, ForwardKindInterrupt, nil); got != ForwardLocal {
+		t.Fatalf("outcome = %v, want ForwardLocal", got)
+	}
+}
+
+// TestResponsesTurnForwardStatesAreRunningOnly_spec_29_3 pins the kind's
+// forward states to running, the only state a warm turn is served in.
+//
+// spec: 29.3 (Interactive message send) Forwarding, 15 (Open Responses conversation sessions)
+func TestResponsesTurnForwardStatesAreRunningOnly_spec_29_3(t *testing.T) {
+	got := forwardStates[ForwardKindResponsesTurn]
+	if len(got) != 1 || !got[session.StateRunning] {
+		t.Errorf("forward states = %v, want {running}", got)
+	}
+	s := forwardServer(nil, "gw-a", nil)
+	for _, st := range []session.State{session.StateInputRequired, session.StateSuspended, session.StateResumePending, session.StateCompleted} {
+		if s.forwardGated(sessionstore.Session{State: st, PodAssignment: "pod-1"}, ForwardKindResponsesTurn) {
+			t.Errorf("state %q is gated, want only running", st)
+		}
+	}
+}

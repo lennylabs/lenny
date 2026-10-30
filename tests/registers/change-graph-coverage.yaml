@@ -146,8 +146,6 @@ prefixes:
   - pkg/gateway/environment/tenantaccessstore/pgstore/
   - pkg/gateway/environment/tenantstore/
   - pkg/gateway/environment/tenantstore/pgstore/
-  - pkg/gateway/environment/transcriptstore/
-  - pkg/gateway/environment/transcriptstore/pgstore/
   - pkg/gateway/eventbuffer/
   - pkg/gateway/experiment/evalstore/
   - pkg/gateway/experiment/evalstore/pgstore/

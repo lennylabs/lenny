@@ -83,7 +83,7 @@ func TestReplayPromptHistoryCopiesTranscript(t *testing.T) {
 	transcripts := transcriptstore.NewMemory()
 	store := memstore.New(memstore.WithTranscriptCopier(transcripts.CopySession))
 	seedTerminalSource(t, store)
-	_ = transcripts.Append(context.Background(), "acme", "sess_src",
+	_, _ = transcripts.Append(context.Background(), "acme", "sess_src",
 		transcriptstore.Entry{Role: "user", Content: "original prompt"})
 
 	srv := sessionserver.New(store, snapshotFor(t, "sess_src").wire(sessionserver.Options{

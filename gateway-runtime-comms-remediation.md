@@ -3410,7 +3410,13 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   `memstore` and `pgstore`) and `terminal_writer_inventory_test.go`, names `serveCold` in place of
   `handleCreate` among 0107 CODE-3's hookless writers, and gives `endHeldSession` the dispatch of the CODE-3
   `lenny/cancel_session` row. Its unstaged defects are filed below, in the block for proposal 0108. The next
-  change-proposal run is the snapshot-restore proposal below, drafting as 0109.
+  change-proposal run is the snapshot-restore proposal below, drafting as 0109. Implemented (proposal 0108) on
+  `impl/0108-conversation-session`, cut from this branch at `ca11cddf9`, with the spec edits from `69a894763`
+  and the code, tests, and docs through `30b511f44`. The implementation was finalized on 2026-10-30: the
+  proposal status is Implemented, its deviations are accepted or resolved, and the legacy 0061 draft is marked
+  superseded. It closes no filed finding and fixed none of the defects in the block for proposal 0108 below as
+  a side effect. F-29.3.4 and 0110's Open Responses steps (S5, S10, S11, and S12) are unblocked once
+  `impl/0108-conversation-session` merges into this branch. 0108 is implemented once that branch merges.
 - [x] **Snapshot restore at bind (F-7.1.34 restore half, High, with F-7.1.33)**
   (`proposals/0109_fix_a-derived-or-replayed-session-starts-without-its-source/`): approved 2026-10-29 as
   proposal 0109, merge `bad91fe31`. A derived or replayed session's copied snapshot is restored at its first
@@ -4308,7 +4314,8 @@ for 0085's RECORDS-1, so the §6.2 entry below takes F-6.2.33.
   delegated child's `created → running` edge is F-7.2.45, already filed.
 
 **Defects filed from proposal 0108's unstaged-defect list (2026-10-29).** Proposal 0108 (proposal 0061
-re-derived, approved 2026-10-29, merge `4e5a94071`, implementation pending) lists defects in the shipped tree
+re-derived, approved 2026-10-29, merge `4e5a94071`, implementation finalized 2026-10-30 on
+`impl/0108-conversation-session`) lists defects in the shipped tree
 that it does not stage. It has no records deliverable and closes no filed finding, so no Owner line moves to
 it, and the listed defects are filed now, because no defect is dropped. Each was re-confirmed against the tree
 at `4e5a94071`. Each new or annotated BUILD-GAPS entry says 0108's implementor updates the entry rather than
@@ -4320,6 +4327,7 @@ filing a duplicate.
     before the §29.3 **Forwarding.** rule-5 branch. The fix applies the rule-5 branch first for every kind and
     makes the REST and MCP not-delivered DLQ hold conditional on a `running` or `input_required` row, as
     rule 6 states. 0108 reorders the branch for its own kind only.
+    Unblocked once `impl/0108-conversation-session` merges (note dated 2026-10-30 in its BUILD-GAPS entry).
 - Proposal routing: a session-owner authorization proposal (new, unwritten), after 0108's implementation,
   which rewrites the Open Responses read and resolution paths. This proposal is 0110 (approved 2026-10-29,
   merge `05ed531a5`), whose REC-1 closes all three entries below. Only its Open Responses steps wait for

@@ -78,7 +78,13 @@ var ErrNotFound = errors.New("transcriptstore: no transcript for session")
 type Store interface {
 	// Append adds entries to a session's transcript, assigning each
 	// a monotonic Seq. The entries are recorded in the order given.
-	Append(ctx context.Context, tenantID, sessionID string, entries ...Entry) error
+	// It returns the Seq it assigned to the last entry, which an Open
+	// Responses turn records as its response's end sequence. A call
+	// with no entries records nothing and returns 0. A failed call
+	// returns 0 with the error.
+	//
+	// spec: §15.1 (REST API), §15 (Open Responses conversation sessions)
+	Append(ctx context.Context, tenantID, sessionID string, entries ...Entry) (lastSeq uint64, err error)
 
 	// Get returns the full ordered transcript for a session.
 	// Returns ErrNotFound when the session has no recorded entries.
@@ -115,9 +121,9 @@ var _ Store = (*Memory)(nil)
 func key(tenantID, sessionID string) string { return tenantID + "/" + sessionID }
 
 // Append implements Store.
-func (m *Memory) Append(_ context.Context, tenantID, sessionID string, entries ...Entry) error {
+func (m *Memory) Append(_ context.Context, tenantID, sessionID string, entries ...Entry) (uint64, error) {
 	if len(entries) == 0 {
-		return nil
+		return 0, nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -142,7 +148,7 @@ func (m *Memory) Append(_ context.Context, tenantID, sessionID string, entries .
 		nextSeq++
 	}
 	m.transcripts[k] = existing
-	return nil
+	return nextSeq - 1, nil
 }
 
 // Get implements Store.
