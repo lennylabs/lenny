@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
@@ -55,6 +57,8 @@ func TestOpenResponsesWarmContinuationByAnotherUserGoesCold_spec_15(t *testing.T
 	binder := &orHoldingBinder{store: store}
 	f := &orFixture{sessions: store, transcripts: transcriptstore.NewMemory(), exec: exec}
 	f.handler = translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
+		HolderForwarder:  responsesstub.LocalForwarder{},
+		Terminal:         responsesstub.ReleasingTerminal{Exec: exec, Store: store},
 		DevTenantHeader:  true,
 		SingleShotBinder: binder,
 		Transcripts:      f.transcripts,

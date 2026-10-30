@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
+
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
@@ -68,6 +70,8 @@ func newORFixture(t *testing.T) *orFixture {
 	t.Helper()
 	f := &orFixture{sessions: memstore.New(), transcripts: transcriptstore.NewMemory(), exec: &orRecordingExecutor{}}
 	f.handler = translator.NewOpenResponsesHandler(f.sessions, f.exec, translator.OpenResponsesOptions{
+		HolderForwarder: responsesstub.LocalForwarder{},
+		Terminal:        responsesstub.ReleasingTerminal{Exec: f.exec, Store: f.sessions},
 		DevTenantHeader: true,
 		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		Transcripts:     f.transcripts,

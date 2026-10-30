@@ -208,17 +208,20 @@ type OpenResponsesOptions struct {
 
 	// HolderForwarder forwards a warm turn to the coordinating replica of
 	// the session that holds its pod, and reports whether a request arrived
-	// forwarded. The gateway always wires the session server's forwarder.
-	// Pass nil only in the single-process translator (the §17.4 in-memory
-	// mode and the in-process unit tests), where every turn is local.
+	// forwarded. It is required: the gateway wires the session server's
+	// forwarder, which reports a turn local on the replica that coordinates
+	// the session, and NewOpenResponsesHandler panics on nil. There is no
+	// local stand-in, so a wiring that omits it fails at construction
+	// rather than serving forwarded or off-holder turns locally.
 	// spec: §29.3 (Interactive message send) Forwarding.
 	HolderForwarder HolderForwarder
 
 	// Terminal opens a session's terminal claim and runs its post-terminal
-	// hook when a turn fails and the handler ends the session. The gateway
-	// always wires the session server. Pass nil only in the single-process
-	// translator, where ending a session releases its executor binding
-	// with the failed disposition and opens no claim.
+	// hook when a turn fails and the handler ends the session. It is
+	// required: the gateway wires the session server, and
+	// NewOpenResponsesHandler panics on nil, so a failed held session is
+	// never ended outside its terminal claim or without the post-terminal
+	// hook.
 	// spec: §15 (Open Responses conversation sessions); §7.2.
 	Terminal SessionTerminal
 
@@ -232,8 +235,18 @@ type OpenResponsesOptions struct {
 	DevTenantHeader bool
 }
 
-// NewOpenResponsesHandler returns a configured handler.
+// NewOpenResponsesHandler returns a configured handler. It panics when
+// opts.HolderForwarder or opts.Terminal is nil, because both are always wired
+// and the handler has no mode that runs without them.
+// spec: §15 (Open Responses conversation sessions); §29.3 (Interactive
+// message send) Forwarding.
 func NewOpenResponsesHandler(store sessionstore.Store, exec executor.Executor, opts OpenResponsesOptions) *OpenResponsesHandler {
+	if opts.HolderForwarder == nil {
+		panic("translator: NewOpenResponsesHandler: OpenResponsesOptions.HolderForwarder is required")
+	}
+	if opts.Terminal == nil {
+		panic("translator: NewOpenResponsesHandler: OpenResponsesOptions.Terminal is required")
+	}
 	clock := opts.Clock
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
@@ -254,14 +267,6 @@ func NewOpenResponsesHandler(store sessionstore.Store, exec executor.Executor, o
 	if releaseTimeout <= 0 {
 		releaseTimeout = defaultSingleShotReleaseTimeout
 	}
-	forwarder := opts.HolderForwarder
-	if forwarder == nil {
-		forwarder = localHolderForwarder{}
-	}
-	terminal := opts.Terminal
-	if terminal == nil {
-		terminal = localSessionTerminal{rel: singleShotRelease{exec: exec, store: store, clock: clock, timeout: releaseTimeout}}
-	}
 	return &OpenResponsesHandler{
 		store:          store,
 		exec:           exec,
@@ -269,8 +274,8 @@ func NewOpenResponsesHandler(store sessionstore.Store, exec executor.Executor, o
 		defaultRuntime: rt,
 		binder:         binder,
 		releaseTimeout: releaseTimeout,
-		forwarder:      forwarder,
-		terminal:       terminal,
+		forwarder:      opts.HolderForwarder,
+		terminal:       opts.Terminal,
 		// The continuity helper tolerates a nil transcripts backing; response
 		// resolution always reads the session store.
 		// spec: §15 (Open Responses conversation sessions).
@@ -581,7 +586,12 @@ func (h *OpenResponsesHandler) serveCold(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	completedAt := h.clock()
+	// completed reports whether this commit applied the completed terminal
+	// write. It is reset on every mutator run so a retried mutator reports
+	// only its own outcome.
+	completed := false
 	_, err = h.store.Update(ctx, t.tenantID, b.SessionID, func(s *sessionstore.Session) error {
+		completed = false
 		if s.RecoveryGeneration != b.RecoveryGeneration {
 			return errGenerationAdvanced
 		}
@@ -602,6 +612,7 @@ func (h *OpenResponsesHandler) serveCold(w http.ResponseWriter, r *http.Request,
 		from := s.State
 		s.State = session.StateCompleted
 		sessionstore.MarkTerminated(s, from, completedAt)
+		completed = true
 		return nil
 	})
 	if err != nil {
@@ -609,7 +620,12 @@ func (h *OpenResponsesHandler) serveCold(w http.ResponseWriter, r *http.Request,
 			fmt.Errorf("response completion failed on session %s: %w", b.SessionID, err))
 		return
 	}
-	if !b.Hold {
+	// A row another writer already ended was released by that writer's
+	// post-terminal hook, so the handler releases only a session whose
+	// completion it wrote itself; a second release would release the pod
+	// twice, under a disposition that contradicts the row.
+	// spec: §15 (Open Responses conversation sessions); §6.2 release.
+	if completed {
 		disp := executor.DispositionCompleted
 		releaseSingleShot(ctx, h.release(), t.tenantID, b.SessionID, &disp)
 	}

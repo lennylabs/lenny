@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
+
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -63,6 +65,8 @@ func newResponsesServers(t *testing.T, clock func() time.Time, ids ...string) (*
 
 	next := 0
 	respHandler := translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
+		HolderForwarder: responsesstub.LocalForwarder{},
+		Terminal:        responsesstub.ReleasingTerminal{Exec: exec, Store: store},
 		DevTenantHeader: true,
 		Clock:           clock,
 		IDFunc: func() string {

@@ -29,6 +29,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
+
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
@@ -122,6 +124,8 @@ func newJourneyGateway(t *testing.T, clock func() time.Time, idSeed string) *jou
 	t.Cleanup(tsChat.Close)
 
 	respHandler := translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
+		HolderForwarder: responsesstub.LocalForwarder{},
+		Terminal:        responsesstub.ReleasingTerminal{Exec: exec, Store: store},
 		DevTenantHeader: true,
 		Clock:           clock,
 		IDFunc:          func() string { return idSeed },

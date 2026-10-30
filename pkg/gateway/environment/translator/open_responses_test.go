@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
@@ -27,6 +29,8 @@ func newResponsesHandler(t *testing.T) (*translator.OpenResponsesHandler, sessio
 	t.Helper()
 	store := memstore.New()
 	h := translator.NewOpenResponsesHandler(store, executor.NewEchoExecutor(), translator.OpenResponsesOptions{
+		HolderForwarder: responsesstub.LocalForwarder{},
+		Terminal:        responsesstub.ReleasingTerminal{Exec: nil, Store: store},
 		DevTenantHeader: true,
 		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:          func() string { return "resp_1" },
@@ -365,6 +369,8 @@ func newContinuityHandler(t *testing.T, exec executor.Executor, ts transcriptsto
 	store := memstore.New()
 	var n int
 	h := translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
+		HolderForwarder: responsesstub.LocalForwarder{},
+		Terminal:        responsesstub.ReleasingTerminal{Exec: exec, Store: store},
 		DevTenantHeader: true,
 		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:          func() string { n++; return fmt.Sprintf("resp_%d", n) },
@@ -567,6 +573,8 @@ func TestOpenResponsesRecordsChainRootTurn_spec_15_1(t *testing.T) {
 	failExec := &dispositionExecutor{}
 	failStore := memstore.New()
 	failH := translator.NewOpenResponsesHandler(failStore, failExec, translator.OpenResponsesOptions{
+		HolderForwarder: responsesstub.LocalForwarder{},
+		Terminal:        responsesstub.ReleasingTerminal{Exec: failExec, Store: failStore},
 		DevTenantHeader: true,
 		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:          func() string { return "resp_fail" },
@@ -674,6 +682,8 @@ func TestOpenResponsesCommitsOneCompletedFirstResponse_spec_15(t *testing.T) {
 	}
 	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	h := translator.NewOpenResponsesHandler(store, &captureExecutor{}, translator.OpenResponsesOptions{
+		HolderForwarder:  responsesstub.LocalForwarder{},
+		Terminal:         responsesstub.ReleasingTerminal{Exec: nil, Store: store},
 		DevTenantHeader:  true,
 		Clock:            func() time.Time { return created },
 		SingleShotBinder: genBinder{store: store, id: "sess_commit", gen: 3},
@@ -729,6 +739,8 @@ func TestOpenResponsesCommitFailureIs500_spec_15(t *testing.T) {
 	inner := memstore.New()
 	exec := &dispositionExecutor{}
 	h := translator.NewOpenResponsesHandler(updateFailStore{Store: inner}, exec, translator.OpenResponsesOptions{
+		HolderForwarder: responsesstub.LocalForwarder{},
+		Terminal:        responsesstub.ReleasingTerminal{Exec: exec, Store: updateFailStore{Store: inner}},
 		DevTenantHeader: true,
 		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:          func() string { return "sess_nocommit" },
@@ -770,6 +782,8 @@ func TestOpenResponsesContinuationResolveErrorIs500_spec_15(t *testing.T) {
 	store := getFailStore{Store: memstore.New(), err: errors.New("session store unavailable")}
 	var n int
 	h := translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
+		HolderForwarder: responsesstub.LocalForwarder{},
+		Terminal:        responsesstub.ReleasingTerminal{Exec: exec, Store: store},
 		DevTenantHeader: true,
 		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:          func() string { n++; return fmt.Sprintf("resp_%d", n) },

@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
@@ -984,40 +986,88 @@ func TestOpenResponsesResolutionPrecedesClaim_spec_15(t *testing.T) {
 	})
 }
 
-// TestOpenResponsesDefaultTerminalReleasesTheFailedSession_spec_15 pins the
-// single-process handler built without a session terminal: a failed held
-// turn writes the session failed and releases its binding once with the
-// failed disposition.
+// TestOpenResponsesHandlerRequiresForwarderAndTerminal_spec_15 pins that the
+// handler has no nil-forwarder or nil-terminal mode: construction without
+// either panics, so a wiring that omits one fails at startup instead of
+// serving forwarded or off-holder turns locally, or ending a failed session
+// outside its terminal claim and post-terminal hook.
 //
-// spec: §15 (Open Responses conversation sessions), §17.4 (in-memory mode)
-func TestOpenResponsesDefaultTerminalReleasesTheFailedSession_spec_15(t *testing.T) {
+// spec: §15 (Open Responses conversation sessions), §29.3 (Interactive
+// message send) Forwarding
+func TestOpenResponsesHandlerRequiresForwarderAndTerminal_spec_15(t *testing.T) {
 	store := memstore.New()
 	exec := &convExecutor{}
-	binder := &convBinder{store: store, hold: true}
-	h := translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
-		DevTenantHeader:  true,
-		SingleShotBinder: binder,
-		Transcripts:      transcriptstore.NewMemory(),
-	})
-	exec.hook = func(_ context.Context, call int, _ string) error {
-		if call == 2 {
-			return errors.New("adapter stream reset")
+	for _, c := range []struct {
+		name string
+		opts translator.OpenResponsesOptions
+		want string
+	}{
+		{"nil forwarder", translator.OpenResponsesOptions{
+			Terminal: responsesstub.ReleasingTerminal{Exec: exec, Store: store},
+		}, "HolderForwarder is required"},
+		{"nil terminal", translator.OpenResponsesOptions{
+			HolderForwarder: responsesstub.LocalForwarder{},
+		}, "Terminal is required"},
+		{"neither", translator.OpenResponsesOptions{}, "HolderForwarder is required"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			defer func() {
+				r := recover()
+				msg, _ := r.(string)
+				if !strings.Contains(msg, c.want) {
+					t.Errorf("panic = %v, want one naming %q", r, c.want)
+				}
+			}()
+			translator.NewOpenResponsesHandler(store, exec, c.opts)
+		})
+	}
+}
+
+// TestOpenResponsesColdTurnLeavesReleaseToTheWriterThatEndedTheRow_spec_15
+// pins the cold commit on a session the handler does not hold whose row
+// another writer ended between the bind and the commit: the commit records
+// the response but writes no completion over the terminal row, and the
+// handler makes no executor release, because the writer that ended the row
+// released the pod through its post-terminal hook. A release here would
+// release the pod a second time under the completed disposition.
+//
+// spec: §15 (Open Responses conversation sessions), §6.2 release
+func TestOpenResponsesColdTurnLeavesReleaseToTheWriterThatEndedTheRow_spec_15(t *testing.T) {
+	for _, ended := range []session.State{session.StateCancelled, session.StateFailed, session.StateExpired} {
+		t.Run(string(ended), func(t *testing.T) {
+			f := newConvFixture(t, convOptions{hold: false})
+			f.exec.hook = func(ctx context.Context, _ int, sessionID string) error {
+				_, err := f.inner.Update(ctx, "acme", sessionID, func(s *sessionstore.Session) error {
+					from := s.State
+					s.State = ended
+					sessionstore.MarkTerminated(s, from, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+					return nil
+				})
+				return err
+			}
+			if id := f.mustTurn(t, "", "one"); id != "sess_1.1" {
+				t.Fatalf("response id = %q, want sess_1.1", id)
+			}
+			if got := f.exec.releases(); len(got) != 0 {
+				t.Errorf("executor releases = %v, want none from the handler", got)
+			}
+			row, err := f.inner.Get(context.Background(), "acme", "sess_1")
+			if err != nil {
+				t.Fatalf("get: %v", err)
+			}
+			if row.State != ended {
+				t.Errorf("state = %q, want %q left by the writer that ended it", row.State, ended)
+			}
+			if _, _, hooks := f.terminal.snapshot(); hooks != 0 {
+				t.Errorf("post-terminal hooks = %d, want 0", hooks)
+			}
+		})
+	}
+	t.Run("running row completes and releases once", func(t *testing.T) {
+		f := newConvFixture(t, convOptions{hold: false})
+		f.mustTurn(t, "", "one")
+		if got := f.exec.releases(); len(got) != 1 || got[0] != executor.DispositionCompleted {
+			t.Errorf("executor releases = %v, want one DispositionCompleted", got)
 		}
-		return nil
-	}
-	first := respPostTenant(t, h.Handler(), "acme", map[string]any{"model": "echo", "input": "one"})
-	if first.Code != http.StatusOK {
-		t.Fatalf("first turn status %d", first.Code)
-	}
-	rr := respPostTenant(t, h.Handler(), "acme", map[string]any{"model": "echo", "input": "two", "previous_response_id": "sess_1.1"})
-	if rr.Code != http.StatusInternalServerError {
-		t.Fatalf("status %d, want 500", rr.Code)
-	}
-	row, _ := store.Get(context.Background(), "acme", "sess_1")
-	if row.State != session.StateFailed {
-		t.Errorf("state = %q, want failed", row.State)
-	}
-	if got := exec.releases(); len(got) != 1 || got[0] != executor.DispositionFailed {
-		t.Errorf("releases = %v, want one DispositionFailed", got)
-	}
+	})
 }

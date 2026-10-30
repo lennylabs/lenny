@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
+
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
@@ -198,7 +200,10 @@ func TestHolderForwardListenerBuildsStartsAndStopsWithTheRESTListener_spec_10_3(
 	if w.holderForwardClient == nil || w.holderForwardTLS == nil {
 		t.Fatal("the forward client or listener TLS was not built with the material present")
 	}
-	w.responsesHandler = translator.NewOpenResponsesHandler(memstore.New(), nil, translator.OpenResponsesOptions{})
+	w.responsesHandler = translator.NewOpenResponsesHandler(memstore.New(), nil, translator.OpenResponsesOptions{
+		HolderForwarder: responsesstub.LocalForwarder{},
+		Terminal:        responsesstub.ReleasingTerminal{},
+	})
 	w.buildHolderForwardServer(sessionserver.New(memstore.New(), sessionserver.Options{}), mcp.NewServer())
 	if w.holderForwardSrv == nil || w.holderForwardSrv.Addr != listen {
 		t.Fatalf("forward server = %+v, want one bound to %s", w.holderForwardSrv, listen)

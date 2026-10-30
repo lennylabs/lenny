@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
@@ -89,42 +88,6 @@ type SessionTerminal interface {
 	BeginTerminal(sessionID string) (end func())
 	AfterTerminalWrite(ctx context.Context, fromState session.State, sess sessionstore.Session,
 		signals func(context.Context, sessionstore.Session)) sessionstore.Session
-}
-
-// localHolderForwarder is the HolderForwarder a handler built without one
-// uses: the single-process translator, as in the §17.4 in-memory mode and the
-// in-process unit tests, coordinates every session, so every turn is local
-// and no request arrives forwarded.
-//
-// spec: §29.3 (Interactive message send) Forwarding; §17.4 in-memory mode.
-type localHolderForwarder struct{}
-
-func (localHolderForwarder) ForwardResponsesTurn(http.ResponseWriter, *http.Request, sessionstore.Session, []byte,
-	func(http.ResponseWriter, string),
-) bool {
-	return true
-}
-
-func (localHolderForwarder) Forwarded(context.Context) bool { return false }
-
-// localSessionTerminal is the SessionTerminal a handler built without one
-// uses. It has no terminal claim to open, and its post-terminal hook releases
-// the session's executor binding with the failed disposition, which is the
-// release the session server's hook performs for a failed session.
-//
-// spec: §15 (Open Responses conversation sessions); §17.4 in-memory mode.
-type localSessionTerminal struct {
-	rel singleShotRelease
-}
-
-func (localSessionTerminal) BeginTerminal(string) func() { return func() {} }
-
-func (t localSessionTerminal) AfterTerminalWrite(ctx context.Context, _ session.State, sess sessionstore.Session,
-	_ func(context.Context, sessionstore.Session),
-) sessionstore.Session {
-	disp := executor.DispositionFailed
-	releaseSingleShot(ctx, t.rel, sess.TenantID, sess.ID, &disp)
-	return sess
 }
 
 // SingleShotSpec carries the adapter-resolved fields the binder maps into

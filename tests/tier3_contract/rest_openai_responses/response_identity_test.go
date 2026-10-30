@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
+
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
@@ -30,6 +32,8 @@ var responseIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}
 func newIdentityServer(t *testing.T, ts transcriptstore.Store) *httptest.Server {
 	t.Helper()
 	h := translator.NewOpenResponsesHandler(memstore.New(), executor.NewEchoExecutor(), translator.OpenResponsesOptions{
+		HolderForwarder: responsesstub.LocalForwarder{},
+		Terminal:        responsesstub.ReleasingTerminal{Exec: nil, Store: nil},
 		DevTenantHeader: true,
 		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		Transcripts:     ts,

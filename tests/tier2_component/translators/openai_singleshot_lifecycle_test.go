@@ -35,6 +35,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
+
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
@@ -1140,6 +1142,7 @@ func TestHeldResponsesSessionFailedWarmTurnDrainsTheInbox_spec_15(t *testing.T) 
 		Messaging:               messaging,
 	})
 	h := translator.NewOpenResponsesHandler(store, spy, translator.OpenResponsesOptions{
+		HolderForwarder:  responsesstub.LocalForwarder{},
 		DevTenantHeader:  true,
 		SingleShotBinder: ssSingleShotBinder{srv: srv, hold: true},
 		DefaultRuntime:   "echo",

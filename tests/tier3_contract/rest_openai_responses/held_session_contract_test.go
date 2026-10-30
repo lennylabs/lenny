@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
@@ -56,6 +58,7 @@ func newHeldServer(t *testing.T, exec executor.Executor, fwd translator.HolderFo
 	t.Helper()
 	store := memstore.New()
 	h := translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
+		Terminal:         responsesstub.ReleasingTerminal{Exec: exec, Store: store},
 		DevTenantHeader:  true,
 		SingleShotBinder: holdingBinder{store: store},
 		Transcripts:      transcriptstore.NewMemory(),

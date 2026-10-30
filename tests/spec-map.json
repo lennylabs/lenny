@@ -2155,6 +2155,7 @@
         "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreeDeletedSymbolsStayDeleted_spec_8_10",
         "pkg/gateway/podlifecycle/podsession/restore_bind_test.go",
         "pkg/gateway/environment/translator/open_responses_conversation_test.go::TestOpenResponsesDoubleFailureReleasesOnce_spec_15",
+        "pkg/gateway/environment/translator/open_responses_conversation_test.go::TestOpenResponsesColdTurnLeavesReleaseToTheWriterThatEndedTheRow_spec_15",
         "tests/tier4_integration/open_responses_held_session_test.go::TestHeldResponsesSessionServesThreeTurnsOnOnePod_spec_15",
         "tests/tier4_integration/open_responses_held_session_test.go::TestUnheldResponsesSessionReleasesAfterEachTurn_spec_15"
       ],
@@ -8474,6 +8475,7 @@
         "tests/tier4_integration/holder_forward_responses_test.go::TestUndeliveredResponsesTurnFailsClosedInTheNativeEnvelope_spec_29_3",
         "pkg/gateway/environment/translator/open_responses_conversation_test.go::TestOpenResponsesNonLocalForwardWritesNothing_spec_29_3",
         "pkg/gateway/environment/translator/open_responses_conversation_test.go::TestOpenResponsesForwardedRequestAlwaysGoesToTheForwarder_spec_29_3",
+        "pkg/gateway/environment/translator/open_responses_conversation_test.go::TestOpenResponsesHandlerRequiresForwarderAndTerminal_spec_15",
         "tests/tier3_contract/rest_openai_responses/held_session_contract_test.go::TestRefusedWarmTurnIsNative409WithCurrentState_spec_29_3",
         "cmd/lenny-gateway/credentialsurface_singleshot_test.go::TestSessionHolderForwarderAdaptsTheSessionServer_spec_29_3"
       ]
