@@ -17,9 +17,11 @@ func formatResponseID(sessionID string, n int) string {
 
 // parseResponseID splits a response id on its last "." into the session id
 // and the 1-based ordinal. It reports ok == false for an id with no
-// separator, an empty session-id prefix, or an ordinal that is not a decimal
-// integer of at least 1, so the caller answers the native 404 before any
-// store call. The prefix is not validated as a UUID: the tenant-scoped
+// separator, an empty session-id prefix, or an ordinal that is not the
+// canonical decimal spelling of an integer of at least 1, so the caller
+// answers the native 404 before any store call. A leading zero (`S.01`) is
+// rejected: formatResponseID never issues it, and accepting it would give one
+// response several ids and echo an id the gateway never issued. The prefix is not validated as a UUID: the tenant-scoped
 // session-store read already treats a malformed id as not found, so a
 // malformed, an unknown, and a cross-tenant prefix answer the same 404.
 //
@@ -35,7 +37,7 @@ func parseResponseID(id string) (sessionID string, n int, ok bool) {
 		return "", 0, false
 	}
 	n, err := strconv.Atoi(digits)
-	if err != nil || n < 1 {
+	if err != nil || n < 1 || strconv.Itoa(n) != digits {
 		return "", 0, false
 	}
 	return id[:i], n, true

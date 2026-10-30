@@ -7,7 +7,8 @@ import "testing"
 // TestResponseIDCodec_spec_15 pins the response id format: the session id, a
 // ".", and the 1-based ordinal, split on the last "." so a session id that
 // itself carries a "." still parses, and rejected before any store read when
-// the separator, the prefix, or a decimal ordinal of at least 1 is missing.
+// the separator, the prefix, or a canonical decimal ordinal of at least 1 is
+// missing. A leading-zero ordinal is rejected so each response has one id.
 // The prefix is not validated as a UUID; the tenant-scoped store decides.
 //
 // spec: §15 (Open Responses conversation sessions)
@@ -32,6 +33,10 @@ func TestResponseIDCodec_spec_15(t *testing.T) {
 		{id: "S.x"},
 		{id: "S.1x"},
 		{id: "S.99999999999999999999999"},
+		{id: "S.01"},
+		{id: "S.001"},
+		{id: "S.1.01"},
+		{id: "S.00"},
 		{id: ""},
 	} {
 		t.Run(tc.id, func(t *testing.T) {

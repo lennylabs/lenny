@@ -1041,11 +1041,13 @@ func TestOpenResponsesForwardedRequestAlwaysGoesToTheForwarder_spec_29_3(t *test
 
 // TestOpenResponsesResolutionPrecedesClaim_spec_15 pins that a
 // previous_response_id that GET would answer 404 is rejected with the native
-// 404 before any bind, forward, or store write.
+// 404 before any bind, forward, or store write. A leading-zero spelling of
+// an issued id (sess_1.01) is one of them, so it is never echoed as
+// previous_response_id or stored as a continuation parent.
 //
 // spec: §15 (Open Responses conversation sessions)
 func TestOpenResponsesResolutionPrecedesClaim_spec_15(t *testing.T) {
-	for _, id := range []string{"sess_1.2", "sess_1.0", "sess_1", ".1", "sess_missing.1", "sess_1.x"} {
+	for _, id := range []string{"sess_1.2", "sess_1.0", "sess_1", ".1", "sess_missing.1", "sess_1.x", "sess_1.01", "sess_1.001"} {
 		t.Run(id, func(t *testing.T) {
 			f := newConvFixture(t, convOptions{hold: true})
 			f.mustTurn(t, "", "one")

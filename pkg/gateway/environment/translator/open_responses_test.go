@@ -194,8 +194,9 @@ func TestOpenResponsesGetMissing(t *testing.T) {
 // id and previous_response_id (the preceding ordinal on the same session, or
 // for ordinal 1 the response the session's first turn continued from), and
 // an id that names no completed response of the caller's tenant (not
-// completed, past the newest ordinal, unknown, cross-tenant, or malformed)
-// answers the native 404 not_found_error.
+// completed, past the newest ordinal, unknown, cross-tenant, malformed, or a
+// non-canonical leading-zero spelling of an issued id) answers the native 404
+// not_found_error.
 //
 // spec: §15 (Open Responses conversation sessions); §4.2 (session-store
 // tenant isolation)
@@ -218,6 +219,8 @@ func TestOpenResponsesGetAnswersCompletedResponsesOnly_spec_15(t *testing.T) {
 		{id: "S.0", wantCode: http.StatusNotFound},
 		{id: "S.one", wantCode: http.StatusNotFound},
 		{id: "S", wantCode: http.StatusNotFound},
+		{id: "S.01", wantCode: http.StatusNotFound},
+		{id: "S.02", wantCode: http.StatusNotFound},
 	} {
 		t.Run(tc.id, func(t *testing.T) {
 			rr := getResponse(t, h, "acme", tc.id)
