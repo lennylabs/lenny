@@ -4196,8 +4196,13 @@ D2), which stays with the upload route proposal.
     `error_type` label, so `PoolScaleoutBlockedByQuota` never fires. The Sandbox reconciler now emits
     `image_pull_error`, `resource_quota_exceeded`, and `node_pressure` with the §16.1 labels, once per
     failing pod (2026-10-30, `cfc1a57c2`).
-  - [ ] **F-16.1.9** (Low, filed from F-16.1.8): the gateway's `setup_command_failed` emission lacks `pool`
-    and `runtime_class`. Thread both through `SetupCommandFailure` and the gateway hook, after 0109 lands.
+  - [x] **F-16.1.9** (Low, filed from F-16.1.8): the gateway's `setup_command_failed` emission lacks `pool`
+    and `runtime_class`. Closed 2026-10-30 by direct fix on `fix/derive-claim-and-setup-labels`:
+    `SetupCommandFailure` carries both from the exclusive and the slot bind, and the gateway counter and hook
+    take `(pool, runtimeClass, errorType)`. Filed from the fix: F-16.1.10.
+  - [ ] **F-16.1.10** (Low, filed from F-16.1.9): the gateway maps `runtime_class` with the default profile
+    mapping, while the controller reads the pod's overridden `runtimeClassName`, so the two halves disagree
+    under an `isolation.runtimeClassNames` override.
   - [x] **F-15.2.29** (Low): per-session MCP tool schemas are hand-written against §15.2.1 item 4.
     `mcpschemagen` gained a parameter rename and optional-query option, and the nine per-session tools now
     advertise generated schemas (2026-10-30, `91254f71b`).

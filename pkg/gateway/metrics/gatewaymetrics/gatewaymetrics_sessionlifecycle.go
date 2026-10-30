@@ -99,8 +99,8 @@ type sessionLifecycleMetrics struct {
 	// fail. The WarmPoolController emits the warm-up error types
 	// (image_pull_error, resource_quota_exceeded, node_pressure) with the
 	// pool and runtime_class labels from its own registry
-	// (pkg/controller/sandbox). This counter does not yet carry pool and
-	// runtime_class (F-16.1.9). F-7.5.9.
+	// (pkg/controller/sandbox). Both halves carry the same §16.1 label set
+	// (F-16.1.9). F-7.5.9.
 	// spec: §16.1, §7.5.
 	warmpoolWarmupFailure *prometheus.CounterVec
 	// injectionGateFailClosed is the
@@ -269,12 +269,13 @@ func newSessionLifecycleMetrics(reg *prometheus.Registry) (sessionLifecycleMetri
 	if err != nil {
 		return m, err
 	}
-	// §16.1 — `lenny_warmpool_warmup_failure_total{error_type}`, the
-	// gateway's setup_command_failed count. F-7.5.9.
+	// §16.1 — `lenny_warmpool_warmup_failure_total{pool, runtime_class,
+	// error_type}`, the gateway's setup_command_failed count. F-7.5.9,
+	// F-16.1.9.
 	warmpoolWarmupFailure, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_warmpool_warmup_failure_total",
-		Help: "Warm-pool warm-up failures by error_type (§16.1, §7.3).",
-	}, []string{"error_type"})
+		Help: "Warm-pool warm-up failures by pool, runtime_class, and error_type (§16.1, §7.3).",
+	}, []string{"pool", "runtime_class", "error_type"})
 	if err != nil {
 		return m, err
 	}

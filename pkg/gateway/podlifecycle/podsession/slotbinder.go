@@ -26,6 +26,10 @@ import (
 type SlotBindRequest struct {
 	// Pool is the SandboxWarmPool to claim a slot from.
 	Pool string
+	// IsolationProfile is the §5.3 profile the pool's pods run under. The
+	// binder maps it to the RuntimeClass that labels a setup-command
+	// failure's §16.1 lenny_warmpool_warmup_failure_total count.
+	IsolationProfile string
 	// SessionID is the §15.1 session being started. It is also the
 	// slot's SlotID.
 	SessionID string
@@ -400,7 +404,10 @@ func (b *Binder) materializeSlotStages(ctx context.Context, req SlotBindRequest,
 	if err != nil {
 		b.recordSlotFailure(slotFailureSetup, req.Pool, sandboxName)
 		return nil, nil, b.slotBindError(sandboxName, slotID, slotFailureSetup,
-			&SetupCommandFailure{Pod: sandboxName, Cause: err, Outputs: setupOutputs})
+			&SetupCommandFailure{
+				Pod: sandboxName, Pool: req.Pool, RuntimeClass: runtimeClassOf(req.IsolationProfile),
+				Cause: err, Outputs: setupOutputs,
+			})
 	}
 
 	minted, err := b.assignSlotCredentials(ctx, cl, req, bindAttempt)

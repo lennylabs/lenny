@@ -440,8 +440,10 @@ func (s *Server) recordSetupCommandFailed(failure *podsession.SetupCommandFailur
 	if failure == nil {
 		return
 	}
+	// spec: §16.1 — labeled with the pool and runtime class of the pod the
+	// setup ran on, as the WarmPoolController labels its warm-up errors.
 	if s.incWarmpoolWarmupFailure != nil {
-		s.incWarmpoolWarmupFailure("setup_command_failed")
+		s.incWarmpoolWarmupFailure(failure.Pool, failure.RuntimeClass, "setup_command_failed")
 	}
 	if s.lifecycleAudit == nil {
 		return

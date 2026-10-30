@@ -192,6 +192,7 @@ func (s *Server) exclusiveBindRequest(ctx context.Context, row sessionstore.Sess
 func (s *Server) slotBindRequest(ctx context.Context, row sessionstore.Session, match podsession.PoolMatch, plan workspaceplan.Plan, credPools map[string]string, userCredProviders []string, agentInterface []byte, minPlatformVersion string) podsession.SlotBindRequest {
 	return podsession.SlotBindRequest{
 		Pool:                    match.Pool,
+		IsolationProfile:        match.IsolationProfile,
 		SessionID:               row.ID,
 		TenantID:                row.TenantID,
 		Runtime:                 row.RuntimeRef,

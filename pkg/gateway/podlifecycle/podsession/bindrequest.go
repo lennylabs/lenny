@@ -10,6 +10,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
 // BindRequest describes a session to place on a warm pod.
@@ -392,12 +393,28 @@ func (r *BindResult) Closing() bool { return r.closing.Load() }
 type SetupCommandFailure struct {
 	// Pod is the sandbox name the failure was observed on.
 	Pod string
+	// Pool is the SandboxWarmPool the pod belongs to, and RuntimeClass the
+	// RuntimeClass its §5.3 isolation profile maps to (empty for an
+	// unrecognized profile). The gateway labels its setup_command_failed
+	// count of lenny_warmpool_warmup_failure_total with both, as §16.1
+	// lists. spec: §16.1 (Metrics); §5.3.
+	Pool         string
+	RuntimeClass string
 	// Cause is the adapter-side error (a gRPC FailedPrecondition).
 	Cause error
 	// Outputs is the per-command transcript captured up to the failure,
 	// including the failing command's stdout/stderr/exit code when
 	// available.
 	Outputs []*adapterv1.SetupCommandOutput
+}
+
+// runtimeClassOf returns the RuntimeClass name a pod of the §5.3 isolation
+// profile runs under, by the same mapping the warm-pool claim counter uses,
+// or the empty string for an unrecognized profile.
+// spec: §5.3 (Isolation Profiles); §16.1 (Metrics).
+func runtimeClassOf(profile string) string {
+	rc, _ := isolation.RuntimeClassName(isolation.Profile(profile))
+	return rc
 }
 
 func (e *SetupCommandFailure) Error() string {
