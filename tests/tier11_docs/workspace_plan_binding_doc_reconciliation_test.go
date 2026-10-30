@@ -34,6 +34,10 @@ var openAPIDocumentPath = []string{"pkg", "gateway", "externalapi", "openapi", "
 // per-session MCP tools the MCP API page documents.
 var mcpClientToolsSourcePath = []string{"pkg", "gateway", "mcpfabric", "mcptools", "client_tools.go"}
 
+// mcpGeneratedSchemasSourcePath holds the MCP tool input schemas generated from
+// the OpenAPI document.
+var mcpGeneratedSchemasSourcePath = []string{"pkg", "gateway", "mcpfabric", "mcptools", "generated_schemas.go"}
+
 // planBindRejectionTokens are the plan-bind rejections a finalize request
 // can return for its plan. Every page that documents the finalize body
 // names each of them.
@@ -338,7 +342,10 @@ func TestMCPDocsToolArgumentsMatchRegisteredSchemas_spec_15_2(t *testing.T) {
 	if uploadSchema == nil {
 		t.Fatal("lenny/upload_files input schema not found in the tool source")
 	}
-	finalizeSchema := regexp.MustCompile("var finalizeWorkspaceInputSchema = json\\.RawMessage\\(`([^`]+)`\\)").FindStringSubmatch(source)
+	// The finalize schema is generated from the OpenAPI operation (§15.2.1
+	// item 4), so it is read from the generated file.
+	generated := readRepoFile(t, root, mcpGeneratedSchemasSourcePath...)
+	finalizeSchema := regexp.MustCompile("var GeneratedFinalizeWorkspaceInputSchema = json\\.RawMessage\\(`([^`]+)`\\)").FindStringSubmatch(generated)
 	if finalizeSchema == nil {
 		t.Fatal("finalize_workspace input schema not found in the tool source")
 	}
