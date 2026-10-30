@@ -5,6 +5,8 @@
 
 name: phase-gate
 
+# CI is paused (owner decision 2026-10-30): this workflow runs only when triggered
+# by hand. Restore its original triggers when CI resumes.
 on:
   workflow_dispatch:
     inputs:
@@ -29,10 +31,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b  # v5.4.0
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c  # v6.4.0
         with:
           go-version-file: go.mod
           cache: true
@@ -41,7 +43,7 @@ jobs:
       # the static job in pr.yml is the sole writer of this key.
       - name: Restore tool cache (~/go/bin)
         id: tools-cache
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
         with:
           path: ~/go/bin
           key: lenny-go-bin-v3-${{ runner.os }}-${{ hashFiles('go.sum') }}
