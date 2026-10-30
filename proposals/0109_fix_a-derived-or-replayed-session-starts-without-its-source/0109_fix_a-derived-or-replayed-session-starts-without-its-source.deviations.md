@@ -4,7 +4,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: Adapter restore failure table omits the extraction-cap case
 
-**Status:** proposed
+**Status:** accepted: `TestFinalizeWorkspaceRestoreFailuresFailTheBindAndLeaveCurrent_spec_7_1` in `pkg/adapter/staging_restore_test.go` has a case for every other named restore failure and the no-transport case. `restoreSeed` in `pkg/adapter/staging.go` wraps every `workspace.ExtractTree` error, the `maxExtractBytes` error from `extractRegular` in `pkg/adapter/workspace/extract.go` included, in `errRestore`, which `FinalizeWorkspace` maps to `UNAVAILABLE`, so the existing cases pin the mapping the cap error takes. The cap is a 2 GiB package constant with no override, and a tier-1 case for it would write 2 GiB (2026-10-30, orchestrator under the owner's delegation)
 
 **Reported by:** step S9 (CODE-2: adapter seed from restore, pairing refusal, error mapping, and seed-hook signature ripple).
 
@@ -18,7 +18,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: Binder restore closure invoked through a shared helper
 
-**Status:** proposed
+**Status:** accepted: `mintRestoreChunks` in `pkg/gateway/podlifecycle/podsession/bindrequest.go` returns nil grants for a nil closure and otherwise calls it. `Prepare` (`bindprepare.go`) and `materializeSlotStages` (`slotbinder.go`) call it immediately before `FinalizeWorkspace` and keep the error handling CODE-3 states: `reclaim` and the `resolve workspace restore` wrap on the exclusive path, and `recordSlotFailure(slotFailureWorkspaceFinalize)` with `slotBindError(slotFailureWorkspacePrep)` on the slot path. The behaviour matches the proposal's inline form (2026-10-30, orchestrator under the owner's delegation)
 
 **Reported by:** step S10 (CODE-3: Binder restore closure call sites and demotion clause).
 
@@ -32,7 +32,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: REC-1 files no new BUILD-GAPS entries for the unstaged defects
 
-**Status:** proposed
+**Status:** accepted: `BUILD-GAPS.md` carries F-7.1.36, F-15.1.63, F-7.3.36, F-5.2.63, and F-4.5.21 OPEN, each with a "Note (proposal 0109, 2026-10-30)" re-confirming it, and F-10.1.45 CLOSED by its direct fix. Every defect the summary lists is recorded once, and the plan's block for proposal 0109 routes each one (2026-10-30, orchestrator under the owner's delegation)
 
 **Reported by:** step S15 (REC-1: BUILD-GAPS and remediation-plan records).
 
@@ -46,7 +46,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: F-4.5.24 stays closed instead of open
 
-**Status:** proposed
+**Status:** accepted: F-4.5.24 is CLOSED in `BUILD-GAPS.md` by the direct fix merged in `db727ad46`, and its entry carries a 0109 note. Reopening it would misstate the tree, and 0109 did not discharge it, which is the intent of REC-1 (2026-10-30, orchestrator under the owner's delegation)
 
 **Reported by:** step S15 (REC-1: BUILD-GAPS and remediation-plan records).
 
@@ -60,7 +60,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: blobstore.DerivedSnapshotTTL removed
 
-**Status:** proposed
+**Status:** accepted: no Go source in the tree references `blobstore.DerivedSnapshotTTL`. The chunked derive and replay copy stamp no TTL of their own, `TestSnapshotCopyChunkedCheckpoint_spec_10_1` in `pkg/gateway/sessionserver/snapshot_copy_test.go` asserts that each copied chunk keeps the source chunk's TTL measured from the copy, and `TestCopyKeepsTheSourceTTLWhenTheDestinationNamesNone_spec_7_1` in `pkg/blobstore/copy_ttl_test.go` pins the store side. Keeping the constant would leave an exported identifier with no reader (2026-10-30, orchestrator under the owner's delegation)
 
 **Reported by:** design-conformance fix pass (CODE-5 step 4).
 
@@ -74,7 +74,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: Proposal-internal change id in a landed commit message
 
-**Status:** proposed
+**Status:** accepted: the body of `900e0d316` begins "Applies proposal 0109 SPEC-5" and lists the specification sections it edits, which are the durable reference. Committed history is not rewritten (2026-10-30, orchestrator under the owner's delegation)
 
 **Reported by:** design-conformance fix pass.
 
@@ -88,7 +88,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: Tier-9 restore-leak case runs on a concurrent-workspace pool only
 
-**Status:** proposed
+**Status:** accepted: `withoutCapability` in `pkg/adapter/checkpointtransport.go` strips the URL from every object-store request error on every bind path, `pkg/adapter/capability_redaction_test.go` pins the status and span at tier 1, and `TestFailedRestoreFetchLeaksNoCapability_spec_7_1` in `tests/tier9_security/restore_grant_scope_test.go` pins the gateway answers, logs, and spans on the concurrent-workspace pool. The exclusive-pool case cannot run until F-7.1.36 lets a derived session start on an exclusive pool, and F-7.1.36 carries a 2026-10-30 note asking its fix to add that case (2026-10-30, orchestrator under the owner's delegation)
 
 **Reported by:** design-conformance fix pass (presigned URL in restore fetch errors).
 

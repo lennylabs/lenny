@@ -3428,8 +3428,14 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   `impl/0109-snapshot-restore` after 0086's and 0107's implementations merged, with the spec edits in
   `7796a11aa` to `d72ed6c96` and the code, tests, and docs in `5af14a3e5` to `990cffb30`. Its records step
   closed F-7.1.34 (restore half) and F-7.1.33 in BUILD-GAPS, corrected F-7.1.34's stale replay evidence,
-  left F-4.5.21 open, and annotated each unstaged-defect entry below in place; the branch awaits its final
-  gate and merge into this branch.
+  left F-4.5.21 open, and annotated each unstaged-defect entry below in place. Follow-up commits `b050cedf5`
+  (spec-map credit for the restore cases and removal of the orphaned `blobstore.DerivedSnapshotTTL`) and
+  `fccdd76d2` (the presigned restore URL kept out of object-store errors) landed after the records step. The
+  implementation was finalized on 2026-10-30: the proposal status is Implemented, its deviations are accepted,
+  and the F-7.1.34 and F-7.1.33 resolution notes name the follow-up commits. The implementation fixed none of
+  the direct fixes or routed findings in the block for proposal 0109 below as a side effect. F-7.1.36 and
+  F-15.1.63 are unblocked once `impl/0109-snapshot-restore` merges into this branch, because 0107's
+  implementation has already merged. 0109 is implemented once that branch merges.
 - [x] **Session-owner authorization proposal (F-15.1.55 High, F-10.2.30, F-15.1.54)**
   (`proposals/0110_fix_session-owner-authorization-plan-10-2-session-owner-authoriz/`): approved 2026-10-29 as
   proposal 0110, merge `05ed531a5`. A session's owner is the creating principal's subject on every create
@@ -4304,7 +4310,8 @@ F-5.2.63, and F-4.5.21 against the tree at `990cffb30`, and annotated each of th
 than filing a duplicate. F-10.1.45 was already closed and needed no record.
 
 - Direct-fix queue, after 0109's implementation, whose CODE-4 and CODE-5 edit `bind_request.go` and
-  `derive.go`, and after 0107's, which edits `derive.go` and `replay.go`.
+  `derive.go`, and after 0107's, which edits `derive.go` and `replay.go`. Both prerequisites are met once
+  `impl/0109-snapshot-restore` merges (status 2026-10-30), so these entries are next in the queue.
   - [ ] **F-7.1.36** (High): derive and replay persist a `created` row with no pod claimed, so on an exclusive
     pool `prepareAtFinalize` prepares nothing and the launch-only `/start` reconnects to an empty binding. The
     fix claims at create as `POST /v1/sessions` does, which adds claim-failure codes to the derive and replay
