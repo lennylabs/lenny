@@ -42,7 +42,6 @@
 - §16.1 and `docs/reference/metrics.md` must change together with `promemit.go` (SPEC-8, DOCS-1, CODE-2).
 - The rendered-RBAC guard must assert that no other grant on `secrets` applies in the credentials namespace. Asserting that no other ServiceAccount holds any verb there fails on the controller's cluster-wide pod grant (CHART-1 step 5).
 - Envtest does not exercise chart-installed RBAC. The denial, quota, and egress claims are checked in tier 9 with `kubectl auth can-i --as` against the installed chart (TEST-1).
-- Proposal 0110 also inserts text directly after the §10.2 permission matrix. SPEC-5 (b) places the footnote first.
 
 ## Goals
 
@@ -96,7 +95,7 @@
 
 ## Open decisions for human to make
 
-No entry is open yet. The review loops write this section. The drafting stage carried one question to them: whether to confirm the narrowing in **Decisions** under which a `tenant-admin` can no longer register a `secretRef`, or to adopt per-read annotation binding, which keeps `tenant-admin` `secretRef` registration at the cost of a proto field and a tenant annotation on every operator Secret. SPEC-5 is staged for the narrowing.
+No decision is open.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -113,7 +112,7 @@ No entry is open yet. The review loops write this section. The drafting stage ca
 | Proposal | Status | What this change does to it | What it must do |
 |:--|:--|:--|:--|
 | 0111 (warm workspace; branch `draft/0111-warm-workspace`) | Draft | Under the owner decision `[orchestrator.decisions-2026-10-30d]`, this proposal owns the Token Service Secret access path and replaces 0111 SPEC-8 Edits (h), (l), and (m) and CODE-7 rules T2 to T5. It supplies `credential.ParseSecretRef` (CODE-1) and the Token-Service-backed `vcscred.SecretReader` (CODE-6). | Drop Edits (h), (l), and (m) and CODE-7 T2 to T5, stop staging text at the §4.9, §15.1, §17.7, and §24.5 sites this proposal edits, and rebase its git-specific consumers onto CODE-1 and CODE-6. |
-| 0110_fix_session-owner-authorization-plan-10-2-session-owner-authoriz | Approved | Both insert text directly after the §10.2 **Permission matrix:** table, and both edit §15.1 catalog rows (different rows). No semantic dependency. | Whichever lands second rebases textually; the SPEC-5 (b) footnote sits directly under the table, ahead of 0110's **Session ownership.** paragraph. |
+| 0110_fix_session-owner-authorization-plan-10-2-session-owner-authoriz | Approved (2026-10-29, `approved-date` in its status file) | The overlap is textual. 0110 SPEC-1 and this proposal's SPEC-5 (b) both insert text directly after the §10.2 **Permission matrix:** table. 0110 SPEC-6 and this proposal's SPEC-7 edit different §15.1 catalog rows. No 0110 deliverable loses its subject, and nothing 0110 decided is reopened. | If 0110 lands first, SPEC-5 (b) places the footnote between the table and the **Session ownership.** paragraph as staged. If this proposal lands first, the 0110 implementor inserts **Session ownership.** after the ¹ footnote line rather than directly after the table, so the footnote stays attached to its table. The rebase needs no human decision. |
 
 ## Deliverable index
 
