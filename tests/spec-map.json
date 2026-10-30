@@ -1910,6 +1910,7 @@
       "title": "Pre-Warmed Pod Anatomy",
       "spec_file": "spec/06_warm-pod-model.md",
       "tests": [
+        "pkg/gateway/podlifecycle/podsession/restore_bind_test.go",
         "pkg/controller/warmpool/...",
         "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestGvisorIsolation",
         "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestKataIsolation",
@@ -2260,6 +2261,7 @@
       "title": "Session Lifecycle \u2014 Normal Flow",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
+        "pkg/gateway/podlifecycle/podsession/restore_bind_test.go",
         "pkg/gateway/sessionserver/bind_rollback_test.go::TestRollbackBindingDetachesFromCancelledCaller_spec_7_1",
         "pkg/gateway/sessionserver/bind_rollback_test.go::TestRollbackClaimDetachesFromCancelledCaller_spec_7_1",
         "pkg/gateway/sessionserver/bind_rollback_test.go::TestReleaseCoordinationLeaseDetachesFromCancelledCaller_spec_7_1",
