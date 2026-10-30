@@ -40,11 +40,18 @@ import (
 //     SERVICE_UNAVAILABLE + Retry-After rather than admitting a session
 //     whose pool the gateway could not confirm.
 //
+// field names the request field that carried the pin, so the envelope's
+// details.field points at it: `pool` on POST /v1/sessions and
+// POST /v1/sessions/start, `targetPool` on derive and replay, which pin
+// the new session's pool through the same selector (§15.1 Session Replay
+// Semantics: "Must be a pool backed by `targetRuntime`").
+//
 // It returns true when the create may proceed (no pin, or a satisfiable
 // and authorized pin); when it returns false it has already written the
 // §15.1 error envelope. spec: §7.1 (pool selector), §14.1
-// (CreateSessionRequest.pool), §4 / §15.1 (pool_tenant_access grant).
-func (s *Server) requirePoolSelectable(w http.ResponseWriter, r *http.Request, tenantID, runtimeRef, isolationProfile, pinnedPool string) bool {
+// (CreateSessionRequest.pool), §4 / §15.1 (pool_tenant_access grant),
+// §15.1 (Session Replay Semantics).
+func (s *Server) requirePoolSelectable(w http.ResponseWriter, r *http.Request, tenantID, runtimeRef, isolationProfile, pinnedPool, field string) bool {
 	if pinnedPool == "" {
 		return true
 	}
@@ -55,14 +62,14 @@ func (s *Server) requirePoolSelectable(w http.ResponseWriter, r *http.Request, t
 	// session silently scheduled without it.
 	if s.podBinder == nil || s.podBinder.Client == nil {
 		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
-			"pool selection is not available in this deployment posture; omit the pool field",
-			map[string]any{"field": "pool", "pool": pinnedPool, "reason": "pool_selection_unavailable"})
+			"pool selection is not available in this deployment posture; omit the "+field+" field",
+			map[string]any{"field": field, "pool": pinnedPool, "reason": "pool_selection_unavailable"})
 		return false
 	}
 	_, err := podsession.ResolvePool(r.Context(), s.podBinder.Client, s.poolPolicyReader(),
 		s.agentNamespace, runtimeRef, isolationProfile, pinnedPool)
 	if err != nil {
-		return s.writePoolSelectionError(w, runtimeRef, isolationProfile, pinnedPool, err)
+		return s.writePoolSelectionError(w, runtimeRef, isolationProfile, pinnedPool, field, err)
 	}
 	// spec: §4 pool_tenant_access / §15.1 — a client may not pin a pool its
 	// tenant is not granted. Checked against the same §4 grant store the
@@ -72,7 +79,7 @@ func (s *Server) requirePoolSelectable(w http.ResponseWriter, r *http.Request, t
 	if !s.tenantReachesPool(r.Context(), tenantID, pinnedPool) {
 		s.writeError(w, http.StatusForbidden, "FORBIDDEN",
 			"the tenant is not granted access to the requested pool",
-			map[string]any{"field": "pool", "pool": pinnedPool, "reason": "pool_access_denied"})
+			map[string]any{"field": field, "pool": pinnedPool, "reason": "pool_access_denied"})
 		return false
 	}
 	return true
@@ -86,12 +93,12 @@ func (s *Server) requirePoolSelectable(w http.ResponseWriter, r *http.Request, t
 // fail-closed §15.1 503 SERVICE_UNAVAILABLE + Retry-After. It always
 // returns false so the caller propagates the rejection. spec: §7.1, §14.1,
 // §15.1 (SERVICE_UNAVAILABLE).
-func (s *Server) writePoolSelectionError(w http.ResponseWriter, runtimeRef, isolationProfile, pinnedPool string, err error) bool {
+func (s *Server) writePoolSelectionError(w http.ResponseWriter, runtimeRef, isolationProfile, pinnedPool, field string, err error) bool {
 	if errors.Is(err, podsession.ErrPoolNotSatisfiable) {
 		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"the requested pool does not exist, is not backed by the requested runtime, or does not satisfy the requested isolation profile",
 			map[string]any{
-				"field":            "pool",
+				"field":            field,
 				"pool":             pinnedPool,
 				"runtimeRef":       runtimeRef,
 				"isolationProfile": isolationProfile,
@@ -106,7 +113,7 @@ func (s *Server) writePoolSelectionError(w http.ResponseWriter, runtimeRef, isol
 	w.Header().Set("Retry-After", strconv.Itoa(sessionCreationFailedRetryAfterSeconds))
 	s.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE",
 		"the pool selection could not be resolved because a dependency was transiently unavailable",
-		map[string]any{"field": "pool", "pool": pinnedPool, "reason": "pool_lookup_unavailable"})
+		map[string]any{"field": field, "pool": pinnedPool, "reason": "pool_lookup_unavailable"})
 	return false
 }
 

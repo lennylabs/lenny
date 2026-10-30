@@ -4337,8 +4337,11 @@ than filing a duplicate. F-10.1.45 was already closed and needed no record.
   - [ ] **F-5.2.64** (Medium, filed from F-7.1.36): a slot reserved at create is bound once at `/start`, so a
     transient slot failure runs no §5.2 slot retry. Confirm the §5.2 reading first; a spec exception goes to
     the proposal pipeline with F-5.2.62.
-  - [ ] **F-15.1.65** (Low, filed from F-7.1.36): derive and replay skip `requirePoolSelectable` on
-    `targetPool`, so a wrong pool answers a retryable 503 and the pool grant is not checked.
+  - [x] **F-15.1.65** (Low, filed from F-7.1.36): derive and replay skip `requirePoolSelectable` on
+    `targetPool`, so a wrong pool answers a retryable 503 and the pool grant is not checked. Closed 2026-10-30
+    by direct fix on `fix/derive-replay-validation`: both handlers run the create path's selection check on
+    `targetPool` before the copy, answering `400 VALIDATION_ERROR` or `403 FORBIDDEN`. Filed from the fix:
+    F-15.1.67.
   - [ ] **F-15.1.66** (Medium, filed from F-7.1.36): replay compares no `executionMode` and never answers
     `400 INCOMPATIBLE_RUNTIME`.
   - [x] **F-15.1.67** (Low, filed from F-15.1.65): the served `Error` schema closes `error.category` over a

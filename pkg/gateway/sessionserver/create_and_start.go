@@ -250,7 +250,7 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 	// profile governs the session's isolation and only an explicitly-requested
 	// inconsistent profile is rejected. See validateRequestEnvelope for the
 	// matching two-step-path rationale. F-CS2 (0018).
-	if !s.requirePoolSelectable(w, r, tenantID, req.RuntimeRef, string(req.IsolationProfile), req.Pool) {
+	if !s.requirePoolSelectable(w, r, tenantID, req.RuntimeRef, string(req.IsolationProfile), req.Pool, "pool") {
 		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
 

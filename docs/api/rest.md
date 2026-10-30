@@ -240,14 +240,15 @@ Create a new session pre-populated with this session's workspace snapshot.
 
 | Parameter       | Type   | Required | Description                                                           |
 | :-------------- | :----- | :------- | :-------------------------------------------------------------------- |
-| `targetRuntime` | string | No       | Runtime for the derived session (defaults to source runtime)          |
+| `runtimeRef`    | string | No       | Runtime for the derived session (defaults to source runtime)          |
+| `targetPool`    | string | No       | Pool for the derived session (defaults to the source session's pool)  |
 | `allowStale`    | bool   | No       | Allow deriving from non-terminal sessions using the latest checkpoint |
 
 **Valid precondition states:** terminal states by default; non-terminal with `allowStale: true`.
 
 **Response:** the new session in `created`, with the `uploadToken` that authorizes uploads into it until it is finalized, as on a `POST /v1/sessions` response, and the `workspaceSnapshotSource` and `workspaceSnapshotTimestamp` of the snapshot it starts from.
 
-**Key error codes:** `DERIVE_ON_LIVE_SESSION` (409), `DERIVE_SNAPSHOT_UNAVAILABLE` (503), and `DERIVE_LOCK_CONTENTION` (429). The derived session claims a warm pod at creation as `POST /v1/sessions` does, so a claim failure answers the same codes session creation does: `SESSION_CREATION_FAILED` (503), `CREDENTIAL_POOL_EXHAUSTED` (503), `USER_CREDENTIAL_NOT_FOUND` (404), and `RUNTIME_UNAVAILABLE` (503) while the pool is warming up.
+**Key error codes:** `DERIVE_ON_LIVE_SESSION` (409), `DERIVE_SNAPSHOT_UNAVAILABLE` (503), and `DERIVE_LOCK_CONTENTION` (429). A `targetPool` passes the same check as the `pool` field of `POST /v1/sessions`: a pool that does not exist, is not backed by the runtime, or does not satisfy the target isolation profile answers `VALIDATION_ERROR` (400), and a pool the tenant is not granted answers `FORBIDDEN` (403). The derived session claims a warm pod at creation as `POST /v1/sessions` does, so a claim failure answers the same codes session creation does: `SESSION_CREATION_FAILED` (503), `CREDENTIAL_POOL_EXHAUSTED` (503), `USER_CREDENTIAL_NOT_FOUND` (404), and `RUNTIME_UNAVAILABLE` (503) while the pool is warming up.
 
 ### POST /v1/sessions/{id}/replay
 
@@ -266,7 +267,7 @@ Re-run a session against a different runtime version using the same workspace an
 
 **Response:** the new session in `created` with its `uploadToken`, identical to a `POST /v1/sessions` response. The session then goes through the standard upload, finalize, and start lifecycle.
 
-**Key error codes:** `REPLAY_ON_LIVE_SESSION` (409), `INCOMPATIBLE_RUNTIME` (400), and `DERIVE_SNAPSHOT_UNAVAILABLE` (503). The replayed session claims a warm pod at creation, so a claim failure answers the session-creation codes listed for `POST /v1/sessions/{id}/derive`.
+**Key error codes:** `REPLAY_ON_LIVE_SESSION` (409), `INCOMPATIBLE_RUNTIME` (400), and `DERIVE_SNAPSHOT_UNAVAILABLE` (503). A `targetPool` is checked as on derive: `VALIDATION_ERROR` (400) for a pool that does not exist, is not backed by `targetRuntime`, or does not satisfy the target isolation profile, and `FORBIDDEN` (403) for a pool the tenant is not granted. The replayed session claims a warm pod at creation, so a claim failure answers the session-creation codes listed for `POST /v1/sessions/{id}/derive`.
 
 ---
 

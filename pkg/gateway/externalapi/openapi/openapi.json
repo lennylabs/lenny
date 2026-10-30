@@ -816,6 +816,8 @@
         },
         "responses": {
           "201": { "description": "Created" },
+          "400": { "description": "VALIDATION_ERROR, including a targetPool that does not exist, is not backed by the runtime, or does not satisfy the target isolation profile", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "FORBIDDEN, including a targetPool the tenant holds no pool_tenant_access grant on", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "409": { "description": "DERIVE_ON_LIVE_SESSION" },
           "422": { "description": "ISOLATION_MONOTONICITY_VIOLATED" },
           "503": { "description": "DERIVE_SNAPSHOT_UNAVAILABLE, or a create-time claim failure: SESSION_CREATION_FAILED, CREDENTIAL_POOL_EXHAUSTED, or RUNTIME_UNAVAILABLE (pool warming)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
@@ -1048,7 +1050,8 @@
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": {
           "201": { "description": "Created" },
-          "400": { "description": "INCOMPATIBLE_RUNTIME", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "400": { "description": "INCOMPATIBLE_RUNTIME, or VALIDATION_ERROR, including a targetPool that does not exist, is not backed by targetRuntime, or does not satisfy the target isolation profile", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "FORBIDDEN, including a targetPool the tenant holds no pool_tenant_access grant on", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "409": { "description": "REPLAY_ON_LIVE_SESSION", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "422": { "description": "ISOLATION_MONOTONICITY_VIOLATED", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "503": { "description": "DERIVE_SNAPSHOT_UNAVAILABLE, or a create-time claim failure: SESSION_CREATION_FAILED, CREDENTIAL_POOL_EXHAUSTED, or RUNTIME_UNAVAILABLE (pool warming)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }

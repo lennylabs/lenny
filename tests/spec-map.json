@@ -47,6 +47,7 @@
       "title": "System Components",
       "spec_file": "spec/04_system-components.md",
       "tests": [
+        "tests/tier9_security/derive_replay_pool_access_test.go::TestDeriveAndReplayTargetPoolEnforcesTenantAccess_spec_4",
         "pkg/checkpoint/checkpoint_test.go::TestAllLevelsIsExhaustive",
         "pkg/checkpoint/checkpoint_test.go::TestConsistencyForLevel",
         "pkg/checkpoint/checkpoint_test.go::TestAllTriggersIsExhaustive",
@@ -2268,6 +2269,7 @@
       "title": "Session Lifecycle \u2014 Normal Flow",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
+        "pkg/gateway/sessionserver/derive_replay_pool_selection_test.go",
         "pkg/gateway/sessionserver/derive_claim_test.go",
         "pkg/gateway/sessionserver/derive_upload_token_test.go::TestDeriveAndReplayMintFailureLeavesNoRowAndNoCopy_spec_7_1",
         "tests/tier3_contract/rest_sessions/derive_replay_claim_contract_test.go::TestDeriveAndReplayClaimFailureContract_spec_7_1",
@@ -5637,6 +5639,9 @@
       "title": "REST API",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "pkg/gateway/sessionserver/derive_replay_pool_selection_test.go",
+        "tests/tier3_contract/rest_sessions/derive_replay_target_pool_contract_test.go::TestDeriveAndReplayTargetPoolSelectionContract_spec_15_1",
+        "tests/tier9_security/derive_replay_pool_access_test.go::TestDeriveAndReplayTargetPoolEnforcesTenantAccess_spec_4",
         "pkg/gateway/sessionserver/derive_upload_token_test.go::TestDeriveAndReplayMintAnUploadToken_spec_15_1",
         "tests/tier4_integration/checkpoint_workspace_derive_test.go::TestDerivedAndReplayedSessionsAcceptUploadsBeforeFinalize_spec_15_1",
         "tests/tier3_contract/rest_sessions/derive_replay_snapshot_contract_test.go::TestDeriveAndReplaySnapshotCopyErrorContract_spec_7_1",

@@ -146,6 +146,17 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 			map[string]any{"fields": []map[string]string{{"field": "targetIsolationProfile"}}})
 		return
 	}
+	// spec: §15.1 (Session Replay Semantics) — targetPool "Must be a pool
+	// backed by targetRuntime", and the replayed session claims a pod pinned
+	// to it, so a named targetPool passes the same selection check as a
+	// create-body pool (§14.1 CreateSessionRequest.pool, §4
+	// pool_tenant_access): 400 VALIDATION_ERROR for a pool that does not
+	// exist, is not backed by targetRuntime, or does not satisfy the target
+	// profile, and 403 FORBIDDEN for a pool the tenant holds no grant on. It
+	// runs before the downgrade audit event, the reservation, and the copy.
+	if !s.requirePoolSelectable(w, r, tenantID, req.TargetRuntime, string(target), req.TargetPool, "targetPool") {
+		return
+	}
 	principal, _ := getPrincipal(r)
 	if !isolation.AtLeastAsRestrictive(target, source.IsolationProfile) {
 		if !req.AllowIsolationDowngrade {
