@@ -27,17 +27,17 @@
 - [ ] **S12 · test** — INFRA-1. The gating spike and its recorded results.
       Tiers 0, 7a. Depends on: S3
 - [ ] **S13 · code** — CODE-1. `Dockerfile.git`, the pipeline entries, and the BUILD-GAPS filing.
-      Tiers 0, 5. Depends on: S4, S5
+      Tiers 0, 1, 5. Depends on: S4, S5
 - [ ] **S14 · code** — CODE-2. The `gitRepository` entry through the CRD, `runtimestore`, the flag, and the decoder, and the `podIdentityEnforced` predicate.
       Tiers 0, 1, 2, 3. Depends on: S1, S2
 - [ ] **S15 · code** — CODE-7. The `git-https` provider, host binding, `lenny/vcs_token`, the Token Service `ReadCredentialSecret` RPC and its gateway client with the outage mappings, its chart Role and egress, and the `TokenServiceUnavailable` description.
-      Tiers 0, 1, 3, 4, 5, 9. Depends on: S8, S10
+      Tiers 0, 1, 2, 3, 4, 5, 9, 11. Depends on: S8, S10
 - [ ] **S16 · code** — CODE-8. The pool owner record, its admission, resolution, and the tenant-delete dependent.
       Tiers 0, 1, 2, 4, 9. Depends on: S2, S9, S14
 - [ ] **S17 · code** — CODE-9. The restore lineage record and its claim-register row.
       Tiers 0, 1, 4. Depends on: S3, S10, S16
 - [ ] **S18 · code** — CODE-3. The proto, the mirror, the handler, the stream interceptors, the metrics, and the chart.
-      Tiers 0, 1, 3, 4, 7a, 9. Depends on: S2, S3, S4, S5, S6, S7, S8, S10, S11, S12, S13, S14, S15, S16, S17
+      Tiers 0, 1, 3, 4, 7a, 9, 11. Depends on: S2, S3, S4, S5, S6, S7, S8, S10, S11, S12, S13, S14, S15, S16, S17
 - [ ] **S19 · code** — CODE-4. The adapter warm fill, its controller-rendered deadline, and the projected SA token on the GatewayControl dial.
       Tiers 0, 1, 3, 5. Depends on: S2, S5, S11, S14, S18
 - [ ] **S20 · code** — CODE-5. Binder routing and slot-repository construction.
