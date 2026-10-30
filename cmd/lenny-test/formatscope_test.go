@@ -118,7 +118,7 @@ const unformattedGo = "package p\n\nfunc F( ) {\n}\n"
 func newScopeFixtureRepo(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not on PATH")
+		t.Skip("blocked: precondition not met: git not on PATH")
 	}
 	root := t.TempDir()
 	gitIn(t, root, "init", "-q", "-b", "main")
@@ -188,7 +188,7 @@ func TestFormatterWalkScopedToCheckout(t *testing.T) {
 		t.Run(tool.name, func(t *testing.T) {
 			path := resolveGoBin(tool.name)
 			if path == "" {
-				t.Skipf("%s not installed", tool.name)
+				t.Skipf("blocked: precondition not met: %s not installed", tool.name)
 			}
 			cmd := exec.Command(path, tool.args...)
 			cmd.Dir = root
