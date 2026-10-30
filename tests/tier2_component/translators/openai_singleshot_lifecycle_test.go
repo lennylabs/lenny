@@ -13,8 +13,12 @@
 // per §4.6.3, which the controller-runtime fake client does not implement
 // (kubernetes/kubernetes#115598), so the harness needs envtest.
 //
-// spec: §15 (single-shot compute model), §6.2 (release, terminal
-// disposition), §4.6.3 (gateway writes no Sandbox.status), §7.1
+// The held-session test drives the Open Responses handler over the same
+// harness: a held conversation session whose warm turn fails after delivery
+// is ended through the session server's post-terminal hook.
+//
+// spec: §15 (single-shot compute model), §15 (Open Responses conversation
+// sessions), §6.2 (release, terminal disposition), §4.6.3 (gateway writes no Sandbox.status), §7.1
 // (create-and-start atomicity), §15.2.1 rule 1, §11.1, §10.6, §4.9.
 package translators_test
 
@@ -27,6 +31,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -63,6 +68,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -334,17 +340,22 @@ func (ssRecycleBoundary) OnRecycling(string) {}
 // translator.SingleShotBinder, mirroring the cmd/lenny-gateway wiring: it
 // runs the shared create-and-start service (admission gates + claim + launch
 // + registerBinding) and maps a typed ServiceError into a SingleShotError so
-// the adapter re-emits the code and Retry-After in its native envelope.
-type ssSingleShotBinder struct{ srv *sessionserver.Server }
+// the adapter re-emits the code and Retry-After in its native envelope. hold
+// is the hold decision it reports; a held-session test sets it, because a
+// binder that reports false turns a held-session test into a release test.
+type ssSingleShotBinder struct {
+	srv  *sessionserver.Server
+	hold bool
+}
 
-func (b ssSingleShotBinder) BindSingleShot(ctx context.Context, spec translator.SingleShotSpec) (string, error) {
+func (b ssSingleShotBinder) BindSingleShot(ctx context.Context, spec translator.SingleShotSpec) (translator.SingleShotBinding, error) {
 	resp, serr := b.srv.CreateAndStartService(ctx, spec.TenantID, sessionserver.CreateSessionRequest{
 		RuntimeRef:  spec.RuntimeRef,
 		UserID:      spec.UserID,
 		Environment: spec.Environment,
 	})
 	if serr != nil {
-		return "", &translator.SingleShotError{
+		return translator.SingleShotBinding{}, &translator.SingleShotError{
 			HTTPStatus:        serr.HTTPStatus,
 			Code:              serr.Code,
 			Message:           serr.Message,
@@ -352,7 +363,7 @@ func (b ssSingleShotBinder) BindSingleShot(ctx context.Context, spec translator.
 			Retryable:         serr.Retryable,
 		}
 	}
-	return resp.ID, nil
+	return translator.SingleShotBinding{SessionID: resp.ID, RecoveryGeneration: resp.RecoveryGeneration, Hold: b.hold}, nil
 }
 
 // ssSpyExecutor wraps a real PodExecutor to observe the single-shot dispatch
@@ -373,6 +384,12 @@ type ssSpyExecutor struct {
 	// at dispatch time (after the bind completed), modelling a client
 	// disconnect or request-context timeout that lands mid-dispatch.
 	cancelOnSend context.CancelFunc
+	// failAfterDelivery, when set, delivers the batch through the real
+	// PodExecutor and then returns this error, modelling a dispatch that
+	// fails after its input reached the runtime.
+	failAfterDelivery error
+	// releases counts Release calls.
+	releases atomic.Int64
 }
 
 func (e *ssSpyExecutor) Send(ctx context.Context, sessionID string, msgs []executor.Message) (executor.Response, error) {
@@ -391,6 +408,12 @@ func (e *ssSpyExecutor) Send(ctx context.Context, sessionID string, msgs []execu
 	if e.sendErr != nil {
 		return executor.Response{}, e.sendErr
 	}
+	if e.failAfterDelivery != nil {
+		if _, err := e.inner.Send(ctx, sessionID, msgs); err != nil {
+			return executor.Response{}, err
+		}
+		return executor.Response{}, e.failAfterDelivery
+	}
 	return e.inner.Send(ctx, sessionID, msgs)
 }
 
@@ -399,6 +422,7 @@ func (e *ssSpyExecutor) Close(ctx context.Context, sessionID string) error {
 }
 
 func (e *ssSpyExecutor) Release(ctx context.Context, sessionID string, disp executor.Disposition) error {
+	e.releases.Add(1)
 	return e.inner.Release(ctx, sessionID, disp)
 }
 
@@ -1067,5 +1091,105 @@ func TestSingleShotAdmissionGateDenialsFailClosed_spec_15_2_1(t *testing.T) {
 				t.Errorf("%s: registry holds %d bindings on a gate-denied create, want 0", tc.name, registry.Len())
 			}
 		})
+	}
+}
+
+// spec: §15 (Open Responses conversation sessions), §7.2 (Interactive Session
+// Model)
+// diagnosis: a held Open Responses session whose warm turn failed after its
+// input reached the runtime must be ended through the session server's
+// terminal claim and post-terminal hook: the row is failed, the inbox entry
+// buffered on the session is drained as the §7.2 inbox drain on terminal
+// transition states, and the pod binding is released exactly once. A row left
+// running means endHeldSession never ran; an inbox entry still present means
+// the handler bypassed AfterTerminalWrite; two releases mean the handler
+// released the executor itself as well as the hook.
+func TestHeldResponsesSessionFailedWarmTurnDrainsTheInbox_spec_15(t *testing.T) {
+	cluster := ssEnvClient(
+		t,
+		ssWarmPool("echo-pool", "echo-tmpl"),
+		ssTemplate("echo-tmpl", "echo"),
+		ssIdleSandbox("sbx-1", "echo-pool", "10.244.2.9"),
+	)
+	binder := ssBinder(cluster, ssAdapterDialer(t, &ssRespondingRuntime{out: make(chan []byte, 8)}))
+	binder.RecycleBoundary = ssRecycleBoundary{}
+	registry := podsession.NewRegistry()
+	pools := poolstore.NewMemory()
+	if err := pools.Create(context.Background(), ssRecyclingPool("echo-pool", "echo")); err != nil {
+		t.Fatalf("create recycling pool: %v", err)
+	}
+	mr := miniredis.RunT(t)
+	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rc.Close() })
+	messaging := sessioninbox.NewCoordinator(sessioninbox.Config{
+		Inbox: sessioninbox.NewMemoryInbox(0),
+		DLQ:   sessioninbox.NewDLQ(rc, 0),
+	})
+	store := memstore.New()
+	spy := &ssSpyExecutor{registry: registry}
+	spy.inner = executor.NewPodExecutor(registry, binder)
+	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
+		IDFunc:                  func() string { return "sess-held" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             registry,
+		AgentNamespace:          ssNS,
+		Pools:                   pools,
+		Executor:                spy,
+		Messaging:               messaging,
+	})
+	h := translator.NewOpenResponsesHandler(store, spy, translator.OpenResponsesOptions{
+		DevTenantHeader:  true,
+		SingleShotBinder: ssSingleShotBinder{srv: srv, hold: true},
+		DefaultRuntime:   "echo",
+		Terminal:         srv,
+	})
+	post := func(prev string) *httptest.ResponseRecorder {
+		body := map[string]any{"model": "echo", "input": "hello"}
+		if prev != "" {
+			body["previous_response_id"] = prev
+		}
+		buf, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(buf))
+		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		rr := httptest.NewRecorder()
+		h.Handler().ServeHTTP(rr, req)
+		return rr
+	}
+
+	if rr := post(""); rr.Code != http.StatusOK {
+		t.Fatalf("first turn status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if _, ok := registry.Get("sess-held"); !ok {
+		t.Fatal("held session's binding was released after its first turn")
+	}
+	if spy.releases.Load() != 0 {
+		t.Fatalf("held session released %d times after its first turn", spy.releases.Load())
+	}
+	ctx := context.Background()
+	if _, err := messaging.EnqueueInbox(ctx, "acme", "sess-held", sessioninbox.Message{MessageID: "msg_held"}); err != nil {
+		t.Fatalf("seed inbox: %v", err)
+	}
+
+	spy.failAfterDelivery = errors.New("adapter stream reset after delivery")
+	if rr := post("sess-held.1"); rr.Code != http.StatusInternalServerError {
+		t.Fatalf("failed warm turn status = %d, want 500; body=%s", rr.Code, rr.Body.String())
+	}
+	row, err := store.Get(ctx, "acme", "sess-held")
+	if err != nil {
+		t.Fatalf("read row: %v", err)
+	}
+	if row.State != session.StateFailed {
+		t.Errorf("row state = %q, want failed", row.State)
+	}
+	if _, _, ok, err := messaging.Peek(ctx, "acme", "sess-held"); err != nil || ok {
+		t.Errorf("inbox after the failed turn: present=%v err=%v, want drained", ok, err)
+	}
+	if got := spy.releases.Load(); got != 1 {
+		t.Errorf("executor releases = %d, want 1 (the hook's)", got)
+	}
+	if _, ok := registry.Get("sess-held"); ok {
+		t.Error("binding still registered after the failed turn ended the session")
 	}
 }

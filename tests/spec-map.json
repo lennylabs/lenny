@@ -865,7 +865,9 @@
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOrphanTimeoutAndAbsentAnswerAgree_spec_4_7_1",
         "tests/tier7a_load_local/stale_slot_reaper_race_test.go",
         "pkg/adapter/staging_restore_test.go",
-        "tests/tier3_contract/adapter_workspace_restore/restore_chunks_wire_test.go"
+        "tests/tier3_contract/adapter_workspace_restore/restore_chunks_wire_test.go",
+        "pkg/gateway/environment/translator/open_responses_conversation_test.go::TestOpenResponsesExecutorRefusalBeforeDeliveryGoesCold_spec_15",
+        "tests/tier4_integration/open_responses_held_session_test.go::TestHeldResponsesSessionServesThreeTurnsOnOnePod_spec_15"
       ],
       "packages": [
         "pkg/adapter"
@@ -2151,7 +2153,10 @@
         "pkg/gateway/sessionserver/treerecovery_internal_test.go::TestTreeRecoveryCountsAwaitingClientActionNodeWithoutWriting_spec_8_10",
         "pkg/session/state/state_test.go::TestValidTransitionsHoldEverySessionStateMachineEdge_spec_7_2",
         "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreeDeletedSymbolsStayDeleted_spec_8_10",
-        "pkg/gateway/podlifecycle/podsession/restore_bind_test.go"
+        "pkg/gateway/podlifecycle/podsession/restore_bind_test.go",
+        "pkg/gateway/environment/translator/open_responses_conversation_test.go::TestOpenResponsesDoubleFailureReleasesOnce_spec_15",
+        "tests/tier4_integration/open_responses_held_session_test.go::TestHeldResponsesSessionServesThreeTurnsOnOnePod_spec_15",
+        "tests/tier4_integration/open_responses_held_session_test.go::TestUnheldResponsesSessionReleasesAfterEachTurn_spec_15"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -2633,7 +2638,10 @@
         "pkg/session/state/state_test.go::TestIsValidIllegalTransitionsRejected",
         "pkg/session/state/state_test.go::TestValidTransitionsHoldEverySessionStateMachineEdge_spec_7_2",
         "pkg/session/state/state_test.go::TestValidTransitionsHasNoDuplicateEdge_spec_7_2",
-        "tests/tier7a_load_local/watchdog_replica_sweep_race_test.go::TestTwoWatchdogsEndEachSessionOnce_spec_10_1_1"
+        "tests/tier7a_load_local/watchdog_replica_sweep_race_test.go::TestTwoWatchdogsEndEachSessionOnce_spec_10_1_1",
+        "pkg/gateway/environment/translator/open_responses_conversation_test.go::TestOpenResponsesFailureExitEndsTheSession_spec_15",
+        "pkg/gateway/environment/translator/open_responses_conversation_test.go::TestOpenResponsesFailureOnAnEndedSessionWritesNothing_spec_15",
+        "tests/tier2_component/translators/openai_singleshot_lifecycle_test.go::TestHeldResponsesSessionFailedWarmTurnDrainsTheInbox_spec_15"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -5639,7 +5647,16 @@
         "tests/tier3_contract/rest_openai_responses/response_identity_test.go",
         "tests/tier4_integration/openai_cross_tenant_test.go",
         "tests/tier4_integration/multi_protocol_same_deployment_test.go",
-        "tests/tier9_security/open_responses_isolation_erasure_test.go"
+        "tests/tier9_security/open_responses_isolation_erasure_test.go",
+        "pkg/gateway/environment/translator/open_responses_conversation_test.go",
+        "pkg/gateway/environment/translator/openai_chat_test.go::TestOpenAIChatIgnoresHold_spec_15",
+        "cmd/lenny-gateway/credentialsurface_singleshot_test.go::TestSingleShotBinderHoldsOnlyAPlatformMultiTurnInjectionSession_spec_15",
+        "cmd/lenny-gateway/credentialsurface_singleshot_test.go::TestSessionHolderForwarderAdaptsTheSessionServer_spec_29_3",
+        "tests/tier2_component/translators/openai_singleshot_lifecycle_test.go::TestHeldResponsesSessionFailedWarmTurnDrainsTheInbox_spec_15",
+        "tests/tier3_contract/rest_openai_responses/held_session_contract_test.go",
+        "tests/tier4_integration/open_responses_held_session_test.go",
+        "tests/tier9_security/open_responses_warm_user_test.go",
+        "tests/tier3_contract/rest_sessions/openapi_document_test.go::TestServedDocumentOpenResponsesByIDHasNoDeleteOperation"
       ],
       "packages": [
         "pkg/api/v1/session",
@@ -8454,7 +8471,11 @@
         "pkg/gateway/sessionserver/holder_forward_sites_test.go::TestForwardedCreateAndStartKeepsTheAdmissionRateLimit_spec_29_3",
         "cmd/lenny-gateway/holder_forward_wiring_test.go::TestHolderForwardInnerRoutesOnlyTheResponsesCreate_spec_29_3",
         "tests/tier4_integration/holder_forward_responses_test.go::TestOffHolderResponsesTurnIsServedOnTheHoldersPod_spec_29_3",
-        "tests/tier4_integration/holder_forward_responses_test.go::TestUndeliveredResponsesTurnFailsClosedInTheNativeEnvelope_spec_29_3"
+        "tests/tier4_integration/holder_forward_responses_test.go::TestUndeliveredResponsesTurnFailsClosedInTheNativeEnvelope_spec_29_3",
+        "pkg/gateway/environment/translator/open_responses_conversation_test.go::TestOpenResponsesNonLocalForwardWritesNothing_spec_29_3",
+        "pkg/gateway/environment/translator/open_responses_conversation_test.go::TestOpenResponsesForwardedRequestAlwaysGoesToTheForwarder_spec_29_3",
+        "tests/tier3_contract/rest_openai_responses/held_session_contract_test.go::TestRefusedWarmTurnIsNative409WithCurrentState_spec_29_3",
+        "cmd/lenny-gateway/credentialsurface_singleshot_test.go::TestSessionHolderForwarderAdaptsTheSessionServer_spec_29_3"
       ]
     },
     "28.7": {

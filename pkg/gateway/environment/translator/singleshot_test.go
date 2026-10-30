@@ -29,12 +29,18 @@ func TestNoopSingleShotBinderPersistsRunningRow(t *testing.T) {
 		RuntimeRef:  "echo",
 		Environment: "prod",
 	}
-	id, err := b.BindSingleShot(context.Background(), spec)
+	binding, err := b.BindSingleShot(context.Background(), spec)
 	if err != nil {
 		t.Fatalf("BindSingleShot: %v", err)
 	}
+	id := binding.SessionID
 	if id != "sess_noop_1" {
 		t.Fatalf("session id: got %q, want %q", id, "sess_noop_1")
+	}
+	// spec: §15 (Open Responses conversation sessions) — the no-op binder
+	// claims no pod, so it never holds the session.
+	if binding.Hold {
+		t.Error("no-op binder reported hold; it claims no pod and must release")
 	}
 
 	row, err := store.Get(context.Background(), "acme", id)
@@ -78,12 +84,12 @@ func TestNoopSingleShotBinderWrapsStoreError(t *testing.T) {
 		func() string { return "dup_id" },
 		func() time.Time { return time.Now().UTC() },
 	)
-	id, err := b.BindSingleShot(context.Background(), SingleShotSpec{TenantID: "acme"})
+	binding, err := b.BindSingleShot(context.Background(), SingleShotSpec{TenantID: "acme"})
 	if err == nil {
-		t.Fatalf("expected error on duplicate id, got nil (id=%q)", id)
+		t.Fatalf("expected error on duplicate id, got nil (id=%q)", binding.SessionID)
 	}
-	if id != "" {
-		t.Errorf("session id on error: got %q, want empty", id)
+	if binding.SessionID != "" {
+		t.Errorf("session id on error: got %q, want empty", binding.SessionID)
 	}
 	if !errors.Is(err, sessionstore.ErrAlreadyExists) {
 		t.Errorf("error chain: %v does not wrap ErrAlreadyExists", err)

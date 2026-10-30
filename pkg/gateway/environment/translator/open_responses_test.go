@@ -270,8 +270,8 @@ func getResponse(t *testing.T, h *translator.OpenResponsesHandler, tenant, id st
 
 // TestOpenResponsesDelete pins that the adapter serves no delete operation: a
 // DELETE on /v1/responses/{id} answers 405 with an Allow header naming GET, and
-// the implicit per-request session record behind the response survives it.
-// spec: §15 (Built-in adapter single-shot compute model), §15.1 (REST API)
+// the conversation session record behind the response survives it.
+// spec: §15 (Open Responses conversation sessions), §15.1 (REST API)
 func TestOpenResponsesDelete(t *testing.T) {
 	h, store := newResponsesHandler(t)
 	if err := store.Create(context.Background(), sessionstore.Session{
@@ -649,9 +649,9 @@ type genBinder struct {
 	gen   int64
 }
 
-func (b genBinder) BindSingleShot(ctx context.Context, spec translator.SingleShotSpec) (string, error) {
+func (b genBinder) BindSingleShot(ctx context.Context, spec translator.SingleShotSpec) (translator.SingleShotBinding, error) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	return b.id, b.store.Create(ctx, sessionstore.Session{
+	return translator.SingleShotBinding{SessionID: b.id, RecoveryGeneration: b.gen}, b.store.Create(ctx, sessionstore.Session{
 		ID: b.id, TenantID: spec.TenantID, UserID: spec.UserID, RuntimeRef: spec.RuntimeRef,
 		State: session.StateRunning, RecoveryGeneration: b.gen, CreatedAt: now, UpdatedAt: now,
 	})

@@ -201,7 +201,7 @@ func (failingAppend) Append(context.Context, string, string, ...transcriptstore.
 // diagnosis: a turn whose transcript record fails after the runtime answered
 // that returns 200, or an error body other than the native 500 server_error
 // envelope, means the record stopped being required in
-// pkg/gateway/environment/translator/open_responses.go handleCreate, and a
+// pkg/gateway/environment/translator/open_responses.go serveCold, and a
 // later continuation through that response would rehydrate no context.
 func TestOpenResponsesPostDeliveryFailureIsNative500_spec_15(t *testing.T) {
 	srv := newIdentityServer(t, failingAppend{Store: transcriptstore.NewMemory()})

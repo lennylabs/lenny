@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -195,17 +196,65 @@ func TestOpenAIChatDisabledWhenExecutorMissing(t *testing.T) {
 // stubSingleShotBinder is a translator.SingleShotBinder that returns a
 // fixed session id, or a fixed error, without claiming a pod. It fabricates
 // the binder failure the adapter maps into its native error envelope so the
-// tier-1 mapping can be exercised in-process.
+// tier-1 mapping can be exercised in-process. When store is set it persists a
+// running row for the id, and hold is the hold decision it reports.
 type stubSingleShotBinder struct {
-	id  string
-	err error
+	id    string
+	err   error
+	hold  bool
+	store sessionstore.Store
 }
 
-func (b stubSingleShotBinder) BindSingleShot(_ context.Context, _ translator.SingleShotSpec) (string, error) {
+func (b stubSingleShotBinder) BindSingleShot(ctx context.Context, spec translator.SingleShotSpec) (translator.SingleShotBinding, error) {
 	if b.err != nil {
-		return "", b.err
+		return translator.SingleShotBinding{}, b.err
 	}
-	return b.id, nil
+	if b.store != nil {
+		now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		if err := b.store.Create(ctx, sessionstore.Session{
+			ID: b.id, TenantID: spec.TenantID, UserID: spec.UserID, RuntimeRef: spec.RuntimeRef,
+			State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
+		}); err != nil {
+			return translator.SingleShotBinding{}, err
+		}
+	}
+	return translator.SingleShotBinding{SessionID: b.id, Hold: b.hold}, nil
+}
+
+// TestOpenAIChatIgnoresHold_spec_15 pins that a Chat Completions session is
+// single-shot whatever the binder's hold decision: with a binder that
+// reports hold, the session is written completed and its executor binding is
+// released once with the completed disposition, as with hold false.
+//
+// spec: §15 (Built-in adapter single-shot compute model)
+func TestOpenAIChatIgnoresHold_spec_15(t *testing.T) {
+	for _, hold := range []bool{true, false} {
+		t.Run(fmt.Sprintf("hold=%v", hold), func(t *testing.T) {
+			store := memstore.New()
+			exec := &dispositionExecutor{}
+			h := translator.NewOpenAIChatHandler(store, exec, translator.OpenAIChatOptions{
+				DevTenantHeader:  true,
+				SingleShotBinder: stubSingleShotBinder{id: "chat_1", hold: hold, store: store},
+			})
+			rr := openaiPost(t, h.Handler(), translator.OpenAIChatCompletionsRequest{
+				Model:    "echo",
+				Messages: []translator.OpenAIChatMessage{{Role: "user", Content: "hi"}},
+			})
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
+			}
+			row, err := store.Get(context.Background(), "acme", "chat_1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if row.State != session.StateCompleted {
+				t.Errorf("state = %q, want completed", row.State)
+			}
+			if got := exec.dispositions(); len(got) != 1 || got[0] != executor.DispositionCompleted {
+				t.Errorf("releases = %v, want one DispositionCompleted", got)
+			}
+		})
+	}
 }
 
 // recordingStore wraps a sessionstore.Store and captures the State of the
