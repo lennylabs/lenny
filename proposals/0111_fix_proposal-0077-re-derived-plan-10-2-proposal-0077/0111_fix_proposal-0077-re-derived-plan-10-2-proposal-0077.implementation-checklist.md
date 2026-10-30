@@ -16,12 +16,12 @@
       Tiers 0, 11. Depends on: —
 - [ ] **S7 · spec** — SPEC-7. The §16.1 metric rows.
       Tiers 0, 11. Depends on: —
-- [ ] **S8 · spec** — SPEC-8. The §4.9 provider rows, VCS binding paragraphs, and **Token Service secret resolution.** edits, the §13.2.4 Token Service row, the §4.3 outage text and its §16.5 and §17.7 pointers, the §4.7.11 and §16.4 logging exclusions, the §4.9 Role example, and the §14, §15.1, §26.2, and §26.3 pointers.
+- [ ] **S8 · spec** — SPEC-8. All of its edits.
       Tiers 0, 11. Depends on: —
 - [ ] **S9 · spec** — SPEC-9. The §4.2 table row and the §5.2 pool-dimensions bullet.
       Tiers 0, 11. Depends on: S2
 - [ ] **S10 · spec** — SPEC-10. The §12.4 rows and exception, the §28.3 row, the §28.5.7 sentence, and the §28.7 row.
-      Tiers 0, 11. Depends on: S3
+      Tiers 0, 11. Depends on: S3, S8
 - [ ] **S11 · spec** — SPEC-11. The §17.8.1 rows.
       Tiers 0, 11. Depends on: S2
 - [ ] **S12 · test** — INFRA-1. The gating spike and its recorded results.
@@ -30,7 +30,7 @@
       Tiers 0, 1, 5. Depends on: S4, S5
 - [ ] **S14 · code** — CODE-2. The `gitRepository` entry through the CRD, `runtimestore`, the flag, and the decoder, and the `podIdentityEnforced` predicate.
       Tiers 0, 1, 2, 3. Depends on: S1, S2
-- [ ] **S15 · code** — CODE-7. The `git-https` provider, host binding, `lenny/vcs_token`, the Token Service `ReadCredentialSecret` RPC and its gateway client with the outage mappings, its chart Role and egress, and the `TokenServiceUnavailable` description.
+- [ ] **S15 · code** — CODE-7. The `git-https` provider, host binding, `lenny/vcs_token`, the shared `secretRef` parser, the Token Service `ReadCredentialSecret` RPC and its gateway client with the outage mappings, its chart Role and egress, and the `TokenServiceUnavailable` description.
       Tiers 0, 1, 2, 3, 4, 5, 9, 11. Depends on: S8, S10
 - [ ] **S16 · code** — CODE-8. The pool owner record, its admission, resolution, and the tenant-delete dependent.
       Tiers 0, 1, 2, 4, 9. Depends on: S2, S9, S14
