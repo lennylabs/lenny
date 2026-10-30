@@ -569,15 +569,40 @@ func TestDeriveReserveRefusalCopiesNothing_spec_12_8(t *testing.T) {
 	}
 }
 
-// chunkedDerive wires a parent chunked checkpoint whose single chunk
-// exists, and a manifest writer whose Finalise fails, so the derive copies
-// the chunk and writes the derived manifest row before it fails.
-type failingFinalise struct {
+// failingManifestStep is a manifest writer whose step call fails (Put,
+// ConfirmChunk, or Finalise), so the derive copies the chunk and stops at
+// that point of recording the derived manifest row.
+type failingManifestStep struct {
 	*partialmanifeststore.MemoryStore
+	step string
 }
 
-func (failingFinalise) Finalise(context.Context, string, string, bool, string) error {
-	return errors.New("manifest finalise failed")
+func (f failingManifestStep) fail(step string) error {
+	if f.step == step {
+		return errors.New("manifest " + step + " failed")
+	}
+	return nil
+}
+
+func (f failingManifestStep) Put(ctx context.Context, r partialmanifeststore.Record) error {
+	if err := f.fail("Put"); err != nil {
+		return err
+	}
+	return f.MemoryStore.Put(ctx, r)
+}
+
+func (f failingManifestStep) ConfirmChunk(ctx context.Context, tenantID, checkpointID string, n int, uploaded int64) error {
+	if err := f.fail("ConfirmChunk"); err != nil {
+		return err
+	}
+	return f.MemoryStore.ConfirmChunk(ctx, tenantID, checkpointID, n, uploaded)
+}
+
+func (f failingManifestStep) Finalise(ctx context.Context, tenantID, checkpointID string, partial bool, reason string) error {
+	if err := f.fail("Finalise"); err != nil {
+		return err
+	}
+	return f.MemoryStore.Finalise(ctx, tenantID, checkpointID, partial, reason)
 }
 
 type parentManifest struct{ rec partialmanifeststore.Record }
@@ -597,15 +622,21 @@ func (p parentManifest) LatestFull(context.Context, string, string) (partialmani
 // TestDeriveCopyFailureUndoesChunksAndManifest_spec_12_8 pins the undo in
 // the derive's copy-failure branch: the chunk copied under the derived ID
 // and the derived manifest row are deleted and the reservation released
-// before the failure answers, including when the request context is
-// cancelled, and the derive-failure audit row is then written under the
-// fence.
-// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 16.1 (Metrics)
+// before the failure answers, whichever manifest-writer call fails and
+// including when the request context is cancelled, and the derive-failure
+// audit row is then written under the fence.
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 16.1 (Metrics), 7.1 (Derive restore semantics)
 func TestDeriveCopyFailureUndoesChunksAndManifest_spec_12_8(t *testing.T) {
-	for _, cancelled := range []bool{false, true} {
-		name := "live context"
+	for _, tc := range []struct {
+		step      string
+		cancelled bool
+	}{
+		{"Finalise", false}, {"Finalise", true}, {"Put", false}, {"ConfirmChunk", false},
+	} {
+		step, cancelled := tc.step, tc.cancelled
+		name := step + "/live context"
 		if cancelled {
-			name = "cancelled context"
+			name = step + "/cancelled context"
 		}
 		t.Run(name, func(t *testing.T) {
 			f := newFenceFixture(t)
@@ -629,7 +660,7 @@ func TestDeriveCopyFailureUndoesChunksAndManifest_spec_12_8(t *testing.T) {
 				CheckpointManifestReader: parentManifest{partialmanifeststore.Record{
 					TenantID: "acme", CheckpointID: "ckpt_parent", SessionID: "sess_source", ChunkCount: 1, ChunkEncoding: enc,
 				}},
-				CheckpointManifestWriter: failingFinalise{manifests},
+				CheckpointManifestWriter: failingManifestStep{manifests, step},
 				PersistDeriveFailureRows: true,
 				IncDeriveFailureAudit:    func(o string) { outcomes = append(outcomes, o) },
 			}).Handler()

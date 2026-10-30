@@ -36,3 +36,25 @@ func TestRegistryStateNamesTheEntryBehindEachReclaimOutcome_spec_4_7_1(t *testin
 		seen[got] = true
 	}
 }
+
+// The restore pairing-rule probe sends a mid-session FinalizeWorkspace with
+// no bind token that carries a restore grant, so the only half of the
+// pairing rule that refuses it is the one forbidding restore_chunks on a
+// mid-session request.
+//
+// spec: §7.1 (Derive restore semantics); §4.7.1 (role and gateway RPC contract)
+func TestRestoreFinalizeProbeCarriesARestoreGrantMidSessionWithoutAToken_spec_7_1(t *testing.T) {
+	req := restoreFinalizeReq(alice)
+	if !req.GetMidSession() {
+		t.Error("the restore probe is not mid-session")
+	}
+	if req.GetBindAttempt() != "" {
+		t.Errorf("the restore probe carries bind_attempt %q, want none", req.GetBindAttempt())
+	}
+	if len(req.GetRestoreChunks()) != 1 || req.GetRestoreChunks()[0].GetUrl() == "" {
+		t.Errorf("the restore probe carries restore_chunks %v, want one grant with a URL", req.GetRestoreChunks())
+	}
+	if req.GetSessionId().GetValue() != alice {
+		t.Errorf("the restore probe addresses session %q, want %q", req.GetSessionId().GetValue(), alice)
+	}
+}

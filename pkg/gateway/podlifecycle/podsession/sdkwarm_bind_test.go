@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
@@ -206,6 +207,52 @@ func TestBindSDKWarmDemotionNotSupported_spec_6_1(t *testing.T) {
 	}
 	if rt.started != "" {
 		t.Errorf("session must not start after a failed demotion, started = %q", rt.started)
+	}
+}
+
+// failingDemoteRuntime is an SDK-warm runtime whose SDK teardown fails, so
+// the adapter answers DemoteSDK with an error other than UNIMPLEMENTED.
+type failingDemoteRuntime struct{ fakeSDKWarmRuntime }
+
+func (f *failingDemoteRuntime) DemoteSDK(context.Context) error {
+	f.demoted++
+	return errors.New("sdk teardown failed")
+}
+
+// A preConnect pod whose SDK teardown fails for a reason other than an
+// unimplemented DemoteSDK fails the bind with the wrapped demotion error,
+// which is distinct from SDK_DEMOTION_NOT_SUPPORTED, and the session never
+// starts on the pod.
+//
+// spec: §6.1
+func TestBindSDKWarmDemotionFailureFailsTheBind_spec_6_1(t *testing.T) {
+	ns := testNamespace(t)
+	rt := &failingDemoteRuntime{}
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceBase = t.TempDir()
+	srv.Runtime = rt
+
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
+
+	_, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+		Plan:                 inlinePlan("CLAUDE.md"),
+		PreConnect:           true,
+		SDKWarmBlockingPaths: []string{"CLAUDE.md"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "demote SDK on pod sbx-1") {
+		t.Fatalf("Bind error = %v, want the wrapped demotion failure", err)
+	}
+	var notSupported *podsession.SDKDemotionNotSupported
+	if errors.As(err, &notSupported) {
+		t.Errorf("Bind error = %v, a failed teardown is not SDK_DEMOTION_NOT_SUPPORTED", err)
+	}
+	if rt.demoted != 1 {
+		t.Errorf("DemoteSDK called %d times, want 1", rt.demoted)
+	}
+	if rt.started != "" || len(rt.configured) != 0 {
+		t.Errorf("session must not launch after a failed demotion, started = %q, configured = %v", rt.started, rt.configured)
 	}
 }
 

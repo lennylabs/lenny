@@ -232,7 +232,8 @@
         "tests/tier4_integration/jwt_keyset_cross_process_test.go::TestLennyIssuedTokensVerifyAcrossProcesses_spec_10_2",
         "tests/tier5_e2e_kind/jwt_keyset_cross_replica_test.go::TestLennyIssuedBearerVerifiesAcrossChartReplicas_spec_10_2",
         "tests/tier9_security/jwt_keyset_forgery_all_components_test.go::TestEveryVerifierRefusesForgedLennyTokens_spec_10_2",
-        "tests/tier4_integration/tenant_deletion_phase4_test.go::TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8"
+        "tests/tier4_integration/tenant_deletion_phase4_test.go::TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8",
+        "pkg/gateway/podlifecycle/podsession/restore_bind_test.go"
       ],
       "packages": [
         "pkg/token",
@@ -281,7 +282,8 @@
         "pkg/gateway/runtime/adapterclient/client_test.go",
         "tests/tier3_contract/checkpoint_stream/checkpoint_stream_wire_test.go",
         "tests/tier4_integration/checkpoint_grant_remint_test.go",
-        "pkg/gateway/checkpoint/checkpointer/freshness_test.go::TestFreshnessReaperCountsInputRequiredSessions_spec_4_4"
+        "pkg/gateway/checkpoint/checkpointer/freshness_test.go::TestFreshnessReaperCountsInputRequiredSessions_spec_4_4",
+        "pkg/gateway/podlifecycle/podsession/restore_bind_test.go"
       ],
       "packages": [
         "pkg/store/event",
@@ -1436,7 +1438,8 @@
         "tests/tier2_component/migrations/prod_columns_test.go",
         "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodRefusesRestartOnNonRestartableRuntime_spec_5_2",
         "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodRefusesAgentSidecarRuntimeWithoutCommand_spec_5_1",
-        "pkg/adapter/staging_restore_test.go"
+        "pkg/adapter/staging_restore_test.go",
+        "pkg/gateway/podlifecycle/podsession/restore_bind_test.go"
       ],
       "packages": [
         "pkg/runtime"
@@ -2146,7 +2149,8 @@
         "pkg/gateway/sessionserver/treerecovery_internal_test.go::TestTerminalMarkerFailsOnlyResumePending_spec_8_10",
         "pkg/gateway/sessionserver/treerecovery_internal_test.go::TestTreeRecoveryCountsAwaitingClientActionNodeWithoutWriting_spec_8_10",
         "pkg/session/state/state_test.go::TestValidTransitionsHoldEverySessionStateMachineEdge_spec_7_2",
-        "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreeDeletedSymbolsStayDeleted_spec_8_10"
+        "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreeDeletedSymbolsStayDeleted_spec_8_10",
+        "pkg/gateway/podlifecycle/podsession/restore_bind_test.go"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -2383,7 +2387,8 @@
         "pkg/adapter/staging_restore_test.go",
         "pkg/adapter/workspace/materialize_test.go",
         "tests/tier3_contract/adapter_workspace_restore/restore_chunks_wire_test.go",
-        "tests/tier9_security/restore_grant_scope_test.go"
+        "tests/tier9_security/restore_grant_scope_test.go",
+        "tests/tier10_conformance/slot_bind_attempt_conformance_test.go"
       ],
       "packages": [
         "pkg/session"
@@ -6200,7 +6205,8 @@
         "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreeFiledDefectsAreConfirmed_spec_8_10",
         "cmd/lenny-gateway/deadlock_fail_test.go::TestDeadlockClearanceResolutionCarriesRootPool_spec_16_1",
         "pkg/gateway/mcpfabric/delegationtree/deadlock/manager_test.go::TestManagerClearanceReturnedWhenNoLongerDetected_spec_16_1",
-        "pkg/gateway/mcpfabric/delegationtree/deadlock/manager_test.go::TestManagerTimeoutCarriesRootPool_spec_16_1"
+        "pkg/gateway/mcpfabric/delegationtree/deadlock/manager_test.go::TestManagerTimeoutCarriesRootPool_spec_16_1",
+        "pkg/gateway/podlifecycle/podsession/restore_bind_test.go"
       ],
       "packages": [
         "pkg/observability/metrics",
