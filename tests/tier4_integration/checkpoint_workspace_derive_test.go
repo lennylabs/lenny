@@ -280,9 +280,8 @@ func TestWorkspaceDownloadResolvesFourSegmentRef(t *testing.T) {
 // chunk into the derived session's own prefix.
 //
 // diagnosis: a failure here means derive treats the whole four-segment
-// parent ref as a bare checkpoint_id, misses the parent manifest, and falls
-// through to the legacy single-object copy that cannot copy an N-chunk
-// checkpoint.
+// parent ref as a bare checkpoint_id, misses the parent manifest, and
+// answers 503 DERIVE_SNAPSHOT_UNAVAILABLE for a checkpoint that exists.
 func TestDeriveFromFourSegmentParentRefCopiesChunks(t *testing.T) {
 	t.Parallel()
 	const (

@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -410,12 +409,11 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 // WorkspaceSnapshot.Ref (the four-segment object-path form
 // /{tenant}/checkpoints/{derived_session}/{derived_checkpoint_id} the
 // snapshot parsers accept, whose last segment is the derived checkpoint_id).
-// It reports handled=true when the parent has a chunked manifest that it
-// acted on, so the caller skips the legacy single-snapshot copy;
-// handled=false leaves the caller on the legacy path (dev mode, a store
-// without Copier, or a checkpoint predating the chunked model). A copy or
-// manifest-write failure returns handled=true with a non-nil error so the
-// caller maps it to the derive error response.
+// The caller has checked that every dependency is wired. A parent ref with
+// no manifest row, or a row with no chunk, returns
+// errSnapshotRefUnresolvable; a missing chunk object returns the store's
+// blobstore.ErrNotFound; any other manifest read, copy, or manifest write
+// failure returns that error.
 //
 // The parent's ref is resolved by its trailing checkpoint_id segment, so
 // both the bare-checkpoint_id and four-segment ref forms name the same
@@ -425,26 +423,26 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 // complete via the intent-row model (Put → ConfirmChunk →
 // Finalise(partial=false)).
 //
-// spec: §10.1; §7.1 derive copy semantics; §4.5.
-func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstore.Session, derivedID string, now time.Time) (derivedRef string, handled bool, err error) {
-	if s.checkpointManifests == nil || s.checkpointManifestWriter == nil {
-		return "", false, nil
-	}
-	if _, ok := s.blobs.(blobstore.Copier); !ok || source.WorkspaceSnapshot == nil || source.WorkspaceSnapshot.Ref == "" {
-		return "", false, nil
-	}
+// spec: §10.1; §7.1 (Derive copy semantics); §7.1 (Derive session
+// semantics) derive rule 2; §4.5.
+func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstore.Session, derivedID string, now time.Time) (string, error) {
 	parentCheckpointID := checkpointIDFromSnapshotRef(source.WorkspaceSnapshot.Ref)
 	parentRec, gerr := s.checkpointManifests.Get(ctx, source.TenantID, parentCheckpointID)
-	if gerr != nil || parentRec.ChunkCount <= 0 {
-		// No chunked manifest for this ref: fall through to the legacy path.
-		return "", false, nil
+	if errors.Is(gerr, partialmanifeststore.ErrNotFound) {
+		return "", errSnapshotRefUnresolvable
+	}
+	if gerr != nil {
+		return "", fmt.Errorf("read manifest of checkpoint %s: %w", parentCheckpointID, gerr)
+	}
+	if parentRec.ChunkCount <= 0 {
+		return "", errSnapshotRefUnresolvable
 	}
 	encoding := parentRec.ChunkEncoding
 	if encoding == "" {
 		encoding = partialmanifeststore.ChunkEncodingTarGz
 	}
 	derivedCheckpointID := s.idFn()
-	derivedRef = checkpointSnapshotRef(source.TenantID, derivedID, derivedCheckpointID)
+	derivedRef := checkpointSnapshotRef(source.TenantID, derivedID, derivedCheckpointID)
 
 	// spec: §12.5 ll. 295 — copy each chunk through the tenant-scoped
 	// boundary so both source and destination URIs are validated against
@@ -455,7 +453,7 @@ func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstor
 		srcURI := resumechunks.ChunkObjectURI(source.TenantID, source.ID, parentCheckpointID, uint32(n), encoding)
 		dstURI := resumechunks.ChunkObjectURI(source.TenantID, derivedID, derivedCheckpointID, uint32(n), encoding)
 		if cerr := scoped.Copy(srcURI, dstURI); cerr != nil && !errors.Is(cerr, blobstore.ErrConflict) {
-			return derivedRef, true, cerr
+			return "", cerr
 		}
 	}
 
@@ -477,17 +475,17 @@ func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstor
 		CreatedAt:                   now,
 	}
 	if perr := s.checkpointManifestWriter.Put(ctx, rec); perr != nil {
-		return derivedRef, true, perr
+		return "", perr
 	}
 	if cerr := s.checkpointManifestWriter.ConfirmChunk(ctx, source.TenantID, derivedCheckpointID,
 		parentRec.ChunkCount-1, parentRec.WorkspaceBytesUploaded); cerr != nil {
-		return derivedRef, true, cerr
+		return "", cerr
 	}
 	if ferr := s.checkpointManifestWriter.Finalise(ctx, source.TenantID, derivedCheckpointID,
 		false, partialmanifeststore.ReasonComplete); ferr != nil {
-		return derivedRef, true, ferr
+		return "", ferr
 	}
-	return derivedRef, true, nil
+	return derivedRef, nil
 }
 
 // checkpointSnapshotRef builds the four-segment object-path form the
@@ -524,57 +522,6 @@ func copySnapshotRef(src *sessionstore.WorkspaceSnapshot, newRef string) *sessio
 		Timestamp:   src.Timestamp,
 		ContentHash: src.ContentHash,
 	}
-}
-
-// parseDeriveURIs builds the blobstore.URI pair the §4.5 ll. 311
-// Copy call needs. The parent's `Ref` may carry either a stored
-// `lenny-blob://...` URI or the historical MinIO path; this helper
-// resolves whichever form is present. Returns ok=false when the
-// reference can't be normalised to a URI in the caller's tenant; the
-// caller then fails the copy closed.
-//
-// spec: §4.5 (Artifact Store); §7.1 (Derive copy semantics).
-func parseDeriveURIs(parentRef, tenantID, sourceSessionID, derivedSessionID string) (src, dst blobstore.URI, ok bool) {
-	if strings.HasPrefix(parentRef, blobstore.Scheme+"://") {
-		parsed, err := blobstore.ParseURI(parentRef)
-		if err != nil {
-			return blobstore.URI{}, blobstore.URI{}, false
-		}
-		src = parsed
-	} else {
-		// Path-style reference (e.g. "/acme/workspace/sess/snap.tar").
-		// Strip the leading slash if present and pull out the part_id.
-		trimmed := strings.TrimPrefix(parentRef, "/")
-		parts := strings.SplitN(trimmed, "/", 4)
-		if len(parts) < 4 {
-			return blobstore.URI{}, blobstore.URI{}, false
-		}
-		src = blobstore.URI{
-			TenantID:   parts[0],
-			ObjectType: blobstore.ObjectType(parts[1]),
-			SessionID:  parts[2],
-			PartID:     parts[3],
-			TTL:        blobstore.DerivedSnapshotTTL,
-		}
-	}
-	if src.TenantID != tenantID {
-		return blobstore.URI{}, blobstore.URI{}, false
-	}
-	dst = src
-	dst.SessionID = derivedSessionID
-	dst.PartID = derivedSnapshotPart(sourceSessionID)
-	if dst.TTL == 0 {
-		dst.TTL = blobstore.DerivedSnapshotTTL
-	}
-	return src, dst, true
-}
-
-// derivedSnapshotPart is the §4.5 part-id stamp on the derived
-// workspace object — a stable identifier so the same source +
-// derived pair always names the same object, making the §7.1
-// derive idempotent under retry.
-func derivedSnapshotPart(sourceSessionID string) string {
-	return "derived-from-" + sourceSessionID
 }
 
 // persistDeriveFailure writes the §7.1 derive rule 2 opt-in

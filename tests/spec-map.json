@@ -409,7 +409,6 @@
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudCSI",
         "pkg/gateway/sessionserver/derive_failure_audit_test.go::TestDeriveFailureAuditRowIsNoTreeNode_spec_15_1",
         "pkg/gateway/sessionserver/derive_failure_lineage_internal_test.go::TestPersistDeriveFailureLineage_spec_4_5",
-        "pkg/gateway/sessionserver/derive_test.go::TestDeriveCopiesParentBytesIntoDerivedURI",
         "pkg/gateway/sessionserver/derive_test.go::TestDeriveAndReplayCreateRoots_spec_12_6",
         "tests/testinfra/lifecyclefence/paths_test.go::TestReservedPathsRunTheProductionCreatePaths_spec_12_8",
         "tests/tier11_docs/build_gaps_delegation_tree_records_currency_test.go::TestDelegationTreeFiledDefectsAreConfirmed_spec_8_10"
@@ -2261,6 +2260,9 @@
       "title": "Session Lifecycle \u2014 Normal Flow",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
+        "tests/tier3_contract/rest_sessions/derive_replay_snapshot_contract_test.go::TestDeriveAndReplaySnapshotCopyErrorContract_spec_7_1",
+        "tests/tier3_contract/rest_sessions/openapi_document_test.go::TestServedDocumentDeriveAndReplayDeclareSnapshotUnavailable",
+        "pkg/gateway/sessionserver/snapshot_copy_test.go::TestSnapshotCopyFailsClosed_spec_7_1",
         "pkg/gateway/sessionserver/snapshot_restore_test.go",
         "pkg/gateway/sessionserver/bind_request_test.go",
         "pkg/gateway/podlifecycle/podsession/restore_bind_test.go",
@@ -5614,6 +5616,9 @@
       "title": "REST API",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier3_contract/rest_sessions/derive_replay_snapshot_contract_test.go::TestDeriveAndReplaySnapshotCopyErrorContract_spec_7_1",
+        "tests/tier3_contract/rest_sessions/openapi_document_test.go::TestServedDocumentDeriveAndReplayDeclareSnapshotUnavailable",
+        "pkg/gateway/sessionserver/snapshot_copy_test.go::TestSnapshotCopyFailsClosed_spec_7_1",
         "tests/tier8_chaos/workspace_defaults_outage_test.go::TestWorkspaceDefaultsPostgresOutageFailsClosed_spec_14_1",
         "tests/tier3_contract/rest_sessions/start_starting_state_contract_test.go::TestStartLaunchFailureAnswersStartingFailedAndFailsTheSession_spec_15_1",
         "tests/tier3_contract/rest_sessions/start_starting_state_contract_test.go::TestSecondStartWhileTheFirstIsHeldAnswersStarting_spec_15_1",

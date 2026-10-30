@@ -116,6 +116,9 @@ type fenceFixture struct {
 	mem     *memstore.Store
 	store   *refusalStore
 	blobs   *blobstore.MemoryStore
+	// manifests holds the checkpoint_manifest rows of the seeded source
+	// checkpoint and of every copy a derive or replay writes.
+	manifests *partialmanifeststore.MemoryStore
 }
 
 func newFenceFixture(t *testing.T, users ...userstore.User) *fenceFixture {
@@ -124,6 +127,8 @@ func newFenceFixture(t *testing.T, users ...userstore.User) *fenceFixture {
 		tenants: tenantstore.NewMemory(),
 		users:   userstore.NewMemory(),
 		blobs:   blobstore.NewMemoryStore(nil),
+
+		manifests: partialmanifeststore.NewMemoryStore(nil),
 	}
 	if err := f.tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"}); err != nil {
 		t.Fatalf("seed tenant: %v", err)
@@ -390,25 +395,27 @@ func deriveFixture(t *testing.T, users ...userstore.User) *fenceFixture {
 }
 
 // seedSourceWithSnapshot seeds the terminal source session over f.mem with
-// its legacy snapshot object in f.blobs, so a derive or a replay copies an
-// object under the new session's ID.
+// its chunked checkpoint in f.blobs and f.manifests, so a derive or a replay
+// copies a chunk under the new session's ID.
 func (f *fenceFixture) seedSourceWithSnapshot(t *testing.T) {
 	t.Helper()
-	src := blobstore.URI{
-		TenantID: "acme", ObjectType: blobstore.ObjectTypeWorkspace,
-		SessionID: "sess_source", PartID: "snap", TTL: time.Hour,
-	}
-	if _, err := f.blobs.Put(src, "application/x-tar", strings.NewReader("workspace-bytes")); err != nil {
-		t.Fatalf("seed parent blob: %v", err)
-	}
-	newSourceSession(t, f.mem, func(s *sessionstore.Session) { s.WorkspaceSnapshot.Ref = src.String() })
+	seedChunkedSnapshot(t, f.blobs, f.manifests, "sess_source")
+	newSourceSession(t, f.mem)
 }
 
+// derivedObject is the chunk a derive through deriveServer copies: its
+// IDFunc names both the derived session and the derived checkpoint
+// sess_derived.
 func derivedObject() blobstore.URI {
-	return blobstore.URI{
-		TenantID: "acme", ObjectType: blobstore.ObjectTypeWorkspace,
-		SessionID: "sess_derived", PartID: "derived-from-sess_source", TTL: time.Hour,
-	}
+	return derivedChunk("sess_derived", "sess_derived")
+}
+
+// wireSnapshot wires the fixture's manifest store as the reader and the
+// writer and a chunk resolver into o, which the chunked copy requires.
+func (f *fenceFixture) wireSnapshot(o *sessionserver.Options) {
+	o.CheckpointManifestReader = f.manifests
+	o.CheckpointManifestWriter = f.manifests
+	o.ResumeChunkResolver = stubChunkResolver{}
 }
 
 func (f *fenceFixture) deriveServer(blobs blobstore.Store, opts ...func(*sessionserver.Options)) http.Handler {
@@ -417,6 +424,7 @@ func (f *fenceFixture) deriveServer(blobs blobstore.Store, opts ...func(*session
 		IDFunc:          func() string { return "sess_derived" },
 		Blobs:           blobs, Users: f.users, Tenants: f.tenants,
 	}
+	f.wireSnapshot(&o)
 	for _, m := range opts {
 		m(&o)
 	}
@@ -659,10 +667,7 @@ func TestDeriveCopyFailureUndoesChunksAndManifest_spec_12_8(t *testing.T) {
 func TestDeriveFailureRowRefusedRecordsError_spec_12_8(t *testing.T) {
 	f := newFenceFixture(t, userstore.User{Subject: "alice@acme.com", TenantID: "acme"})
 	newSourceSession(t, f.mem, func(s *sessionstore.Session) {
-		s.WorkspaceSnapshot.Ref = (blobstore.URI{
-			TenantID: "acme", ObjectType: blobstore.ObjectTypeWorkspace,
-			SessionID: "sess_source", PartID: "missing", TTL: time.Hour,
-		}).String()
+		s.WorkspaceSnapshot.Ref = "/acme/checkpoints/sess_source/ckpt_missing"
 	})
 	// The flag commits after the reservation admitted the derive and
 	// before the failure row's insert.
@@ -854,11 +859,13 @@ func replayFixture(t *testing.T) (*fenceFixture, *transcriptstore.Memory, http.H
 		transcriptstore.Entry{Role: "user", Content: "original prompt"}); err != nil {
 		t.Fatalf("seed transcript: %v", err)
 	}
-	h := sessionserver.New(f.store, sessionserver.Options{
+	o := sessionserver.Options{
 		DevTenantHeader: true,
 		IDFunc:          func() string { return "sess_replay" },
 		Transcripts:     transcripts, Users: f.users, Tenants: f.tenants, Blobs: f.blobs,
-	}).Handler()
+	}
+	f.wireSnapshot(&o)
+	h := sessionserver.New(f.store, o).Handler()
 	return f, transcripts, h
 }
 
