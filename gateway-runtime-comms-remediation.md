@@ -3480,7 +3480,7 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   including the create response's `uploadToken` and the owner's action responses that 0110's not-found rule
   hides. The proposal binds the record to the authenticated subject and states what a second principal
   receives, on REST and on the MCP per-tool path. It does not depend on 0110's implementation.
-- [ ] **Warm-time shared-asset fill (F-6.4.19 Medium, F-6.4.20 Low)** (new proposal, queued 2026-10-30 after
+- [ ] **Warm-time shared-asset fill (F-6.4.19 Medium, F-6.4.20 Medium)** (new proposal, queued 2026-10-30 after
   0111 and after the idempotent-replay proposal above, which is a security item): a Runtime's `type: artifact`
   `sharedAssets` entries never reach `/workspace/shared/`, and inline entries ride the adapter's
   `--shared-assets` command-line argument, which caps them near 90 KiB in total. The proposal reuses 0111's
@@ -4683,7 +4683,7 @@ the warm-time shared-asset fill proposal in "Queue after P4b" above, queued afte
   builder, which reads the `Runtime` CRD, and the CRD schema has no `type`, `ref`, or `destPath` property. An
   artifact entry registered through the admin API is dropped silently and warm-up succeeds; on the CRD it is
   rejected for the missing `path`, or written as an empty file when a `path` is added.
-- [ ] **F-6.4.20** (Low): inline shared assets travel base64-encoded in one adapter command-line argument, so
+- [ ] **F-6.4.20** (Medium): inline shared assets travel base64-encoded in one adapter command-line argument, so
   `MAX_ARG_STRLEN` caps a Runtime's inline set near 90 KiB in total and a larger set fails at container start
   with `E2BIG`. §6.4 and §5.1 state no size limit, transport, or volume size.
 
